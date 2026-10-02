@@ -461,32 +461,102 @@ different results. Do not report a complete staging release from ready Pods,
    producer sealing. Disabling the flag removes only future scheduling and
    preserves completed Jobs and source rows.
 
-   The independent producer close schedule uses
-   `LKE_OTA_PRODUCER_SEAL_SCHEDULE_ENABLED=false` in every environment until
-   the selected delivery mode, source receipts, object inventory and Billing
-   acknowledgement are qualified. Direct-object months do not need the CDN
-   collector or edge review; future CDN months require both.
-   To enable it, select Video Cloud, Account Manager and Billing in one reviewed
-   rollout; confirm the Account Manager completed-month inventory API is deployed,
-   the Video Cloud image contains `/app/otaseal`, and provision a separate
-   environment-local `ota-producer-seal-token` of at least 32 characters. The
-   deployer installs that token in a dedicated Video Cloud Secret and the Billing
-   runtime. Full and targeted deployments validate the token before applying
-   runtime dependencies; targeted activation refuses a partial selection.
-   Billing's Pod template checksum includes the token so first activation and
-   rotation restart its consumer. The deployer permits only `video-cloud-otaservice` and
-   `ota-producer-period-seal` to reach Billing on port 8080. The CronJob starts
-   at 04:00 UTC on days 3-7, each time replaying the previous UTC month. It
-   enumerates every historical Brand Cloud through Account Manager, including
-   disabled and zero-use Clouds; any missing delivery-mode evidence, source fact, object,
-   inventory or Billing acknowledgement makes the batch fail. Inspect the Job,
-   hashed Cloud failures, Billing's two seals and the oldest unclosed month;
-   alert on failed or missing Jobs. For an older month, launch the packaged
-   `/app/otaseal --all-brand-clouds --month YYYY-MM` with the same protected
-   runtime inputs after the selected mode's review. Disabling the flag or rolling back the
-   CronJob does not delete historical Jobs, source receipts or Billing seals.
-   In staging, Product PKI Go/No-Go and the selected CI image provenance remain
-   mandatory before any mutation.
+   **OTA monthly producer identity and close.** Every environment keeps
+   `LKE_OTA_PRODUCER_SEAL_SCHEDULE_ENABLED=false` and
+   `LKE_OTA_PRODUCER_SEAL_SCHEDULE_SUSPENDED=true` until the selected delivery
+   mode, source receipts, object inventory, mTLS Cloud inventory and Billing
+   acknowledgement are qualified. Configure `LKE_OTA_PRODUCER_SEAL_FIRST_MONTH`
+   from the first complete, qualified UTC source month; dev/prod defaults are
+   empty. Staging's proposed boundary is `2026-11`, because October source
+   coverage is partial. This boundary does not publish a price or certify that
+   November has completed. Earlier months are skipped without source or Billing
+   writes. Direct-object months do not require CDN collection or review.
+
+   The Job has its own `service:ota` key, canonical owner record
+   `pki/services/ota-producer-period-seal/identity.json`, issuance request and
+   runtime Secret `ota-producer-period-seal-identity`. The OTA API's existing
+   `pki/services/ota/identity.json` and registration key are separate. Prepare
+   this initial owner using the selected environment's recorded Root, signing
+   policy and an active operator-authorized Service bootstrap session:
+
+   ```sh
+   go run ./scripts/go/rtk-cloud -- deployment service-identity \
+     --environment staging --subject service:ota \
+     --owner ota-producer-period-seal --confirm video-cloud-staging --install-seed
+   ```
+
+   A previously sealed/expired bootstrap session cannot sign another initial
+   key. Prepare a new scoped session through the existing environment PKI
+   procedure; do not borrow the API key, invent another reviewer, or reset its
+   session. The owner-specific request digest prevents collision with the API's
+   initial issuance. Persist CSR/key before contacting the issuer. An uncertain
+   response reuses that request. Initial installation creates the named Secret
+   only if absent and saves its UID in the owner record. A recorded missing or
+   replaced Secret is a recovery decision, not permission to overwrite it.
+   Existing runtime state is never reapplied from the older local certificate.
+
+   The Job uses an explicitly projected Kubernetes API token and CA, a dedicated
+   ServiceAccount and Role with only `get`/`patch` on that one named Secret.
+   It saves a pending CSR/key/request before renewal, and the verified current
+   credential before use, with Secret UID/resourceVersion tests. Conflicts or
+   unknown writes fail closed. Only `identity.json` is patched; fixed public
+   Account Manager/issuer trust is preserved. The Job mounts only the public CA
+   entries, uses a private lock subdirectory in memory, and creates no PVC.
+   Account Manager inventory uses its private Service listener at port 8443
+   (Pod port 9444), requiring verified `service:ota` mTLS plus the existing
+   internal bearer. Renewal uses the private CertIssuer Service at port 9443 and the
+   recorded CA/DNS pin; the operator's local forwarding origin is not used
+   inside a Pod. Both network allowlists include this exact Job label. Service client
+   admission uses current registry/revocation records; do not claim an additional
+   client CRL snapshot check unless that layer is configured.
+
+   **Operator identity maintenance is required.** A Service leaf lasts at most
+   30 days; monthly execution can be 31 days apart. The existing managed loader
+   renews at two-thirds of the actual lifetime only while running. Run the
+   read-only certificate inspection and launch explicit maintenance before
+   expiry; this delivery installs no recurring renewal scheduler:
+
+   ```sh
+   go run ./scripts/go/rtk-cloud -- deployment certificate-check --environment staging
+   go run ./scripts/go/rtk-cloud -- deployment ota-producer-seal \
+     --environment staging --maintain-identity
+   go run ./scripts/go/rtk-cloud -- deployment ota-producer-seal \
+     --environment staging --maintain-identity --confirm video-cloud-staging
+   ```
+
+   Maintenance checks the current owner and renews only when due, or resumes its
+   durable pending issuance. It carries registry/identity trust but no object,
+   inventory bearer or Billing credentials, and does not close a period. The
+   certificate inventory reads current Secret state even when no Job exists;
+   the local initial record is provenance after renewal. An expired or revoked
+   current identity remains NO-GO and needs the existing authorized recovery
+   procedure. Scheduling remains suspended until the operator has qualified
+   this maintenance path and agreed its operational cadence.
+
+   Publish the reviewed Job-capable Video Cloud image and the Account Manager
+   Service inventory route before activation. Provision a distinct canonical
+   `ota-producer-seal-token` of at least 32 characters for producer/Billing;
+   the deployer validates coordinated Account Manager, Billing and Video Cloud
+   selection before applying runtime dependencies. Billing's token checksum
+   restarts its consumer after activation/rotation. Only the OTA service and
+   producer Job may reach Billing port 8080. A manual close uses an exact month
+   after the 48-hour UTC lateness window:
+
+   ```sh
+   go run ./scripts/go/rtk-cloud -- deployment ota-producer-seal \
+     --environment staging --month 'YYYY-MM'
+   go run ./scripts/go/rtk-cloud -- deployment ota-producer-seal \
+     --environment staging --month 'YYYY-MM' --confirm video-cloud-staging
+   ```
+
+   The optional suspended CronJob retains 04:00 UTC days 3-7 and `previous`,
+   guarded by the first qualified month. All modes enumerate every historical
+   Cloud, including disabled/zero-use Clouds; missing source facts, object
+   reconciliation, inventory, required review or Billing ACK fail the batch.
+   Inspect Job Complete, hashed failures, both Billing seals and oldest unclosed
+   month before invoice close. Disabling scheduling preserves historical Jobs,
+   receipts, owner state and seals. Protected-environment Go/No-Go and canonical
+   image provenance remain required before live mutation.
    Before a protected Video Cloud PKI schema migration, run
    `scripts/check-deployment-credentials.sh --environment <environment> --read-only --require-pki-migration`;
    this checks the separate

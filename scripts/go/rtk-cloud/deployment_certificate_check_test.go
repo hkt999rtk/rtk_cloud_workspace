@@ -308,6 +308,12 @@ func TestCertificateCheckInventoryOverrideValidationAndCLI(t *testing.T) {
 		{"bad secret namespace", func(x *certificateCheckTarget) {
 			x.Source, x.Namespace, x.Secret, x.CertKey, x.KeyKey = "secret", "bad/name", "identity", "cert", "key"
 		}},
+		{"missing managed Secret state", func(x *certificateCheckTarget) {
+			x.Source, x.Namespace, x.Secret = "managed-secret", "video-cloud", "identity"
+		}},
+		{"bad managed Secret namespace", func(x *certificateCheckTarget) {
+			x.Source, x.Namespace, x.Secret, x.StateKey = "managed-secret", "bad/name", "identity", "identity.json"
+		}},
 		{"relative managed state", func(x *certificateCheckTarget) {
 			x.Source, x.Namespace, x.Selector, x.Container, x.StateFile = "managed", "video-cloud", "app=ota", "owner", "relative.json"
 		}},
@@ -352,6 +358,253 @@ func TestCertificateCheckInventoryOverrideValidationAndCLI(t *testing.T) {
 	for _, environment := range []string{"dev", "staging", "prod"} {
 		if targets, err := loadCertificateCheckInventory(root, environment); err != nil || len(targets) < 20 {
 			t.Fatalf("%s inventory=%d err=%v", environment, len(targets), err)
+		}
+	}
+}
+
+func TestCertificateCheckManagedSecretWithoutOwnerPod(t *testing.T) {
+	r, target, material, fixture := certificateInspectionFixture(t)
+	target.Source = "managed-secret"
+	target.Namespace = "video-cloud"
+	target.Secret = "ota-producer-period-seal-identity"
+	target.StateKey = "identity.json"
+	target.ServiceRoot = true
+	issuer := deploymentServiceIssuer{Environment: r.store.Environment, Stack: r.stack, RootCAFile: target.RootFile, RootSHA256: target.RootSHA256}
+	raw, err := json.Marshal(issuer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.store.write("pki/services/issuer.json", raw, false); err != nil {
+		t.Fatal(err)
+	}
+	state := map[string]any{"version": 1, "subject": target.Subject, "current": map[string]any{
+		"private_key_pem": material.key, "certificate_chain_pem": material.chain, "installed_at": r.now,
+	}}
+	secretFor := func(state any) []byte {
+		t.Helper()
+		body, err := json.Marshal(state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		object := lkeTestSecret(map[string][]byte{target.StateKey: body})
+		object["metadata"] = map[string]any{"name": target.Secret, "namespace": r.stack + "-" + target.Namespace, "uid": "monthly-identity-uid"}
+		secret, err := json.Marshal(object)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return secret
+	}
+	secret := secretFor(state)
+	wantQuery := "-n " + r.stack + "-video-cloud get secret " + target.Secret + " --ignore-not-found=true -o json"
+	r.query = func(args ...string) ([]byte, error) {
+		if got := strings.Join(args, " "); got != wantQuery {
+			t.Fatalf("unexpected Kubernetes query: %s", got)
+		}
+		return secret, nil
+	}
+	if rows := r.check(target); len(rows) != 1 || rows[0].Status != "OK" || rows[0].Subject != target.Subject {
+		t.Fatalf("current managed Secret without Pod: %+v", rows)
+	}
+	secretQuery := r.query
+	baseSettings := map[string]string{
+		"VIDEO_CLOUD_ACCOUNT_MANAGER_IDENTITY_STATE":            "/var/lib/ota-period-identity/state/identity.json",
+		"VIDEO_CLOUD_ACCOUNT_MANAGER_IDENTITY_BACKEND":          "kubernetes-secret",
+		"VIDEO_CLOUD_ACCOUNT_MANAGER_IDENTITY_SECRET_NAMESPACE": r.stack + "-video-cloud",
+		"VIDEO_CLOUD_ACCOUNT_MANAGER_IDENTITY_SECRET_NAME":      target.Secret,
+		"VIDEO_CLOUD_ACCOUNT_MANAGER_IDENTITY_SECRET_KEY":       target.StateKey,
+		"VIDEO_CLOUD_ACCOUNT_MANAGER_IDENTITY_SECRET_UID":       "monthly-identity-uid",
+	}
+	podFor := func(overrides map[string]string, phase string) []byte {
+		t.Helper()
+		settings := map[string]string{}
+		for key, value := range baseSettings {
+			settings[key] = value
+		}
+		for key, value := range overrides {
+			settings[key] = value
+		}
+		env := make([]map[string]string, 0, len(settings))
+		for key, value := range settings {
+			env = append(env, map[string]string{"name": key, "value": value})
+		}
+		pods, err := json.Marshal(map[string]any{"items": []any{map[string]any{
+			"metadata": map[string]string{"name": "seal-1"}, "status": map[string]string{"phase": phase},
+			"spec": map[string]any{"containers": []any{map[string]any{"name": "seal", "env": env}}},
+		}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pods
+	}
+	pods := podFor(nil, "Running")
+	namespace := r.stack + "-video-cloud"
+	r.query = func(args ...string) ([]byte, error) {
+		if strings.Contains(strings.Join(args, " "), " get pods -o json") {
+			if len(args) >= 2 && args[1] != namespace {
+				return []byte(`{"items":[]}`), nil
+			}
+			return pods, nil
+		}
+		return secretQuery(args...)
+	}
+	if report := r.run([]certificateCheckTarget{target}, nil); certificateCheckExit(report) != 0 {
+		t.Fatalf("full inspection failed with correctly bound Job: %+v", report.Rows)
+	}
+	if rows := r.checkOwnerCoverage(map[string]bool{namespace: true}); len(rows) != 0 {
+		t.Fatalf("valid Job Secret binding was not covered: %+v", rows)
+	}
+	// A legacy in-Pod inspection cannot cover a Secret-backed owner with drifted metadata.
+	r.checkedOwners[namespace+"/seal-1/seal/"+baseSettings["VIDEO_CLOUD_ACCOUNT_MANAGER_IDENTITY_STATE"]] = true
+	for _, test := range []struct {
+		name      string
+		overrides map[string]string
+		phase     string
+	}{
+		{name: "wrong UID", overrides: map[string]string{"VIDEO_CLOUD_ACCOUNT_MANAGER_IDENTITY_SECRET_UID": "other-uid"}},
+		{name: "wrong Secret", overrides: map[string]string{"VIDEO_CLOUD_ACCOUNT_MANAGER_IDENTITY_SECRET_NAME": "other-identity"}},
+		{name: "wrong state key", overrides: map[string]string{"VIDEO_CLOUD_ACCOUNT_MANAGER_IDENTITY_SECRET_KEY": "other.json"}},
+		{name: "wrong namespace", overrides: map[string]string{"VIDEO_CLOUD_ACCOUNT_MANAGER_IDENTITY_SECRET_NAMESPACE": "other-video-cloud"}},
+		{name: "wrong backend", overrides: map[string]string{"VIDEO_CLOUD_ACCOUNT_MANAGER_IDENTITY_BACKEND": "file"}},
+		{name: "unmapped owner", overrides: map[string]string{"UNRECOGNIZED_IDENTITY_STATE": "/other/identity.json"}},
+		{name: "completed Pod", phase: "Succeeded"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			phase := test.phase
+			if phase == "" {
+				phase = "Running"
+			}
+			pods = podFor(test.overrides, phase)
+			rows := r.checkOwnerCoverage(map[string]bool{namespace: true})
+			if len(rows) != 1 || rows[0].Status != "UNKNOWN" || strings.Contains(strings.Join(rows[0].Findings, " "), "monthly-identity-uid") {
+				t.Fatalf("unbound owner was treated as covered or leaked UID: %+v", rows)
+			}
+		})
+	}
+	pods = podFor(nil, "Running")
+	secret = secretFor(map[string]any{"version": 1, "subject": target.Subject, "current": map[string]any{
+		"private_key_pem": "wrong", "certificate_chain_pem": material.chain, "installed_at": r.now,
+	}})
+	if rows := r.check(target); rows[0].Status != "CRITICAL" {
+		t.Fatalf("invalid current key was accepted: %+v", rows)
+	}
+	if rows := r.checkOwnerCoverage(map[string]bool{namespace: true}); len(rows) != 1 || rows[0].Status != "UNKNOWN" {
+		t.Fatalf("failed Secret inspection still covered owner: %+v", rows)
+	}
+	r.query = secretQuery
+	secret = secretFor(map[string]any{"version": 1, "subject": target.Subject, "current": state["current"], "pending": map[string]any{"request_id": "renewal"}})
+	if rows := r.check(target); rows[0].Status != "WARNING" {
+		t.Fatalf("pending renewal not visible: %+v", rows)
+	}
+	secret = secretFor(state)
+	target.CRLFile = "pki/clients.crl"
+	if err := r.store.write(target.CRLFile, lkeTestCRL(t, fixture.issuer, fixture.issuerKey, fixture.now, nil), false); err != nil {
+		t.Fatal(err)
+	}
+	if rows := r.check(target); rows[0].Status != "OK" || rows[0].Revocation != "checked" {
+		t.Fatalf("configured CRL was not checked: %+v", rows)
+	}
+	if err := r.store.write(target.CRLFile, lkeTestCRL(t, fixture.issuer, fixture.issuerKey, fixture.now, []*big.Int{fixture.serials[target.Subject]}), true); err != nil {
+		t.Fatal(err)
+	}
+	if rows := r.check(target); rows[0].Status != "CRITICAL" {
+		t.Fatalf("revoked monthly identity accepted: %+v", rows)
+	}
+	target.CRLFile = ""
+	var missingUIDObject map[string]any
+	if err := json.Unmarshal(secretFor(state), &missingUIDObject); err != nil {
+		t.Fatal(err)
+	}
+	delete(missingUIDObject["metadata"].(map[string]any), "uid")
+	missingUIDSecret, err := json.Marshal(missingUIDObject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name string
+		data []byte
+		want string
+	}{
+		{name: "missing state key", data: []byte(`{"data":{}}`), want: "CRITICAL"},
+		{name: "invalid version", data: secretFor(map[string]any{"version": 2, "subject": target.Subject, "current": state["current"]}), want: "CRITICAL"},
+		{name: "missing installed time", data: secretFor(map[string]any{"version": 1, "subject": target.Subject, "current": map[string]any{"private_key_pem": material.key, "certificate_chain_pem": material.chain}}), want: "CRITICAL"},
+		{name: "missing state subject", data: secretFor(map[string]any{"version": 1, "current": state["current"]}), want: "CRITICAL"},
+		{name: "wrong state subject", data: secretFor(map[string]any{"version": 1, "subject": "service:shadow", "current": state["current"]}), want: "CRITICAL"},
+		{name: "server domain state", data: secretFor(map[string]any{"version": 1, "subject": target.Subject, "domain": "wrong.example", "current": state["current"]}), want: "CRITICAL"},
+		{name: "wrong private key", data: secretFor(map[string]any{"version": 1, "subject": target.Subject, "current": map[string]any{"private_key_pem": "wrong", "certificate_chain_pem": material.chain, "installed_at": r.now}}), want: "CRITICAL"},
+		{name: "missing Secret UID", data: missingUIDSecret, want: "CRITICAL"},
+		{name: "missing Secret", data: nil, want: "CRITICAL"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			secret = test.data
+			if rows := r.check(target); len(rows) != 1 || rows[0].Status != test.want || strings.Contains(strings.Join(rows[0].Findings, " "), material.key) {
+				t.Fatalf("managed Secret state was misclassified or exposed: %+v", rows)
+			}
+		})
+	}
+	r.query = func(...string) ([]byte, error) { return nil, errors.New("secret-sensitive-error") }
+	if rows := r.check(target); rows[0].Status != "UNKNOWN" || strings.Contains(strings.Join(rows[0].Findings, " "), "sensitive") {
+		t.Fatalf("Secret read error leaked or passed: %+v", rows)
+	}
+	r.localOnly = true
+	r.query = func(...string) ([]byte, error) { t.Fatal("local-only reached cluster"); return nil, nil }
+	if rows := r.check(target); rows[0].Status != "UNKNOWN" {
+		t.Fatalf("local-only managed Secret was treated as checked: %+v", rows)
+	}
+}
+
+func TestCertificateCheckManagedSecretRenewalSupersedesInitial(t *testing.T) {
+	r, initial, material, fixture := certificateInspectionFixture(t)
+	r.now = fixture.now.Add(2 * time.Hour)
+	initial.Source = "deployment"
+	initial.RecordFile = "pki/services/ota-producer-period-seal/identity.json"
+	initial.ServiceRoot = true
+	initial.SupersededBy = "ota-producer-period-seal-current"
+	initial.EnabledBy = "LKE_OTA_PRODUCER_SEAL_SCHEDULE_ENABLED"
+	issuer := deploymentServiceIssuer{Environment: r.store.Environment, Stack: r.stack, RootCAFile: initial.RootFile, RootSHA256: initial.RootSHA256}
+	issuerRaw, _ := json.Marshal(issuer)
+	if err := r.store.write("pki/services/issuer.json", issuerRaw, false); err != nil {
+		t.Fatal(err)
+	}
+	record := deploymentServiceIdentity{Version: 1, Environment: r.store.Environment, Stack: r.stack, Subject: initial.Subject, PrivateKey: material.key, CertificateChain: material.chain}
+	if err := writeDeploymentServiceIdentity(r.store, initial.RecordFile, record); err != nil {
+		t.Fatal(err)
+	}
+	current := initial
+	current.ID, current.Source, current.SupersededBy = initial.SupersededBy, "managed-secret", ""
+	current.Namespace, current.Secret, current.StateKey = "video-cloud", "ota-producer-period-seal-identity", "identity.json"
+	newKey, newCert := lkeTestLeaf(t, fixture.issuer, fixture.issuerKey, big.NewInt(100), pkix.Name{CommonName: initial.Subject}, nil, []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, r.now)
+	oldCerts, err := pemCertificates([]byte(material.chain))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldFingerprint := certificateSHA256(oldCerts[0])
+	state, _ := json.Marshal(map[string]any{"version": 1, "subject": initial.Subject, "current": map[string]any{
+		"private_key_pem": string(newKey), "certificate_chain_pem": string(newCert), "installed_at": r.now,
+	}})
+	object := lkeTestSecret(map[string][]byte{"identity.json": state})
+	object["metadata"] = map[string]any{"name": current.Secret, "namespace": r.stack + "-" + current.Namespace, "uid": "renewed-monthly-identity-uid"}
+	secret, _ := json.Marshal(object)
+	r.query = func(args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		if strings.Contains(joined, " get secret ota-producer-period-seal-identity ") {
+			return secret, nil
+		}
+		if strings.Contains(joined, " get pods -o json") {
+			return []byte(`{"items":[]}`), nil
+		}
+		t.Fatalf("unexpected query: %v", args)
+		return nil, nil
+	}
+	report := r.run([]certificateCheckTarget{initial, current}, map[string]string{initial.EnabledBy: "true"})
+	if certificateCheckExit(report) != 0 {
+		t.Fatalf("renewed monthly identity misreported: %+v", report.Rows)
+	}
+	for _, row := range report.Rows {
+		if row.ID == initial.ID && row.Status != "INFO" {
+			t.Fatalf("historical initial status: %+v", row)
+		}
+		if row.ID == current.ID && (row.Status != "OK" || row.Fingerprint == oldFingerprint) {
+			t.Fatalf("current identity status: %+v", row)
 		}
 	}
 }

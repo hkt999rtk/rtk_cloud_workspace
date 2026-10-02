@@ -57,7 +57,7 @@ func newDeploymentSignerFixture(t *testing.T) *deploymentSignerFixture {
 		t.Fatal(err)
 	}
 	fixture := &deploymentSignerFixture{store: store}
-	var savedChain string
+	savedChains := map[string]string{}
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/certificates/service-client/issue" || r.Method != http.MethodPost || len(r.TLS.PeerCertificates) == 0 {
 			t.Error("unexpected enrollment request")
@@ -75,6 +75,7 @@ func newDeploymentSignerFixture(t *testing.T) *deploymentSignerFixture {
 			return
 		}
 		fixture.requests = append(fixture.requests, request.RequestID+request.CSR)
+		savedChain := savedChains[request.RequestID]
 		if savedChain == "" {
 			block, _ := pem.Decode([]byte(request.CSR))
 			if block == nil {
@@ -91,7 +92,7 @@ func newDeploymentSignerFixture(t *testing.T) *deploymentSignerFixture {
 			if csr.CheckSignature() != nil {
 				t.Error("bad CSR signature")
 			}
-			leaf := &x509.Certificate{SerialNumber: big.NewInt(33), Subject: pkix.Name{CommonName: request.Subject}, NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}
+			leaf := &x509.Certificate{SerialNumber: big.NewInt(int64(33 + len(savedChains))), Subject: pkix.Name{CommonName: request.Subject}, NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}
 			der, err := x509.CreateCertificate(rand.Reader, leaf, intermediate, csr.PublicKey, intermediateKey)
 			if err != nil {
 				t.Error(err)
@@ -99,6 +100,7 @@ func newDeploymentSignerFixture(t *testing.T) *deploymentSignerFixture {
 				return
 			}
 			savedChain = string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})) + intermediatePEM + rootPEM
+			savedChains[request.RequestID] = savedChain
 		}
 		if fixture.firstUnavailable && len(fixture.requests) == 1 {
 			w.WriteHeader(http.StatusServiceUnavailable)

@@ -249,6 +249,27 @@
         "LKE_OTA_SERVICE_REGISTRATION_ENABLED",
         "LKE_OTA_REGISTRAR_REGISTRATION_ENABLED"
       ]
+    },
+    {
+      "id": "ota-producer-period-seal-initial",
+      "source": "deployment",
+      "record_file": "pki/services/ota-producer-period-seal/identity.json",
+      "subject": "service:ota",
+      "purpose": "client",
+      "service_root": true,
+      "enabled_by": "LKE_OTA_PRODUCER_SEAL_SCHEDULE_ENABLED",
+      "superseded_by": "ota-producer-period-seal-current"
+    },
+    {
+      "id": "ota-producer-period-seal-current",
+      "source": "managed-secret",
+      "namespace_suffix": "video-cloud",
+      "secret": "ota-producer-period-seal-identity",
+      "state_key": "identity.json",
+      "subject": "service:ota",
+      "purpose": "client",
+      "service_root": true,
+      "enabled_by": "LKE_OTA_PRODUCER_SEAL_SCHEDULE_ENABLED"
     }
   ]
 }

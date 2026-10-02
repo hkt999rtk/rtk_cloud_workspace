@@ -158,6 +158,9 @@ func defaultDeploymentOperations() deploymentOperations {
 }
 
 func runDeploymentWithOperations(args []string, ops deploymentOperations) error {
+	if len(args) > 0 && args[0] == "ota-producer-seal" {
+		return runDeploymentOTAProducerSeal(args[1:])
+	}
 	if len(args) > 0 && args[0] == "certificate-check" {
 		return runDeploymentCertificateCheck(args[1:])
 	}
@@ -716,7 +719,9 @@ func printDeploymentUsage() {
   rtk-cloud deployment preflight --environment NAME --operation plan|provision|acceptance|ephemeral-test
   rtk-cloud deployment plan --environment NAME
   rtk-cloud deployment certificate-check --environment NAME [--format table|json] [--local-only]
-  rtk-cloud deployment service-identity --environment NAME --subject service:NAME --confirm STACK [--install-seed]
+  rtk-cloud deployment service-identity --environment NAME --subject service:NAME [--owner ota-producer-period-seal] --confirm STACK [--install-seed]
+  rtk-cloud deployment ota-producer-seal --environment NAME --month YYYY-MM [--confirm STACK]
+  rtk-cloud deployment ota-producer-seal --environment NAME --maintain-identity [--confirm STACK]
   rtk-cloud deployment ota-service-rollout --environment dev|staging [--confirm STACK]
   rtk-cloud deployment ota-service-rollout --environment dev|staging --update-image [--read-only|--confirm STACK]
   rtk-cloud deployment ota-manifest-trust --environment dev|staging [--confirm STACK]

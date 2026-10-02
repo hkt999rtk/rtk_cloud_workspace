@@ -45,7 +45,7 @@ func TestLKEOTAProducerSealScheduleIsOptInAndUsesDedicatedToken(t *testing.T) {
 	for _, want := range []string{
 		"kind: CronJob", "namespace: video-cloud-staging-video-cloud", `schedule: "0 4 3-7 * *"`,
 		"timeZone: Etc/UTC", "concurrencyPolicy: Forbid", "automountServiceAccountToken: false",
-		`args: ["--all-brand-clouds", "--month", "previous"]`,
+		`args: ["--all-brand-clouds", "--month", "previous", "--first-month", ""]`,
 		"name: VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN", "name: VIDEO_CLOUD_OTA_PRODUCER_SEAL_TOKEN",
 		"name: VIDEO_CLOUD_OTA_DELIVERY_MODE",
 	} {

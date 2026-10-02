@@ -39,6 +39,7 @@ type certificateCheckTarget struct {
 	Secret       string   `json:"secret,omitempty"`
 	CertKey      string   `json:"cert_key,omitempty"`
 	KeyKey       string   `json:"key_key,omitempty"`
+	StateKey     string   `json:"state_key,omitempty"`
 	CompareTo    string   `json:"compare_to,omitempty"`
 	Selector     string   `json:"selector,omitempty"`
 	Container    string   `json:"container,omitempty"`
@@ -80,14 +81,19 @@ type certificateCheckMaterial struct {
 	subject    string
 }
 
+type certificateCheckManagedSecretBinding struct {
+	namespace, secret, stateKey, uid string
+}
+
 type certificateCheckRunner struct {
-	store          secretStore
-	stack          string
-	now            time.Time
-	warn, critical time.Duration
-	localOnly      bool
-	query          func(...string) ([]byte, error)
-	checkedOwners  map[string]bool
+	store                 secretStore
+	stack                 string
+	now                   time.Time
+	warn, critical        time.Duration
+	localOnly             bool
+	query                 func(...string) ([]byte, error)
+	checkedOwners         map[string]bool
+	checkedManagedSecrets map[certificateCheckManagedSecretBinding]bool
 }
 
 func readCertificateCheckFile(store secretStore, relative string, private bool) ([]byte, error) {
@@ -157,6 +163,10 @@ func loadCertificateCheckInventory(workspace, environment string) ([]certificate
 					if entry.Secret == "" || entry.CertKey == "" || entry.KeyKey == "" {
 						return nil, fmt.Errorf("%s: incomplete Secret binding", entry.ID)
 					}
+				case "managed-secret":
+					if entry.Secret == "" || entry.StateKey == "" {
+						return nil, fmt.Errorf("%s: incomplete managed Secret binding", entry.ID)
+					}
 				case "managed":
 					if entry.Selector == "" || entry.Container == "" || !filepath.IsAbs(entry.StateFile) {
 						return nil, fmt.Errorf("%s: incomplete managed owner binding", entry.ID)
@@ -164,7 +174,7 @@ func loadCertificateCheckInventory(workspace, environment string) ([]certificate
 				default:
 					return nil, fmt.Errorf("%s: unknown source", entry.ID)
 				}
-				if (entry.Source == "secret" || entry.Source == "managed") && !secretEnvironmentPattern.MatchString(entry.Namespace) {
+				if (entry.Source == "secret" || entry.Source == "managed" || entry.Source == "managed-secret") && !secretEnvironmentPattern.MatchString(entry.Namespace) {
 					return nil, fmt.Errorf("%s: namespace suffix is required", entry.ID)
 				}
 			}
@@ -179,7 +189,7 @@ func loadCertificateCheckInventory(workspace, environment string) ([]certificate
 	for _, entry := range targets {
 		if entry.SupersededBy != "" {
 			owner, ok := entries[entry.SupersededBy]
-			if !ok || owner.Source != "managed" || owner.Subject != entry.Subject || entry.Source != "deployment" {
+			if !ok || (owner.Source != "managed" && owner.Source != "managed-secret") || owner.Subject != entry.Subject || entry.Source != "deployment" {
 				return nil, fmt.Errorf("%s: provenance requires a matching managed current target", entry.ID)
 			}
 		}
@@ -419,7 +429,15 @@ func (r *certificateCheckRunner) inspect(target certificateCheckTarget, material
 }
 
 func (r *certificateCheckRunner) check(target certificateCheckTarget) []certificateCheckRow {
-	if r.localOnly && (target.Source == "secret" || target.Source == "managed") {
+	if target.Source == "managed-secret" {
+		// A later failed inspection must not inherit an earlier successful binding.
+		for binding := range r.checkedManagedSecrets {
+			if binding.namespace == r.stack+"-"+target.Namespace && binding.secret == target.Secret && binding.stateKey == target.StateKey {
+				delete(r.checkedManagedSecrets, binding)
+			}
+		}
+	}
+	if r.localOnly && (target.Source == "secret" || target.Source == "managed" || target.Source == "managed-secret") {
 		return []certificateCheckRow{unknownCertificateRow(target, "runtime source not checked in local-only mode")}
 	}
 	switch target.Source {
@@ -429,7 +447,7 @@ func (r *certificateCheckRunner) check(target certificateCheckTarget) []certific
 			return []certificateCheckRow{unknownCertificateRow(target, "local credential missing, unsafe or invalid")}
 		}
 		return []certificateCheckRow{r.inspect(target, material)}
-	case "secret":
+	case "secret", "managed-secret":
 		raw, err := r.query("-n", r.stack+"-"+target.Namespace, "get", "secret", target.Secret, "--ignore-not-found=true", "-o", "json")
 		if err != nil {
 			return []certificateCheckRow{unknownCertificateRow(target, "Kubernetes Secret access failed")}
@@ -442,6 +460,38 @@ func (r *certificateCheckRunner) check(target certificateCheckTarget) []certific
 		var secret map[string]any
 		if json.Unmarshal(raw, &secret) != nil {
 			return []certificateCheckRow{unknownCertificateRow(target, "invalid Kubernetes response")}
+		}
+		if target.Source == "managed-secret" {
+			metadata, _ := secret["metadata"].(map[string]any)
+			name, _ := metadata["name"].(string)
+			namespace, _ := metadata["namespace"].(string)
+			uid, _ := metadata["uid"].(string)
+			if name != target.Secret || namespace != r.stack+"-"+target.Namespace || uid == "" {
+				row := unknownCertificateRow(target, "managed Secret identity scope is invalid")
+				row.Status = "CRITICAL"
+				return []certificateCheckRow{row}
+			}
+			stateRaw, err := kubernetesSecretBytes(secret, target.StateKey)
+			if err != nil {
+				row := unknownCertificateRow(target, "managed Secret identity state is missing")
+				row.Status = "CRITICAL"
+				return []certificateCheckRow{row}
+			}
+			var state otaProducerIdentityState
+			if json.Unmarshal(stateRaw, &state) != nil || state.Version != 1 || state.Subject != target.Subject || state.Domain != "" || len(state.DNSNames) != 0 || state.Current == nil || state.Current.InstalledAt.IsZero() {
+				row := unknownCertificateRow(target, "managed Secret identity state is invalid")
+				row.Status = "CRITICAL"
+				return []certificateCheckRow{row}
+			}
+			pending := len(state.Pending) != 0 && string(state.Pending) != "null"
+			row := r.inspect(target, certificateCheckMaterial{chain: state.Current.Chain, key: state.Current.PrivateKey, subject: state.Subject, pending: pending})
+			if row.Status == "OK" || row.Status == "WARNING" {
+				if r.checkedManagedSecrets == nil {
+					r.checkedManagedSecrets = map[certificateCheckManagedSecretBinding]bool{}
+				}
+				r.checkedManagedSecrets[certificateCheckManagedSecretBinding{namespace, name, target.StateKey, uid}] = true
+			}
+			return []certificateCheckRow{row}
 		}
 		chain, _ := kubernetesSecretBytes(secret, target.CertKey)
 		key, _ := kubernetesSecretBytes(secret, target.KeyKey)
@@ -513,12 +563,38 @@ func (r *certificateCheckRunner) checkOwnerCoverage(namespaces map[string]bool) 
 		}
 		for _, pod := range pods.Items {
 			for _, container := range pod.Spec.Containers {
+				settings := map[string]string{}
+				seen := map[string]bool{}
+				ambiguous := map[string]bool{}
+				for _, setting := range container.Env {
+					if seen[setting.Name] {
+						ambiguous[setting.Name] = true
+						delete(settings, setting.Name)
+						continue
+					}
+					seen[setting.Name] = true
+					if setting.ValueFrom == nil {
+						settings[setting.Name] = setting.Value
+					}
+				}
 				for _, setting := range container.Env {
 					if !strings.HasSuffix(setting.Name, "_IDENTITY_STATE") && !strings.HasSuffix(setting.Name, "_IDENTITY_STATE_FILE") {
 						continue
 					}
 					key := namespace + "/" + pod.Metadata.Name + "/" + container.Name + "/" + setting.Value
-					if !r.checkedOwners[key] {
+					prefix := strings.TrimSuffix(strings.TrimSuffix(setting.Name, "_IDENTITY_STATE_FILE"), "_IDENTITY_STATE")
+					binding := certificateCheckManagedSecretBinding{
+						namespace: settings[prefix+"_IDENTITY_SECRET_NAMESPACE"],
+						secret:    settings[prefix+"_IDENTITY_SECRET_NAME"],
+						stateKey:  settings[prefix+"_IDENTITY_SECRET_KEY"],
+						uid:       settings[prefix+"_IDENTITY_SECRET_UID"],
+					}
+					usesSecretState := settings[prefix+"_IDENTITY_BACKEND"] == "kubernetes-secret" || seen[prefix+"_IDENTITY_SECRET_NAME"] ||
+						seen[prefix+"_IDENTITY_SECRET_NAMESPACE"] || seen[prefix+"_IDENTITY_SECRET_KEY"] || seen[prefix+"_IDENTITY_SECRET_UID"]
+					coveredBySecret := pod.Status.Phase == "Running" && setting.ValueFrom == nil && !ambiguous[setting.Name] && filepath.IsAbs(setting.Value) &&
+						settings[prefix+"_IDENTITY_BACKEND"] == "kubernetes-secret" && binding.namespace == namespace && r.checkedManagedSecrets[binding]
+					covered := (!usesSecretState && r.checkedOwners[key]) || (usesSecretState && coveredBySecret)
+					if !covered {
 						instance := target
 						instance.ID = key
 						rows = append(rows, unknownCertificateRow(instance, "managed identity state is not covered by a successful inventory inspection"))
@@ -531,6 +607,7 @@ func (r *certificateCheckRunner) checkOwnerCoverage(namespaces map[string]bool) 
 }
 
 func (r *certificateCheckRunner) run(targets []certificateCheckTarget, env map[string]string) certificateCheckReport {
+	r.checkedManagedSecrets = nil
 	report := certificateCheckReport{Environment: r.store.Environment, Stack: r.stack, CheckedAt: r.now.UTC().Format(time.RFC3339), Scope: "local-and-runtime", Rows: []certificateCheckRow{}}
 	if r.localOnly {
 		report.Scope = "local-only"
@@ -558,7 +635,7 @@ func (r *certificateCheckRunner) run(targets []certificateCheckTarget, env map[s
 		checked := false
 		healthy := true
 		for _, row := range report.Rows {
-			if strings.HasPrefix(row.ID, target.SupersededBy+"/") {
+			if row.ID == target.SupersededBy || strings.HasPrefix(row.ID, target.SupersededBy+"/") {
 				checked = true
 				healthy = healthy && (row.Status == "OK" || row.Status == "WARNING")
 			}
