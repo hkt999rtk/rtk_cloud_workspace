@@ -87,6 +87,9 @@ func runDeploymentPreflightWithChecks(cfg deploymentConfig, operation string, ch
 		reporter.fail("deployment-adapter", fmt.Errorf("adapter %s does not support live mutation", cfg.Adapter))
 		return reporter.result()
 	}
+	// Inspect an existing snapshot before network checks. Provision regenerates
+	// its configuration, while acceptance relies on the recorded deployment.
+	validateDeploymentRuntimeSnapshot(cfg, operation, reporter)
 	if !rtkCloudTestMode() {
 		store, err := newSecretStore("", cfg.Environment)
 		if err != nil {
@@ -137,6 +140,11 @@ func runDeploymentPreflightWithChecks(cfg deploymentConfig, operation string, ch
 		}
 	} else {
 		reporter.fail("credential:ghcr", errors.New("canonical environment credential directory could not be read"))
+	}
+	if err := validateConsoleRuntimeConfig(cfg.RuntimeRoot, deploymentRuntimeStack(cfg), provisionOptions{}); err != nil {
+		reporter.fail("console-config", err)
+	} else {
+		reporter.pass("console-config", "selected deployment inputs preserve declared Console settings")
 	}
 	username, token := lkeGHCRPullCredentials(credentialEnv)
 	if username == "" || token == "" {
@@ -237,11 +245,40 @@ func validateAcceptanceRuntime(cfg deploymentConfig, reporter *deploymentPreflig
 		}
 		reporter.pass("runtime-state", display+" is available")
 	}
-	stackPath := filepath.Join(cfg.RuntimeRoot, "env", "stack.env")
-	if got := envFileValue(stackPath, "CLOUD_STACK_NAME"); got != "" && got != cfg.Values["CLOUD_STACK_NAME"] {
-		reporter.fail("runtime-identity", fmt.Errorf("runtime CLOUD_STACK_NAME does not match tracked environment identity"))
-	} else if got != "" {
+}
+
+func validateDeploymentRuntimeSnapshot(cfg deploymentConfig, operation string, reporter *deploymentPreflightReporter) {
+	path := filepath.Join(cfg.RuntimeRoot, "env", "stack.env")
+	actual, err := readStrictEnv(path)
+	if errors.Is(err, os.ErrNotExist) && operation != "acceptance" {
+		reporter.warn("runtime-snapshot", "no restored stack; deployment will generate it from selected configuration")
+		return
+	}
+	if err != nil {
+		// Do not echo parser errors: a malformed key could itself contain a secret.
+		reporter.fail("runtime-snapshot", errors.New("runtime env/stack.env is missing, unreadable, or malformed; reconcile the selected environment snapshot"))
+		return
+	}
+	if got := strings.TrimSpace(actual["CLOUD_STACK_NAME"]); got == "" || got != cfg.Values["CLOUD_STACK_NAME"] {
+		reporter.fail("runtime-identity", errors.New("runtime CLOUD_STACK_NAME is missing or does not match tracked environment identity"))
+	} else {
 		reporter.pass("runtime-identity", "runtime stack matches tracked environment identity")
+	}
+	desired, err := readStrictEnv(filepath.Join(cfg.EnvironmentRoot, "environment.env"))
+	if err != nil {
+		reporter.fail("runtime-config", errors.New("declared environment configuration cannot be read"))
+		return
+	}
+	if err := compareConsoleRuntimeSnapshot(desired, actual); err != nil {
+		if operation == "acceptance" {
+			reporter.fail("runtime-config", err)
+		} else {
+			reporter.warn("runtime-config", err.Error()+"; the provision path regenerates this snapshot; verify the resulting workload settings after rollout")
+		}
+		return
+	}
+	if operation == "acceptance" {
+		reporter.pass("runtime-config", "recorded Console settings match declared environment; live workload checks remain required")
 	}
 }
 

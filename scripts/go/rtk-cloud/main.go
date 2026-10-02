@@ -1170,18 +1170,46 @@ func runSecretsCheck(args []string) error {
 	return nil
 }
 
-var runWorkspaceBaselineCmd = runCmd
+var runWorkspaceBaselineCmd = func(dir, name string, args ...string) error {
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+	// Match the module dependency graph used by governed workspace coverage.
+	cmd.Env = withEnv(os.Environ(), map[string]string{"GOWORK": "off"})
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	return cmd.Run()
+}
 
 func runTestMatrix(args []string) error {
 	fs := flag.NewFlagSet("test-matrix", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	policyOnly := fs.Bool("policy-only", false, "validate policy and inventory only; caller must require complete workspace-tooling coverage")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("test-matrix does not accept positional arguments")
 	}
 	workspace, err := workspaceRoot()
 	if err != nil {
 		return err
 	}
+	return runTestMatrixWithChecks(workspace, *policyOnly, checkTestMatrixPolicy, runWorkspaceBaselineCmd)
+}
+
+func runTestMatrixWithChecks(workspace string, policyOnly bool, policy func(string, bool) error, baseline func(string, string, ...string) error) error {
+	// Catch inexpensive metadata errors before starting the complete Go suite.
+	if err := policy(workspace, policyOnly); err != nil {
+		return err
+	}
+	if policyOnly {
+		fmt.Fprintln(os.Stdout, "Workspace baseline delegated to required workspace-tooling coverage.")
+		return nil
+	}
+	fmt.Fprintln(os.Stdout, "== workspace baseline validation ==")
+	return baseline(filepath.Join(workspace, "scripts", "go"), "go", "test", "-count=1", "-timeout=20m", "./...")
+}
+
+func checkTestMatrixPolicy(workspace string, policyOnly bool) error {
 	fmt.Fprintln(os.Stdout, "== workspace status ==")
 	if err := runCmd(workspace, "git", "status", "--short", "--branch"); err != nil {
 		return err
@@ -1190,11 +1218,7 @@ func runTestMatrix(args []string) error {
 		return err
 	}
 	fmt.Fprintln(os.Stdout)
-	fmt.Fprintln(os.Stdout, "== workspace baseline validation ==")
 	if err := runCmd(workspace, "git", "diff", "--check"); err != nil {
-		return err
-	}
-	if err := runWorkspaceBaselineCmd(workspace, "go", "test", "-timeout=20m", "./scripts/go/..."); err != nil {
 		return err
 	}
 	fmt.Fprintln(os.Stdout)
@@ -1205,6 +1229,11 @@ func runTestMatrix(args []string) error {
 	if cfg, err := loadCoverageConfig(workspace); err != nil {
 		return err
 	} else {
+		if policyOnly {
+			if err := validateWorkspaceBaselineCoverage(cfg); err != nil {
+				return err
+			}
+		}
 		fmt.Fprintf(os.Stdout, "coverage policy valid: %d modules, %.1f%% differential minimum\n", len(cfg.Modules), cfg.Differential.MinimumStatementPercent)
 	}
 	if err := checkUnitInventory(workspace, "", true); err != nil {
@@ -1228,6 +1257,15 @@ func runTestMatrix(args []string) error {
 		}
 	}
 	return nil
+}
+
+func validateWorkspaceBaselineCoverage(cfg coverageConfig) error {
+	for _, module := range cfg.Modules {
+		if module.Name == "workspace-tooling" && module.Kind == "go" && filepath.ToSlash(module.Path) == "scripts/go" && slices.Equal(module.Packages, []string{"./..."}) {
+			return nil
+		}
+	}
+	return errors.New("policy-only requires workspace-tooling Go coverage of all scripts/go packages (./...)")
 }
 
 type serviceTestSpec struct {

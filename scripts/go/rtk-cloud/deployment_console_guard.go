@@ -24,6 +24,18 @@ func validateConsoleRuntimeConfig(runtimeRoot string, actual map[string]string, 
 }
 
 func compareConsoleRuntimeConfig(desired, actual map[string]string, opts provisionOptions) error {
+	return compareConsoleRuntimeConfigUsing(desired, actual, opts, lkeEnvValue)
+}
+
+// Snapshot checks must compare recorded values directly: a process override is
+// an input to a future deployment, not evidence that a restored snapshot matches.
+func compareConsoleRuntimeSnapshot(desired, actual map[string]string) error {
+	return compareConsoleRuntimeConfigUsing(desired, actual, provisionOptions{}, func(values map[string]string, key string) string {
+		return values[key]
+	})
+}
+
+func compareConsoleRuntimeConfigUsing(desired, actual map[string]string, opts provisionOptions, value func(map[string]string, string) string) error {
 	keys := []string{}
 	if lkeWorkloadSelected(actual, opts, "account-manager") {
 		keys = append(keys, "AUTH_TOKEN_BASE_URL", "SOCIAL_LOGIN_CALLBACK_URL", "GOOGLE_LOGIN_ENABLED", "GOOGLE_OAUTH_CLIENT_ID", "GITHUB_LOGIN_ENABLED", "GITHUB_OAUTH_CLIENT_ID", "CHIPSET_PROVIDER_ALLOWED_HOSTS")
@@ -33,7 +45,7 @@ func compareConsoleRuntimeConfig(desired, actual map[string]string, opts provisi
 	}
 	var changed []string
 	for _, key := range keys {
-		if want, declared := desired[key]; declared && strings.TrimSpace(want) != strings.TrimSpace(lkeEnvValue(actual, key)) {
+		if want, declared := desired[key]; declared && strings.TrimSpace(want) != strings.TrimSpace(value(actual, key)) {
 			changed = append(changed, key)
 		}
 	}

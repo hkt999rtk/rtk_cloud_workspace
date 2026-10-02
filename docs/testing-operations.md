@@ -16,7 +16,7 @@ qualification, and capacity/load testing. These levels do not replace one anothe
 
 | Purpose | Entry point | Primary prerequisites |
 | --- | --- | --- |
-| Fast workspace baseline | `test-matrix` | Complete recursive checkout |
+| Workspace policy and Go baseline | `test-matrix` | Complete recursive checkout; full Go suite may take several minutes |
 | Service tests | `test-services` | Per-repository runtime/dependencies |
 | Deterministic E2E | `test-e2e` | Local fixtures; no shared staging required |
 | UI tests | `test-ui` | Chromium and local BFF/fixtures |

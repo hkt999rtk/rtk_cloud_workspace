@@ -44,9 +44,82 @@ reason.
 (cd scripts/go && go run ./rtk-cloud -- test-matrix)
 ```
 
-`test-matrix` is the fast workspace baseline: it checks the workspace diff,
-workspace-owned Go tooling, catalog validity and generated-document drift, and
-repository/submodule status. It does not run every service or product E2E test.
+`test-matrix` checks the workspace diff, catalog validity, generated-document
+drift and repository/submodule status before running workspace-owned Go tooling.
+The baseline runs from `scripts/go` with `GOWORK=off`, `-count=1`, a 20-minute
+package timeout and the full `./...` scope. It does not run every service or
+product E2E test. It can take several minutes; it is not a formatting check.
+
+`test-matrix --policy-only` omits that Go execution. Use it only when the same
+delivery requires complete `workspace-tooling` coverage with the same module
+dependency graph and package scope. `pre-pr` and the coverage CI workflow make
+this decision from the affected-module selection. A coverage failure still
+fails the delivery. Standalone `test-matrix` keeps the baseline by default.
+
+### Local pre-PR sequence and evidence reuse
+
+Finish implementation and review, then run focused tests. Resolve every known
+required edit before the complete gate:
+
+```sh
+env -u GOWORK go run ./scripts/go/rtk-cloud -- pre-pr \
+  --base <delivery-target> --run-id <unique-run-id>
+```
+
+Use the task's agreed target branch; a deliberately frozen delivery does not
+implicitly import newer `main`. The command requires a clean committed tree,
+and `--head` must identify the actual checkout. It first checks selected Go
+dependencies and source formatting, Node tools, report tooling, and available
+local fixture images. Independent prerequisite failures are reported together,
+before long tests. Policy/catalog/inventory checks also precede Go execution.
+
+Selected Account Manager PostgreSQL and Video Cloud PostgreSQL/EMQX profiles
+run against owned disposable containers, bound to dynamic loopback ports.
+The runner restores the caller's environment and removes its containers after
+each profile. It never resets a supplied database or uses shared staging.
+An integration profile replaces that module's local unit execution; unrelated
+CI profiles with different fixtures remain separate checks.
+
+Account Manager's canonical report script executes formatting, its full
+PostgreSQL suite with coverage, and the build once. Workspace coverage consumes
+those exact events and profile, enforces its own required tests and package
+ratchets, validates the candidate, and compares it with the committed report.
+The candidate and the execution evidence are preserved when report drift fails.
+The leaf CI uploads its sanitized candidate even when the drift check fails, so it can
+be imported without starting another test execution just to recreate the file.
+
+After validating and importing a report-only correction, reuse its sealed
+execution explicitly:
+
+```sh
+env -u GOWORK go run ./scripts/go/rtk-cloud -- pre-pr \
+  --base <delivery-target> --run-id <new-unique-run-id> \
+  --account-manager-report-evidence \
+  .artifacts/test-runs/<previous-run-id>-account-manager-pr/coverage/modules/account-manager
+```
+
+This mode validates the original source inputs, toolchain and artifact hashes;
+it needs no database and does not repeat tests or the build. Generated
+`docs/test_report.md` is excluded from the execution fingerprint. Other source,
+test, dependency, configuration and report-generator inputs are retained.
+Unit-only, failed, incomplete, altered or legacy unsealed evidence is rejected.
+The workspace re-evaluates coverage policy against the validated raw evidence.
+See the leaf [testing guide](../repos/rtk_account_manager/docs/testing.md) for
+the standalone report workflow and manifest details.
+
+For other modules, preserve the passing report, raw evidence, tested revision,
+profile, fixture and toolchain information. Review the diff before deciding
+what must run again: a new commit ID, PR-body change, or equivalent merged
+gitlink alone does not require coverage. Changes to tested inputs do. Documents
+read by tests are test inputs too; do not assume every Markdown edit is exempt.
+There is no automatic cross-module cache or substitution of unit evidence for
+integration evidence. Mandatory remote checks remain enforced.
+
+Every `test-coverage` execution claims a fresh output directory and refuses to
+overwrite an existing run, including an interrupted run. Use a new run ID for
+a retry; retain the old evidence for diagnosis. Concurrency is restricted by
+the actual shared resource (output directory, fixture or environment), not by
+a global lock across independent worktrees.
 
 Use the explicit test layers when broader validation is needed:
 

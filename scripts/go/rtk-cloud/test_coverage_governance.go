@@ -2,6 +2,8 @@ package main
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -839,33 +841,72 @@ func copyCoverageCaseEvidence(sourceDir, outDir string, result coverageCaseResul
 	}
 	expectedHashes := map[string]string{}
 	for _, evidence := range result.Evidence {
+		if previous, exists := expectedHashes[evidence.Path]; exists && previous != evidence.SHA256 {
+			return fmt.Errorf("artifact %s has conflicting SHA-256 evidence entries", evidence.Path)
+		}
 		expectedHashes[evidence.Path] = evidence.SHA256
+		paths = append(paths, evidence.Path)
 	}
+	uniquePaths := map[string]bool{}
 	for _, rel := range paths {
 		if rel == "" {
 			continue
 		}
-		source := filepath.Join(sourceDir, filepath.FromSlash(rel))
+		if rel == "." || !fs.ValidPath(rel) || !filepath.IsLocal(filepath.FromSlash(rel)) || strings.Contains(rel, `\`) {
+			return fmt.Errorf("artifact path %q must be a local relative file path", rel)
+		}
 		expectedSHA := expectedHashes[rel]
 		if expectedSHA == "" {
 			return fmt.Errorf("artifact %s has no SHA-256 evidence entry", rel)
 		}
-		actualSHA, err := fileSHA256(source)
+		if decoded, err := hex.DecodeString(expectedSHA); err != nil || len(decoded) != sha256.Size {
+			return fmt.Errorf("artifact %s has an invalid SHA-256 evidence entry", rel)
+		}
+		uniquePaths[rel] = true
+	}
+	if _, exists := expectedHashes[""]; exists {
+		return errors.New("artifact evidence path must not be empty")
+	}
+	sourceRoot, err := os.OpenRoot(sourceDir)
+	if err != nil {
+		return err
+	}
+	defer sourceRoot.Close()
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		return err
+	}
+	targetRoot, err := os.OpenRoot(outDir)
+	if err != nil {
+		return err
+	}
+	defer targetRoot.Close()
+	paths = paths[:0]
+	for rel := range uniquePaths {
+		paths = append(paths, rel)
+	}
+	sort.Strings(paths)
+	for _, rel := range paths {
+		local := filepath.FromSlash(rel)
+		info, err := sourceRoot.Stat(local)
 		if err != nil {
 			return err
 		}
-		if actualSHA != expectedSHA {
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("artifact %s is not a regular file", rel)
+		}
+		// Root confines symlink resolution on both sides. Hash the bytes we copy,
+		// rather than reopening a path after a separate checksum operation.
+		raw, err := sourceRoot.ReadFile(local)
+		if err != nil {
+			return err
+		}
+		if fmt.Sprintf("%x", sha256.Sum256(raw)) != expectedHashes[rel] {
 			return fmt.Errorf("artifact %s SHA-256 mismatch", rel)
 		}
-		raw, err := os.ReadFile(source)
-		if err != nil {
+		if err := targetRoot.MkdirAll(filepath.Dir(local), 0o755); err != nil {
 			return err
 		}
-		target := filepath.Join(outDir, filepath.FromSlash(rel))
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return err
-		}
-		if err := os.WriteFile(target, raw, 0o644); err != nil {
+		if err := targetRoot.WriteFile(local, raw, 0o644); err != nil {
 			return err
 		}
 	}

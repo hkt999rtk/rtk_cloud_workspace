@@ -4,7 +4,7 @@ Status: active
 
 Owner: `rtk_cloud_workspace`
 
-Last reviewed: 2026-09-07
+Last reviewed: 2026-10-02
 
 Audience: internal deployment operators and new maintainers
 
@@ -159,6 +159,80 @@ client more than one minor version from the API server. Select a supported
 binary with `RTK_CLOUD_KUBECTL` if the shell's first `kubectl` is too old.
 Output shows only `PASS/WARN/FAIL`, never credential values. Correct every
 `FAIL` before proceeding to provisioning.
+
+The preflight collects independent blockers in one run. A restored
+`runtime/env/stack.env` must parse correctly and identify the selected stack;
+an absent stack name, another environment's stack, duplicate assignments or
+malformed content cannot count as matching deployment evidence. A new
+environment may have no runtime snapshot. Preflight does not create one.
+Declared Console settings are checked before the later deploy guard runs.
+For an existing snapshot, differences from the selected environment's declared
+Console settings are shown as `WARN runtime-config` during provision, because
+provision regenerates that snapshot, and as `FAIL runtime-config` during
+acceptance, which relies on the recorded deployment. Process overrides cannot
+hide old recorded settings. A matching snapshot proves only controller-state
+consistency; the live workload and authenticated Console checks are still
+required.
+
+### Qualify once, then recheck the affected dependencies
+
+Finish the selected code/configuration changes and review before expensive
+qualification. Record one release scope containing the environment, fixed
+workspace/service revisions, selected workloads, intended image digests,
+configuration changes and acceptance fixture Cloud/Product. Keep sanitized
+results together with the command, time and relevant input identities; private
+operator inputs remain in the environment SecretStore. Preserve passing and
+failing results separately. A report edit or equivalent merge commit does not
+prove a new execution occurred or erase a previous failure. Local code-test
+reuse follows the [testing operations guide](testing-operations.md); passing
+source tests do not substitute for live deployment checks.
+
+Run the applicable read-only checks below before maintenance, migrations,
+credential changes or resource creation. These checks already have separate
+entry points; select the dependencies for the operation instead of starting an
+unrelated full-platform deployment to discover them.
+
+| Dependency | Early evidence | Recheck after a relevant change |
+| --- | --- | --- |
+| Controller/configuration | `deployment preflight` for the selected operation; snapshot identity, declared Console settings, required tools and source/image pins | Changed selected configuration, toolchain, restored snapshot or image/source selection |
+| Credentials, images and TLS | `scripts/check-deployment-credentials.sh --environment NAME --read-only` with applicable `--checks`, exact `--image` and TLS inputs | Changed credential/pull identity, image digest, certificate, Secret binding or target environment |
+| Provider/storage capacity | Selected live LKE preflight and plan with canonical kubeconfig; actual usage and `additional_required`, PVC ownership and selected topology | Changed topology, requested storage or live provider state; recheck before maintenance/mutation |
+| Deployment identity | Existing `--require-deployment-identity` continuity check, plus `scripts/check-certissuer-app-mtls.sh NAME` for deployed AM/certissuer | Changed AM/certissuer workload, identity, trust bundle or consumer binding; repeat the non-issuing mTLS check before acceptance |
+| Acceptance Product PKI | `--require-product-pki --product-pki-cloud-id` for the exact fixture owner Cloud | Changed fixture owner or CA-job state; verify its active Products before enrollment |
+| Service Billing readiness | Existing service-specific entitlement, registration/cutover, durable retention and period-source checks | Changed Product grants, service routing, retention, source exporter or requested period |
+
+After fixing a blocker, rerun its check and the checks that consume the changed
+input; preserve unrelated evidence with its original revision and timestamp.
+For example, fixing registry pull access does not require another unit-coverage
+run; changing a trust bundle does require its identity and mTLS consumer checks.
+Transport timeouts remain failed/unverified observations until a bounded retry
+succeeds; they do not establish missing credentials or broken data. Live
+capacity, readiness, lease, certificate validity and concurrency assertions can
+change without a Git change. Repeat those immediately relevant checks before
+mutation/acceptance, and retain the operation's resource-version/old-value
+guards. Evidence reuse never disables an embedded deployment guard.
+
+### Report delivery states separately
+
+Use these states in the release packet and final operator report. Record
+`pending`, `failed`, `passed`, or `not applicable` with the supporting revision,
+environment and time. Do not infer a later state from an earlier one.
+
+| State | Evidence required |
+| --- | --- |
+| Code merged | Reviewed PR merge and exact selected source revisions |
+| Image published | Successful canonical CI publication for those revisions and verified registry digest; build-only CI is insufficient |
+| Deployed | Selected live workload configuration and running Pod image IDs/digests match the reviewed release |
+| Accepted | Applicable authenticated feature/data checks passed for the stated scope; retain failed or skipped stages |
+| Price effective | Required price publication completed and Billing read-back confirms the selected card, scope and effective time; a visible reference price is insufficient |
+| Month closed | The actual complete UTC period has all required source seals/completeness evidence and the persisted Billing close/archive result |
+
+OTA/Logger rollout, the Service Pricing page, future-card publication and a
+successful synthetic period test can finish before a real billable month is
+complete. List the next eligible period and its pending operational evidence
+without manufacturing a historical close or treating that wait as unfinished
+code. This reporting convention adds no signing or financial approval rule;
+the service's existing authorization and pricing policy still applies.
 
 ## Create a New Environment
 
