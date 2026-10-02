@@ -74,6 +74,13 @@ func TestOTAProvisionBucketChecksLiveInventoryBeforeDeployment(t *testing.T) {
 	bucketType := "E3"
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveMigrationBucketInspection(w, r) {
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Query().Has("tagging") {
+			_, _ = w.Write([]byte(`<Tagging><TagSet/></Tagging>`))
+			return
+		}
 		if r.Method != http.MethodGet || r.URL.Path != "/v4/object-storage/buckets" {
 			http.NotFound(w, r)
 			return
@@ -111,6 +118,13 @@ func TestOTABootstrapDoesNotIssueDuplicateKeyWhenExistingE3KeyCannotAccessBucket
 	issued := 0
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveMigrationBucketInspection(w, r) {
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Query().Has("tagging") {
+			_, _ = w.Write([]byte(`<Tagging><TagSet/></Tagging>`))
+			return
+		}
 		switch {
 		case r.URL.Path == "/v4/object-storage/buckets" && r.Method == http.MethodGet:
 			_, _ = fmt.Fprintf(w, `{"data":[{"label":%q,"region":"us-lax","endpoint_type":"E3","s3_endpoint":%q}]}`, bucketName, server.URL)
@@ -138,6 +152,13 @@ func TestOTABootstrapDoesNotIssueDuplicateKeyWhenExistingE3KeyCannotAccessBucket
 
 func TestResolveStorageEndpointSkipsUnavailableEndpointTypes(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveMigrationBucketInspection(w, r) {
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Query().Has("tagging") {
+			_, _ = w.Write([]byte(`<Tagging><TagSet/></Tagging>`))
+			return
+		}
 		_, _ = w.Write([]byte(`{"data":[{"region":"sg-sin-2","endpoint_type":"E3","s3_endpoint":null},{"region":"sg-sin-2","endpoint_type":"E1","s3_endpoint":"sg-sin-1.linodeobjects.com"}]}`))
 	}))
 	defer server.Close()
@@ -151,6 +172,13 @@ func TestResolveStorageEndpointSkipsUnavailableEndpointTypes(t *testing.T) {
 func TestResolveOTAMetricsEndpointTypeRequiresAssignedE3(t *testing.T) {
 	assignedE3 := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveMigrationBucketInspection(w, r) {
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Query().Has("tagging") {
+			_, _ = w.Write([]byte(`<Tagging><TagSet/></Tagging>`))
+			return
+		}
 		if r.URL.Path != "/v4/object-storage/endpoints" {
 			http.NotFound(w, r)
 			return
@@ -177,6 +205,13 @@ func TestResolvedObjectStorageValidationWritesRedactedReceipt(t *testing.T) {
 	objects := map[string][]byte{}
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveMigrationBucketInspection(w, r) {
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Query().Has("tagging") {
+			_, _ = w.Write([]byte(`<Tagging><TagSet/></Tagging>`))
+			return
+		}
 		switch r.URL.Path {
 		case "/v4/regions/sg-sin-2":
 			_, _ = w.Write([]byte(`{"id":"sg-sin-2","status":"ok","capabilities":["Kubernetes","Object Storage"]}`))
@@ -247,6 +282,13 @@ func TestResolvedObjectStorageValidationWritesRedactedReceipt(t *testing.T) {
 func TestResolvedObjectStorageRejectsWrongRegionBeforeS3(t *testing.T) {
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveMigrationBucketInspection(w, r) {
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Query().Has("tagging") {
+			_, _ = w.Write([]byte(`<Tagging><TagSet/></Tagging>`))
+			return
+		}
 		switch r.URL.Path {
 		case "/v4/regions/sg-sin-2":
 			_, _ = w.Write([]byte(`{"id":"sg-sin-2","status":"ok","capabilities":["Kubernetes","Object Storage"]}`))
@@ -267,6 +309,13 @@ func TestResolvedObjectStorageRejectsWrongRegionBeforeS3(t *testing.T) {
 func TestStorageCanaryCleansUpAfterReadMismatch(t *testing.T) {
 	deleted := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveMigrationBucketInspection(w, r) {
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Query().Has("tagging") {
+			_, _ = w.Write([]byte(`<Tagging><TagSet/></Tagging>`))
+			return
+		}
 		if r.URL.Path == "/bucket" {
 			_, _ = w.Write([]byte(`<ListBucketResult/>`))
 			return
@@ -315,19 +364,9 @@ func TestStorageMigrationFiltersApplicationNamespaces(t *testing.T) {
 	}
 }
 
-func TestMediaCutoverRejectsOtherActiveOldBucketConsumers(t *testing.T) {
-	body := []byte(`{"items":[{"metadata":{"name":"video-cloud-cleaner"},"spec":{"replicas":1,"template":{"spec":{"containers":[{"env":[{"name":"VIDEO_CLOUD_BLOB_BUCKET","value":"old-bucket"}]}]}}}}]}`)
-	if err := validateMediaCutoverInventory(body, "new-bucket"); err == nil || !strings.Contains(err.Error(), "video-cloud-cleaner") {
-		t.Fatalf("active old-bucket consumer was accepted: %v", err)
-	}
-	zeroReplica := []byte(`{"items":[{"metadata":{"name":"video-cloud-cleaner"},"spec":{"replicas":0,"template":{"spec":{"containers":[{"env":[{"name":"VIDEO_CLOUD_BLOB_BUCKET","value":"old-bucket"}]}]}}}}]}`)
-	if err := validateMediaCutoverInventory(zeroReplica, "new-bucket"); err == nil {
-		t.Fatal("scaled-down old-bucket consumer was accepted and could later scale up")
-	}
-}
-
 func TestDeploymentStorageActivationRequiresMatchingCutover(t *testing.T) {
-	cfg := deploymentConfig{Environment: "dev", RuntimeRoot: t.TempDir(), Storage: deploymentStoragePlan{RuntimeMedia: deploymentStorageTarget{Bucket: "rtk-video-media-dev-us-sea"}, RuntimeMediaCutoverRequired: true}}
+	t.Setenv("RTK_CLOUD_CONFIG_ROOT", t.TempDir())
+	cfg := deploymentConfig{Environment: "dev", RuntimeRoot: t.TempDir(), Storage: deploymentStoragePlan{RuntimeMedia: deploymentStorageTarget{Bucket: "rtk-cloud-dev-runtime-us-sea", Region: "us-sea", Prefix: "environments/video-cloud-dev"}, RuntimeMediaCutoverRequired: true}}
 	if err := validateDeploymentStorageActivation(cfg); err == nil {
 		t.Fatal("deployment activated before media cutover")
 	}
@@ -337,17 +376,44 @@ func TestDeploymentStorageActivationRequiresMatchingCutover(t *testing.T) {
 	if err := validateDeploymentStorageActivation(cfg); err == nil {
 		t.Fatal("deployment accepted mismatched cutover")
 	}
-	if err := writeStorageState(filepath.Join(cfg.RuntimeRoot, "state", "storage-cutover.json"), map[string]any{"environment": "dev", "bucket": "rtk-video-media-dev-us-sea", "cutover_at": "2026-09-27T00:00:00Z", "rollback_credentials_retained": true}); err != nil {
+	proof := []byte(`{"verified":true}`)
+	if err := os.WriteFile(storageCutoverMigrationPath(cfg, "media"), proof, 0600); err != nil {
+		t.Fatal(err)
+	}
+	hash := fmt.Sprintf("%x", sha256.Sum256(proof))
+	store, _ := newSecretStore("", "dev")
+	if err := saveStorageCutoverJournal(store, storageCutoverJournal{Environment: "dev", Purpose: "media", Status: "complete", ID: "cutover-id", MigrationSHA256: hash}, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeStorageState(filepath.Join(cfg.RuntimeRoot, "state", "storage-cutover.json"), map[string]any{"environment": "dev", "bucket": cfg.Storage.RuntimeMedia.Bucket, "region": "us-sea", "prefix": cfg.Storage.RuntimeMedia.Prefix, "cutover_id": "cutover-id", "migration_receipt_sha256": hash, "cutover_at": "2026-09-27T00:00:00Z", "rollback_credentials_retained": true}); err != nil {
 		t.Fatal(err)
 	}
 	if err := validateDeploymentStorageActivation(cfg); err != nil {
 		t.Fatal(err)
+	}
+	cfg.Storage.RuntimeMedia.Prefix = "environments/another-stack"
+	if err := validateDeploymentStorageActivation(cfg); err == nil {
+		t.Fatal("changed prefix accepted with stale receipt")
+	}
+	cfg.Storage.RuntimeMedia.Prefix = "environments/video-cloud-dev"
+	if err := os.WriteFile(storageCutoverMigrationPath(cfg, "media"), []byte("changed"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateDeploymentStorageActivation(cfg); err == nil {
+		t.Fatal("changed migration proof accepted")
 	}
 }
 
 func TestResolvedObjectStorageRejectsLegacySeattleTuple(t *testing.T) {
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveMigrationBucketInspection(w, r) {
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Query().Has("tagging") {
+			_, _ = w.Write([]byte(`<Tagging><TagSet/></Tagging>`))
+			return
+		}
 		switch r.URL.Path {
 		case "/v4/regions/sg-sin-2":
 			_, _ = w.Write([]byte(`{"id":"sg-sin-2","status":"ok","capabilities":["Kubernetes","Object Storage"]}`))
@@ -392,6 +458,13 @@ func TestDeploymentStorageLifecycleHappyPaths(t *testing.T) {
 	deletedKeyID := ""
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveMigrationBucketInspection(w, r) {
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Query().Has("tagging") {
+			_, _ = w.Write([]byte(`<Tagging><TagSet/></Tagging>`))
+			return
+		}
 		switch {
 		case strings.HasPrefix(r.URL.Path, "/v4/regions/"):
 			region := strings.TrimPrefix(r.URL.Path, "/v4/regions/")
@@ -427,7 +500,16 @@ func TestDeploymentStorageLifecycleHappyPaths(t *testing.T) {
 			return
 		}
 		if len(parts) == 1 {
-			_, _ = w.Write([]byte(`<ListBucketResult><IsTruncated>false</IsTruncated></ListBucketResult>`))
+			mu.Lock()
+			defer mu.Unlock()
+			_, _ = w.Write([]byte(`<ListBucketResult><IsTruncated>false</IsTruncated>`))
+			for physical, data := range objects {
+				key, found := strings.CutPrefix(physical, parts[0]+"/")
+				if found && strings.HasPrefix(key, r.URL.Query().Get("prefix")) {
+					_, _ = fmt.Fprintf(w, `<Contents><Key>%s</Key><Size>%d</Size></Contents>`, key, len(data))
+				}
+			}
+			_, _ = w.Write([]byte(`</ListBucketResult>`))
 			return
 		}
 		key := parts[0] + "/" + parts[1]
@@ -467,6 +549,13 @@ func TestDeploymentStorageLifecycleHappyPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := runDeploymentStorageLifecycle("storage-bootstrap", cfg, environmentFile, "", 0); err != nil {
+		t.Fatal(err)
+	}
+	prepared, profileCheck := deploymentCredentialProfileValues("staging", environmentFile, "")
+	if !profileCheck.Passed || prepared["LINODE_ARTIFACT_OBJ_ACCESS_KEY_ID"] != "" {
+		t.Fatalf("media bootstrap changed artifact credentials: %s", profileCheck.Detail)
+	}
+	if err := runDeploymentStorageLifecyclePurpose("storage-bootstrap", cfg, environmentFile, "", 0, "artifacts"); err != nil {
 		t.Fatal(err)
 	}
 	if err := validateDeploymentCredentials(deploymentConfig{Environment: "staging"}, environmentFile); err != nil {
@@ -546,10 +635,10 @@ func TestDeploymentStorageLifecycleHappyPaths(t *testing.T) {
 	if err := writeStorageState(filepath.Join(cfg.RuntimeRoot, "state", "storage-consumers.json"), map[string]bool{"generic_key_in_use": false}); err != nil {
 		t.Fatal(err)
 	}
-	if err := runDeploymentStorageLifecycle("storage-retire", cfg, environmentFile, "", 101); err != nil {
-		t.Fatal(err)
+	if err := runDeploymentStorageLifecycle("storage-retire", cfg, environmentFile, "", 101); err == nil {
+		t.Fatal("retirement accepted incomplete, unbound consumer evidence")
 	}
-	if deletedKeyID != "101" {
+	if deletedKeyID != "" {
 		t.Fatalf("deleted key ID = %q", deletedKeyID)
 	}
 
@@ -580,8 +669,33 @@ func TestDeploymentStorageLifecycleHappyPaths(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(cutoverCfg.RuntimeRoot, "state", "storage-migration.json"), stateBody, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	candidate := filepath.Join(t.TempDir(), "media-candidate.env")
+	if err := stageDeploymentStorageProfile("staging", environmentFile, candidate, true); err != nil {
+		t.Fatal(err)
+	}
 	fakeKubectl(t)
-	if err := runDeploymentStorageLifecycle("storage-cutover", cutoverCfg, environmentFile, "", 0); err != nil {
+	mockRoot := installStorageCutoverMock(t)
+	consumer := storageCutoverFixture("Deployment", "video-cloud-api")
+	storageCutoverMap(consumer["metadata"])["namespace"] = "video-cloud-staging-video-cloud"
+	for _, item := range storageCutoverGet(consumer, "/spec/template/spec/containers/0/env").([]any) {
+		env := storageCutoverMap(item)
+		switch env["name"] {
+		case "VIDEO_CLOUD_BLOB_BUCKET":
+			env["value"] = "source-bucket"
+		case "VIDEO_CLOUD_BLOB_ENDPOINT":
+			env["value"] = "file://" + sourceRoot
+		case "VIDEO_CLOUD_BLOB_PREFIX":
+			env["value"] = ""
+		case "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY":
+			delete(env, "valueFrom")
+			env["value"] = "source-credential"
+		}
+	}
+	storageCutoverMockWrite(t, mockRoot, consumer)
+	if err := runDeploymentStorageLifecycle("storage-cutover", cutoverCfg, candidate, sourceFile, 0); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(cutoverCfg.RuntimeRoot, "state", "storage-cutover.json")); err != nil {
@@ -591,7 +705,7 @@ func TestDeploymentStorageLifecycleHappyPaths(t *testing.T) {
 
 func TestCutoverOTAStorageRejectsWhitespaceCDNBeforeStorageChecks(t *testing.T) {
 	cfg := deploymentConfig{Values: map[string]string{"VIDEO_CLOUD_OTA_CDN_BASE_URL": " \t"}}
-	if err := (deploymentCredentialChecker{}).cutoverOTAStorage(cfg, nil, ""); err == nil || !strings.Contains(err.Error(), "HTTPS") {
+	if err := (deploymentCredentialChecker{}).cutoverOTAStorage(cfg, nil, "", ""); err == nil || !strings.Contains(err.Error(), "HTTPS") {
 		t.Fatalf("OTA storage cutover accepted whitespace-only CDN URL: %v", err)
 	}
 }
@@ -616,6 +730,13 @@ func TestDedicatedOTAStorageLifecycle(t *testing.T) {
 	objects := map[string][]byte{}
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveMigrationBucketInspection(w, r) {
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Query().Has("tagging") {
+			_, _ = w.Write([]byte(`<Tagging><TagSet/></Tagging>`))
+			return
+		}
 		switch {
 		case r.URL.Path == "/v4/regions/us-sea":
 			_, _ = w.Write([]byte(`{"id":"us-sea","status":"ok","capabilities":["Kubernetes","Object Storage"]}`))
@@ -871,22 +992,51 @@ func TestDedicatedOTAStorageLifecycle(t *testing.T) {
 		t.Fatal("OTA cutover mutated Kubernetes before verifying its live source bucket")
 	}
 	t.Setenv("FAKE_WEBRTC_CORE_DEPLOYMENT_JSON", coreSourceDeployment)
+	candidate := filepath.Join(t.TempDir(), "ota-candidate.env")
+	if err := stageDeploymentStorageProfile("dev", profile, candidate, true); err != nil {
+		t.Fatal(err)
+	}
+	mockRoot := installStorageCutoverMock(t)
+	var coreSource map[string]any
+	if err := json.Unmarshal([]byte(coreSourceDeployment), &coreSource); err != nil {
+		t.Fatal(err)
+	}
+	coreSource["apiVersion"], coreSource["kind"] = "apps/v1", "Deployment"
+	metadata := storageCutoverMap(coreSource["metadata"])
+	metadata["namespace"], metadata["uid"], metadata["resourceVersion"] = "video-cloud-dev-video-cloud", "core-source-uid", "1"
+	storageCutoverMockWrite(t, mockRoot, coreSource)
 	t.Setenv("FAKE_OTA_SERVICE_JSON", `{"spec":{"type":"ClusterIP","selector":{"app.kubernetes.io/name":"video-cloud-otaservice"},"ports":[{"port":18084,"targetPort":"http"}]}}`)
-	if err := runDeploymentStorageLifecyclePurpose("storage-cutover", cutoverCfg, profile, sourceFile, 0, "ota"); err == nil || !strings.Contains(err.Error(), "no ready registered endpoint") {
+	if err := runDeploymentStorageLifecyclePurpose("storage-cutover", cutoverCfg, candidate, sourceFile, 0, "ota"); err == nil || !strings.Contains(err.Error(), "no ready registered endpoint") {
 		t.Fatalf("OTA cutover accepted a Service without ready endpoints: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(cutoverCfg.RuntimeRoot, "state", "storage-cutover-ota.json")); !os.IsNotExist(err) {
 		t.Fatalf("OTA cutover wrote receipt before Service readiness: %v", err)
 	}
-	cutoverCalls, err := os.ReadFile(kubectlLog)
+	journalPath, err := store.safePath(filepath.Join("migration-backup", "storage-cutover-ota.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(cutoverCalls), "kind: NetworkPolicy") || !strings.Contains(string(cutoverCalls), "kind: Service") {
+	journalBody, err := os.ReadFile(journalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var journal storageCutoverJournal
+	if json.Unmarshal(journalBody, &journal) != nil || journal.Status != "rolled-back" {
+		t.Fatalf("failed OTA rollout did not restore its changes: %s", journal.Status)
+	}
+	kinds := map[string]bool{}
+	for _, mutation := range journal.Mutations {
+		kinds[mutation.Kind] = true
+	}
+	if !kinds["NetworkPolicy"] || !kinds["Service"] {
 		t.Fatal("OTA cutover omitted private network policy or Service")
 	}
+	// A fresh reviewed attempt archives the completed rollback journal.
+	if err := os.Rename(journalPath, journalPath+".rolled-back"); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("FAKE_OTA_ENDPOINTSLICES_JSON", `{"items":[{"ports":[{"port":18084}],"endpoints":[{"addresses":["10.0.0.5"],"conditions":{"ready":true}}]}]}`)
-	if err := runDeploymentStorageLifecyclePurpose("storage-cutover", cutoverCfg, profile, sourceFile, 0, "ota"); err != nil {
+	if err := runDeploymentStorageLifecyclePurpose("storage-cutover", cutoverCfg, candidate, sourceFile, 0, "ota"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(cutoverCfg.RuntimeRoot, "state", "storage-cutover-ota.json")); err != nil {

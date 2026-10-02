@@ -1,6 +1,6 @@
 # Creating and Configuring an Environment
 
-This is the operational entry point for adding `dev`, `staging`, `prod`, `qa`, or another deployment environment. See [`docs/cloud-deployment-architecture.md`](../docs/cloud-deployment-architecture.md) for architecture responsibilities and resolution rules, [`cloud_deploy/README.md`](../cloud_deploy/README.md) for shared defaults and adapter keys, and [`docs/storage-credential-lifecycle.md`](../docs/storage-credential-lifecycle.md) for multi-environment Object Storage and credential lifecycles.
+This is the operational entry point for adding `dev`, `staging`, `prod`, `qa`, or another deployment environment. See [`docs/cloud-deployment-architecture.md`](../docs/cloud-deployment-architecture.md) for architecture responsibilities and resolution rules, [`cloud_deploy/README.md`](../cloud_deploy/README.md) for shared defaults and adapter keys, [`docs/storage-credential-lifecycle.md`](../docs/storage-credential-lifecycle.md) for storage operations and credentials, and [`docs/object-storage-policy.md`](../docs/object-storage-policy.md) for canonical naming, namespaces and retention.
 
 To build LKE staging from a fresh clone, complete service acceptance, and run the 1K MQTT/Device Shadow test, follow [`staging-from-scratch.md`](../docs/staging-from-scratch.md). Do not use that procedure for an existing cluster; safely restore the existing environment's ignored `runtime/` first.
 
@@ -135,7 +135,7 @@ for Ed25519 or P-256 subject keys. These settings do not control public ACME
 certificates, JWT/EdDSA token signing, OTA signing, SSH keys, or PKCS#11 signer
 selection.
 
-Each environment must also track `storage.env`, which declares the runtime media policy, bucket, and environment-owned prefix. It also declares whether OTA uses that legacy bucket or a dedicated OTA bucket. See [`docs/storage-credential-lifecycle.md`](../docs/storage-credential-lifecycle.md) for the naming rule, object paths, credentials, and lifecycle, and [`docs/object-storage-inventory.md`](../docs/object-storage-inventory.md) for observed buckets.
+Each environment must also track `storage.env`, which declares the runtime media policy, bucket, and environment-owned prefix. It also declares whether OTA uses that legacy bucket or a dedicated OTA bucket. See [`docs/storage-credential-lifecycle.md`](../docs/storage-credential-lifecycle.md) for operational commands and credentials, [`docs/object-storage-policy.md`](../docs/object-storage-policy.md) for naming, object namespaces and retention, and [`docs/object-storage-inventory.md`](../docs/object-storage-inventory.md) for observed buckets.
 
 Use `overrides/dns.env` for optional DNS-provider escape hatches. A normal environment does not set a hosted-zone ID, API endpoint, AWS access key, or GoDaddy key. GoDaddy credentials are read only from `~/.config/rtk_cloud/<environment>/operator/env/`; Route53 credentials must be stored in the same environment store. See [`docs/secret-store.md`](../docs/secret-store.md) and [`docs/dns-adapter-architecture.md`](../docs/dns-adapter-architecture.md) for details.
 

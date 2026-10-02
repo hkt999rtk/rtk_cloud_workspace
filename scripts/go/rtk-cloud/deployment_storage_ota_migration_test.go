@@ -34,6 +34,13 @@ func TestOTACutoverReconcilesLiveSourceReceiptAndDestination(t *testing.T) {
 	destinationObjects := map[string][]byte{destinationKey: firmware}
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveMigrationBucketInspection(w, r) {
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Query().Has("tagging") {
+			_, _ = w.Write([]byte(`<Tagging><TagSet/></Tagging>`))
+			return
+		}
 		switch {
 		case r.URL.Path == "/v4/object-storage/buckets":
 			_, _ = fmt.Fprintf(w, `{"data":[{"label":%q,"region":"us-sea","s3_endpoint":%q}]}`, bucket, server.URL)
@@ -68,7 +75,7 @@ func TestOTACutoverReconcilesLiveSourceReceiptAndDestination(t *testing.T) {
 	source := provisionObjectStore{bucket: "old-media-bucket", endpoint: "file://" + sourceRoot, region: "us-sea"}
 	destination := provisionObjectStore{bucket: bucket, endpoint: server.URL, region: "us-sea", accessKey: "access", secretKey: "secret"}
 	receipt := deploymentStorageMigrationState{
-		Environment: "dev", Source: source.bucket, SourceRegion: source.region, SourceEndpoint: source.endpoint,
+		Environment: "dev", Purpose: "ota-firmware", SourceKeys: map[string]string{sourceKey: destinationKey}, Source: source.bucket, SourceRegion: source.region, SourceEndpoint: source.endpoint,
 		Destination: destination.bucket, DestinationRegion: destination.region, DestinationEndpoint: destination.endpoint,
 		Prefix: prefix, Objects: map[string]storageObjectProof{destinationKey: otaObjectProof(firmware)},
 		ObjectCount: 1, ByteCount: int64(len(firmware)), UpdatedAt: time.Now().UTC().Format(time.RFC3339),

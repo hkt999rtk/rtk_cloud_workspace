@@ -158,7 +158,7 @@ these classifications automatically.
    reuse a public release-artifact bucket/prefix. Bucket privacy, independent
    failure domain and retention are operator qualification checks; the client
    does not infer them from an endpoint name. Follow the `backup` purpose in
-   [Object Storage naming](storage-credential-lifecycle.md); a proposed name
+   [Object Storage Policy](object-storage-policy.md#bucket-naming-and-boundaries); a proposed name
    does not mean the bucket or backup workflow has been provisioned.
 6. Prepare a dedicated absolute local backup directory with mode `0700` on an
    encrypted disk; files are `0600`. No symlink ancestors. Do not use the Git
@@ -317,7 +317,7 @@ reactivate revoked access.
 | Remaining helper pod | Inspect/remove only `rtk-recovery-<component-id>` after confirming the command stopped; a mounted helper blocks further file operations. |
 | Controller loss | Recover the exact reviewed configuration, SecretStore/escrow and target kubeconfig. The cluster journal is authoritative; `status` checks namespace UID and configuration hash. Do not delete it to hide a partial restore. |
 
-Never prune automatically in v1. The operator defines per-environment RPO,
+Follow the protected recovery class in [Object Storage Policy](object-storage-policy.md#retention-and-cost-control). The v1 recovery command has no automatic pruning. The operator defines per-environment RPO,
 RTO, retention, owner and backup frequency. RPO is the age of the last usable
 matched set; RTO must be measured from a drill, not inferred from upload time.
 Manual maintenance backups do not satisfy a future continuous-backup/PITR SLA.
