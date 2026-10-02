@@ -504,8 +504,9 @@ different results. Do not report a complete staging release from ready Pods,
    entries, uses a private lock subdirectory in memory, and creates no PVC.
    Account Manager inventory uses its private Service listener at port 8443
    (Pod port 9444), requiring verified `service:ota` mTLS plus the existing
-   internal bearer. Renewal uses the recorded HTTPS CertIssuer origin and DNS
-   pin. Both network allowlists include this exact Job label. Service client
+   internal bearer. Renewal uses the private CertIssuer Service at port 9443 and the
+   recorded CA/DNS pin; the operator's local forwarding origin is not used
+   inside a Pod. Both network allowlists include this exact Job label. Service client
    admission uses current registry/revocation records; do not claim an additional
    client CRL snapshot check unless that layer is configured.
 

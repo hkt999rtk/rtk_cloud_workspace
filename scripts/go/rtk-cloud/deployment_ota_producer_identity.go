@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -211,7 +210,9 @@ func lkeRequireOTAProducerSealIdentity(env map[string]string, allowPending bool)
 	env["LKE_OTA_PRODUCER_IDENTITY_ROOT_SHA256"] = record.RootSHA256
 	env["LKE_OTA_PRODUCER_ACCOUNT_MANAGER_ROOT_SHA256"] = accountPin
 	env["LKE_OTA_PRODUCER_RENEWAL_ROOT_SHA256"] = issuerPin
-	env["LKE_OTA_PRODUCER_RENEWAL_URL"] = strings.TrimSuffix(cfg.Endpoint, "/")
+	// The operator origin may be a local port-forward. A Pod must use the
+	// private issuer Service while retaining the independently recorded CA/SNI.
+	env["LKE_OTA_PRODUCER_RENEWAL_URL"] = "https://certissuer." + lkeNamespaceName(env, "video-cloud") + ".svc.cluster.local:9443"
 	env["LKE_OTA_PRODUCER_RENEWAL_SERVER_NAME"] = cfg.ServerName
 	return nil
 }

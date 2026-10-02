@@ -170,6 +170,86 @@ else: sys.exit(8)
 	}
 }
 
+func TestOTAProducerIdentityPreflightSelectsPrivateIssuerAndRejectsBorrowedKey(t *testing.T) {
+	f := newDeploymentSignerFixture(t)
+	api, err := ensureDeploymentServiceIdentity(f.store, f.cfg.Stack, "service:ota", nil, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := ensureDeploymentServiceIdentityOwner(f.store, f.cfg.Stack, "service:ota", otaProducerSealOwner, nil, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	job.RuntimeSecretUID = "original-uid"
+	path, _ := deploymentServiceIdentityPath(job.Subject, job.Owner)
+	if err := writeDeploymentServiceIdentity(f.store, path, job); err != nil {
+		t.Fatal(err)
+	}
+	// The issuer origin remains the operator's local HTTPS forwarding address;
+	// its independent CA/SNI can be reused by the Pod's private Service origin.
+	f.cfg.ServerCAFile = f.cfg.RootCAFile
+	cfg, _ := json.Marshal(f.cfg)
+	if err := f.store.write("pki/services/issuer.json", cfg, true); err != nil {
+		t.Fatal(err)
+	}
+	root, _ := f.store.read(f.cfg.RootCAFile)
+	secret := otaProducerSecretFixture(t, job, job)
+	data := secret["data"].(map[string]any)
+	data["account-manager-ca.crt"] = base64.StdEncoding.EncodeToString([]byte(root))
+	data["certissuer-ca.crt"] = base64.StdEncoding.EncodeToString([]byte(root))
+	apiSecret := map[string]any{"data": map[string]any{"client.crt": base64.StdEncoding.EncodeToString([]byte(api.CertificateChain))}}
+	dir := t.TempDir()
+	fixturePath := filepath.Join(dir, "secrets.json")
+	writeFixture := func() {
+		raw, _ := json.Marshal(map[string]any{otaProducerIdentitySecret: secret, otaRegistrarIdentitySecretName: apiSecret})
+		if err := os.WriteFile(fixturePath, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFixture()
+	bin := filepath.Join(dir, "kubectl")
+	script := `#!/usr/bin/env python3
+import json,os,sys
+args=sys.argv[1:]
+if 'get' not in args or 'secret' not in args: sys.exit(9)
+name=args[args.index('secret')+1]
+with open(os.environ['OTA_IDENTITY_PREFLIGHT_FIXTURE']) as f: obj=json.load(f)
+if name not in obj: sys.exit(8)
+sys.stdout.write(json.dumps(obj[name]))
+`
+	if err := os.WriteFile(bin, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", bin)
+	t.Setenv("OTA_IDENTITY_PREFLIGHT_FIXTURE", fixturePath)
+	oldRoot := activeSecretEnvironmentRoot
+	activeSecretEnvironmentRoot = f.store.Root
+	t.Cleanup(func() { activeSecretEnvironmentRoot = oldRoot })
+	env := map[string]string{"CLOUD_ENV_NAME": "dev", "CLOUD_STACK_NAME": f.cfg.Stack}
+	if err := lkeRequireOTAProducerSealIdentity(env, false); err != nil {
+		t.Fatal(err)
+	}
+	if env["LKE_OTA_PRODUCER_RENEWAL_URL"] != "https://certissuer.identity-test-video-cloud.svc.cluster.local:9443" || env["LKE_OTA_PRODUCER_RENEWAL_SERVER_NAME"] != f.cfg.ServerName || env["LKE_OTA_PRODUCER_IDENTITY_SECRET_UID"] != "original-uid" {
+		t.Fatal("Job used local forwarding origin or lost canonical trust/UID")
+	}
+	borrowed := otaProducerSecretFixture(t, job, api)["data"].(map[string]any)["identity.json"]
+	data["identity.json"] = borrowed
+	writeFixture()
+	if err := lkeRequireOTAProducerSealIdentity(env, false); err == nil || !strings.Contains(err.Error(), "must not share") {
+		t.Fatal("API key borrowed by monthly Job")
+	}
+	data["identity.json"] = otaProducerSecretFixture(t, job, job)["data"].(map[string]any)["identity.json"]
+	_, _, wrongRoot, _, err := newLKECertificateAuthority("different trust root", "p256")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data["account-manager-ca.crt"] = base64.StdEncoding.EncodeToString([]byte(wrongRoot))
+	writeFixture()
+	if err := lkeRequireOTAProducerSealIdentity(env, false); err == nil || !strings.Contains(err.Error(), "trust differs") {
+		t.Fatal("mutable peer CA replaced canonical trust")
+	}
+}
+
 func TestOTAProducerMaintenanceManifestHasOnlyIdentityCredentials(t *testing.T) {
 	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "CLOUD_ENV_NAME": "staging", "LKE_VIDEO_CLOUD_IMAGE": "example.test/video@sha256:" + strings.Repeat("a", 64), "LKE_OTA_PRODUCER_SEAL_FIRST_MONTH": "2026-11"}
 	manifest, err := lkeOTAProducerSealJobManifest(env, "", "operator-identity", true)
