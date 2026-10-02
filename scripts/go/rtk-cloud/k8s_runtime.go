@@ -39,16 +39,16 @@ func runKubernetesProvision(provider cloudProvider, ctx provisionContext) error 
 		activeSecretEnvironmentRoot = ""
 	}()
 	lkeRuntimeSecretStateDir = store.RuntimeDir()
-	if provider.Name() == "lke" {
-		if err := lkeRequireCanonicalCapacityProfile(ctx.Env); err != nil {
-			return err
-		}
-	}
 	if err := loadLKEImageManifestDefaults(ctx.Paths.EnvRoot, ctx.Env); err != nil {
 		return err
 	}
 	if ctx.Opts.mode.reset {
 		return errors.New("Kubernetes provision reset is not implemented; use remove-k8s for current staging teardown")
+	}
+	if provider.Name() == "lke" {
+		if err := lkeRequireCanonicalCapacityProfile(ctx.Env); err != nil {
+			return err
+		}
 	}
 	if ctx.Opts.mode.apply || ctx.Opts.mode.dns || ctx.Opts.mode.deploy || ctx.Opts.mode.artifacts || ctx.Opts.mode.e2e {
 		if err := writeLKECompatibilityArtifacts(ctx.Paths, ctx.Env); err != nil {
