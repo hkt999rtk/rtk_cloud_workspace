@@ -98,6 +98,14 @@ func runDeploymentOTAServiceRolloutWithCredentialModes(args []string, credential
 		return err
 	}
 	defer restore()
+	if *updateImage {
+		// The existing image may only be qualified against the selected saved
+		// runtime material. Missing files must not fall back to shell values or
+		// generated development secrets while calculating its checksum.
+		previousCanonical := activeCanonicalSecretStore
+		activeCanonicalSecretStore = true
+		defer func() { activeCanonicalSecretStore = previousCanonical }()
+	}
 	storageCredentials, err := bindSelectedOTAStorage(cfg, store, env)
 	if err != nil {
 		return err

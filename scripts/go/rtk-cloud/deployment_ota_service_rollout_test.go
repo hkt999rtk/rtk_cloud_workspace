@@ -246,6 +246,19 @@ func TestOTAServiceRolloutAppliesOnlyIndependentServiceAfterHandoff(t *testing.T
 		if err != nil {
 			t.Fatal(err)
 		}
+		previousRuntimeDir, previousRuntimeCache, previousCanonical := lkeRuntimeSecretStateDir, lkeRuntimeSecretCache, activeCanonicalSecretStore
+		t.Cleanup(func() {
+			lkeRuntimeSecretStateDir, lkeRuntimeSecretCache = previousRuntimeDir, previousRuntimeCache
+			activeCanonicalSecretStore = previousCanonical
+		})
+		for _, entry := range rtkSecretCatalog() {
+			if err := secretStore.write(filepath.Join("runtime", entry.ID), []byte("fixture-"+entry.ID), true); err != nil {
+				t.Fatal(err)
+			}
+		}
+		lkeRuntimeSecretStateDir = secretStore.RuntimeDir()
+		lkeRuntimeSecretCache = map[string]string{}
+		activeCanonicalSecretStore = true // Model the normal canonical provision while building and inspecting the live fixture.
 		writeRecord := func(f lkePlatformCertificateFixture) {
 			identity := f.identities["service:ota"]
 			cert, certErr := kubernetesSecretBytes(identity, "client.crt")
@@ -426,6 +439,7 @@ func TestOTAServiceRolloutAppliesOnlyIndependentServiceAfterHandoff(t *testing.T
 		t.Setenv("FAKE_OTA_PODS_AFTER_PATCH_JSON_FILE", podsAfterPath)
 		updateArgs := append(append([]string{}, args...), "--update-image")
 		readOnlyArgs := []string{"--workspace", workspace, "--environment", "dev", "--update-image", "--read-only"}
+		activeCanonicalSecretStore = false // The command itself must enter canonical mode; no caller may supply it.
 		priorLog, _ := os.ReadFile(logPath)
 		if err := runDeploymentOTAServiceRolloutWithCredentials(readOnlyArgs, credentials); err == nil || !strings.Contains(err.Error(), "identity record is unavailable") {
 			t.Fatalf("missing canonical OTA identity record was accepted: %v", err)
@@ -437,6 +451,17 @@ func TestOTAServiceRolloutAppliesOnlyIndependentServiceAfterHandoff(t *testing.T
 		writeRecord(certificateFixture)
 		if err := runDeploymentOTAServiceRolloutWithCredentials(readOnlyArgs, credentials); err != nil {
 			t.Fatalf("active read-only preflight: %v", err)
+		}
+		missingSecret := filepath.Join(secretStore.RuntimeDir(), "ota-bff-token")
+		if err := os.Remove(missingSecret); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("LKE_OTA_BFF_TOKEN", "shell-value-must-not-replace-saved-runtime-secret")
+		if err := runDeploymentOTAServiceRolloutWithCredentials(readOnlyArgs, credentials); err == nil || !strings.Contains(err.Error(), "runtime checksum") {
+			t.Fatalf("missing canonical runtime secret was accepted: %v", err)
+		}
+		if err := os.WriteFile(missingSecret, []byte("fixture-ota-bff-token"), 0o600); err != nil {
+			t.Fatal(err)
 		}
 		readOnlyLog, _ := os.ReadFile(logPath)
 		if strings.Count(string(readOnlyLog), "patch deployment video-cloud-otaservice --type=json") != strings.Count(string(priorLog), "patch deployment video-cloud-otaservice --type=json") || strings.Count(string(readOnlyLog), "rollout status deployment/video-cloud-otaservice") != strings.Count(string(priorLog), "rollout status deployment/video-cloud-otaservice") {
