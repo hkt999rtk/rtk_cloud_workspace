@@ -19,7 +19,7 @@ type billingUnitWorkflowStep struct {
 	Env   map[string]string `yaml:"env"`
 }
 
-func billingUnitFixtureSteps(t *testing.T) (billingUnitWorkflowStep, billingUnitWorkflowStep, billingUnitWorkflowStep) {
+func billingUnitFixtureSteps(t *testing.T) (billingUnitWorkflowStep, billingUnitWorkflowStep, billingUnitWorkflowStep, map[string]string) {
 	t.Helper()
 	workspace, err := workspaceRoot()
 	if err != nil {
@@ -41,6 +41,9 @@ func billingUnitFixtureSteps(t *testing.T) (billingUnitWorkflowStep, billingUnit
 	unit, ok := workflow.Jobs["unit"]
 	if !ok || unit.Env["TEST_DATABASE_URL"] != "" {
 		t.Fatal("Billing fixture must be scoped to its unit matrix step, not shared job environment")
+	}
+	if value, exists := unit.Env["BILLING_UNIT_POSTGRES_CONTAINER_ID"]; !exists || value != "" {
+		t.Fatal("unit job must explicitly clear inherited Billing fixture ownership before any step")
 	}
 	var start, coverage, cleanup billingUnitWorkflowStep
 	startIndex, coverageIndex, cleanupIndex := -1, -1, -1
@@ -73,11 +76,11 @@ func billingUnitFixtureSteps(t *testing.T) (billingUnitWorkflowStep, billingUnit
 			t.Fatalf("%q shell syntax: %v\n%s", step.Name, err, output)
 		}
 	}
-	return start, coverage, cleanup
+	return start, coverage, cleanup, unit.Env
 }
 
 func TestBillingUnitCoverageWorkflowExecutesScopedPostgresFixture(t *testing.T) {
-	start, coverage, cleanup := billingUnitFixtureSteps(t)
+	start, coverage, cleanup, _ := billingUnitFixtureSteps(t)
 	const fixtureID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	const fixtureDSN = "postgres://integration:integration_password@127.0.0.1:63422/integration?sslmode=disable"
 	for _, test := range []struct {
@@ -240,5 +243,36 @@ esac
 				t.Fatal("fixture cleanup must never prune shared Docker resources")
 			}
 		})
+	}
+}
+
+func TestBillingUnitCoverageCleanupPreservesRunnerContainerWhenStartSkipped(t *testing.T) {
+	_, _, cleanup, jobEnv := billingUnitFixtureSteps(t)
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "bin")
+	if err := os.Mkdir(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(dir, "docker.log")
+	mock := "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$MOCK_DOCKER_LOG\"\nexit 99\n"
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(mock), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("bash", "-c", cleanup.Run)
+	command.Env = append(os.Environ(),
+		"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"MOCK_DOCKER_LOG="+log,
+		"BILLING_UNIT_POSTGRES_CONTAINER_ID=unrelated-runner-container",
+	)
+	// GitHub applies job-level environment before checkout/init/setup-go. If
+	// any of them fails, always() still runs cleanup without executing start.
+	for name, value := range jobEnv {
+		command.Env = append(command.Env, name+"="+value)
+	}
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("skipped-start cleanup: %v\n%s", err, output)
+	}
+	if _, err := os.Stat(log); !os.IsNotExist(err) {
+		t.Fatalf("cleanup must not issue any Docker command for inherited unowned container: %v", err)
 	}
 }
