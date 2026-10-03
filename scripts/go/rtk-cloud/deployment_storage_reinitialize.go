@@ -96,9 +96,9 @@ func readStorageReinitializationSource(path, environment string) (provisionObjec
 	if path == "" {
 		return provisionObjectStore{}, "", errors.New("--source-env-file is required for reinitialization")
 	}
-	values, check := deploymentCredentialValuesFromFile(path)
-	if !check.Passed {
-		return provisionObjectStore{}, "", errors.New(check.Detail)
+	values, profileHash, err := readStorageReinitializationProfile(path)
+	if err != nil {
+		return provisionObjectStore{}, "", err
 	}
 	if values["RTK_STORAGE_SOURCE_ENVIRONMENT"] != environment {
 		return provisionObjectStore{}, "", errors.New("source profile requires RTK_STORAGE_SOURCE_ENVIRONMENT matching the selected environment")
@@ -122,11 +122,7 @@ func readStorageReinitializationSource(path, environment string) (provisionObjec
 	if _, err := normalizeLinodeS3Endpoint(source.endpoint); err != nil {
 		return source, "", err
 	}
-	body, err := os.ReadFile(path)
-	if err != nil {
-		return source, "", err
-	}
-	return source, fmt.Sprintf("%x", sha256.Sum256(body)), nil
+	return source, profileHash, nil
 }
 
 func (c deploymentCredentialChecker) requireStorageSourceAbsent(token string, source provisionObjectStore) error {
@@ -217,8 +213,8 @@ func (c deploymentCredentialChecker) reinitializeStorage(cfg deploymentConfig, p
 	if acknowledged != source.bucket || source.bucket == target.Bucket {
 		return errors.New("--acknowledge-discarded-source must name the exact deleted source bucket, distinct from the destination")
 	}
-	candidate, check := deploymentCredentialValuesFromFile(candidateFile)
-	if !check.Passed || candidate["RTK_STORAGE_CANDIDATE_ENVIRONMENT"] != cfg.Environment {
+	candidate, candidateHash, err := readStorageReinitializationProfile(candidateFile)
+	if err != nil || candidate["RTK_STORAGE_CANDIDATE_ENVIRONMENT"] != cfg.Environment {
 		return errors.New("reinitialization requires the selected environment's private candidate profile")
 	}
 	access, secret := candidate[credentialPrefix+"ACCESS_KEY_ID"], candidate[credentialPrefix+"SECRET_ACCESS_KEY"]
@@ -288,6 +284,10 @@ func (c deploymentCredentialChecker) reinitializeStorage(cfg deploymentConfig, p
 			return err
 		}
 	}
+	var mediaIsolation *storageReinitializationMediaIsolation
+	if purpose == "media" && cfg.Storage.OTAMode == "dedicated" {
+		mediaIsolation = &storageReinitializationMediaIsolation{stack: cfg.Values["CLOUD_STACK_NAME"], sourceBucket: source.bucket}
+	}
 	inspect := func() ([]byte, error) {
 		body, err := kubectlCombinedOutput(nil, "get", "deployments,statefulsets,daemonsets,jobs,cronjobs,replicasets,pods", "-A", "-o", "json")
 		if err != nil {
@@ -295,6 +295,9 @@ func (c deploymentCredentialChecker) reinitializeStorage(cfg deploymentConfig, p
 		}
 		if purpose == "ota" {
 			return storageReinitializationOTAInventory(body, cfg.Values["CLOUD_STACK_NAME"], source.bucket)
+		}
+		if mediaIsolation != nil {
+			return mediaIsolation.filter(body)
 		}
 		return body, nil
 	}
@@ -314,11 +317,15 @@ func (c deploymentCredentialChecker) reinitializeStorage(cfg deploymentConfig, p
 	if len(mutations) == 0 {
 		return errors.New("no existing source-bound consumers found; refusing an activation receipt")
 	}
-	profile, err := os.ReadFile(candidateFile)
-	if err != nil {
+	if mediaIsolation != nil {
+		if err := mediaIsolation.protectDestinationSecrets(mutations); err != nil {
+			return err
+		}
+	}
+	proof := storageReinitializationProof{Environment: cfg.Environment, Purpose: purpose, Source: storageReinitializationIdentity{source.bucket, source.region, source.endpoint, source.prefix}, Destination: storageReinitializationIdentity{target.Bucket, target.Region, target.Endpoint, target.Prefix}, SourceProfileSHA256: sourceHash, DestinationProfileSHA256: candidateHash, AcknowledgedDiscardedSource: acknowledged, SourceAbsent: true, DestinationEmpty: true, DestinationKeyID: key.ID, CheckedAt: time.Now().UTC(), EmptyEndpointConsumers: emptyEndpoints}
+	if err := verifyStorageReinitializationProfiles(proof, sourceFile, candidateFile); err != nil {
 		return err
 	}
-	proof := storageReinitializationProof{Environment: cfg.Environment, Purpose: purpose, Source: storageReinitializationIdentity{source.bucket, source.region, source.endpoint, source.prefix}, Destination: storageReinitializationIdentity{target.Bucket, target.Region, target.Endpoint, target.Prefix}, SourceProfileSHA256: sourceHash, DestinationProfileSHA256: fmt.Sprintf("%x", sha256.Sum256(profile)), AcknowledgedDiscardedSource: acknowledged, SourceAbsent: true, DestinationEmpty: true, DestinationKeyID: key.ID, CheckedAt: time.Now().UTC(), EmptyEndpointConsumers: emptyEndpoints}
 	consumers := []string{}
 	for _, m := range mutations {
 		consumers = append(consumers, m.Kind+"/"+m.Namespace+"/"+m.Name)
@@ -363,6 +370,11 @@ func (c deploymentCredentialChecker) reinitializeStorage(cfg deploymentConfig, p
 	if clusterUID == "" {
 		return errors.New("cannot identify reinitialization cluster")
 	}
+	if mediaIsolation != nil {
+		if _, err := inspect(); err != nil {
+			return err
+		}
+	}
 	journal := storageCutoverJournal{Operation: "reinitialize", Reinitialization: &proof, SourceFile: sourceFile, DestinationFile: candidateFile, Environment: cfg.Environment, Purpose: purpose, ClusterUID: clusterUID, ID: fmt.Sprint(time.Now().UTC().UnixNano()), Status: "prepared", Mutations: mutations, SourceSecrets: snapshots}
 	if err := saveStorageCutoverJournal(store, journal, false); err != nil {
 		return fmt.Errorf("preserve the existing storage journal before reinitialization: %w", err)
@@ -393,6 +405,11 @@ func (c deploymentCredentialChecker) reinitializeStorage(cfg deploymentConfig, p
 	}
 	if err := verifyStorageReinitializationProfiles(proof, sourceFile, candidateFile); err != nil {
 		return err
+	}
+	if mediaIsolation != nil {
+		if _, err := inspect(); err != nil {
+			return err
+		}
 	}
 	if err := activateStorageCandidateValues(cfg, candidate, purpose, active); err != nil {
 		return err

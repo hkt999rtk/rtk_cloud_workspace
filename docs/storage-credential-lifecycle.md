@@ -114,6 +114,22 @@ ready-service gates. It updates only an existing OTA Deployment and its owned
 Pods. It does not introduce a service, change routes or select new images.
 Deleting old firmware does not waive the database drain or billing gates.
 
+With `RUNTIME_OTA_STORAGE_MODE=dedicated`, media reinitialization leaves the
+exact existing OTA Deployment and its owned ReplicaSets and Pods unchanged.
+Media may be activated while OTA qualification is still blocked; qualify and
+activate OTA separately with `--purpose ota`. Unknown or foreign source-bound
+OTA consumers still require an explicit owner mapping. An excluded OTA consumer
+must not reference any destination Secret that the media operation would write.
+
+Keep the excluded OTA controller tree steady during this bounded operation.
+The media plan pins its UIDs, specifications and resolved storage bindings,
+then checks them again before mutation and credential promotion. OTA Pod or
+ReplicaSet replacement, removal, or specification changes stop the operation
+without a completed receipt; preserve its private journal and review a new plan.
+Routine readiness/status changes do not invalidate this snapshot. Candidate and
+source proof hashes are derived from the same private bytes used for parsing;
+profile replacement during provider validation also stops activation.
+
 ### Shared artifact preparation
 
 ```bash
