@@ -227,11 +227,11 @@ verified successful probe bodies. A positive count of error-response bytes,
 partial payload accounting or unrelated traffic does not establish qualification.
 Before writing any file, the
 command selects only the exact OTA bucket and endpoint series and discards the
-rest of the account-wide response. It archives that filtered JSON under
-`runtime/artifacts/ota-metrics/` with a SHA-256 digest and atomically
-archives the exact probe evidence bytes separately as `0600` and atomically
-writes `runtime/state/ota-metrics-qualification.json`. It never stores the
-service token. The receipt binds both archive SHA-256 values and includes the UTC window, bucket hostname, endpoint,
+rest of the account-wide response. It writes the filtered JSON and exact probe
+evidence to separate `0600` files under `runtime/artifacts/ota-metrics/`, using
+exclusive creation and file sync. It then atomically writes
+`runtime/state/ota-metrics-qualification.json`. It never stores the service
+token. The receipt binds both archive SHA-256 values and includes the UTC window, bucket hostname, endpoint,
 metric totals, export time and operator identity. Subsequent deployment checks
 reparse both archives, check the exact target/window and successful probe
 totals, compare the metric totals and require the export and window to be
