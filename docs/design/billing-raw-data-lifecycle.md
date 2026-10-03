@@ -1,6 +1,6 @@
 # Billing Raw-data Lifecycle and Backup Design
 
-Status: implementation in progress; features remain disabled until local and per-environment qualification. No production activation is implied.
+Status: guarded implementation; features remain disabled until local and per-environment qualification. No production activation is implied.
 
 Classification: supporting-note.
 

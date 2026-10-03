@@ -1,6 +1,6 @@
 # Billing Backup Key Custody Design
 
-Status: implementation in progress; custody locations, role isolation and Billing backup automation require owner approval and environment qualification.
+Status: guarded implementation; custody provisioning, role isolation and Billing backup activation require owner approval and environment qualification.
 
 Classification: supporting-note.
 
