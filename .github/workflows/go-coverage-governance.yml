@@ -183,6 +183,37 @@ jobs:
             args+=(--base-ref "$BASE_REF" --head-ref HEAD)
           fi
           go run ./rtk-cloud -- test-coverage "${args[@]}"
+      - name: Verify Billing Logger private retention wire
+        if: matrix.module == 'billing-service'
+        working-directory: repos/rtk_billing
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${TEST_DATABASE_URL:-}"
+          test -n "${BILLING_UNIT_POSTGRES_CONTAINER_ID:-}"
+          wire_workspace="$(mktemp -d "$RUNNER_TEMP/rtk-billing-logger-wire.XXXXXX")"
+          cleanup_workspace() {
+            rm -f -- "$wire_workspace/go.work" "$wire_workspace/go.work.sum"
+            rmdir -- "$wire_workspace"
+          }
+          trap cleanup_workspace EXIT
+          (
+            cd "$wire_workspace"
+            GOWORK=off go work init "$GITHUB_WORKSPACE/repos/rtk_billing" "$GITHUB_WORKSPACE/repos/rtk_cloud_logger"
+          )
+          evidence_dir="$GITHUB_WORKSPACE/.artifacts/test-runs/gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-billing-service/coverage/modules/billing-service"
+          mkdir -p "$evidence_dir"
+          GOWORK="$wire_workspace/go.work" go test -json -count=1 -tags=billing_logger_integration \
+            -run '^TestRawRetentionActualLoggerPgPrivateWire$' -timeout=180s ./internal/api \
+            | tee "$evidence_dir/logger-private-wire.json"
+          jq -e -s '
+            def passed($name): any(.[]; .Test == $name and .Action == "pass");
+            passed("TestRawRetentionActualLoggerPgPrivateWire") and
+            passed("TestRawRetentionActualLoggerPgPrivateWire/completed") and
+            passed("TestRawRetentionActualLoggerPgPrivateWire/aborted") and
+            passed("TestRawRetentionActualLoggerPgPrivateWire/recovery-fenced") and
+            all(.[]; .Action != "skip" or ((.Test // "") | startswith("TestRawRetentionActualLoggerPgPrivateWire") | not))
+          ' "$evidence_dir/logger-private-wire.json" >/dev/null
       - name: Stop isolated Billing unit PostgreSQL fixture
         if: always() && matrix.module == 'billing-service'
         shell: bash
