@@ -252,3 +252,18 @@ no OTA qualification receipt or workload activation is accepted from it.
 The separate broker Device Root policy finding remains unresolved. Storage-only
 operations use a recorded bounded exception; full platform acceptance remains
 unqualified. Production ownership and its OTA region are still undecided.
+
+At 15:52:43 UTC, Dev media reinitialization also completed. The selected
+12 Deployment definitions (media plus OTA) retained their UIDs, image digests
+and desired replica counts; all 11 active replicas were Ready. The intentionally
+scaled-to-zero clip verifier remained at zero. No active selected Deployment or
+Pod still referenced `rtk-video-dev-us-west`. The API restart exposed an
+existing Service intermediate missing from the controller's CRL manifest;
+a controller-only manifest replacement, using the verified current signed CRL
+and the same image, restored authentication before the normal storage command
+completed. Its private journal and successful receipt were retained.
+
+The subsequent full provider inventory contained only the five canonical
+buckets: the four targets above and shared artifacts. All 11 deleted legacy
+buckets remained absent. This account inventory does not establish Production
+ownership or recover any discarded data.
