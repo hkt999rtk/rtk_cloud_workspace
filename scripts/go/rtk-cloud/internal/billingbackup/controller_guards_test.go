@@ -51,6 +51,26 @@ func TestControllerConfigDefaultsAndRejectsUnqualifiedRegistry(t *testing.T) {
 		{"store-uppercase", func(c *Config) { c.StoreID = strings.Repeat("A", 32) }},
 		{"directory", func(c *Config) { c.Directory = "relative" }},
 		{"bucket-scope", func(c *Config) { c.Remote.Bucket = "shared-backup" }},
+		{"bucket-shared", func(c *Config) {
+			c.Environment = "shared"
+			c.Remote.Bucket = "rtk-cloud-shared-billing-backup-" + c.Remote.Region
+		}},
+		{"bucket-region-underscore", func(c *Config) {
+			c.Remote.Region = "us_sea"
+			c.Remote.Bucket = "rtk-cloud-dev-billing-backup-" + c.Remote.Region
+		}},
+		{"bucket-region-empty-segment", func(c *Config) {
+			c.Remote.Region = "us--sea"
+			c.Remote.Bucket = "rtk-cloud-dev-billing-backup-" + c.Remote.Region
+		}},
+		{"bucket-region-trailing-separator", func(c *Config) {
+			c.Remote.Region = "us-sea-"
+			c.Remote.Bucket = "rtk-cloud-dev-billing-backup-" + c.Remote.Region
+		}},
+		{"bucket-length", func(c *Config) {
+			c.Remote.Region = strings.Repeat("a", 45)
+			c.Remote.Bucket = "rtk-cloud-dev-billing-backup-" + c.Remote.Region
+		}},
 		{"bucket-region", func(c *Config) { c.Remote.SigningRegion = "../region" }},
 		{"endpoint-http", func(c *Config) { c.Remote.Endpoint = "http://storage.example" }},
 		{"endpoint-empty", func(c *Config) { c.Remote.Endpoint = "https:///" }},

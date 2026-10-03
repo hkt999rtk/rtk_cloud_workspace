@@ -24,6 +24,7 @@ import (
 	"filippo.io/age"
 	logger "github.com/hkt999rtk/rtk_cloud_logger"
 	"github.com/hkt999rtk/rtk_cloud_logger/billingarchive"
+	"rtk-cloud-workspace/scripts/go/internal/storagepolicy"
 )
 
 type Remote struct {
@@ -61,7 +62,10 @@ func (c Config) Validate() error {
 	if decoded, err := hex.DecodeString(c.StoreID); err != nil || len(decoded) != 16 || strings.ToLower(c.StoreID) != c.StoreID {
 		return errors.New("invalid logical StoreID")
 	}
-	if c.Remote.Bucket != "rtk-cloud-"+c.Environment+"-billing-backup-"+c.Remote.Region || !billingarchive.SafeID(c.Remote.Region) || !billingarchive.SafeID(c.Remote.SigningRegion) {
+	if err := storagepolicy.Validate(c.Remote.Bucket, c.Environment, "billing-backup", c.Remote.Region); err != nil {
+		return fmt.Errorf("dedicated environment Billing backup bucket required: %w", err)
+	}
+	if !billingarchive.SafeID(c.Remote.SigningRegion) {
 		return errors.New("dedicated environment Billing backup bucket required")
 	}
 	u, err := url.Parse(c.Remote.Endpoint)
