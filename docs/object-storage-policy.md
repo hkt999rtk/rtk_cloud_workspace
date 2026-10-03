@@ -6,7 +6,7 @@ Classification: source.
 
 Owner: `rtk_cloud_workspace`; each registered bucket has an accountable service owner.
 
-Last reviewed: 2026-10-03.
+Last reviewed: 2026-10-04.
 
 Applies to: RTK-managed Linode Object Storage buckets and their object namespaces.
 Local MinIO fixtures are outside the Linode inventory. Shared wire and payload
@@ -80,9 +80,15 @@ planned PKI, billing or OTA bucket can remain `reserved`; lack of objects is not
 evidence that it is waste.
 
 The dedicated OTA E3 requirement remains in force for CDN and signed-GET
-delivery. Dev's approved region is `us-lax`; Staging's is `sg-sin-2`. A newly
-named destination must independently pass endpoint, signed URL, metrics and
-service cutover qualification. A rename cannot upgrade an E1 bucket to E3.
+delivery. Dev's approved region is `us-lax`. On 2026-10-04, the operator approved
+Staging's cross-region target `rtk-cloud-staging-ota-firmware-us-lax` after the
+Singapore E3 endpoint repeatedly underreported verified download bytes. Staging
+compute and runtime media remain in `sg-sin-2`. The prepared Singapore OTA bucket
+remains private and unactivated while Linode support ticket `27525319` is open.
+The new Staging target must independently pass endpoint, signed URL, metrics and
+service cutover qualification before activation; Dev's proof cannot qualify it.
+Any later return to Singapore needs fresh qualification. A rename cannot upgrade
+an E1 bucket to E3.
 Production has no approved destination until ownership and E3 availability are
 verified; preserve its explicit legacy configuration meanwhile.
 
