@@ -246,6 +246,14 @@ func serveMigrationBucketInspection(w http.ResponseWriter, r *http.Request) bool
 	if r.Method != http.MethodGet {
 		return false
 	}
+	if r.URL.Query().Has("acl") {
+		fmt.Fprint(w, privateStorageACLForTest)
+		return true
+	}
+	if r.URL.Query().Has("policy") {
+		w.WriteHeader(http.StatusNotFound)
+		return true
+	}
 	for query, root := range map[string]string{"versioning": "VersioningConfiguration", "versions": "ListVersionsResult", "uploads": "ListMultipartUploadsResult"} {
 		if r.URL.Query().Has(query) {
 			fmt.Fprintf(w, "<%s/>", root)

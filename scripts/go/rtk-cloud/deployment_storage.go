@@ -52,6 +52,9 @@ func validateDeploymentStorageActivation(cfg deploymentConfig) error {
 	if err != nil {
 		return fmt.Errorf("runtime media bucket %s is prepared but not cut over; storage-cutover receipt is required before deployment", cfg.Storage.RuntimeMedia.Bucket)
 	}
+	if isStorageReinitializationReceipt(body) {
+		return validateStorageReinitializationReceipt(cfg.Environment, "media", cfg.Storage.RuntimeMedia, body)
+	}
 	var receipt struct {
 		Environment                 string    `json:"environment"`
 		Bucket                      string    `json:"bucket"`
@@ -232,18 +235,31 @@ func (c deploymentCredentialChecker) validateClipStorageSmoke(store provisionObj
 }
 
 func (c deploymentCredentialChecker) bootstrapRuntimeStorage(cfg deploymentConfig, values map[string]string, environmentFile string) error {
-	mediaReady := c.checkResolvedObjectStorage(cfg, values).Passed
+	validation := c.checkResolvedObjectStorage(cfg, values)
+	mediaReady := validation.Passed
 	token := strings.TrimSpace(values["LINODE_TOKEN"])
 	if token == "" {
 		return errors.New("LINODE_TOKEN is required")
 	}
 	if !mediaReady {
 		target := cfg.Storage.RuntimeMedia
+		if access := firstNonEmpty(values["LINODE_MEDIA_OBJ_ACCESS_KEY_ID"], values["LINODE_OBJ_ACCESS_KEY_ID"]); access != "" {
+			_, keyErr := c.resolveAuthorizedStorageKey(token, access, target)
+			if keyErr == nil {
+				return fmt.Errorf("configured media key already belongs to the bucket; repair storage access before retrying bootstrap: %s", validation.Detail)
+			}
+			if !errors.Is(keyErr, errStorageKeyWrongTarget) && !errors.Is(keyErr, errStorageKeyMissing) {
+				return keyErr
+			}
+		}
 		if err := c.validateStorageRegionCapabilities(token, target.Region); err != nil {
 			return err
 		}
 		bucket, err := c.resolveStorageBucket(token, target)
 		if err != nil && strings.Contains(err.Error(), "was not found") {
+			if err := validateStorageBucketCreation(cfg.Environment, "runtime", target); err != nil {
+				return err
+			}
 			payload, _ := json.Marshal(map[string]string{"label": target.Bucket, "region": target.Region})
 			body, createErr := c.linodeAuthorizedRequest(token, http.MethodPost, "/object-storage/buckets", payload)
 			if createErr != nil {
@@ -267,14 +283,19 @@ func (c deploymentCredentialChecker) bootstrapRuntimeStorage(cfg deploymentConfi
 			return err
 		}
 		store := provisionObjectStore{bucket: target.Bucket, region: target.Region, endpoint: endpoint, accessKey: access, secretKey: secret}
-		if err := c.validateNewStorageKey(store, target.Prefix); err != nil {
-			return fmt.Errorf("new media key validation failed: %w", err)
-		}
+		// Keep the replacement only in the private candidate even if validation
+		// fails, so a retry cannot silently issue another inaccessible key.
 		if err := ensureCredentialProfile(environmentFile); err != nil {
 			return err
 		}
 		if err := updateDeploymentCredentialEnvFile(environmentFile, map[string]string{"LINODE_MEDIA_OBJ_ACCESS_KEY_ID": access, "LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY": secret}); err != nil {
 			return err
+		}
+		if err := c.validateStoragePrivacy(store); err != nil {
+			return err
+		}
+		if err := c.validateNewStorageKey(store, target.Prefix); err != nil {
+			return fmt.Errorf("new media key validation failed: %w", err)
 		}
 		values["LINODE_MEDIA_OBJ_ACCESS_KEY_ID"] = access
 		values["LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY"] = secret
@@ -318,6 +339,9 @@ func (c deploymentCredentialChecker) bootstrapOTAStorage(cfg deploymentConfig, v
 	}
 	bucket, err := c.resolveStorageBucket(token, target)
 	if err != nil && strings.Contains(err.Error(), "was not found") {
+		if err := validateStorageBucketCreation(cfg.Environment, "ota-firmware", target); err != nil {
+			return err
+		}
 		creation := map[string]string{"label": target.Bucket, "region": target.Region}
 		endpointType, typeErr := c.resolveOTAMetricsEndpointType(token, target.Region)
 		if typeErr != nil {
@@ -350,14 +374,17 @@ func (c deploymentCredentialChecker) bootstrapOTAStorage(cfg deploymentConfig, v
 		return err
 	}
 	store := provisionObjectStore{bucket: target.Bucket, region: target.Region, endpoint: endpoint, accessKey: access, secretKey: secret}
-	if err := c.validateNewStorageKey(store, target.Prefix); err != nil {
-		return fmt.Errorf("new OTA key validation failed: %w", err)
-	}
 	if err := ensureCredentialProfile(environmentFile); err != nil {
 		return err
 	}
 	if err := updateDeploymentCredentialEnvFile(environmentFile, map[string]string{"LINODE_OTA_OBJ_ACCESS_KEY_ID": access, "LINODE_OTA_OBJ_SECRET_ACCESS_KEY": secret}); err != nil {
 		return err
+	}
+	if err := c.validateStoragePrivacy(store); err != nil {
+		return err
+	}
+	if err := c.validateNewStorageKey(store, target.Prefix); err != nil {
+		return fmt.Errorf("new OTA key validation failed: %w", err)
 	}
 	values["LINODE_OTA_OBJ_ACCESS_KEY_ID"], values["LINODE_OTA_OBJ_SECRET_ACCESS_KEY"] = access, secret
 	if check := c.checkResolvedOTAStorage(cfg, values); !check.Passed {
@@ -396,6 +423,9 @@ func (c deploymentCredentialChecker) checkResolvedOTAStorage(cfg deploymentConfi
 		return deploymentCredentialCheck{Name: name, Detail: err.Error()}
 	}
 	store := provisionObjectStore{bucket: target.Bucket, endpoint: endpoint, accessKey: access, secretKey: secret, region: target.Region}
+	if err := c.validateStoragePrivacy(store); err != nil {
+		return deploymentCredentialCheck{Name: name, Detail: err.Error()}
+	}
 	if c.readOnly {
 		return c.checkStorageReadOnly(store, target.Prefix, name)
 	}
@@ -410,12 +440,25 @@ func (c deploymentCredentialChecker) checkResolvedOTAStorage(cfg deploymentConfi
 }
 
 func (c deploymentCredentialChecker) bootstrapArtifactStorage(cfg deploymentConfig, values map[string]string, environmentFile string) error {
-	if c.checkResolvedArtifactStorage(cfg, values).Passed {
+	validation := c.checkResolvedArtifactStorage(cfg, values)
+	if validation.Passed {
 		return nil
 	}
 	target := cfg.Storage.ReleaseArtifacts
+	if access := firstNonEmpty(values["LINODE_ARTIFACT_OBJ_ACCESS_KEY_ID"], values["LINODE_OBJ_ACCESS_KEY_ID"]); access != "" {
+		_, keyErr := c.resolveAuthorizedStorageKey(values["LINODE_TOKEN"], access, target)
+		if keyErr == nil {
+			return fmt.Errorf("configured artifact key already belongs to the bucket; repair storage access before retrying bootstrap: %s", validation.Detail)
+		}
+		if !errors.Is(keyErr, errStorageKeyWrongTarget) && !errors.Is(keyErr, errStorageKeyMissing) {
+			return keyErr
+		}
+	}
 	bucket, err := c.resolveStorageBucket(values["LINODE_TOKEN"], target)
 	if err != nil && strings.Contains(err.Error(), "was not found") {
+		if err := validateStorageBucketCreation(cfg.Environment, "artifacts", target); err != nil {
+			return err
+		}
 		if err := c.validateStorageRegionCapabilities(values["LINODE_TOKEN"], target.Region); err != nil {
 			return err
 		}
@@ -439,9 +482,6 @@ func (c deploymentCredentialChecker) bootstrapArtifactStorage(cfg deploymentConf
 		return err
 	}
 	store := provisionObjectStore{bucket: target.Bucket, region: target.Region, endpoint: endpoint, accessKey: access, secretKey: secret}
-	if err := c.validateNewStorageKey(store, target.Prefix); err != nil {
-		return fmt.Errorf("new artifact key validation failed: %w", err)
-	}
 	if err := ensureCredentialProfile(environmentFile); err != nil {
 		return err
 	}
@@ -449,7 +489,16 @@ func (c deploymentCredentialChecker) bootstrapArtifactStorage(cfg deploymentConf
 		"LINODE_ARTIFACT_OBJ_ACCESS_KEY_ID":     access,
 		"LINODE_ARTIFACT_OBJ_SECRET_ACCESS_KEY": secret,
 	}
-	return updateDeploymentCredentialEnvFile(environmentFile, replacements)
+	if err := updateDeploymentCredentialEnvFile(environmentFile, replacements); err != nil {
+		return err
+	}
+	if err := c.validateStoragePrivacy(store); err != nil {
+		return err
+	}
+	if err := c.validateNewStorageKey(store, target.Prefix); err != nil {
+		return fmt.Errorf("new artifact key validation failed: %w", err)
+	}
+	return nil
 }
 
 func ensureCredentialProfile(path string) error {
@@ -808,6 +857,9 @@ func (c deploymentCredentialChecker) checkResolvedObjectStorage(cfg deploymentCo
 		return deploymentCredentialCheck{Name: "Linode runtime-media storage", Detail: err.Error()}
 	}
 	store := provisionObjectStore{bucket: target.Bucket, endpoint: endpoint, accessKey: access, secretKey: secret, region: target.Region}
+	if err := c.validateStoragePrivacy(store); err != nil {
+		return deploymentCredentialCheck{Name: "Linode runtime-media storage", Detail: err.Error()}
+	}
 	if c.readOnly {
 		return c.checkStorageReadOnly(store, target.Prefix, "Linode runtime-media storage")
 	}
@@ -857,6 +909,9 @@ func (c deploymentCredentialChecker) checkResolvedArtifactStorage(cfg deployment
 		return deploymentCredentialCheck{Name: "Linode release-artifact storage", Detail: err.Error()}
 	}
 	store := provisionObjectStore{bucket: target.Bucket, endpoint: endpoint, accessKey: access, secretKey: secret, region: target.Region}
+	if err := c.validateStoragePrivacy(store); err != nil {
+		return deploymentCredentialCheck{Name: "Linode release-artifact storage", Detail: err.Error()}
+	}
 	if c.readOnly {
 		return c.checkStorageReadOnly(store, target.Prefix, "Linode release-artifact storage")
 	}

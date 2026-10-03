@@ -4,7 +4,7 @@ Classification: supporting-note; dated observations and migration targets.
 
 Owner: `rtk_cloud_workspace`.
 
-Historical observation dates: 2026-09-27 and 2026-09-28. Naming targets reviewed: 2026-10-02. A separate 2026-10-02 reconciliation appears below.
+Historical observation dates: 2026-09-27 and 2026-09-28. Naming targets reviewed: 2026-10-02. Separate 2026-10-02 and 2026-10-03 reconciliations appear below.
 
 Observed through the Linode bucket API on 2026-09-27 and 2026-09-28 using the Dev and Staging operator accounts. This is a dated snapshot, not proof of current consumers or contents. Verify ownership and key scope before migration or deletion. The opening inventory and qualification notes retain those dates. The later reconciliation section records a separate observation. Naming targets follow [Object Storage Policy](object-storage-policy.md) and are not deployed-state claims.
 
@@ -166,3 +166,46 @@ consumer cutover or retirement, complete the writer fence, exact copy and
 verification, reader/publisher reconciliation, and the relevant environment
 qualification. The Dev and Staging PKI findings above still block runtime
 storage cutover.
+
+## Retirement and artifact reconciliation: 2026-10-03
+
+Kevin explicitly authorized permanent deletion of all 11 noncanonical buckets
+listed in the opening inventory and their contents, accepting service failure.
+Deletion completed at 13:34:23 UTC and each bucket was verified absent. The
+operation removed 7,293 current objects totaling 77,884,691,086 bytes; its private
+inventory also checked versions, delete markers and incomplete uploads. The
+historical preparation and preservation notes above describe earlier state.
+They do not authorize recreating those legacy names or imply retained data.
+
+The retained shared bucket is `rtk-cloud-shared-artifacts-us-sea`, at
+`https://us-sea-1.linodeobjects.com`. Client, Video Cloud, Account Manager, Admin
+and Logger publisher settings now select that bucket. Dev and Staging SDK
+readers use separate read-only keys. Both live frontends have verified
+`pro2-examples/dev/` or `pro2-examples/staging/` in their operator configuration,
+SDK Secret and effective Pod environment. Their existing image digest and
+readiness were verified after reload. Deleted SDK/PRO2 releases and discovery
+objects were not republished; the catalogs remain unavailable until a verified
+release is published again.
+
+A fresh shared-bucket inventory contained three current CI files totaling
+278,229,914 bytes, all beneath `ci/rtk_video_cloud/37127913489/1/linux/`. There
+were no noncurrent versions, non-null version IDs, delete markers, incomplete
+uploads or held evidence. The owner-only ACL and fixed-principal bucket policy
+were retained. The policy's `ci/` 30-day, `tmp/` 7-day, `reports/` 30-day and
+`releases/__rtk_cloud_validation__/` 1-day expiry rules were installed and
+verified by provider readback. Formal releases, SDK/PRO2 handoffs and held
+namespaces have no automatic expiry rule. This is rule installation evidence,
+not a claim that asynchronous expiry has already removed data.
+
+CORS now has separate Dev and Staging browser rules for the exact Admin and
+Portal origins, `GET` and `HEAD`, with provider readback verified. The old
+wildcard-origin browser write rule was removed. CI uploads use server-side
+credentials and do not require that rule.
+
+The runtime media and dedicated OTA destinations still require their own
+bootstrap, empty-destination reinitialization and service qualification. The
+new command records discarded-source proof separately from migration. The
+Dev/Staging credential prechecks still report the PKI failures recorded above;
+Staging Account Manager-to-certissuer app mTLS passed. Scoped frontend and
+artifact operations do not establish full platform acceptance. Production's
+account ownership and dedicated OTA region remain pending separate approval.

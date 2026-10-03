@@ -12,6 +12,13 @@ The command creates fresh isolated test credentials and three complete flash ima
 
 Before releasing changed guide content, run the examples repository's `tools/sync_website_docs.py --admin /absolute/rtk_cloud_admin`, build Developer Docs, and review the website copy. The canonical English document participates in the existing Developer Docs translation pipeline; do not separately edit its generated website copy.
 
+Before uploading, set `PRO2_EXAMPLES_PREFIX=pro2-examples/dev/` in the Dev
+operator store and frontend SDK Secret, then reload the frontend with its
+validated image. The workspace renderer derives this prefix from the selected
+environment and rejects a conflicting override. Preserve the image, prefix,
+Deployment resource version and persistent data when preparing the update;
+verify the effective Pod prefix after the guarded rollout.
+
 From the workspace, with Python boto3 and requests installed:
 
 ```sh
@@ -20,7 +27,10 @@ python3 tools/pro2/publish_examples.py --release-dir repos/amebapro2_cloud_examp
 
 This command defaults to **Dev**, obtains runtime bucket/endpoint information from the canonical Dev kubeconfig, and uses the Dev operator's `LINODE_ARTIFACT_OBJ_ACCESS_KEY_ID` / `LINODE_ARTIFACT_OBJ_SECRET_ACCESS_KEY` for writing. Runtime SDK credentials are read-only and must not be used for publication. It verifies artifact hashes before upload and after download, refuses conflicting immutable objects, and preserves existing CORS rules while adding the Dev browser origin. Previous CORS settings are saved alongside the private local build evidence.
 
-Set `PRO2_EXAMPLES_PREFIX=pro2-examples/dev/` in the Dev operator store and frontend SDK Secret. The workspace renderer persists this setting. Roll out only Cloud Admin and frontend with their validated images, using Recreate to preserve single-writer SQLite semantics. Preserve old image references, prefix values and Deployment resource versions for rollback; use guarded updates.
+The publisher checks the live frontend Secret's prefix before loading writer
+credentials or contacting Object Storage. A missing, root-level or different
+environment prefix is an error, including during upload without `--activate`.
+This check does not prove that an existing Pod has reloaded its Secret.
 
 After those services are ready, activate the previously uploaded version:
 
@@ -50,7 +60,9 @@ Use `--environment staging` for the same verified isolated evaluation release.
 The publisher reads only the canonical Staging kubeconfig and operator writer
 credentials, writes under `pro2-examples/staging/`, and allows both Staging Admin
 and Portal origins in CORS. Runtime credentials must read that prefix and `sdk/`.
-Backups are named per environment. First upload and verify without `--activate`,
-then deploy CI-published service images with the Staging prefix before activating.
+Backups are named per environment. First persist `pro2-examples/staging/` in
+the operator store and frontend Secret, reload with a verified CI-published image,
+and verify the Pod prefix. Then upload and verify without `--activate` before
+activating.
 Never promote locally built Dev service images to Staging. Preserve existing
 CORS rules, data and image/settings rollback records.

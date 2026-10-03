@@ -6,7 +6,7 @@ Classification: source.
 
 Owner: `rtk_cloud_workspace`; each registered bucket has an accountable service owner.
 
-Last reviewed: 2026-10-02.
+Last reviewed: 2026-10-03.
 
 Applies to: RTK-managed Linode Object Storage buckets and their object namespaces.
 Local MinIO fixtures are outside the Linode inventory. Shared wire and payload
@@ -190,6 +190,25 @@ Limited access keys are scoped per bucket; a key label or prefix is not an acces
 boundary. Custom bucket policies must preserve existing limited-key rules and
 be tested for both allowed and denied operations.
 
+A legacy naming exception permits use of an existing registered resource only.
+It never authorizes recreating a missing noncanonical bucket. Validate the
+canonical name again at creation, and verify both ACL and bucket policy before
+the write canary or successful bootstrap receipt. Fixed-principal policies used
+by Linode's limited keys remain valid; public ACL grants and wildcard allow
+principals fail privacy qualification.
+
+### Browser access to shared artifacts
+
+The registered browser consumers are the Dev and Staging Portal and Cloud Admin:
+`https://frontend.video-cloud-<environment>.realtekconnect.com` and
+`https://admin.video-cloud-<environment>.realtekconnect.com`, with environment
+equal to `dev` or `staging`. Their CORS rules allow `GET` and `HEAD` for signed
+artifact downloads. Use explicit origins and separate environment rule IDs.
+CI and operator uploads do not require browser write methods or wildcard
+origins. A new browser writer or Production origin requires registration of its
+purpose and exact origin before expanding CORS. CORS does not grant object
+access; bucket privacy and scoped credentials remain required.
+
 ## Existing Bucket Migration and Retirement
 
 1. Inventory the live account and exact endpoint. Enumerate current objects,
@@ -227,6 +246,13 @@ The current storage commands cover only their documented operations; this policy
 does not imply that they implement account-wide reconciliation, generic cleanup,
 version-history migration or bucket deletion. Preserve the dated inventory when
 recording a newer observation rather than rewriting historical state.
+
+If the owner explicitly discards the data and the source is already deleted,
+the [reinitialization procedure](storage-credential-lifecycle.md#reinitialize-after-an-authorized-source-deletion)
+can activate a verified empty canonical destination. It records the loss and
+absence of data rollback separately from migration proof. Source absence must
+come from the provider inventory; a failed read with an obsolete key is not
+proof of deletion. Runtime readiness and OTA qualification still apply.
 
 ## Provider References
 

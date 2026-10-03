@@ -11,11 +11,14 @@ dev_store=Path(os.environ.get('RTK_CLOUD_CONFIG_ROOT',str(Path.home()/'.config/r
 k=['kubectl','--kubeconfig',str(dev_store/'kube/kubeconfig.yaml')]
 raw=json.loads(subprocess.check_output(k+['-n','video-cloud-'+a.environment+'-frontend','get','secret','frontend-sdk-downloads','-o','json']))['data']
 c={n:base64.b64decode(v).decode() for n,v in raw.items()}
+prefix='pro2-examples/'+a.environment+'/'
+if c.get('PRO2_EXAMPLES_PREFIX')!=prefix:
+ raise ValueError('Frontend PRO2_EXAMPLES_PREFIX must be '+prefix+' before publication or activation')
 operator=dev_store/'operator/env'
 c['SDK_ARTIFACT_ACCESS_KEY_ID']=(operator/'LINODE_ARTIFACT_OBJ_ACCESS_KEY_ID').read_text().strip()
 c['SDK_ARTIFACT_SECRET_ACCESS_KEY']=(operator/'LINODE_ARTIFACT_OBJ_SECRET_ACCESS_KEY').read_text().strip()
 s=boto3.client('s3',config=Config(request_checksum_calculation='when_required',response_checksum_validation='when_required'),endpoint_url=c['SDK_ARTIFACT_ENDPOINT'],region_name=c['SDK_ARTIFACT_REGION'],aws_access_key_id=c['SDK_ARTIFACT_ACCESS_KEY_ID'],aws_secret_access_key=c['SDK_ARTIFACT_SECRET_ACCESS_KEY'])
-bucket=c['SDK_ARTIFACT_BUCKET'];prefix='pro2-examples/'+a.environment+'/';release=a.release_dir.resolve();manifest=json.loads((release/'publish/manifest.json').read_text());version=manifest['version']
+bucket=c['SDK_ARTIFACT_BUCKET'];release=a.release_dir.resolve();manifest=json.loads((release/'publish/manifest.json').read_text());version=manifest['version']
 import re
 if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,40}',version) or manifest.get('test_only') is not True:raise ValueError('Not an isolated evaluation release')
 expected={x['filename'] for x in manifest['artifacts']}|{'manifest.json'}

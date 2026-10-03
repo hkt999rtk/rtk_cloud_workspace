@@ -28,6 +28,9 @@ type provisionObjectStore struct {
 	region    string
 	prefix    string // Explicit source prefix for storage migration.
 	prefixSet bool
+	// Reinitialization alone can repair an empty endpoint after proving the
+	// consumer credential's exact deleted-source bucket/region grant.
+	reinitializeEmptyEndpoint bool
 }
 
 type provisionObjectEntry struct {

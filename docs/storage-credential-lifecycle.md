@@ -6,7 +6,7 @@ Classification: source for operator commands and credential handling.
 
 Owner: `rtk_cloud_workspace`.
 
-Last reviewed: 2026-10-02.
+Last reviewed: 2026-10-03.
 
 [Object Storage Policy](object-storage-policy.md) is the sole authority for bucket
 names, object namespaces, retention, creation, migration and retirement rules.
@@ -16,8 +16,8 @@ from naming targets. Runtime intent is in `cloud_env/<environment>/storage.env`;
 shared release intent is in `cloud_deploy/storage/release-artifacts.env`.
 The CLI discovers endpoints from Linode's API.
 
-Names observed on 2026-09-27/28 remain migration sources or explicit compatibility
-exceptions. Dedicated Dev and Staging OTA buckets were privately validated as E3
+Names observed on 2026-09-27/28 are historical inventory, not proof that the
+resources still exist. Dedicated Dev and Staging OTA buckets were privately validated as E3
 on 2026-09-28; workload cutover and each environment's remaining qualification
 are separate gates. A new naming target does not inherit that qualification.
 Production's account ownership and assigned E3 endpoint still require verification.
@@ -69,6 +69,50 @@ Enabled/suspended versioning, non-null version history, delete markers and incom
 Media cutover inventories Deployments, StatefulSets, DaemonSets, Jobs, CronJobs, ReplicaSets and Pods, including regular, init and ephemeral containers. It resolves `envFrom` and `valueFrom` Secret/ConfigMap references for source identification, honoring source order and explicit environment overrides. Indirect source settings require a reviewed literal mapping before automatic cutover. Standalone source-bound Pods block cutover; managed source Pods must belong to a selected controller and terminate before completion. It verifies literal source bucket, endpoint, region and prefix before changing matched consumers, including API variants, videostorage, cleaner, verifier and legacy OTA. Unfinished Jobs must be finished or recreated separately; affected CronJobs must already be suspended. Indirect or ambiguous storage settings require explicit reconciliation. Matching consumers outside the selected stack block the switch. Changes use the recorded Kubernetes object identity, resource version and old environment values; concurrent changes stop the operation. Source credential Secrets and old settings are retained privately. Rollout checks and a repeat consumer inventory precede completion.
 
 OTA cutover verifies the existing dedicated OTA Deployment's source, or the live core API source when introducing the dedicated service, before changing workloads. Its bucket, region, endpoint and prefix must match the verified migration. Preserve the separate registration, metrics, routing and legacy drain gates below.
+
+### Reinitialize after an authorized source deletion
+
+When an owner has explicitly authorized discarding the source data and the
+bucket has already been deleted, use `storage-reinitialize`. Do not manufacture
+an empty migration receipt or remove the deployment activation gate.
+
+First bootstrap and verify the canonical destination with an isolated candidate
+profile. Create a private source identity file containing
+`RTK_STORAGE_SOURCE_ENVIRONMENT`, `LINODE_OBJ_BUCKET`, `LINODE_OBJ_REGION`,
+`LINODE_OBJ_ENDPOINT` and an explicit `LINODE_OBJ_PREFIX` (which can be empty
+for a historical root prefix). Deleted source credentials are not required.
+
+```bash
+rtk-cloud deployment storage-reinitialize --environment dev --purpose media \
+  --source-env-file /secure/deleted-media-source.env \
+  --destination-env-file /secure/dev-media-candidate.env \
+  --acknowledge-discarded-source <exact-deleted-bucket> --plan
+# Execute the reviewed plan with the same identities:
+rtk-cloud deployment storage-reinitialize --environment dev --purpose media \
+  --source-env-file /secure/deleted-media-source.env \
+  --destination-env-file /secure/dev-media-candidate.env \
+  --acknowledge-discarded-source <exact-deleted-bucket> --confirm video-cloud-dev
+```
+
+The read-only plan proves source absence through the full provider inventory
+and verifies that the destination has no current objects, versions, delete
+markers or incomplete multipart uploads. It checks privacy, exact scoped
+credentials and the existing consumer mapping. Execution repeats these checks,
+validates a bounded write/read/delete canary, and updates consumers with guarded
+Kubernetes changes while preserving their images. A failed rollout does not
+activate the candidate credentials or produce a completed receipt.
+
+The private journal and receipt explicitly record `operation=reinitialize`,
+the acknowledged discarded source, destination proof and unavailable data
+rollback. The deployment gate accepts this completed proof separately from
+migration evidence. `storage-rollback` refuses a deleted-source journal;
+recovery requires repairing or reconciling the destination, including any new
+writes. Preserve a failed journal before a separately reviewed retry.
+
+`--purpose ota` retains E3 endpoint, registration, metrics/CDN, legacy drain and
+ready-service gates. It updates only an existing OTA Deployment and its owned
+Pods. It does not introduce a service, change routes or select new images.
+Deleting old firmware does not waive the database drain or billing gates.
 
 ### Shared artifact preparation
 
