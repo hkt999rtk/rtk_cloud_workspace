@@ -284,3 +284,12 @@ GETs, but only 274 downloaded bytes for its verified 16,777,216-byte successful
 range/full-download traffic. This supports a provider telemetry undercount;
 the provider's internal cause remains unproven. The exact filtered query
 responses and reproduction steps are retained privately for investigation.
+
+The four new media/OTA buckets also received the registered canary fallback:
+one enabled `rtk-storage-canary` lifecycle rule expires only
+`environments/video-cloud-<environment>/__rtk_cloud_validation__/` after one day.
+The initial inventory found all four unversioned and empty, with no existing
+lifecycle, versions, delete markers or incomplete uploads. Exact rule readback
+was confirmed again at 16:11:54–16:11:55 UTC after an interrupted session;
+no write was repeated. No noncurrent-version or multipart expiry was added.
+This records policy installation, not later asynchronous deletion.
