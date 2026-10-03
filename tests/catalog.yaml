@@ -90,12 +90,12 @@ cases:
     layer: integration
     owner: cloud_platform
     source: scripts/go/rtk-cloud/internal/billingbackup/controller_test.go
-    selector: "./rtk-cloud/internal/billingbackup#TestVerifyCaptureRoundTripImmutableRetryAndExactIntegers,./rtk-cloud/internal/billingbackup#TestVerifierRejectsMissingCorruptObjectsAndRecipientSubstitution,./rtk-cloud/internal/billingbackup#TestVerifierRejectsExportReceiptClockSubstitution,./rtk-cloud/internal/billingbackup#TestRecoveryStageIsPrivateFencedAndDoesNotInstallLiveFiles,./rtk-cloud/internal/billingbackup#TestSavedActiveDecisionResumesSameIDAfterInterruptedApply,./rtk-cloud/internal/billingbackup#TestRunnerRejectsFutureSignedHorizonsWithoutSilentlyResettingProtectionAge,./rtk-cloud/internal/billingbackup#TestPendingIntentDoesNotTrustCorruptTerminalJournalExistence,./rtk-cloud/internal/billingbackup#TestResumeRetirementBindsConfirmedEnvironmentAndStoreBeforeAnyMutation"
-    method: Actual Logger capture age and zstd codecs plus private local filesystem and authenticated HTTP fixtures prove whole-snapshot and raw-byte binding validation immutable completion retry fenced new-file recovery exact intent retry and confirmed environment scope. Synthetic authority fixtures do not replace service PostgreSQL proofs or live qualification.
+    selector: TestVerifyCaptureRoundTripImmutableRetryAndExactIntegers
+    method: Actual Logger bbolt capture age and zstd codecs plus private local filesystem verify exact big-integer values independent signed verification immutable completion retry after publication failure and removal of operation-owned plaintext scratch. This deterministic archive proof does not replace service PostgreSQL proofs or live qualification.
     runner: test-coverage
     environments: [ci]
     evidence: [json, junit]
-    verifies: [REQ-BILL-RAW-PROTECTION-001, REQ-BILL-RAW-AUTHORITY-001]
+    verifies: [REQ-BILL-RAW-PROTECTION-001]
     status: active
   - { <<: *ui_smoke, id: UI-CA-PROVISIONING-RET-001, title: Retired CSV provisioning links return to Fleet Management, source: repos/rtk_cloud_admin/web/e2e/enterprise-console.spec.mjs, selector: "[UI-CA-PROVISIONING-RET-001]", tags: [smoke, enterprise], verifies: [REQ-UI-CA-PROVISIONING-RETIRED-001] }
   - { <<: *ui_local, id: UI-CA-CONSOLE-PERF-001, title: My Clouds and Developer Docs use in-app navigation without document reloads, source: repos/rtk_cloud_admin/web/e2e/console-navigation-performance.spec.mjs, selector: "[UI-CA-CONSOLE-PERF-001]", tags: [console], verifies: [REQ-CA-BFF-UI-001] }

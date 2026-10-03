@@ -116,7 +116,8 @@ func runBillingLifecycle(args []string) error {
 	case "recovery-status":
 		err = loggerClient.Request(ctx, http.MethodGet, "/v1/internal/billing-lifecycle/recovery", nil, &response)
 	case "recovery-admit":
-		body, err := readBillingLifecycleRequest(*requestFile)
+		var body json.RawMessage
+		body, err = readBillingLifecycleRequest(*requestFile)
 		if err != nil {
 			return err
 		}
@@ -137,7 +138,8 @@ func runBillingLifecycle(args []string) error {
 		if id == "" {
 			return errors.New("unknown authority role")
 		}
-		token, err := readToken(id)
+		var token string
+		token, err = readToken(id)
 		if err != nil {
 			return err
 		}
@@ -153,7 +155,8 @@ func runBillingLifecycle(args []string) error {
 		if !billingarchive.SafeID(*op) {
 			return errors.New("operation ID required")
 		}
-		token, err := readToken("billing-raw-retention-controller")
+		var token string
+		token, err = readToken("billing-raw-retention-controller")
 		if err != nil {
 			return err
 		}
@@ -188,11 +191,13 @@ func runBillingLifecycle(args []string) error {
 				return err
 			}
 		}
-		operator, err := store.readOperator()
+		var operator map[string]string
+		operator, err = store.readOperator()
 		if err != nil {
 			return errors.New("verifier storage credentials unavailable")
 		}
-		objects, err := billingbackup.NewS3Store(cfg.Remote, operator["RTK_BILLING_VERIFIER_ACCESS_KEY_ID"], operator["RTK_BILLING_VERIFIER_SECRET_ACCESS_KEY"])
+		var objects *billingbackup.S3Store
+		objects, err = billingbackup.NewS3Store(cfg.Remote, operator["RTK_BILLING_VERIFIER_ACCESS_KEY_ID"], operator["RTK_BILLING_VERIFIER_SECRET_ACCESS_KEY"])
 		if err != nil {
 			return err
 		}
@@ -219,16 +224,22 @@ func runBillingLifecycle(args []string) error {
 			if err != nil {
 				return err
 			}
-			err = loggerClient.Request(ctx, http.MethodPost, "/v1/internal/billing-lifecycle/rehydrate", map[string]any{"set_id": manifest.SetID, "records": records}, &response)
+			if err = loggerClient.Request(ctx, http.MethodPost, "/v1/internal/billing-lifecycle/rehydrate", map[string]any{"set_id": manifest.SetID, "records": records}, &response); err != nil {
+				return err
+			}
 			break
 		}
-		token, err := readToken("billing-raw-retention-controller")
+		var token string
+		token, err = readToken("billing-raw-retention-controller")
 		if err != nil {
 			return err
 		}
 		authority := billingbackup.Client{BaseURL: cfg.BillingURL, Token: token}
 		if action == "retire" {
 			err = billingbackup.RetireRange(ctx, engine, loggerClient, authority, *prefix, *first, *last)
+			if err == nil {
+				return printJSON(map[string]string{"environment": cfg.Environment, "store_id": cfg.StoreID, "result": "authoritatively-resolved"})
+			}
 			break
 		}
 		if action == "run" {

@@ -67,7 +67,13 @@ func (s *S3Store) PutImmutable(ctx context.Context, key string, body []byte) err
 func (s *S3Store) ListManifests(ctx context.Context, prefix string) ([]string, error) {
 	var out []string
 	var token *string
+	seen := map[string]bool{}
+	pages := 0
 	for {
+		pages++
+		if pages > 10000 {
+			return nil, errors.New("catalog listing page bound exceeded; select explicit archive prefix")
+		}
 		r, err := s.Client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: aws.String(s.Bucket), Prefix: aws.String(prefix), ContinuationToken: token})
 		if err != nil {
 			return nil, errors.New("Billing catalog listing failed")
@@ -84,9 +90,10 @@ func (s *S3Store) ListManifests(ctx context.Context, prefix string) ([]string, e
 			break
 		}
 		token = r.NextContinuationToken
-		if token == nil {
+		if token == nil || *token == "" || seen[*token] {
 			return nil, errors.New("invalid listing continuation")
 		}
+		seen[*token] = true
 	}
 	return out, nil
 }
