@@ -69,7 +69,25 @@ func runPostgresBackupWorker(args []string) (resultErr error) {
 	}
 	defer cleanup()
 	m := postgresBackupManager{Config: c, Kubeconfig: kubeconfig}
-	release, err := recovery.AcquireClusterLock(ctx, lkeKubectl(), kubeconfig, c.Namespace, "postgres-backup-"+postgresBackupRandomID(), true)
+	return m.runWorker(ctx, action, *id, postgresBackupWorkerOperations{
+		AcquireLock: func(ctx context.Context) (func() error, error) {
+			return recovery.AcquireClusterLock(ctx, lkeKubectl(), kubeconfig, c.Namespace, "postgres-backup-"+postgresBackupRandomID(), true)
+		},
+		Capture: postgresbackup.Capture, Upload: postgresbackup.Upload, Prune: postgresbackup.Prune, Status: postgresbackup.GetStatus,
+	})
+}
+
+type postgresBackupWorkerOperations struct {
+	AcquireLock func(context.Context) (func() error, error)
+	Capture     func(context.Context, postgresbackup.Config) (postgresbackup.CaptureResult, error)
+	Upload      func(context.Context, postgresbackup.Config, postgresbackup.Manifest, string) error
+	Prune       func(context.Context, postgresbackup.Config, bool) (postgresbackup.PrunePlan, error)
+	Status      func(context.Context, postgresbackup.Config) (postgresbackup.Status, error)
+}
+
+func (m *postgresBackupManager) runWorker(ctx context.Context, action, id string, operations postgresBackupWorkerOperations) (resultErr error) {
+	c := m.Config
+	release, err := operations.AcquireLock(ctx)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "PostgreSQL backup skipped: another recovery operation owns the cluster lock; shared status unchanged")
 		return err
@@ -90,7 +108,7 @@ func runPostgresBackupWorker(args []string) (resultErr error) {
 			resultErr = err
 		}
 	}()
-	status, err = postgresBackupReadStatus(ctx, &m)
+	status, err = postgresBackupReadStatus(ctx, m)
 	if err != nil {
 		return err
 	}
@@ -111,11 +129,11 @@ func runPostgresBackupWorker(args []string) (resultErr error) {
 		if err := postgresBackupScratchReady(c.Worker.Directory); err != nil {
 			return err
 		}
-		capture, err := postgresbackup.Capture(ctx, c.Worker)
+		capture, err := operations.Capture(ctx, c.Worker)
 		if err != nil {
 			return err
 		}
-		if err = postgresbackup.Upload(ctx, c.Worker, capture.Manifest, capture.File); err != nil {
+		if err = operations.Upload(ctx, c.Worker, capture.Manifest, capture.File); err != nil {
 			return err
 		}
 		if err = postgresBackupPublishedStatus(&status, c.Worker, capture.Manifest.ID); err != nil {
@@ -125,35 +143,35 @@ func runPostgresBackupWorker(args []string) (resultErr error) {
 		if err = postgresBackupRemovePublished(c.Worker, capture.Manifest.ID); err != nil {
 			return err
 		}
-		if _, err = postgresbackup.Prune(ctx, c.Worker, false); err != nil {
+		if _, err = operations.Prune(ctx, c.Worker, false); err != nil {
 			return err
 		}
 	case "retry-upload":
-		if !recovery.Name.MatchString(*id) {
+		if !recovery.Name.MatchString(id) {
 			return errors.New("invalid retry backup id")
 		}
-		manifest, err := postgresbackup.ReadManifest(filepath.Join(c.Worker.Directory, *id+".manifest.json"))
+		manifest, err := postgresbackup.ReadManifest(filepath.Join(c.Worker.Directory, id+".manifest.json"))
 		if err != nil {
 			return err
 		}
 		if err = c.Worker.MatchManifest(manifest); err != nil {
 			return err
 		}
-		if err = postgresbackup.Upload(ctx, c.Worker, manifest, filepath.Join(c.Worker.Directory, *id+".age")); err != nil {
+		if err = operations.Upload(ctx, c.Worker, manifest, filepath.Join(c.Worker.Directory, id+".age")); err != nil {
 			return err
 		}
-		if err = postgresBackupPublishedStatus(&status, c.Worker, *id); err != nil {
+		if err = postgresBackupPublishedStatus(&status, c.Worker, id); err != nil {
 			return err
 		}
-		if err = postgresBackupRemovePublished(c.Worker, *id); err != nil {
+		if err = postgresBackupRemovePublished(c.Worker, id); err != nil {
 			return err
 		}
 	case "prune":
-		if _, err = postgresbackup.Prune(ctx, c.Worker, false); err != nil {
+		if _, err = operations.Prune(ctx, c.Worker, false); err != nil {
 			return err
 		}
 	}
-	remote, err := postgresbackup.GetStatus(ctx, c.Worker)
+	remote, err := operations.Status(ctx, c.Worker)
 	if err != nil {
 		return err
 	}
@@ -235,27 +253,42 @@ func postgresBackupDrillWorker(ctx context.Context, c postgresBackupDeployment, 
 	if err != nil {
 		return err
 	}
-	if err:=postgresBackupVerifyDrillManifest(c.Worker,id,manifest);err!=nil{return err}
+	if err := postgresBackupVerifyDrillManifest(c.Worker, id, manifest); err != nil {
+		return err
+	}
 	if err := postgresBackupVerifyRunningCluster(ctx, target); err != nil {
 		return err
 	}
 	return json.NewEncoder(os.Stdout).Encode(postgresbackup.Drill{Version: 1, Environment: c.Environment, Stack: c.Stack, ClusterID: c.Worker.ClusterID, BackupID: id, SystemIdentifier: manifest.SystemIdentifier, PostgresImage: manifest.PostgresImage, FinishedAt: time.Now().UTC(), Success: true})
 }
 
-func postgresBackupVerifyDrillManifest(c postgresbackup.Config,id string,manifest postgresbackup.Manifest)error{
-	f,err:=os.Open(filepath.Join(c.Directory,id+".complete.json"));if err!=nil{return errors.New("download completion evidence unavailable")};defer f.Close()
+func postgresBackupVerifyDrillManifest(c postgresbackup.Config, id string, manifest postgresbackup.Manifest) error {
+	f, err := os.Open(filepath.Join(c.Directory, id+".complete.json"))
+	if err != nil {
+		return errors.New("download completion evidence unavailable")
+	}
+	defer f.Close()
 	var completion postgresbackup.Completion
-	if recovery.Decode(io.LimitReader(f,1<<20),&completion)!=nil||manifest.ID!=id||manifest!=completion.Manifest||c.MatchManifest(manifest)!=nil{return errors.New("authenticated inner backup manifest differs from requested download completion evidence")}
+	if recovery.Decode(io.LimitReader(f, 1<<20), &completion) != nil || manifest.ID != id || manifest != completion.Manifest || c.MatchManifest(manifest) != nil {
+		return errors.New("authenticated inner backup manifest differs from requested download completion evidence")
+	}
 	return nil
 }
 
-func postgresBackupVerifyRunningCluster(ctx context.Context, target string)error{return postgresBackupVerifyRunningClusterWithExecutor(ctx,target,recovery.QuietExec)}
+func postgresBackupVerifyRunningCluster(ctx context.Context, target string) error {
+	return postgresBackupVerifyRunningClusterWithExecutor(ctx, target, recovery.QuietExec)
+}
 
 func postgresBackupVerifyRunningClusterWithExecutor(ctx context.Context, target string, run recovery.Executor) (resultErr error) {
 	pgdata := filepath.Join(target, "pgdata")
 	var control bytes.Buffer
-	if err:=run(ctx,[]string{"env","LC_ALL=C","pg_controldata",pgdata},nil,&control);err!=nil{return errors.New("cannot read verified PostgreSQL recovery parameters")}
-	recoverySettings,err:=postgresBackupRecoverySettings(control.String());if err!=nil{return err}
+	if err := run(ctx, []string{"env", "LC_ALL=C", "pg_controldata", pgdata}, nil, &control); err != nil {
+		return errors.New("cannot read verified PostgreSQL recovery parameters")
+	}
+	recoverySettings, err := postgresBackupRecoverySettings(control.String())
+	if err != nil {
+		return err
+	}
 	socket := filepath.Join(target, "socket")
 	if err := os.Mkdir(socket, 0700); err != nil {
 		return errors.New("cannot create isolated PostgreSQL socket")
@@ -267,7 +300,7 @@ func postgresBackupVerifyRunningClusterWithExecutor(ctx context.Context, target 
 	// A clean, operator-owned config prevents restored preload libraries,
 	// subscriptions, archive commands and network listeners from contacting services.
 	conf := filepath.Join(target, "postgresql.conf")
-	settings := "listen_addresses = ''\nport = 6543\narchive_mode = off\nprimary_conninfo = ''\nrestore_command = ''\nshared_preload_libraries = ''\nmax_logical_replication_workers = 0\ndefault_transaction_read_only = on\nssl = off\n"+recoverySettings
+	settings := "listen_addresses = ''\nport = 6543\narchive_mode = off\nprimary_conninfo = ''\nrestore_command = ''\nshared_preload_libraries = ''\nmax_logical_replication_workers = 0\ndefault_transaction_read_only = on\nssl = off\n" + recoverySettings
 	settings += "unix_socket_directories = '" + strings.ReplaceAll(socket, "'", "''") + "'\nhba_file = '" + strings.ReplaceAll(hba, "'", "''") + "'\n"
 	if err := os.WriteFile(conf, []byte(settings), 0600); err != nil {
 		return err
@@ -305,14 +338,27 @@ func postgresBackupVerifyRunningClusterWithExecutor(ctx context.Context, target 
 	return postgresBackupCheckRestoredData(query)
 }
 
-func postgresBackupRecoverySettings(control string)(string,error){
-	if strings.Contains(control,"WARNING:"){return "",errors.New("PostgreSQL control data reported a warning")}
-	keys:=[]struct{field,parameter string}{{"max_connections","max_connections"},{"max_worker_processes","max_worker_processes"},{"max_wal_senders","max_wal_senders"},{"max_prepared_xacts","max_prepared_transactions"},{"max_locks_per_xact","max_locks_per_transaction"}}
-	values:=map[string]string{}
-	for _,line:=range strings.Split(control,"\n"){key,value,ok:=strings.Cut(line,":");if ok{values[strings.TrimSpace(key)]=strings.TrimSpace(value)}}
+func postgresBackupRecoverySettings(control string) (string, error) {
+	if strings.Contains(control, "WARNING:") {
+		return "", errors.New("PostgreSQL control data reported a warning")
+	}
+	keys := []struct{ field, parameter string }{{"max_connections", "max_connections"}, {"max_worker_processes", "max_worker_processes"}, {"max_wal_senders", "max_wal_senders"}, {"max_prepared_xacts", "max_prepared_transactions"}, {"max_locks_per_xact", "max_locks_per_transaction"}}
+	values := map[string]string{}
+	for _, line := range strings.Split(control, "\n") {
+		key, value, ok := strings.Cut(line, ":")
+		if ok {
+			values[strings.TrimSpace(key)] = strings.TrimSpace(value)
+		}
+	}
 	var settings strings.Builder
-	for _,key:=range keys{value,err:=strconv.Atoi(values[key.field+" setting"]);if err!=nil||value<0||value>262143{return "",errors.New("invalid or missing PostgreSQL recovery parameter")};fmt.Fprintf(&settings,"%s = %d\n",key.parameter,value)}
-	return settings.String(),nil
+	for _, key := range keys {
+		value, err := strconv.Atoi(values[key.field+" setting"])
+		if err != nil || value < 0 || value > 262143 {
+			return "", errors.New("invalid or missing PostgreSQL recovery parameter")
+		}
+		fmt.Fprintf(&settings, "%s = %d\n", key.parameter, value)
+	}
+	return settings.String(), nil
 }
 
 type postgresBackupDataCheck struct{ Name, Database, SQL, Expected string }

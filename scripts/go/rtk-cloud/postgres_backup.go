@@ -158,10 +158,12 @@ func postgresBackupStorageBytes(value string) (int64, error) {
 }
 
 type postgresBackupManager struct {
-	Config     postgresBackupDeployment
-	Store      secretStore
-	Kubeconfig string
-	Exec       recovery.Executor
+	Config           postgresBackupDeployment
+	Store            secretStore
+	Kubeconfig       string
+	Exec             recovery.Executor
+	RecordDrill      func(context.Context, postgresbackup.Config, postgresbackup.Drill) error
+	ReadRemoteStatus func(context.Context, postgresbackup.Config) (postgresbackup.Status, error)
 }
 
 func (m *postgresBackupManager) kube(ctx context.Context, input io.Reader, args ...string) ([]byte, error) {
@@ -250,18 +252,14 @@ func runPostgresBackupCLI(restore bool, args []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	if action == "status" {
-		b, err := m.kube(ctx, nil, "-n", cfg.Namespace, "get", "configmap", postgresBackupStatusName, "-o", "json")
+		status, err := postgresBackupReadStatus(ctx, &m)
 		if err != nil {
 			return err
 		}
-		var obj struct {
-			Data map[string]string `json:"data"`
+		if status.Version == 0 {
+			return errors.New("PostgreSQL backup status is not configured")
 		}
-		if json.Unmarshal(b, &obj) != nil {
-			return errors.New("invalid status response")
-		}
-		fmt.Println(obj.Data["status.json"])
-		return nil
+		return json.NewEncoder(os.Stdout).Encode(status)
 	}
 	if action == "prune" && *dryRun {
 		restoreEnv, err := postgresBackupRemoteEnvironment(store, false)

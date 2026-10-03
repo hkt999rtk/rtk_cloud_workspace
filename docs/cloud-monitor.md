@@ -230,7 +230,9 @@ malformed or mismatched evidence is UNKNOWN. Only an explicitly disabled source
 is NOT_APPLICABLE.
 
 The latest attempt is independent: failed is FAIL, skipped is WARN, and running
-for more than four hours is FAIL. `latest_drill` is assessed separately: missing
+for more than four hours is FAIL. Workers refused by the shared recovery lock
+leave status unchanged; their Job/log records the skip. `latest_drill` is assessed
+separately: missing
 evidence is UNKNOWN and a failed drill is FAIL. A successful upload cannot satisfy
 a restore drill. The result displays hours since the recorded drill and does not
 infer that newer backups have been exercised. Status strings and subprocess

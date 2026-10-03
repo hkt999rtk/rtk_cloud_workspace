@@ -50,6 +50,22 @@ configuration is defined in
 and deployment fields in
 [`postgres_backup.go`](../scripts/go/rtk-cloud/postgres_backup.go).
 
+Start from the [deployment configuration example](examples/postgres-backup.example.json).
+After the scoped environment preflight, copy it to
+`cloud_env/<environment>/postgres-backup.json` and replace every `REPLACE_WITH_...`
+value with reviewed evidence. The example intentionally fails validation until
+the source/runner digests, cluster/system identity, age public recipient and
+private destination are supplied. Its staging names are examples; update both
+environment/stack fields, namespace, source host and remote prefix together for
+another environment. No credentials or private age identity belong in this file.
+
+The example budgets 20 GiB of plaintext and 30 GiB of encrypted archive on a
+60 GiB scratch PVC, leaving space beyond the required 64 MiB reserve. It fits
+only when measured source data, growth and retry needs fit those limits and the
+source PVC is no larger than 20 GiB; increase the scratch size and limits together
+when necessary. Optional `storage_class` selects a reviewed cluster storage
+class; omission uses the cluster default.
+
 Record and review:
 
 - Logical environment, stack and stable `cluster_id`; exact PostgreSQL system
@@ -83,7 +99,8 @@ Build the runner with the [PostgreSQL Backup Runner workflow](../.github/workflo
 Supply the source Pod's actual platform image digest as `postgres_image`; a
 multi-architecture index digest is not the running container's platform digest.
 The Dockerfile uses that exact PostgreSQL image as its runtime base and records
-it in `RTK_POSTGRES_RUNNER_SOURCE_IMAGE`. The worker rejects a mismatch with the
+it in `RTK_POSTGRES_RUNNER_SOURCE_IMAGE`. This runner adapter requires the
+PostgreSQL 16 Alpine image family. The worker rejects a mismatch with the
 reviewed source-image digest. Configure/manual-run preflight compares the actual
 ready source container's `imageID` digest, and the worker repeats this check before
 each scheduled capture. Record the resulting runner digest and
@@ -156,6 +173,13 @@ Use the [qualification schema example](examples/postgres-backup-qualification.ex
 to prepare the file. Its placeholders and zero measurements intentionally fail
 validation; replace them with actual evidence, never estimated pass values.
 
+After the manual backup, isolated drill and performance gates pass, enable the
+staging schedule and observe **two consecutive successful daily scheduled Jobs**.
+Retain their capture, remote readback/completion and monitoring evidence. Two
+immediate manual runs do not satisfy this observation. Staging qualification and
+production runbook readiness require those scheduled results; production
+activation remains a separate reviewed operation.
+
 Update the environment's matched-core inventory before its next maintenance
 backup: explicitly exclude `rtk-postgres-backup-scratch` with the reason that it
 contains reproducible backup scratch/retry artifacts, suspend the backup CronJob,
@@ -163,9 +187,9 @@ and drain active backup Jobs. Do not classify a running backup Job as a business
 writer or assume the shared lock replaces the core procedure's inventory checks.
 
 One run captures and locally verifies the full data directory, compresses it with
-gzip level 1, encrypts it, uploads
-it, verifies the remote ciphertext by reading it back, and publishes a completion
-record last. A partially uploaded object has no successful recovery-point claim.
+gzip level 1, encrypts and uploads it, verifies the remote ciphertext by reading
+it back, and publishes a completion record last. A partially uploaded object has
+no successful recovery-point claim.
 Retry a retained encrypted capture with `postgres-backup retry-upload --id ID`
 and the same identity/confirmation arguments. A retry preserves the original
 capture timestamp. Review plaintext and encrypted scratch cleanup after a killed
@@ -237,7 +261,9 @@ test record.
 - Enabled backup with no completed backup is FAIL. Missing/unreadable/malformed
   or mismatched status evidence is UNKNOWN, requiring investigation.
 - A failed attempt is reported independently of the last successful capture.
-  A running attempt beyond four hours is FAIL; a skipped attempt is WARN.
+  A running attempt beyond four hours is FAIL. Recorded skipped attempts are
+  WARN; a worker that cannot acquire the shared recovery lock leaves shared
+  status unchanged, so inspect that Job and its log for the skipped attempt.
 - Restore-drill status is independent: absent evidence is UNKNOWN, a failed drill
   is FAIL, and success applies to the named tested backup. A new successful upload
   does not turn an untested restore into PASS.
@@ -250,6 +276,26 @@ backup size/duration and scratch headroom. Exercise timeout/cancellation, upload
 failure/retry, corrupt/incomplete artifacts, lock exclusion, retention protection,
 and a clean isolated restore. Record every missing prerequisite as pending.
 
-**Current qualification:** staging performance, remote backup readback, isolated
-restore and production enablement are pending. Local tests do not establish
-those deployment outcomes. See [testing requirements](testing.md#postgresql-daily-backup-qualification).
+### Validation evidence and pending staging qualification
+
+Local implementation checks recorded on 2026-10-03:
+
+| Check | Observed result | Evidence boundary |
+| --- | --- | --- |
+| [Native PostgreSQL 16 round trip](../scripts/go/rtk-cloud/internal/postgresbackup/integration_test.go) | PASS, 14.19 seconds. A Docker fixture with networking disabled restored two databases and role grants, left the source intact, and rejected a damaged native manifest and missing WAL. | Local fixture only; the elapsed test time is not staging RTO or an API performance measurement. |
+| [Large multipart transport](../scripts/go/rtk-cloud/internal/postgresbackup/remote_large_test.go) | PASS, 16.59 seconds. The actual S3 SDK and local HTTPS fixture transferred a 6 GiB + 17 byte file in 97 parts and verified readback/completion. | Synthetic local transport evidence; it does not qualify Linode compatibility, remote throughput, encryption of a production dataset or a live restore. |
+| Cloud Monitor | Unit and race suites passed, including capture-age thresholds, independent drill outcomes and malformed evidence. | Read-only fixture results; no claim of current live backup coverage. |
+
+The native test is opt-in with `RTK_POSTGRES_BACKUP_INTEGRATION=1` and uses an
+already-installed image; it does not pull images or contact a deployment. The
+large transfer test uses `RTK_POSTGRES_BACKUP_LARGE_INTEGRATION=1` and needs at
+least 7 GiB of temporary space and loopback HTTPS access. A sandbox socket denial
+is an execution restriction, not proof that Docker or credentials are missing.
+
+**Staging qualification remains pending:** representative workload baseline and
+backup windows meeting the p95/p99 <=5% gate, remote provider readback, independent
+credential/escrow recovery, isolated staging restore, schedule enablement and two
+consecutive successful daily scheduled Jobs.
+No local result above satisfies those gates. Record the deployment images,
+topology, source size, measured results and reviewer in the qualification evidence
+before enabling the schedule. See [testing requirements](testing.md#postgresql-daily-backup-qualification).

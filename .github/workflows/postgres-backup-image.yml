@@ -3,19 +3,13 @@ name: PostgreSQL Backup Runner
 on:
   pull_request:
     paths:
-      - scripts/go/rtk-cloud/postgres_*.go
-      - scripts/go/rtk-cloud/internal/postgresbackup/**
-      - scripts/go/rtk-cloud/internal/recovery/**
-      - scripts/go/go.*
+      - scripts/go/**
       - cloud_deploy/architectures/kubernetes/postgres-backup/**
       - .github/workflows/postgres-backup-image.yml
   push:
     branches: [main]
     paths:
-      - scripts/go/rtk-cloud/postgres_*.go
-      - scripts/go/rtk-cloud/internal/postgresbackup/**
-      - scripts/go/rtk-cloud/internal/recovery/**
-      - scripts/go/go.*
+      - scripts/go/**
       - cloud_deploy/architectures/kubernetes/postgres-backup/**
       - .github/workflows/postgres-backup-image.yml
   workflow_dispatch:
@@ -37,16 +31,30 @@ concurrency:
 jobs:
   runner:
     runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          lfs: true
+          submodules: false
+      - name: Initialize workspace submodules
+        env:
+          CI_RUNNER_GITHUB_WORK_KEY: ${{ secrets.CI_RUNNER_GITHUB_WORK_KEY }}
+        run: scripts/ci/init-submodules.sh
       - uses: actions/setup-go@v6
         with:
           go-version-file: scripts/go/go.mod
           cache: false
       - name: Test backup and deployment safety
         working-directory: scripts/go
-        run: GOWORK=off go test ./rtk-cloud/internal/postgresbackup ./rtk-cloud/internal/recovery ./rtk-cloud -run 'PostgresBackup|PostgresRestore|ClusterLock|Capture|Restore|Retention|Prune|Upload|Archive|Manifest'
+        env:
+          GOWORK: 'off'
+          RTK_POSTGRES_BACKUP_INTEGRATION: '1'
+          RTK_POSTGRES_BACKUP_LARGE_INTEGRATION: '1'
+        run: |
+          docker pull postgres:16-alpine
+          go test -timeout=20m -count=1 ./rtk-cloud/internal/postgresbackup ./rtk-cloud/internal/recovery ./internal/cloudmonitor ./rtk-cloud
       - uses: docker/setup-buildx-action@v3
       - name: Resolve immutable source image
         id: images

@@ -98,10 +98,18 @@ func (m *postgresBackupManager) drill(ctx context.Context, id, drillID, identity
 	}
 	result.FinishedAt = time.Now().UTC()
 	result.Success = err == nil
-	if recordErr := postgresbackup.RecordDrill(context.WithoutCancel(ctx), c.Worker, result); recordErr != nil && err == nil {
+	recordDrill := m.RecordDrill
+	if recordDrill == nil {
+		recordDrill = postgresbackup.RecordDrill
+	}
+	if recordErr := recordDrill(context.WithoutCancel(ctx), c.Worker, result); recordErr != nil && err == nil {
 		err = recordErr
 	}
-	status, statusErr := postgresbackup.GetStatus(context.WithoutCancel(ctx), c.Worker)
+	readStatus := m.ReadRemoteStatus
+	if readStatus == nil {
+		readStatus = postgresbackup.GetStatus
+	}
+	status, statusErr := readStatus(context.WithoutCancel(ctx), c.Worker)
 	if statusErr == nil {
 		if prior, readErr := postgresBackupReadStatus(context.WithoutCancel(ctx), m); readErr == nil {
 			status.LastAttempt = prior.LastAttempt

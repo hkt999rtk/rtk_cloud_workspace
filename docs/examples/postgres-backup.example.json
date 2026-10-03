@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "environment": "staging",
+  "stack": "video-cloud-staging",
+  "namespace": "video-cloud-staging-platform",
+  "runner_image": "ghcr.io/REPLACE_WITH_REVIEWED_REPOSITORY/postgres-backup@sha256:REPLACE_WITH_CI_RUNNER_DIGEST",
+  "source_pod": "postgresql-0",
+  "source_container": "postgres",
+  "source_pvc": "data-postgresql-0",
+  "scratch_storage": "60Gi",
+  "image_pull_secret": "ghcr-pull",
+  "schedule": "0 3 * * *",
+  "time_zone": "Asia/Shanghai",
+  "worker": {
+    "version": 1,
+    "environment": "staging",
+    "stack": "video-cloud-staging",
+    "cluster_id": "REPLACE_WITH_REVIEWED_STABLE_CLUSTER_ID",
+    "directory": "/backup",
+    "source": {
+      "host": "postgresql.video-cloud-staging-platform.svc.cluster.local",
+      "port": 5432,
+      "user": "rtk_postgres_backup",
+      "password_file": "/run/postgres-backup/source-password",
+      "ssl_mode": "disable",
+      "postgres_image": "postgres:16-alpine@sha256:REPLACE_WITH_ACTUAL_SOURCE_PLATFORM_DIGEST",
+      "system_identifier": "REPLACE_WITH_VERIFIED_POSTGRES_SYSTEM_IDENTIFIER",
+      "max_rate": "10M"
+    },
+    "recipients": [
+      "REPLACE_WITH_REVIEWED_AGE_PUBLIC_RECIPIENT"
+    ],
+    "remote": {
+      "endpoint": "https://REPLACE_WITH_REVIEWED_BACKUP_ENDPOINT",
+      "region": "REPLACE_WITH_REVIEWED_BACKUP_REGION",
+      "bucket": "REPLACE_WITH_PRIVATE_ENVIRONMENT_BACKUP_BUCKET",
+      "prefix": "staging/postgres"
+    },
+    "timeout_seconds": 14400,
+    "max_plaintext_bytes": 21474836480,
+    "max_archive_bytes": 32212254720,
+    "retention_days": 14,
+    "minimum_backups": 14
+  }
+}

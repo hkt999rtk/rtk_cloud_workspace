@@ -81,4 +81,24 @@ func TestRecoveryMutationGuard(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	for _, args := range [][]string{
+		{"postgres-backup", "plan"}, {"postgres-backup", "status"},
+		{"postgres-backup", "prune", "--dry-run"},
+		{"postgres-backup", "prune", "--dry-run=false", "--dry-run=true"},
+		{"postgres-backup-worker", "run"}, // worker enforces the cluster lock
+	} {
+		if err := recoveryMutationGuard(args); err != nil {
+			t.Fatalf("safe inspection/worker rejected: %v: %v", args, err)
+		}
+	}
+	for _, args := range [][]string{
+		{"postgres-backup", "run"}, {"postgres-backup", "configure"},
+		{"postgres-backup", "prune"},
+		{"postgres-backup", "prune", "--dry-run=true", "--dry-run=false"},
+		{"postgres-restore", "drill"},
+	} {
+		if err := recoveryMutationGuard(args); err == nil {
+			t.Fatalf("mutation allowed during maintenance: %v", args)
+		}
+	}
 }
