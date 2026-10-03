@@ -21,6 +21,7 @@ func TestExportOTAMetricsArchivesExactBucketResponse(t *testing.T) {
 	now := time.Date(2026, 9, 28, 8, 0, 0, 0, time.UTC)
 	start, end := now.Add(-2*time.Hour), now.Add(-time.Hour)
 	var server *httptest.Server
+	var probeFile string
 	seen := map[string]int{}
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seen[r.URL.Path]++
@@ -66,10 +67,15 @@ func TestExportOTAMetricsArchivesExactBucketResponse(t *testing.T) {
 			}
 			if query.EntityRegion != otaMetricsTestRegion || !reflect.DeepEqual(query.GroupBy, []string{"entity_id", "endpoint"}) ||
 				query.TimeGranularity.Unit != "min" || query.TimeGranularity.Value != 1 ||
-				query.AbsoluteTimeDuration.Start != start.Format(time.RFC3339) || query.AbsoluteTimeDuration.End != end.Add(-time.Second).Format(time.RFC3339) ||
+				query.AbsoluteTimeDuration.Start != start.Format(time.RFC3339) || query.AbsoluteTimeDuration.End != end.Format(time.RFC3339) ||
 				len(query.Metrics) != 2 || query.Metrics[0].Name != "obj_requests_get" || query.Metrics[1].Name != "obj_bytes_downloaded" ||
 				query.Metrics[0].AggregateFunction != "sum" || query.Metrics[1].AggregateFunction != "sum" {
 				t.Errorf("metrics query is not the exact bucket GET/bytes UTC query: %+v", query)
+			}
+			// Changing the input after the exporter has read it must not change
+			// the archived proof or the totals used for qualification.
+			if err := os.WriteFile(probeFile, []byte(`{"invalid":true}`), 0o600); err != nil {
+				t.Error(err)
 			}
 			_, _ = w.Write(otaMetricsRegionalFixture(t, bucketHostname, endpointHost, start.Add(30*time.Minute)))
 		default:
@@ -82,7 +88,9 @@ func TestExportOTAMetricsArchivesExactBucketResponse(t *testing.T) {
 	cfg := deploymentConfig{Environment: otaMetricsTestEnvironment, RuntimeRoot: root,
 		Storage: deploymentStoragePlan{OTAMode: "dedicated", OTAFirmware: deploymentStorageTarget{Bucket: otaMetricsTestBucket, Region: otaMetricsTestRegion}}}
 	checker := deploymentCredentialChecker{client: server.Client(), linodeAPIRoot: server.URL + "/v4", monitorAPIRoot: server.URL + "/v2"}
-	if err := checker.exportOTAMetrics(cfg, "linode-pat", start.Format(time.RFC3339), end.Format(time.RFC3339), "staging-operator", now); err != nil {
+	probeFile = filepath.Join(t.TempDir(), "probe.json")
+	probeBody := writeOTAMetricsProbeFixture(t, probeFile, otaMetricsProbeFixture(cfg.Environment, otaMetricsTestBucket, otaMetricsTestRegion, server.URL, start, end, 2, 4096))
+	if err := checker.exportOTAMetrics(cfg, "linode-pat", start.Format(time.RFC3339), end.Format(time.RFC3339), "staging-operator", probeFile, now); err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range []string{"/v4/object-storage/buckets", "/v4/monitor/services/objectstorage/token", "/v2/monitor/services/objectstorage/metrics"} {
@@ -112,6 +120,135 @@ func TestExportOTAMetricsArchivesExactBucketResponse(t *testing.T) {
 	}
 	if err := validateOTAMetricsQualification(root, cfg.Environment, otaMetricsTestBucket, otaMetricsTestRegion, server.URL, now); err != nil {
 		t.Fatal(err)
+	}
+	archivedProbe, err := os.ReadFile(filepath.Join(root, receipt.ProbeFile))
+	info, statErr := os.Stat(filepath.Join(root, receipt.ProbeFile))
+	if err != nil || statErr != nil || !bytes.Equal(archivedProbe, probeBody) || info.Mode().Perm() != 0o600 {
+		t.Fatalf("probe evidence was not archived exactly and privately: %v, %v", err, statErr)
+	}
+}
+
+func newOTAMetricsExportTestServer(t *testing.T, metrics func(string, string) []byte, queryCheck func(*http.Request)) *httptest.Server {
+	t.Helper()
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		endpointHost := strings.TrimPrefix(server.URL, "http://")
+		bucketHostname := otaMetricsTestBucket + "." + endpointHost
+		switch r.URL.Path {
+		case "/v4/object-storage/buckets":
+			_, _ = fmt.Fprintf(w, `{"data":[{"label":%q,"region":%q,"hostname":%q,"s3_endpoint":%q,"endpoint_type":"E3"}]}`, otaMetricsTestBucket, otaMetricsTestRegion, bucketHostname, server.URL)
+		case "/v4/monitor/services/objectstorage/token":
+			_, _ = io.WriteString(w, `{"token":"monitor-test"}`)
+		case "/v2/monitor/services/objectstorage/metrics":
+			if queryCheck != nil {
+				queryCheck(r)
+			}
+			_, _ = w.Write(metrics(bucketHostname, endpointHost))
+		default:
+			t.Errorf("unexpected provider request: %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+func TestExportOTAMetricsRejectsUnderreportedControlledProbe(t *testing.T) {
+	now := time.Date(2026, 9, 28, 8, 0, 0, 0, time.UTC)
+	start, end := now.Add(-2*time.Hour), now.Add(-time.Hour)
+	for _, tc := range []struct {
+		name             string
+		gets, downloaded int64
+		pass             bool
+	}{
+		{"74 error bytes", 5, 74, false},
+		{"274 error bytes", 5, 274, false},
+		{"partial successful body", 5, 2 << 20, false},
+		{"missing successful request", 2, 16777216, false},
+		{"verified bodies with extra error bytes", 5, 16777216 + 274, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := newOTAMetricsExportTestServer(t, func(bucket, endpoint string) []byte {
+				return otaMetricsMatrixFixture(t, bucket, endpoint, start.Add(time.Minute), tc.gets, tc.downloaded)
+			}, nil)
+			root := t.TempDir()
+			cfg := deploymentConfig{Environment: otaMetricsTestEnvironment, RuntimeRoot: root, Storage: deploymentStoragePlan{OTAMode: "dedicated", OTAFirmware: deploymentStorageTarget{Bucket: otaMetricsTestBucket, Region: otaMetricsTestRegion}}}
+			probeFile := filepath.Join(t.TempDir(), "probe.json")
+			writeOTAMetricsProbeFixture(t, probeFile, otaMetricsProbeFixture(cfg.Environment, otaMetricsTestBucket, otaMetricsTestRegion, server.URL, start, end, 3, 16777216))
+			checker := deploymentCredentialChecker{client: server.Client(), linodeAPIRoot: server.URL + "/v4", monitorAPIRoot: server.URL + "/v2"}
+			err := checker.exportOTAMetrics(cfg, "linode-pat", start.Format(time.RFC3339), end.Format(time.RFC3339), "operator", probeFile, now)
+			if tc.pass {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "undercount") {
+				t.Fatalf("underreported probe qualified: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(root, "artifacts", "ota-metrics")); !os.IsNotExist(err) {
+				t.Fatalf("underreported metrics were archived as qualification: %v", err)
+			}
+		})
+	}
+}
+
+func TestOTAMetricsOneMinuteProviderQueryPreservesHalfOpenWindow(t *testing.T) {
+	now := time.Date(2026, 9, 28, 8, 0, 0, 0, time.UTC)
+	start, end := now.Add(-2*time.Minute), now.Add(-time.Minute)
+	for _, inWindow := range []bool{true, false} {
+		t.Run(fmt.Sprint(inWindow), func(t *testing.T) {
+			server := newOTAMetricsExportTestServer(t, func(bucket, endpoint string) []byte {
+				gets, downloaded := int64(0), int64(0)
+				if inWindow {
+					gets, downloaded = 3, 4096
+				}
+				var body map[string]any
+				_ = json.Unmarshal(otaMetricsMatrixFixture(t, bucket, endpoint, start, gets, downloaded), &body)
+				for index := range []int{0, 1} {
+					series := otaMetricTestSeries(body, index)
+					series["values"] = append(series["values"].([]any), []any{end.Unix(), "16777216"})
+				}
+				raw, _ := json.Marshal(body)
+				return raw
+			}, func(r *http.Request) {
+				var query struct {
+					Duration struct{ Start, End string } `json:"absolute_time_duration"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&query); err != nil {
+					t.Error(err)
+				}
+				queryStart, _ := time.Parse(time.RFC3339, query.Duration.Start)
+				queryEnd, _ := time.Parse(time.RFC3339, query.Duration.End)
+				if queryEnd.Sub(queryStart) != time.Minute || query.Duration.End != end.Format(time.RFC3339) {
+					t.Errorf("one-minute request became %v: %+v", queryEnd.Sub(queryStart), query.Duration)
+				}
+			})
+			root := t.TempDir()
+			cfg := deploymentConfig{Environment: otaMetricsTestEnvironment, RuntimeRoot: root, Storage: deploymentStoragePlan{OTAMode: "dedicated", OTAFirmware: deploymentStorageTarget{Bucket: otaMetricsTestBucket, Region: otaMetricsTestRegion}}}
+			probeFile := filepath.Join(t.TempDir(), "probe.json")
+			writeOTAMetricsProbeFixture(t, probeFile, otaMetricsProbeFixture(cfg.Environment, otaMetricsTestBucket, otaMetricsTestRegion, server.URL, start, end, 3, 4096))
+			checker := deploymentCredentialChecker{client: server.Client(), linodeAPIRoot: server.URL + "/v4", monitorAPIRoot: server.URL + "/v2"}
+			err := checker.exportOTAMetrics(cfg, "linode-pat", start.Format(time.RFC3339), end.Format(time.RFC3339), "operator", probeFile, now)
+			if !inWindow {
+				if err == nil {
+					t.Fatal("traffic at the excluded end qualified the probe")
+				}
+				if _, err := os.Stat(filepath.Join(root, "state", "ota-metrics-qualification.json")); !os.IsNotExist(err) {
+					t.Fatal("excluded boundary traffic wrote a qualification receipt")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			var receipt otaMetricsQualification
+			body, _ := os.ReadFile(filepath.Join(root, "state", "ota-metrics-qualification.json"))
+			_ = json.Unmarshal(body, &receipt)
+			if receipt.GETRequests != 3 || receipt.DownloadedBytes != 4096 {
+				t.Fatalf("inclusive provider boundary was counted locally: %+v", receipt)
+			}
+		})
 	}
 }
 
@@ -322,7 +459,9 @@ func TestExportOTAMetricsRejectsUnqualifiedProviderEvidence(t *testing.T) {
 			if tc.noToken {
 				token = ""
 			}
-			err := checker.exportOTAMetrics(cfg, token, start.Format(time.RFC3339), end.Format(time.RFC3339), "operator", now)
+			probeFile := filepath.Join(t.TempDir(), "probe.json")
+			writeOTAMetricsProbeFixture(t, probeFile, otaMetricsProbeFixture(cfg.Environment, otaMetricsTestBucket, otaMetricsTestRegion, server.URL, start, end, 1, 4096))
+			err := checker.exportOTAMetrics(cfg, token, start.Format(time.RFC3339), end.Format(time.RFC3339), "operator", probeFile, now)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("export error = %v, want %q", err, tc.want)
 			}

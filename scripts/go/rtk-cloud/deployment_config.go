@@ -200,6 +200,7 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 	metricsStart := fs.String("window-start", "", "UTC start of the OTA Cloud Pulse qualification window")
 	metricsEnd := fs.String("window-end", "", "UTC end of the OTA Cloud Pulse qualification window")
 	metricsRecorder := fs.String("recorded-by", "", "operator identity for the OTA metrics qualification")
+	metricsProbeFile := fs.String("probe-evidence-file", "", "private JSON evidence of the verified OTA GetObject bodies")
 	operation := fs.String("operation", "", "preflight operation: plan, provision, acceptance, or ephemeral-test")
 	var qualification deploymentCredentialCheckOptions
 	var selectedChecks string
@@ -225,8 +226,11 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 	if action != "storage-reinitialize" && (hasFlag(args[1:], "--acknowledge-discarded-source") || hasFlag(args[1:], "--plan")) {
 		return errors.New("--acknowledge-discarded-source and --plan require storage-reinitialize")
 	}
-	if action != "storage-metrics-export" && (hasFlag(args[1:], "--window-start") || hasFlag(args[1:], "--window-end") || hasFlag(args[1:], "--recorded-by")) {
-		return errors.New("OTA metrics window and operator flags require deployment storage-metrics-export")
+	if action != "storage-metrics-export" && (hasFlag(args[1:], "--window-start") || hasFlag(args[1:], "--window-end") || hasFlag(args[1:], "--recorded-by") || hasFlag(args[1:], "--probe-evidence-file")) {
+		return errors.New("OTA metrics window, operator and probe flags require deployment storage-metrics-export")
+	}
+	if action == "storage-metrics-export" && strings.TrimSpace(*metricsProbeFile) == "" {
+		return errors.New("--probe-evidence-file is required for OTA metrics qualification")
 	}
 	qualificationFlags := keySet("read-only", "checks", "image", "manifest", "tls-cert", "tls-key", "tls-ca", "tls-name", "tls-purpose", "min-valid-days")
 	customQualification := false
@@ -316,7 +320,7 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 			if *storagePurpose != "ota" {
 				return errors.New("storage-metrics-export requires --purpose ota")
 			}
-			return runDeploymentOTAMetricsExport(cfg, *envFile, *metricsStart, *metricsEnd, *metricsRecorder)
+			return runDeploymentOTAMetricsExport(cfg, *envFile, *metricsStart, *metricsEnd, *metricsRecorder, *metricsProbeFile)
 		}
 		return runDeploymentStorageLifecyclePurpose(action, cfg, *envFile, *sourceEnvFile, *keyID, *storagePurpose)
 	}
@@ -752,7 +756,7 @@ func printDeploymentUsage() {
   rtk-cloud deployment storage-bootstrap --environment NAME --purpose media|ota|artifacts --destination-env-file PATH --confirm STACK
   rtk-cloud deployment storage-reinitialize --environment NAME --purpose media|ota --source-env-file PATH --destination-env-file PATH --acknowledge-discarded-source BUCKET [--plan | --confirm STACK]
   rtk-cloud deployment storage-migrate --environment NAME --purpose media|ota|artifacts --destination-env-file PATH --source-env-file PATH --confirm STACK
-  rtk-cloud deployment storage-metrics-export --environment NAME --purpose ota --window-start YYYY-MM-DDTHH:MM:SSZ --window-end YYYY-MM-DDTHH:MM:SSZ --recorded-by OPERATOR --confirm STACK
+  rtk-cloud deployment storage-metrics-export --environment NAME --purpose ota --window-start YYYY-MM-DDTHH:MM:SSZ --window-end YYYY-MM-DDTHH:MM:SSZ --recorded-by OPERATOR --probe-evidence-file FILE --confirm STACK
   rtk-cloud deployment storage-cutover --environment NAME --purpose media|ota --destination-env-file PATH --source-env-file PATH --confirm STACK
   rtk-cloud deployment storage-rollback --environment NAME --purpose media|ota --destination-env-file PATH --confirm STACK
   rtk-cloud deployment storage-retire --environment NAME --key-id ID --confirm STACK

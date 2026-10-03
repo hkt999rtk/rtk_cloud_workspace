@@ -37,7 +37,7 @@ func parseOTAMetricsWindow(startText, endText string, now time.Time) (time.Time,
 // selectOTAMetricsMatrix discards other buckets' series before any provider
 // response is archived. Object Storage Cloud Pulse currently issues only an
 // account-wide service token and does not accept an entity_id query filter.
-func selectOTAMetricsMatrix(raw []byte, bucketHostname, endpointHost string) ([]byte, error) {
+func selectOTAMetricsMatrix(raw []byte, bucketHostname, endpointHost string, end time.Time) ([]byte, error) {
 	var response struct {
 		Status    string `json:"status"`
 		IsPartial *bool  `json:"isPartial"`
@@ -70,6 +70,17 @@ func selectOTAMetricsMatrix(raw []byte, bucketHostname, endpointHost string) ([]
 		if json.Unmarshal(series.Metric["entity_id"], &entityID) == nil &&
 			json.Unmarshal(series.Metric["endpoint"], &endpoint) == nil &&
 			entityID == bucketHostname && endpoint == endpointHost {
+			// The provider can include its inclusive end boundary. Archive only
+			// [start,end); every other out-of-window point still fails validation.
+			points := series.Values[:0:0]
+			for _, point := range series.Values {
+				var epoch int64
+				if len(point) == 2 && json.Unmarshal(point[0], &epoch) == nil && epoch == end.Unix() {
+					continue
+				}
+				points = append(points, point)
+			}
+			series.Values = points
 			selected = append(selected, series)
 		}
 	}
@@ -178,7 +189,7 @@ func parseOTAMetricsMatrix(raw []byte, bucketHostname, endpointHost string, star
 	return counts["obj_requests_get"], counts["obj_bytes_downloaded"], nil
 }
 
-func runDeploymentOTAMetricsExport(cfg deploymentConfig, environmentFile, startText, endText, recorder string) error {
+func runDeploymentOTAMetricsExport(cfg deploymentConfig, environmentFile, startText, endText, recorder, probeFile string) error {
 	if cfg.Storage.OTAMode != "dedicated" || strings.TrimSpace(recorder) == "" {
 		return errors.New("OTA metrics export requires dedicated OTA storage and --recorded-by")
 	}
@@ -186,10 +197,10 @@ func runDeploymentOTAMetricsExport(cfg deploymentConfig, environmentFile, startT
 	if !check.Passed {
 		return errors.New(check.Detail)
 	}
-	return defaultDeploymentCredentialChecker().exportOTAMetrics(cfg, values["LINODE_TOKEN"], startText, endText, recorder, time.Now().UTC())
+	return defaultDeploymentCredentialChecker().exportOTAMetrics(cfg, values["LINODE_TOKEN"], startText, endText, recorder, probeFile, time.Now().UTC())
 }
 
-func (c deploymentCredentialChecker) exportOTAMetrics(cfg deploymentConfig, linodeToken, startText, endText, recorder string, now time.Time) error {
+func (c deploymentCredentialChecker) exportOTAMetrics(cfg deploymentConfig, linodeToken, startText, endText, recorder, probeFile string, now time.Time) error {
 	start, end, err := parseOTAMetricsWindow(startText, endText, now)
 	if err != nil {
 		return err
@@ -199,6 +210,10 @@ func (c deploymentCredentialChecker) exportOTAMetrics(cfg deploymentConfig, lino
 	}
 	if strings.TrimSpace(linodeToken) == "" {
 		return errors.New("LINODE_TOKEN is required for Cloud Pulse export")
+	}
+	probeBody, err := readPrivateOTAMetricsProbe(probeFile)
+	if err != nil {
+		return err
 	}
 	bucket, err := c.resolveStorageBucket(linodeToken, cfg.Storage.OTAFirmware)
 	if err != nil {
@@ -215,6 +230,10 @@ func (c deploymentCredentialChecker) exportOTAMetrics(cfg deploymentConfig, lino
 	bucketHostname := bucket.Label + "." + parsedEndpoint.Host
 	if bucket.Hostname != bucketHostname {
 		return errors.New("OTA bucket inventory hostname does not match its selected endpoint")
+	}
+	proof, err := parseOTAMetricsProbe(probeBody, cfg.Environment, bucket.Label, cfg.Storage.OTAFirmware.Region, endpoint, start, end, now)
+	if err != nil {
+		return err
 	}
 	// The provider rejects entity_ids for Object Storage. The service token is
 	// account-wide and remains in memory only for this regional query.
@@ -257,7 +276,7 @@ func (c deploymentCredentialChecker) exportOTAMetrics(cfg deploymentConfig, lino
 		AbsoluteTimeDuration: struct {
 			Start string `json:"start"`
 			End   string `json:"end"`
-		}{startText, end.Add(-time.Second).Format(time.RFC3339)},
+		}{startText, endText},
 	})
 	monitorRoot := c.monitorAPIRoot
 	if monitorRoot == "" {
@@ -273,7 +292,7 @@ func (c deploymentCredentialChecker) exportOTAMetrics(cfg deploymentConfig, lino
 	if err != nil {
 		return fmt.Errorf("Cloud Pulse bucket metrics request failed: %w", err)
 	}
-	selected, err := selectOTAMetricsMatrix(response, bucketHostname, parsedEndpoint.Host)
+	selected, err := selectOTAMetricsMatrix(response, bucketHostname, parsedEndpoint.Host, end)
 	if err != nil {
 		return err
 	}
@@ -285,25 +304,24 @@ func (c deploymentCredentialChecker) exportOTAMetrics(cfg deploymentConfig, lino
 	if gets <= 0 || downloaded <= 0 {
 		return errors.New("controlled OTA signed GET must yield positive bucket GET and downloaded-byte metrics")
 	}
+	if err := validateOTAMetricsProbeCounts(proof, gets, downloaded); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Join(cfg.RuntimeRoot, "artifacts", "ota-metrics"), 0o700); err != nil {
 		return err
 	}
 	relative := filepath.Join("artifacts", "ota-metrics", fmt.Sprintf("qualification-%d-%d.json", start.Unix(), now.UnixNano()))
 	archivePath := filepath.Join(cfg.RuntimeRoot, relative)
-	archive, err := os.OpenFile(archivePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
+	if err := writeOTAMetricsArchive(archivePath, selected); err != nil {
 		return err
 	}
-	_, writeErr := archive.Write(selected)
-	if writeErr == nil {
-		writeErr = archive.Sync()
-	}
-	closeErr := archive.Close()
-	if writeErr != nil || closeErr != nil {
+	probeRelative := strings.TrimSuffix(relative, ".json") + "-probe.json"
+	if err := writeOTAMetricsArchive(filepath.Join(cfg.RuntimeRoot, probeRelative), probeBody); err != nil {
 		_ = os.Remove(archivePath)
-		return errors.New("Cloud Pulse archive could not be written completely")
+		return fmt.Errorf("OTA probe archive could not be written: %w", err)
 	}
 	sum := sha256.Sum256(selected)
+	probeSum := sha256.Sum256(probeBody)
 	receipt := otaMetricsQualification{
 		Source: "akamai_cloud_pulse", Environment: cfg.Environment, Bucket: bucket.Label,
 		BucketHostname: bucketHostname, Region: cfg.Storage.OTAFirmware.Region, Endpoint: endpoint,
@@ -311,6 +329,7 @@ func (c deploymentCredentialChecker) exportOTAMetrics(cfg deploymentConfig, lino
 		RecordedBy: recorder, ExportFile: relative, ExportSHA256: hex.EncodeToString(sum[:]),
 		GETMetric: "obj_requests_get", GETRequests: gets,
 		DownloadedBytesMetric: "obj_bytes_downloaded", DownloadedBytes: downloaded,
+		ProbeFile: probeRelative, ProbeSHA256: hex.EncodeToString(probeSum[:]),
 	}
 	if err := writeOTAMetricsQualificationReceipt(cfg.RuntimeRoot, receipt); err != nil {
 		return err
@@ -319,6 +338,23 @@ func (c deploymentCredentialChecker) exportOTAMetrics(cfg deploymentConfig, lino
 		return err
 	}
 	fmt.Printf("OTA Cloud Pulse qualification: bucket=%s window=%s..%s GET=%d downloaded_bytes=%d archive=%s\n", bucket.Label, startText, endText, gets, downloaded, relative)
+	return nil
+}
+
+func writeOTAMetricsArchive(path string, body []byte) error {
+	archive, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	_, writeErr := archive.Write(body)
+	if writeErr == nil {
+		writeErr = archive.Sync()
+	}
+	closeErr := archive.Close()
+	if writeErr != nil || closeErr != nil {
+		_ = os.Remove(path)
+		return errors.New("OTA metrics archive could not be written completely")
+	}
 	return nil
 }
 

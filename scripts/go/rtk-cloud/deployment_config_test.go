@@ -227,6 +227,15 @@ func TestOTAMetricsExportRejectsTrailingPositionalArguments(t *testing.T) {
 	}
 }
 
+func TestOTAMetricsExportRequiresProbeAndRejectsMisplacedProbeFlag(t *testing.T) {
+	if err := runDeploymentWithOperations([]string{"storage-metrics-export", "--environment", "dev", "--purpose", "ota"}, deploymentOperations{}); err == nil || !strings.Contains(err.Error(), "--probe-evidence-file is required") {
+		t.Fatalf("missing controlled probe evidence error = %v", err)
+	}
+	if err := runDeploymentWithOperations([]string{"plan", "--probe-evidence-file", "/private/probe.json"}, deploymentOperations{}); err == nil || !strings.Contains(err.Error(), "probe flags require") {
+		t.Fatalf("misplaced controlled probe evidence error = %v", err)
+	}
+}
+
 func TestDeploymentCredentialFailureStopsBeforeRuntimeMutation(t *testing.T) {
 	for _, action := range []string{"provision", "test"} {
 		t.Run(action, func(t *testing.T) {

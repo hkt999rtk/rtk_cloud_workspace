@@ -167,8 +167,10 @@ The live drain query only covers releases whose stored object key begins `ota/`,
 For direct delivery, first perform a controlled private signed GET on the
 actual E3 OTA bucket. After Cloud Pulse has reported that request, export a
 recent UTC interval with the operator command below. Its window is
-minute-aligned and half-open `[start,end)`; the API query ends one second before
-`end` so adjacent intervals cannot count the same minute twice. This command
+minute-aligned and half-open `[start,end)`. The provider query includes `end`,
+so even a one-minute interval sends a full 60 seconds. Before archiving, the
+tool removes points exactly at `end`; adjacent local intervals cannot count
+the same boundary twice. Every other out-of-window point is rejected. This command
 is a **cutover qualification**, with a maximum 24-hour window. It is not a
 complete monthly evidence export.
 
@@ -176,12 +178,42 @@ complete monthly evidence export.
 rtk-cloud deployment storage-metrics-export --environment staging --purpose ota \
   --destination-env-file /secure/staging-ota-candidate.env \
   --window-start '<recent-start-utc>' --window-end '<recent-end-utc>' \
+  --probe-evidence-file /secure/staging-ota-probe.json \
   --recorded-by '<operator-id>' --confirm video-cloud-staging
 ```
 
 Replace the window placeholders with minute-aligned RFC3339 UTC timestamps
 (for example, `YYYY-MM-DDTHH:MM:00Z`) that include the controlled test and satisfy
 the 72-hour freshness limit. Do not reuse a historical qualification window.
+
+Create the private `0600` probe evidence from a completed, verified download.
+It records only successful `GetObject` response bodies (`200` or `206`), whose
+contents matched the fixture. Exclude `ListObjects` bodies, denied or expired
+GETs, and protocol overhead. For a range/resume test, count each verified range
+body once; verify the reconstructed fixture digest. The selected window must
+contain the probe and the reported provider samples, including any collection
+delay. Its identity and window must exactly match the export:
+
+```json
+{
+  "version": 1,
+  "environment": "staging",
+  "bucket": "rtk-cloud-staging-ota-firmware-sg-sin-2",
+  "region": "sg-sin-2",
+  "endpoint": "https://sg-sin-1.linodeobjects.com",
+  "started_at": "<probe-start-UTC>",
+  "completed_at": "<probe-completion-UTC>",
+  "window_start": "<selected-minute-UTC>",
+  "window_end": "<selected-minute-UTC>",
+  "fixture_sha256": "<verified-64-character-lowercase-SHA-256>",
+  "successful_get_requests": 3,
+  "successful_downloaded_bytes": 16777216
+}
+```
+
+The example counts describe an 8 MiB fixture downloaded once through two
+verified ranges and once through a full GET. Use the actual completed probe's
+counts, times and digest. The tool has no arbitrary minimum-byte override.
 
 The command reads `LINODE_TOKEN` from the selected credential profile; the
 example uses the candidate prepared from the environment's operator profile.
@@ -190,17 +222,23 @@ and does not accept an `entity_id` query filter. The token is used only in
 memory to query the selected region for `obj_requests_get` and
 `obj_bytes_downloaded` with one-minute granularity. It requires a complete
 `success` matrix, exact bucket and endpoint labels, in-window timestamps,
-whole nonnegative values and positive totals. Before writing any file, the
+whole nonnegative values, and GET/download totals at least as large as the
+verified successful probe bodies. A positive count of error-response bytes,
+partial payload accounting or unrelated traffic does not establish qualification.
+Before writing any file, the
 command selects only the exact OTA bucket and endpoint series and discards the
 rest of the account-wide response. It archives that filtered JSON under
 `runtime/artifacts/ota-metrics/` with a SHA-256 digest and atomically
+archives the exact probe evidence bytes separately as `0600` and atomically
 writes `runtime/state/ota-metrics-qualification.json`. It never stores the
-service token. The receipt includes the UTC window, bucket hostname, endpoint,
+service token. The receipt binds both archive SHA-256 values and includes the UTC window, bucket hostname, endpoint,
 metric totals, export time and operator identity. Subsequent deployment checks
-reparse the archived series, compare both totals and require the export and
-window to be within 72 hours. The operator must compare the controlled GET's
-time and transferred bytes with this result; an empty interval or unrelated
-traffic is not proof of qualification. The local archive and receipt are
+reparse both archives, check the exact target/window and successful probe
+totals, compare the metric totals and require the export and window to be
+within 72 hours. Existing receipts without probe evidence must be requalified.
+The operator remains responsible for recording the actual verified bodies and
+isolating the controlled interval; bucket aggregates cannot attribute traffic
+to individual requests. The local archives and receipt are
 operator-held evidence, not independent authentication of provider origin.
 The 2026-09-28 Dev E3 run verified the provider's actual matrix labels and
 response shape against this parser. Requalify each bucket and environment
@@ -212,7 +250,7 @@ provider's monthly invoice. The provider retains these metrics for 93 days;
 retain monthly exports and independent completeness proof before that window
 expires. Inactive minutes can appear as empty-string values in a returned
 series; the qualification sum skips those placeholders and still requires
-positive GET and downloaded-byte totals from the controlled test. Collection
+provider totals that cover the verified successful probe bodies. Collection
 delays or gaps need separate investigation before closing a charged month.
 The export follows Akamai's [service token](https://techdocs.akamai.com/linode-api/reference/post-get-token),
 [metrics query](https://techdocs.akamai.com/linode-api/reference/post-read-metric),

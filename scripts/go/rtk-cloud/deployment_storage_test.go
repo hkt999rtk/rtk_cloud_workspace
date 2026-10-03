@@ -959,13 +959,13 @@ func TestDedicatedOTAStorageLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	archiveHash := sha256.Sum256(archive)
-	writeOTAMetricsReceipt(t, cutoverCfg.RuntimeRoot, otaMetricsQualification{
+	writeOTAMetricsReceipt(t, cutoverCfg.RuntimeRoot, attachOTAMetricsProbeFixture(t, cutoverCfg.RuntimeRoot, otaMetricsQualification{
 		Source: "akamai_cloud_pulse", Environment: "dev", Bucket: bucketName, BucketHostname: bucketName + "." + endpointHost, Region: "us-sea", Endpoint: server.URL,
 		WindowStart: metricsNow.Add(-10 * time.Minute).Format(time.RFC3339), WindowEnd: metricsNow.Add(-2 * time.Minute).Format(time.RFC3339),
 		ExportedAt: metricsNow.Add(-time.Minute).Format(time.RFC3339), RecordedBy: "test-operator",
 		ExportFile: archiveRelative, ExportSHA256: hex.EncodeToString(archiveHash[:]),
 		GETMetric: "obj_requests_get", GETRequests: 1, DownloadedBytesMetric: "obj_bytes_downloaded", DownloadedBytes: 32,
-	})
+	}))
 	if err := runDeploymentStorageLifecyclePurpose("storage-cutover", cutoverCfg, profile, sourceFile, 0, "ota"); err == nil || !strings.Contains(err.Error(), "migration receipt") {
 		t.Fatalf("OTA cutover accepted missing migration inventory: %v", err)
 	}
