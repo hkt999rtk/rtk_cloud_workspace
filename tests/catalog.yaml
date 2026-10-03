@@ -78,8 +78,8 @@ cases:
     layer: integration
     owner: rtk_video_cloud
     source: repos/rtk_video_cloud/internal/postgres/raw_lifecycle_integration_test.go
-    selector: "./internal/postgres#TestRawLifecycleReconciliationRequiresEveryExactAcknowledgedMeasurement,./internal/postgres#TestRawLifecycleLegacyDeliveredMarkersRequireProtocolReacknowledgment"
-    method: Real isolated PostgreSQL receipt event fact and outbox transactions require every exact Billing payload acknowledgment and reject missing fields altered identities incomplete measurements and unqualified legacy delivery markers without modifying cursor or evidence.
+    selector: "./internal/postgres#TestRawLifecycleReconciliationRequiresEveryExactAcknowledgedMeasurement,./internal/postgres#TestRawLifecycleLegacyDeliveredMarkersRequireProtocolReacknowledgment,./internal/mqttusageapp#TestRawLifecycleHistoricalReacknowledgmentsRotateWithoutStarvingFreshFacts"
+    method: Real isolated PostgreSQL receipt event fact and outbox transactions require every exact Billing payload acknowledgment and reject missing fields altered identities incomplete measurements and unqualified legacy delivery markers without modifying cursor or evidence. Bounded forwarder cycles retain failed legacy facts while rotating their retries and prioritizing fresh facts.
     runner: test-services
     environments: [ci]
     evidence: [json, junit]
