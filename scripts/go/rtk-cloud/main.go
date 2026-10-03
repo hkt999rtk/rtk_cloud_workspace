@@ -169,8 +169,12 @@ func run(args []string) error {
 		return nil
 	}
 	args = normalizeLegacyPathArgs(args)
-	if err := recoveryMutationGuard(args); err != nil {
-		return err
+	// The deployment-check facade validates all arguments before consulting
+	// the same maintenance fence. Other commands retain their existing order.
+	if !(len(args) > 1 && args[0] == "deployment" && args[1] == "check") {
+		if err := recoveryMutationGuard(args); err != nil {
+			return err
+		}
 	}
 	var err error
 	args, err = normalizeEnvironmentArgs(args)

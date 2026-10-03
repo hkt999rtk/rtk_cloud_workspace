@@ -147,6 +147,61 @@ additionally validates provider, DNS, GHCR, SSH key, active-service limit, and
 existing-cluster safety state. Output shows only `PASS/WARN/FAIL`, never credential
 values. Correct every `FAIL` before proceeding to provisioning.
 
+## Check an Existing Environment
+
+Use the unified checker before changing an existing environment:
+
+```sh
+scripts/check-deployment-credentials.sh --environment staging --fast \
+  --report /tmp/staging-deployment-check.json
+# Direct Go entry point:
+go run ./scripts/go/rtk-cloud -- deployment check --environment staging --fast
+# Full pull of an affected, reviewed CI image, without provider writes:
+scripts/check-deployment-credentials.sh --environment staging --read-only \
+  --checks ghcr --image "$RELEASE_IMAGE"
+```
+
+The shell builds the checker once and executes it once. `deployment check`
+requires the selected environment's SecretStore, kubeconfig, live Secret mirrors
+and PKI checks even when `--checks` narrows provider/TLS/mount checks. Missing
+kubeconfig blocks dependent live checks. This entry does not bootstrap a new
+cloud environment or adopt an empty existing cluster. Legacy
+`deployment credentials-check` keeps its provider/local-only behavior and
+existing provisioning callers.
+
+| Mode | Provider writes and receipts | Explicit `--image` |
+| --- | --- | --- |
+| Default | Selected DNS/storage canaries and validation receipts remain enabled | Full controller-host `linux/amd64` pull |
+| `--read-only` | No canaries or new receipts | Full pull remains enabled |
+| `--fast` | Implies read-only | Manifest/config and platform metadata; full pull reported as skipped |
+
+Without `--image`, GHCR checks repository access. Metadata access, a controller
+pull that may reuse cached layers, and a cluster rollout provide different
+evidence. A controller pull does not prove cold-node downloads or matching live
+`imagePullSecret` credentials. Supply each affected immutable image explicitly.
+
+`--timeout` defaults to **2m for fast mode and 10m otherwise**, measured after
+CLI/configuration validation and any shell build. The checker limits independent
+read probes to four and full pulls to two; provider writes remain sequential.
+Individual HTTP, Kubernetes, SQL and pull operations have shorter deadlines.
+Temporary read failures retry once within the remaining budget. On cancellation,
+created canaries receive up to 30s of additional cleanup time, with cleanup
+failure reported separately. See the [checker reference](../scripts/README.md#existing-environment-deployment-checks)
+for exact limits and retry conditions.
+`--report PATH` writes sanitized JSON with mode 0600 to an existing parent
+directory. Schema version 1 records scope, coverage and per-check status/code,
+resource, required flag, duration, attempts, dependencies, message, next action
+and evidence time/level. Final statuses are `PASS`, `FAIL`, `ERROR`, `BLOCKED`,
+and `SKIPPED`; required incomplete checks prevent success.
+
+The shell and compiled checker return **0** for successful required selected
+checks, **1** for check/report failure and **2** for invalid inputs/configuration.
+Use the shell for exact exit codes; `go run` may return 1 for a program that exits
+2. A PASS covers the selected checks; complete release approval still requires
+the [release gates below](#upgrade-persistent-staging-release-gates).
+See [checker options and PKI gates](../scripts/README.md#existing-environment-deployment-checks)
+for TLS/mount qualification, optional PKI checks and explicit credential repairs.
+
 ## Create a New Environment
 
 Use this path only after confirming that the target cluster/storage does not
@@ -244,7 +299,7 @@ different results. Do not report a complete staging release from ready Pods,
    migration-owner Secret instead of accepting the controller runtime login.
    Before Product PKI lifecycle acceptance, add --require-product-pki to
    verify that the controller pins an active Device Root in its registry.
-   Before the write fence, run the full credential check without --read-only
+   Before the write fence, run the full credential check without --fast or --read-only
    and then deployment plan so the validated runtime-media storage receipt
    populates the blob endpoint used by the deployer.
 5. **Console gate.** Run the maintained check below and inspect its JSON report.

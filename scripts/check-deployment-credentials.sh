@@ -2,49 +2,33 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Build once and execute once: go run would turn the checker's exit 2 into 1.
+CHECK_TMP="$(mktemp -d)"
+CHECK_PID=""
+trap 'rm -rf "$CHECK_TMP"' EXIT
 
-environment=""
-require_pki_migration=false
-require_product_pki=false
-arguments=()
-for argument in "$@"; do
-  if [[ "$argument" == "--require-pki-migration" ]]; then
-    require_pki_migration=true
-  elif [[ "$argument" == "--require-product-pki" ]]; then
-    require_product_pki=true
-  else
-    arguments+=("$argument")
+forward_signal() {
+  local signal="$1" status="$2"
+  trap '' INT TERM
+  if [[ -n "$CHECK_PID" ]]; then
+    kill -s "$signal" "$CHECK_PID" 2>/dev/null || true
+    # Give the checker time to perform its bounded canary cleanup.
+    wait "$CHECK_PID" 2>/dev/null || true
   fi
-done
-for ((index = 0; index < ${#arguments[@]}; index++)); do
-  case "${arguments[$index]}" in
-    --environment)
-      if ((index + 1 < ${#arguments[@]})); then
-        environment="${arguments[$((index + 1))]}"
-      fi
-      ;;
-    --environment=*)
-      environment="${arguments[$index]#--environment=}"
-      ;;
-  esac
-done
+  exit "$status"
+}
+trap 'forward_signal INT 1' INT
+trap 'forward_signal TERM 1' TERM
 
-if [[ -n "$environment" ]]; then
-  # Provider credentials can all be valid while workload identities held on
-  # PVCs are detached from the PKI registry after a database restore/rebuild.
-  # Keep this read-only verification in the standard deployment check so that
-  # such a stack is a NO-GO before any rollout starts.
-  secret_args=(--environment "$environment")
-  if [[ "$require_pki_migration" == true ]]; then
-    secret_args+=(--require-pki-migration)
-  fi
-  if [[ "$require_product_pki" == true ]]; then
-    secret_args+=(--require-product-pki)
-  fi
-  go run "$ROOT/scripts/go/rtk-cloud" -- secrets verify "${secret_args[@]}"
-elif [[ "$require_pki_migration" == true || "$require_product_pki" == true ]]; then
-  echo "PKI qualification flags require --environment" >&2
-  exit 2
-fi
+run_child() {
+  local status=0
+  "$@" &
+  CHECK_PID=$!
+  wait "$CHECK_PID" || status=$?
+  CHECK_PID=""
+  return "$status"
+}
 
-exec go run "$ROOT/scripts/go/rtk-cloud" -- deployment credentials-check --workspace "$ROOT" "${arguments[@]}"
+cd "$ROOT"
+run_child go build -o "$CHECK_TMP/rtk-cloud" ./scripts/go/rtk-cloud
+run_child "$CHECK_TMP/rtk-cloud" deployment check --workspace "$ROOT" "$@"

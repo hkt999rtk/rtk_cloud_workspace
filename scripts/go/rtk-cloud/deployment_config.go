@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/envroot"
 	"rtk-cloud-workspace/scripts/go/internal/storagepolicy"
+	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/envroot"
 )
 
 type deploymentConfig struct {
@@ -169,6 +169,9 @@ func defaultDeploymentOperations() deploymentOperations {
 }
 
 func runDeploymentWithOperations(args []string, ops deploymentOperations) error {
+	if len(args) > 0 && args[0] == "check" {
+		return runDeploymentCheck(args[1:])
+	}
 	if len(args) > 0 && args[0] == "console-check" {
 		// Read-only feature checks must not materialize or normalize a live runtime.
 		return runDeploymentConsoleCheck(args[1:])
@@ -720,6 +723,7 @@ func validateLKEEnvironmentStateBeforeMutation(cfg deploymentConfig) error {
 
 func printDeploymentUsage() {
 	fmt.Fprint(os.Stdout, `Usage:
+  rtk-cloud deployment check --environment NAME [--fast] [--timeout 2m] [--report PATH]
   rtk-cloud deployment credentials-check --environment NAME
   rtk-cloud deployment credentials-check --environment NAME --read-only [--checks ghcr,tls,mounts] [--image GHCR_DIGEST] [--manifest WORKLOAD_JSON]
   rtk-cloud deployment credentials-check --environment NAME --create-missing-object-storage-bucket
