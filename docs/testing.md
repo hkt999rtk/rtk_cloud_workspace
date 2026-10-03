@@ -2,6 +2,51 @@
 
 Use this workspace to coordinate validation across pinned submodule commits.
 
+## PostgreSQL Daily Backup Qualification
+
+[Daily PostgreSQL Backup and Restore](postgres-backup-restore.md) owns the
+operational procedure. Deterministic tests must cover native capture/manifest
+verification, source identity and image checks, bounded encrypted archives,
+completion-after-readback, multipart failure/retry, retention protecting at least
+14 days/14 successes/the last successful drill, and shared maintenance exclusion.
+Test with fake executors and isolated local fixtures; normal CI must not contact
+Dev, Staging or Prod.
+
+Cloud Monitor's dedicated backup tests check capture-time freshness at 26/28
+hours, failed/skipped/timed-out attempts, independent restore-drill outcomes,
+missing/malformed/foreign status evidence, redaction and read-only named ConfigMap
+access:
+
+```sh
+cd scripts/go
+go test ./internal/cloudmonitor -run TestPostgresBackup
+go test ./rtk-cloud/internal/postgresbackup
+```
+
+Local tests do not qualify remote storage or a live restore. A dated staging run
+must record the exact PostgreSQL and runner image digests, system identifier,
+database size, node/PVC resources, backup rate and timings. Compare representative
+API histogram p95 and p99 before and during backup with the same workload and
+sample window. Each window must be at least five minutes, request rates must
+agree within 5%, and error rate must not increase. Both latency percentiles may
+increase by at most 5%; record errors, throughput, source
+CPU/I/O/WAL, scratch usage and backup duration alongside those percentiles.
+Missing or statistically unusable baseline data leaves the performance gate
+pending. A successful upload is not restore evidence.
+Schedule enablement requires `--qualification FILE` with this measured evidence,
+bound to the current images, rate, system identity and successfully drilled
+backup. The [schema example](examples/postgres-backup-qualification.example.json)
+contains deliberately invalid placeholders and zero measurements.
+
+Run the isolated restore drill from a remotely read-back completed archive using
+independent restore credentials and escrow. Verify native checksums/WAL, startup,
+the expected databases/roles and service-owned representative data; record the
+measured recovery time. Exercise upload outage/retry, cancellation/timeout,
+corruption, incomplete inventory, concurrent core-maintenance exclusion and
+retention protection. Save sanitized evidence outside the backup payload, remove
+only isolated drill resources, and record the remaining resources and unresolved
+prerequisites. Production scheduling stays suspended until those gates pass.
+
 ## Test Case Governance
 
 [`tests/catalog.yaml`](../tests/catalog.yaml) is the only source of truth for

@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "environment": "staging",
+  "stack": "video-cloud-staging",
+  "cluster_id": "REPLACE_WITH_REVIEWED_CLUSTER_ID",
+  "source_postgres_image": "REPLACE_WITH_RUNNING_PLATFORM_IMAGE_DIGEST",
+  "runner_image": "REPLACE_WITH_CI_RUNNER_IMAGE_DIGEST",
+  "system_identifier": "REPLACE_WITH_POSTGRES_SYSTEM_IDENTIFIER",
+  "max_rate": "10M",
+  "backup_id": "REPLACE_WITH_SUCCESSFULLY_DRILLED_BACKUP_ID",
+  "workload_id": "REPLACE_WITH_RETAINED_MEASUREMENT_EVIDENCE_ID",
+  "reviewed_by": "REPLACE_WITH_REVIEWER",
+  "measured_at": "0001-01-01T00:00:00Z",
+  "baseline": {
+    "duration_seconds": 0,
+    "requests": 0,
+    "errors": 0,
+    "p95_ms": 0,
+    "p99_ms": 0
+  },
+  "during_backup": {
+    "duration_seconds": 0,
+    "requests": 0,
+    "errors": 0,
+    "p95_ms": 0,
+    "p99_ms": 0
+  }
+}

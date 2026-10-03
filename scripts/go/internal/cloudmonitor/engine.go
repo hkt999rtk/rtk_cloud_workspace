@@ -107,6 +107,7 @@ func Watch(ctx context.Context, cfg Config, inv Inventory, rt Runtime, runner Co
 				func() Collection { return CollectHTTP(c, cfg, inv, rt, n) },
 				func() Collection { return CollectTLS(c, cfg, rt, n) },
 				func() Collection { return CollectTokens(c, cfg, rt, n) },
+				func() Collection { return CollectPostgresBackups(c, cfg, rt, runner, n) },
 			)
 		},
 		"certificate": func(c context.Context, n time.Time) Collection { return CollectCertificates(c, cfg, rt, runner, n) },

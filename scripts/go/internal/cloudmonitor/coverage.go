@@ -20,6 +20,9 @@ func ConfigurationCoverage(cfg Config, inv Inventory, now time.Time) Collection 
 	if enabled["postgres"] && len(cfg.Postgres) == 0 {
 		gap("postgres", "coverage/postgres", "尚未配置 PostgreSQL 唯讀統計與實際 filesystem 用量來源。")
 	}
+	if enabled["postgres"] && len(cfg.PostgresBackups) == 0 {
+		gap("postgres", "coverage/postgres-backup", "尚未配置 PostgreSQL 備份完成與還原演練的唯讀證據來源。")
+	}
 	redisRoles := map[string]bool{}
 	for _, r := range cfg.Redis {
 		redisRoles[r.Role] = true

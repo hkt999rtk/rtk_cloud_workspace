@@ -15,14 +15,15 @@ import (
 )
 
 type fakeCluster struct {
-	t          *testing.T
-	config     Config
-	journal    string
-	replicas   map[string]int
-	events     []string
-	failCheck  bool
-	extraKind  string
-	failCreate bool
+	t           *testing.T
+	config      Config
+	journal     string
+	replicas    map[string]int
+	events      []string
+	failCheck   bool
+	extraKind   string
+	failCreate  bool
+	commandLock map[string]any
 }
 
 func newFake(t *testing.T) (*Engine, *fakeCluster) {
@@ -100,7 +101,13 @@ func (f *fakeCluster) exec(_ context.Context, argv []string, in io.Reader, out i
 		return emit(map[string]any{"metadata": map[string]string{"uid": "namespace-uid"}})
 	}
 	if strings.Contains(line, " get configmap ") {
+		if strings.Contains(line, " get configmap "+lockName+"-command") {
+			return emit(f.commandLock)
+		}
 		if f.journal == "" {
+			if strings.Contains(line, "--ignore-not-found=true") {
+				return nil
+			}
 			return errors.New("not found")
 		}
 		return emit(map[string]any{"data": map[string]string{"journal": f.journal}})
@@ -110,13 +117,23 @@ func (f *fakeCluster) exec(_ context.Context, argv []string, in io.Reader, out i
 			return errors.New("lock exists")
 		}
 		var object struct {
-			Kind string            `json:"kind"`
+			Kind     string `json:"kind"`
+			Metadata struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
 			Data map[string]string `json:"data"`
 		}
 		if err := json.NewDecoder(in).Decode(&object); err != nil {
 			return err
 		}
 		if object.Kind == "ConfigMap" {
+			if object.Metadata.Name == lockName+"-command" {
+				if f.commandLock != nil {
+					return errors.New("lock exists")
+				}
+				f.commandLock = map[string]any{"metadata": map[string]string{"uid": "command-lock-uid"}, "data": object.Data}
+				return emit(f.commandLock)
+			}
 			f.journal = object.Data["journal"]
 		}
 		return nil
@@ -156,6 +173,18 @@ func (f *fakeCluster) exec(_ context.Context, argv []string, in io.Reader, out i
 		if strings.Contains(line, " get "+w.Kind+" "+w.Name+" ") {
 			return emit(map[string]any{"spec": map[string]any{"replicas": f.replicas[w.Name], "template": map[string]any{"spec": map[string]any{"containers": []any{map[string]string{"name": "main", "image": "fixture@sha256:" + strings.Repeat("a", 64)}}}}}})
 		}
+	}
+	if strings.Contains(line, " delete --raw ") {
+		var options struct {
+			Preconditions struct {
+				UID string `json:"uid"`
+			} `json:"preconditions"`
+		}
+		if err := json.NewDecoder(in).Decode(&options); err != nil || options.Preconditions.UID != "command-lock-uid" || f.commandLock == nil {
+			return errors.New("lock UID mismatch")
+		}
+		f.commandLock = nil
+		return nil
 	}
 	if strings.Contains(line, " delete configmap ") {
 		f.journal = ""

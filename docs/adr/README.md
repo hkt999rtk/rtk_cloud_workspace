@@ -38,3 +38,4 @@ plans or service docs instead.
 ## Records
 
 - [ADR 0001: Commercial Settlement Ownership And Provider Boundary](0001-commercial-settlement-ownership.md)
+- [ADR 0002: Daily PostgreSQL Physical Backups](0002-daily-postgres-physical-backups.md)
