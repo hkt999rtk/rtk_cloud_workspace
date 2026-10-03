@@ -856,6 +856,10 @@ func parseGoCoverageProfile(path string, changed map[string]map[int]bool) (perce
 		return 0, 0, 0, err
 	}
 	defer file.Close()
+	// PR cross-package instrumentation emits the same block from multiple test
+	// binaries. Count its statements once and its coverage if any binary hit it.
+	seen := map[string]int{}
+	hit := map[string]bool{}
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -883,8 +887,17 @@ func parseGoCoverageProfile(path string, changed map[string]map[int]bool) (perce
 				continue
 			}
 		}
-		statements += countStatements
-		if executionCount > 0 {
+		key := strings.Join(match[1:6], ":")
+		if prior, ok := seen[key]; ok {
+			if prior != countStatements {
+				return 0, 0, 0, fmt.Errorf("inconsistent statement count for Go coverage block %s", key)
+			}
+		} else {
+			seen[key] = countStatements
+			statements += countStatements
+		}
+		if executionCount > 0 && !hit[key] {
+			hit[key] = true
 			covered += countStatements
 		}
 	}
@@ -910,7 +923,11 @@ func changedGoLines(workspace, baseRef, headRef, modulePath string) (map[string]
 				return nil, fmt.Errorf("resolve submodule repository for %s", modulePath)
 			}
 			repositoryRel = filepath.ToSlash(repositoryRel)
-			if !gitObjectExists(workspace, baseRef+":"+repositoryRel) {
+			exists, err := gitTreeEntryExists(workspace, baseRef, repositoryRel)
+			if err != nil {
+				return nil, fmt.Errorf("resolve %s base tree entry: %w", modulePath, err)
+			}
+			if !exists {
 				// A newly introduced submodule has no meaningful predecessor to diff.
 				// Its committed module/package baseline gates still apply in this run.
 				return map[string]map[int]bool{}, nil
@@ -932,7 +949,7 @@ func changedGoLines(workspace, baseRef, headRef, modulePath string) (map[string]
 			if err != nil {
 				return nil, err
 			}
-			diffArgs := []string{"diff", "--unified=0", "--no-color", strings.TrimSpace(baseCommit), strings.TrimSpace(headCommit)}
+			diffArgs := []string{"diff", "--unified=0", "--no-color", "--src-prefix=a/", "--dst-prefix=b/", strings.TrimSpace(baseCommit), strings.TrimSpace(headCommit)}
 			if innerPath != "." {
 				diffArgs = append(diffArgs, "--", filepath.ToSlash(innerPath))
 			}
@@ -951,19 +968,28 @@ func changedGoLines(workspace, baseRef, headRef, modulePath string) (map[string]
 			return prefixed, nil
 		}
 	}
-	output, err := gitOutput(workspace, "diff", "--unified=0", "--no-color", baseRef+"..."+headRef, "--", modulePath)
+	output, err := gitOutput(workspace, "diff", "--unified=0", "--no-color", "--src-prefix=a/", "--dst-prefix=b/", baseRef+"..."+headRef, "--", modulePath)
 	if err != nil {
 		return nil, fmt.Errorf("read differential coverage diff: %w", err)
 	}
 	return parseChangedGoLines(output)
 }
 
-func gitObjectExists(repository, object string) bool {
-	cmd := exec.Command("git", "cat-file", "-e", object)
-	cmd.Dir = repository
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	return cmd.Run() == nil
+func gitTreeEntryExists(repository, ref, path string) (bool, error) {
+	// A gitlink exists in the parent tree even when its target commit is stored
+	// only in the leaf repository. cat-file -e ref:path would confuse that normal
+	// topology with a newly introduced submodule and silently skip its gate.
+	output, err := gitOutput(repository, "ls-tree", "--full-tree", "-z", ref, "--", path)
+	if err != nil {
+		return false, err
+	}
+	for _, entry := range strings.Split(output, "\x00") {
+		fields := strings.SplitN(entry, "\t", 2)
+		if len(fields) == 2 && fields[1] == path {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func ensureGitCommit(repository, commit string) error {
@@ -1041,7 +1067,8 @@ func goDifferentialCoverageDetails(moduleDir, modulePath, profilePath string, ch
 		return 0, 0, 0, nil, err
 	}
 	defer file.Close()
-	uncovered := []string{}
+	uncoveredBlocks := map[string]string{}
+	hitBlocks := map[string]bool{}
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		match := goCoverageLinePattern.FindStringSubmatch(strings.TrimSpace(scanner.Text()))
@@ -1049,7 +1076,13 @@ func goDifferentialCoverageDetails(moduleDir, modulePath, profilePath string, ch
 			continue
 		}
 		executionCount, _ := strconv.Atoi(match[7])
+		key := strings.Join(match[1:6], ":")
 		if executionCount > 0 {
+			hitBlocks[key] = true
+			delete(uncoveredBlocks, key)
+			continue
+		}
+		if hitBlocks[key] {
 			continue
 		}
 		startLine, _ := strconv.Atoi(match[2])
@@ -1057,13 +1090,17 @@ func goDifferentialCoverageDetails(moduleDir, modulePath, profilePath string, ch
 		lines := profileChanged[filepath.ToSlash(match[1])]
 		for lineNo := startLine; lineNo <= endLine; lineNo++ {
 			if lines[lineNo] {
-				uncovered = append(uncovered, fmt.Sprintf("%s:%s", profileToWorkspace[filepath.ToSlash(match[1])], match[2]))
+				uncoveredBlocks[key] = fmt.Sprintf("%s:%s", profileToWorkspace[filepath.ToSlash(match[1])], match[2])
 				break
 			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return 0, 0, 0, nil, err
+	}
+	uncovered := make([]string, 0, len(uncoveredBlocks))
+	for _, source := range uncoveredBlocks {
+		uncovered = append(uncovered, source)
 	}
 	sort.Strings(uncovered)
 	return percent, covered, statements, slices.Compact(uncovered), nil
