@@ -72,6 +72,18 @@ target-local paths and its maintenance journal while replacing selected runtime
 credentials. Losing seal access or an offline Root/HSM cannot be repaired by
 generating a new key and treating it as the original identity.
 
+The [Billing backup key custody design](design/billing-backup-key-custody.md)
+reserves `operator/recovery/billing-backup/<key-id>.agekey` on an off-cluster
+recovery controller's encrypted disk, with independent offline escrow. This is
+not a runtime catalog entry or an automatic key-management command. The Billing
+CLI checks explicit private native identity/signing paths; ordinary CI rejects
+`operator/recovery/`, `.agekey` and `.ed25519key` before materialization. Filesystem
+checks do not certify encrypted disks, independent escrow or private-host isolation.
+Dedicated lifecycle bearer/uploader credentials are optional, explicit-provisioned
+catalog entries and never use core/media fallbacks. See the
+[operations guide](billing-raw-lifecycle-operations.md); default-disabled features
+do not require or generate these credentials.
+
 ## GitHub Actions
 
 CI stores values in GitHub Actions Secrets and materializes them only for one

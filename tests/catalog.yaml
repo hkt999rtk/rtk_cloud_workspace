@@ -37,6 +37,66 @@ sdk_e2e: &sdk_e2e
   status: active
 
 cases:
+  - id: INT-LOGGER-RAW-LIFECYCLE-001
+    title: Logger raw lifecycle preserves receipt identities through migration retirement and online generations
+    layer: integration
+    owner: rtk_cloud_logger
+    source: repos/rtk_cloud_logger/billing_lifecycle_test.go
+    selector: "./#TestOnlineMigrationResumesAndPreservesOriginalBytes,./#TestCaptureSealsEncryptedPartsResumesAndRequiresIndependentSignature,./#TestRetireAbortAndArchivedCursorCachePreserveDedupe,./#TestDisabledRetirementStillAllowsAuthorizedPendingAndUnknownAbort,./#TestOnlineGenerationCompactionAndManifestFailClosed,./#TestConcurrentGenerationCompactionPreservesJournalledWrites,./#TestRecoveryFenceSurvivesRestartAndIndependentAdmission,./#TestPublicListenerRejectsEveryLifecycleRouteAndReadTokenCannotMutate"
+    method: Private local bbolt snapshots and real lifecycle handlers verify resumable migration original identities encrypted immutable capture independent signatures old-cursor cache misses durable apply-abort outcomes concurrent journal replay and state-bound recovery admission. No representative-capacity performance or environment qualification is asserted.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-LOGGER-RAW-LIFECYCLE-001]
+    status: active
+  - id: INT-BILL-RAW-PROTECTION-001
+    title: Canonical raw protection retains exact identities through independently verified archives and recovery
+    layer: integration
+    owner: cloud_platform
+    source: repos/rtk_cloud_logger/billing_lifecycle_test.go
+    selector: "./#TestOnlineMigrationResumesAndPreservesOriginalBytes,./#TestCaptureSealsEncryptedPartsResumesAndRequiresIndependentSignature,./#TestRetireAbortAndArchivedCursorCachePreserveDedupe,./#TestOnlineGenerationCompactionAndManifestFailClosed,./#TestConcurrentGenerationCompactionPreservesJournalledWrites,./#TestRecoveryFenceSurvivesRestartAndIndependentAdmission"
+    method: Real bbolt and archive codecs exercise migration fixed horizons encrypted parts independent completion replay receipt-age gates generation journals and fenced recovery. This deterministic proof does not attest escrow restoration operator approvals four-hour recovery or one-second queues.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-BILL-RAW-PROTECTION-001]
+    status: active
+  - id: INT-BILL-RAW-AUTHORITY-001
+    title: Financial authority permanently orders policies holds accepted fences and pre-acceptance cancellation
+    layer: integration
+    owner: rtk_billing
+    source: repos/rtk_billing/internal/rawretention/store_integration_test.go
+    selector: "./internal/rawretention#TestAuthorityRequiresExplicitClearanceAndAuthenticatedConsumer,./internal/rawretention#TestAuthorityHoldsAndExactResolutionFence,./internal/rawretention#TestAuthorityAbortPermanentAndReleasePendingHold,./internal/rawretention#TestAuthorityHoldAndActiveDecisionRaceLinearizes,./internal/rawretention#TestUnknownIntentCancellationNeverReleasesAnAcceptedFence,./internal/rawretention#TestUnknownCancellationAndAdmissionRaceLinearizes,./internal/rawretention#TestInactivePolicyBlocksNewAdmissionButKeepsExactFenceRecovery"
+    method: Isolated PostgreSQL transactions and authenticated boundary fixtures verify exact consumer proofs independent policy approval explicit clearance immutable intents permanent cancellation racing holds one unresolved fence exact terminal resolution and safe recovery while policy inactive. Fixtures do not certify external authority recovery history or financial source completeness.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-BILL-RAW-AUTHORITY-001]
+    status: active
+  - id: INT-VC-RAW-RECONCILIATION-001
+    title: Video raw-range reconciliation refuses incomplete or unacknowledged measurement evidence
+    layer: integration
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/postgres/raw_lifecycle_integration_test.go
+    selector: "./internal/postgres#TestRawLifecycleReconciliationRequiresEveryExactAcknowledgedMeasurement,./internal/postgres#TestRawLifecycleLegacyDeliveredMarkersRequireProtocolReacknowledgment"
+    method: Real isolated PostgreSQL receipt event fact and outbox transactions require every exact Billing payload acknowledgment and reject missing fields altered identities incomplete measurements and unqualified legacy delivery markers without modifying cursor or evidence.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-BILL-RAW-CONSUMER-001]
+    status: active
+  - id: INT-WS-RAW-VERIFIER-001
+    title: Off-cluster verifier rejects corrupted archives forged bindings and ambiguous controller journals
+    layer: integration
+    owner: cloud_platform
+    source: scripts/go/rtk-cloud/internal/billingbackup/controller_test.go
+    selector: "./rtk-cloud/internal/billingbackup#TestVerifyCaptureRoundTripImmutableRetryAndExactIntegers,./rtk-cloud/internal/billingbackup#TestVerifierRejectsMissingCorruptObjectsAndRecipientSubstitution,./rtk-cloud/internal/billingbackup#TestVerifierRejectsExportReceiptClockSubstitution,./rtk-cloud/internal/billingbackup#TestRecoveryStageIsPrivateFencedAndDoesNotInstallLiveFiles,./rtk-cloud/internal/billingbackup#TestSavedActiveDecisionResumesSameIDAfterInterruptedApply,./rtk-cloud/internal/billingbackup#TestRunnerRejectsFutureSignedHorizonsWithoutSilentlyResettingProtectionAge,./rtk-cloud/internal/billingbackup#TestPendingIntentDoesNotTrustCorruptTerminalJournalExistence,./rtk-cloud/internal/billingbackup#TestResumeRetirementBindsConfirmedEnvironmentAndStoreBeforeAnyMutation"
+    method: Actual Logger capture age and zstd codecs plus private local filesystem and authenticated HTTP fixtures prove whole-snapshot and raw-byte binding validation immutable completion retry fenced new-file recovery exact intent retry and confirmed environment scope. Synthetic authority fixtures do not replace service PostgreSQL proofs or live qualification.
+    runner: test-coverage
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-BILL-RAW-PROTECTION-001, REQ-BILL-RAW-AUTHORITY-001]
+    status: active
   - { <<: *ui_smoke, id: UI-CA-PROVISIONING-RET-001, title: Retired CSV provisioning links return to Fleet Management, source: repos/rtk_cloud_admin/web/e2e/enterprise-console.spec.mjs, selector: "[UI-CA-PROVISIONING-RET-001]", tags: [smoke, enterprise], verifies: [REQ-UI-CA-PROVISIONING-RETIRED-001] }
   - { <<: *ui_local, id: UI-CA-CONSOLE-PERF-001, title: My Clouds and Developer Docs use in-app navigation without document reloads, source: repos/rtk_cloud_admin/web/e2e/console-navigation-performance.spec.mjs, selector: "[UI-CA-CONSOLE-PERF-001]", tags: [console], verifies: [REQ-CA-BFF-UI-001] }
   - { <<: *ui_local, id: UI-CA-CONSOLE-NAV-001, title: Clouds and documentation history retain one Console document, source: repos/rtk_cloud_admin/web/e2e/console-navigation.spec.mjs, selector: "[UI-CA-CONSOLE-NAV-001]", tags: [console], verifies: [REQ-CA-BFF-UI-001, REQ-UI-CA-DOCS-001] }

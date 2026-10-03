@@ -49,6 +49,7 @@ type commandSpec struct {
 
 var commands = map[string]commandSpec{
 	"backup":                           {run: runBackup},
+	"billing-lifecycle":                {run: runBillingLifecycle},
 	"restore":                          {run: runRestore},
 	"bind-devices":                     {run: runBindDevices},
 	"account-manager-email-deploy":     {run: runAccountManagerEmailDeploy},
@@ -203,7 +204,7 @@ func run(args []string) error {
 }
 
 func normalizeEnvironmentArgs(args []string) ([]string, error) {
-	if len(args) == 0 || args[0] == "deployment" || args[0] == "monitor-inventory" || args[0] == "secrets" || args[0] == "backup" || args[0] == "restore" || args[0] == "test-feature-coverage" || args[0] == "object-storage-audit" || args[0] == "object-storage-lifecycle-plan" {
+	if len(args) == 0 || args[0] == "deployment" || args[0] == "monitor-inventory" || args[0] == "secrets" || args[0] == "backup" || args[0] == "restore" || args[0] == "billing-lifecycle" || args[0] == "test-feature-coverage" || args[0] == "object-storage-audit" || args[0] == "object-storage-lifecycle-plan" {
 		return args, nil
 	}
 	var environment, workspace string

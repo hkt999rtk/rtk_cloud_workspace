@@ -25,11 +25,13 @@ var (
 )
 
 type secretCatalogEntry struct {
-	ID         string             `json:"id"`
-	Category   string             `json:"category"`
-	Consumers  []string           `json:"consumers"`
-	Rotation   string             `json:"rotation"`
-	K8SBinding []secretK8SBinding `json:"k8s_bindings,omitempty"`
+	ID                string             `json:"id"`
+	Category          string             `json:"category"`
+	Consumers         []string           `json:"consumers"`
+	Rotation          string             `json:"rotation"`
+	K8SBinding        []secretK8SBinding `json:"k8s_bindings,omitempty"`
+	Optional          bool               `json:"optional,omitempty"`
+	ExplicitProvision bool               `json:"explicit_provision,omitempty"`
 }
 
 type secretK8SBinding struct {
@@ -45,11 +47,13 @@ type secretInventory struct {
 }
 
 type secretInventoryEntry struct {
-	ID        string   `json:"id"`
-	Category  string   `json:"category"`
-	Path      string   `json:"path"`
-	Consumers []string `json:"consumers,omitempty"`
-	Rotation  string   `json:"rotation,omitempty"`
+	ID                string   `json:"id"`
+	Category          string   `json:"category"`
+	Path              string   `json:"path"`
+	Consumers         []string `json:"consumers,omitempty"`
+	Rotation          string   `json:"rotation,omitempty"`
+	Optional          bool     `json:"optional,omitempty"`
+	ExplicitProvision bool     `json:"explicit_provision,omitempty"`
 }
 
 type secretStore struct {
@@ -295,7 +299,7 @@ func (s secretStore) writeInventory() error {
 	for _, item := range rtkSecretCatalog() {
 		entries = append(entries, secretInventoryEntry{
 			ID: item.ID, Category: item.Category, Path: filepath.ToSlash(filepath.Join("runtime", item.ID)),
-			Consumers: append([]string(nil), item.Consumers...), Rotation: item.Rotation,
+			Consumers: append([]string(nil), item.Consumers...), Rotation: item.Rotation, Optional: item.Optional, ExplicitProvision: item.ExplicitProvision,
 		})
 	}
 	payload, err := json.MarshalIndent(secretInventory{SchemaVersion: secretInventorySchemaVersion, Environment: s.Environment, Entries: entries}, "", "  ")
@@ -348,10 +352,13 @@ func rtkSecretCatalog() []secretCatalogEntry {
 	for _, item := range ids {
 		out = append(out, secretCatalogEntry{ID: item.id, Category: "runtime", Consumers: strings.Split(item.consumer, ","), Rotation: item.rotation, K8SBinding: catalogK8SBindings(item.id)})
 	}
-	return out
+	return append(out, billingLifecycleSecretCatalog()...)
 }
 
 func supportSecretRequired(store secretStore, id string) bool {
+	if billingLifecycleSecretID(id) {
+		return billingLifecycleSecretRequired(store, id)
+	}
 	if !strings.HasPrefix(id, "zammad-") {
 		return true
 	}
@@ -364,6 +371,9 @@ func supportSecretRequired(store secretStore, id string) bool {
 }
 
 func catalogK8SBindings(id string) []secretK8SBinding {
+	if bindings, ok := billingLifecycleSecretBindings(id); ok {
+		return bindings
+	}
 	table := map[string][]secretK8SBinding{
 		"postgres":               {{"-platform", "postgresql-runtime", "POSTGRES_PASSWORD"}},
 		"jwt-access":             {{"-account-manager", "account-manager-runtime", "JWT_ACCESS_SECRET"}},
@@ -539,7 +549,16 @@ func ensureMissingRuntimeSecrets(out io.Writer, store secretStore) error {
 		return err
 	}
 	created := []string{}
+	manualMissing := []string{}
 	for _, entry := range rtkSecretCatalog() {
+		if entry.ExplicitProvision {
+			if supportSecretRequired(store, entry.ID) {
+				if value, err := store.readRuntime(entry.ID); err != nil || value == "" {
+					manualMissing = append(manualMissing, entry.ID)
+				}
+			}
+			continue
+		}
 		if value, err := store.readRuntime(entry.ID); err == nil && value != "" {
 			continue
 		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -552,6 +571,10 @@ func ensureMissingRuntimeSecrets(out io.Writer, store secretStore) error {
 	}
 	if err := store.writeInventory(); err != nil {
 		return err
+	}
+	if len(manualMissing) > 0 {
+		sort.Strings(manualMissing)
+		return fmt.Errorf("enabled billing lifecycle requires explicitly provisioned credentials; ensure never generates them: %s", strings.Join(manualMissing, ", "))
 	}
 	if len(created) == 0 {
 		fmt.Fprintf(out, "secret store %s already complete\n", store.Environment)
@@ -589,6 +612,9 @@ func ensureSecretStoreCatalogAdditions(out io.Writer, store secretStore) error {
 			continue
 		}
 		catalogChanged = true
+		if entry.ExplicitProvision {
+			continue
+		}
 		if value, readErr := store.readRuntime(entry.ID); readErr == nil && value != "" {
 			continue
 		} else if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
@@ -656,6 +682,9 @@ func planSecretMigration(out io.Writer, store secretStore, workspace string) err
 	}
 	missing := []string{}
 	for _, entry := range rtkSecretCatalog() {
+		if !supportSecretRequired(store, entry.ID) {
+			continue
+		}
 		if _, err := store.readRuntime(entry.ID); err != nil {
 			missing = append(missing, entry.ID)
 		}
@@ -997,6 +1026,9 @@ func verifySecretStoreK8SBindings(store secretStore) error {
 			continue
 		}
 		for _, binding := range entry.K8SBinding {
+			if !billingLifecycleBindingRequired(store, entry.ID, binding) {
+				continue
+			}
 			secretName := stack + binding.NamespaceSuffix + "/" + binding.Secret
 			bindingName := secretName + ":" + binding.Key
 			data, loaded := seen[secretName]

@@ -48,3 +48,10 @@ scripts/cloud-monitor/inventory.*.json
 __pycache__/
 *.pyc
 .DS_Store
+
+# Isolated task checkouts.
+/worktrees/
+
+# Reviewed non-secret Billing lifecycle intent templates.
+!cloud_env/billing-lifecycle.env.example
+!cloud_env/billing-lifecycle-public.json.example

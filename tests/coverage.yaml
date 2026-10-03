@@ -23,6 +23,7 @@ modules:
     differential: true
     package_policies:
       - { package: rtk-cloud-workspace/scripts/go/rtk-cloud, risk: high, minimum_statement_percent: 70.0, target_statement_percent: 70.0 }
+      - { package: rtk-cloud-workspace/scripts/go/rtk-cloud/internal/billingbackup, risk: critical, minimum_statement_percent: 80.0, target_statement_percent: 80.0 }
       - { package: rtk-cloud-workspace/scripts/go/cloud-mqtt-test, risk: high, minimum_statement_percent: 70.8, target_statement_percent: 70.0 }
       - { package: rtk-cloud-workspace/scripts/go/linode-object-storage, risk: wiring, exclusion_reason: Thin object-storage CLI wiring is covered by service integration and release smoke tests. }
     purpose: Protect workspace CLI, catalog, deployment, and test orchestration behavior.
@@ -113,6 +114,7 @@ modules:
     differential: true
     package_policies:
       - { package: github.com/hkt999rtk/rtk_billing/internal/billing, risk: critical, minimum_statement_percent: 80.0, target_statement_percent: 80.0 }
+      - { package: github.com/hkt999rtk/rtk_billing/internal/rawretention, risk: critical, minimum_statement_percent: 80.0, target_statement_percent: 80.0 }
       - { package: github.com/hkt999rtk/rtk_billing/internal/payment, risk: critical, minimum_statement_percent: 95.0, target_statement_percent: 80.0 }
       - { package: github.com/hkt999rtk/rtk_billing/internal/paymentcrypto, risk: critical, minimum_statement_percent: 87.5, target_statement_percent: 80.0 }
       - { package: github.com/hkt999rtk/rtk_billing/internal/paymentprovider/newebpay, risk: critical, minimum_statement_percent: 86.3, target_statement_percent: 80.0 }
