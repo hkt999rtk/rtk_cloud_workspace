@@ -209,3 +209,46 @@ Dev/Staging credential prechecks still report the PKI failures recorded above;
 Staging Account Manager-to-certissuer app mTLS passed. Scoped frontend and
 artifact operations do not establish full platform acceptance. Production's
 account ownership and dedicated OTA region remain pending separate approval.
+
+## Runtime preparation and OTA verification: 2026-10-03
+
+A later same-day check created and verified these four private canonical
+buckets, with separate environment- and purpose-scoped keys. All passed an
+owner-only ACL/fixed-principal policy check and a write/read/delete canary:
+
+| Environment | Purpose | Bucket | Assigned endpoint |
+| --- | --- | --- | --- |
+| Dev | Media | `rtk-cloud-dev-runtime-us-sea` | `us-sea-1.linodeobjects.com` |
+| Dev | OTA | `rtk-cloud-dev-ota-firmware-us-lax` | `us-lax-4.linodeobjects.com` (E3) |
+| Staging | Media | `rtk-cloud-staging-runtime-sg-sin-2` | `sg-sin-1.linodeobjects.com` |
+| Staging | OTA | `rtk-cloud-staging-ota-firmware-sg-sin-2` | `sg-sin-1.linodeobjects.com` (E3) |
+
+Both OTA provider probes passed private unsigned-request rejection, exact
+`206 Range`, expired-URL rejection, fresh-URL resume with matching SHA-256,
+and a full synthetic 8 MiB download. The first Staging attempt timed out;
+its subsequent complete retry passed. Temporary probe objects were deleted.
+Dev Cloud Pulse for 15:15–15:20 UTC recorded 5 GETs and 16,777,993 downloaded
+bytes, consistent with the controlled full download and resumed download.
+
+Dev OTA reinitialization completed at 15:40:11 UTC. The provider proved the
+acknowledged source bucket absent and the destination empty before activation.
+The legacy database drain found no open campaigns, deployments or unexpired
+grants. Its existing Deployment kept the same image digest, became Ready 1/1,
+and passed private service endpoint verification. Its completed receipt records
+that source data was discarded and data rollback is unavailable.
+
+Dev's expired Service, OpenBao TLS and MQTT Root CRLs were renewed using their
+existing keys through the guarded dev recovery procedure and independently
+reviewed signing requests. Actual consumers acknowledged the replacements;
+the controller refreshed the relevant intermediates. The selected Dev
+credential checker subsequently passed all seven required checks. This does
+not qualify the separate App PKI flow or physical-device OTA acceptance.
+
+Staging's successful 15:30–15:31 UTC OTA probe still lacks matching downloaded
+byte metrics: Cloud Pulse recorded 5 GETs but only 274 bytes in its 15:32
+sample. This repeats the earlier Staging measurement discrepancy. A small
+positive error-response byte count is not the observed firmware transfer;
+no OTA qualification receipt or workload activation is accepted from it.
+The separate broker Device Root policy finding remains unresolved. Storage-only
+operations use a recorded bounded exception; full platform acceptance remains
+unqualified. Production ownership and its OTA region are still undecided.
