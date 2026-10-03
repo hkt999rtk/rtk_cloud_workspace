@@ -284,6 +284,9 @@ GETs, but only 274 downloaded bytes for its verified 16,777,216-byte successful
 range/full-download traffic. This supports a provider telemetry undercount;
 the provider's internal cause remains unproven. The exact filtered query
 responses and reproduction steps are retained privately for investigation.
+The same three queries were repeated at 16:40:14–16:40:26 UTC, more than an
+hour after the successful probe. Their filtered responses were unchanged;
+elapsed time did not resolve the discrepancy or qualify OTA activation.
 
 The four new media/OTA buckets also received the registered canary fallback:
 one enabled `rtk-storage-canary` lifecycle rule expires only
