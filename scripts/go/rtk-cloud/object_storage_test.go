@@ -105,6 +105,32 @@ func TestProvisionFileObjectStoreLifecycle(t *testing.T) {
 	}
 }
 
+func TestProvisionBucketCreationRequiresResolvedRemoteStorageProfile(t *testing.T) {
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	for _, bucket := range []string{"legacy-bucket", "rtk-cloud-dev-runtime-us-sea"} {
+		store := provisionObjectStore{bucket: bucket, endpoint: server.URL, region: "us-sea", accessKey: "access", secretKey: "secret"}
+		if err := provisionCreateObjectBucketWithClient(server.Client(), store); err == nil || !strings.Contains(err.Error(), "resolved storage profile") {
+			t.Fatalf("remote bucket %q creation error = %v", bucket, err)
+		}
+	}
+	if requests != 0 {
+		t.Fatalf("remote bucket creation sent %d requests", requests)
+	}
+	root := t.TempDir()
+	store := provisionObjectStore{bucket: "local-fixture", endpoint: (&url.URL{Scheme: "file", Path: root}).String()}
+	if err := provisionCreateObjectBucketWithClient(nil, store); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(filepath.Join(root, store.bucket)); err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
+		t.Fatalf("private local bucket directory = %v, error = %v", info, err)
+	}
+}
+
 func TestProvisionSignedObjectRequestsPaginateAndRejectFailures(t *testing.T) {
 	page := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {

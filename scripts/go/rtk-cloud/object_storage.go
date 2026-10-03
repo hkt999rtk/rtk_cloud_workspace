@@ -369,8 +369,7 @@ func provisionCreateObjectBucketWithClient(client *http.Client, store provisionO
 		}
 		return os.MkdirAll(filepath.Join(root, store.bucket), 0o700)
 	}
-	_, err := provisionSignedObjectRequestWithClient(client, store, http.MethodPut, "", nil, nil)
-	return err
+	return errors.New("remote bucket creation requires a resolved storage profile; use deployment storage-bootstrap")
 }
 
 func provisionWriteObjectToFile(store provisionObjectStore, key, out string) error {
