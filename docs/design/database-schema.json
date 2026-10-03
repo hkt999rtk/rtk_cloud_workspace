@@ -1,15 +1,15 @@
 {
-  "captured_at": "2026-10-02T12:09:51.306204+00:00",
+  "captured_at": "2026-10-03T11:58:32.958498+00:00",
   "environment": null,
   "format_version": 1,
   "revisions": {
     "Account Manager": "48c5c63f6f8a",
-    "Billing": "3027631c1079",
+    "Billing": "dc036edc1cf6",
     "Cloud Admin": "97df544091f4",
     "Cloud Frontend": "475b9fe80d6c",
-    "Video Cloud": "0a3b3b201bde"
+    "Video Cloud": "14340e44cacb"
   },
-  "schema_hash": "a675e0f8b59a535cb34b527c5236dc12142beec9c4a39970f4fcbfeb66474f3d",
+  "schema_hash": "281c8ab6334fb21d26fde53283c2857604fbd55b7ad7126857bb41dec7147b20",
   "source_dirty": {
     "Account Manager": false,
     "Billing": false,
@@ -17469,6 +17469,136 @@
         {
           "details": {
             "critical": "key",
+            "description": "Database-assigned primary key of an append-only authorization or decision binding audit record."
+          },
+          "kind": "column",
+          "name": "billing_raw_retention_audit.id",
+          "schema": "public",
+          "version": 1
+        },
+        {
+          "details": {
+            "critical": "key",
+            "description": "Immutable primary key of the explicit financial source-complete and reconciled range attestation."
+          },
+          "kind": "column",
+          "name": "billing_raw_retention_clearances.clearance_id",
+          "schema": "public",
+          "version": 1
+        },
+        {
+          "details": {
+            "critical": "key",
+            "description": "References billing_raw_retention_policies.policy_id together with policy_version; the approved policy identity cannot be rewritten."
+          },
+          "kind": "column",
+          "name": "billing_raw_retention_clearances.policy_id",
+          "schema": "public",
+          "version": 1
+        },
+        {
+          "details": {
+            "critical": "key",
+            "description": "References billing_raw_retention_policies.version together with policy_id; clearance cannot silently adopt a later policy version."
+          },
+          "kind": "column",
+          "name": "billing_raw_retention_clearances.policy_version",
+          "schema": "public",
+          "version": 1
+        },
+        {
+          "details": {
+            "description": "One-way revocation flag for new admissions; revocation cannot regress or release an accepted retirement fence.",
+            "semantic_kind": "state"
+          },
+          "kind": "column",
+          "name": "billing_raw_retention_clearances.revoked",
+          "schema": "public",
+          "version": 1
+        },
+        {
+          "details": {
+            "critical": "key",
+            "description": "Permanent primary key and immutable idempotency identity of a financial or legal hold request."
+          },
+          "kind": "column",
+          "name": "billing_raw_retention_holds.hold_id",
+          "schema": "public",
+          "version": 1
+        },
+        {
+          "details": {
+            "description": "ACTIVE, PENDING_FENCED and RELEASE_PENDING block new overlapping admissions and protect archive/key evidence; RELEASED is final, and PENDING_FENCED cannot reverse an earlier accepted local operation.",
+            "semantic_kind": "state"
+          },
+          "kind": "column",
+          "name": "billing_raw_retention_holds.status",
+          "schema": "public",
+          "version": 1
+        },
+        {
+          "details": {
+            "description": "accepted requires authenticated Logger evidence at termination; cancelled-before-acceptance is a permanent local ABORTED tombstone with no Logger receipt and no deletion authority.",
+            "semantic_kind": "state"
+          },
+          "kind": "column",
+          "name": "billing_raw_retention_operations.decision_origin",
+          "schema": "public",
+          "version": 1
+        },
+        {
+          "details": {
+            "critical": "key",
+            "description": "Permanent primary key and idempotency identity of one retirement decision; ambiguous retries reuse the exact operation and plan."
+          },
+          "kind": "column",
+          "name": "billing_raw_retention_operations.operation_id",
+          "schema": "public",
+          "version": 1
+        },
+        {
+          "details": {
+            "description": "ACTIVE and ABORT_REQUESTED retain the per-store fence; COMPLETED and ABORTED are immutable terminal states governed by decision_origin.",
+            "semantic_kind": "state"
+          },
+          "kind": "column",
+          "name": "billing_raw_retention_operations.status",
+          "schema": "public",
+          "version": 1
+        },
+        {
+          "details": {
+            "description": "Admission switch: false blocks new operations only; existing ACTIVE or ABORT_REQUESTED fences remain recoverable.",
+            "semantic_kind": "state"
+          },
+          "kind": "column",
+          "name": "billing_raw_retention_policies.active",
+          "schema": "public",
+          "version": 1
+        },
+        {
+          "details": {
+            "critical": "key",
+            "description": "Stable financial policy identifier; policy_id and version form the immutable composite primary key."
+          },
+          "kind": "column",
+          "name": "billing_raw_retention_policies.policy_id",
+          "schema": "public",
+          "version": 1
+        },
+        {
+          "details": {
+            "critical": "key",
+            "description": "Positive immutable policy version; paired with policy_id and referenced by the clearance composite foreign key."
+          },
+          "kind": "column",
+          "name": "billing_raw_retention_policies.version",
+          "schema": "public",
+          "version": 1
+        },
+        {
+          "details": {
+            "critical": "key",
             "description": "References commercial_accounts.id within this database."
           },
           "kind": "column",
@@ -18348,6 +18478,18 @@
         },
         {
           "details": {
+            "purpose": "Authoritative financial and recovery decisions for verified Logger raw-data retirement.",
+            "scenario": "Approve automatic retention policies and source-complete financial clearances, preserve legal holds and durable per-store fences, and audit authenticated terminal decisions.",
+            "service": "Billing",
+            "source": "repos/rtk_billing/migrations/072_raw_retention_schema_metadata.sql"
+          },
+          "kind": "group",
+          "name": "Raw billing retention",
+          "schema": "public",
+          "version": 1
+        },
+        {
+          "details": {
             "group": "Payments and automatic top-ups",
             "scenario": "Evaluated when a balance falls below its threshold or a policy is disabled.",
             "service": "Billing",
@@ -18780,6 +18922,71 @@
         },
         {
           "details": {
+            "group": "Raw billing retention",
+            "purpose": "Append-only authorization, approval and retirement decision binding records.",
+            "scenario": "Audit policy approvals, clearances, holds and immutable operation outcomes without storing credentials or raw tenant payloads.",
+            "service": "Billing",
+            "source": "repos/rtk_billing/migrations/072_raw_retention_schema_metadata.sql"
+          },
+          "kind": "table",
+          "name": "billing_raw_retention_audit",
+          "schema": "public",
+          "version": 1
+        },
+        {
+          "details": {
+            "group": "Raw billing retention",
+            "purpose": "Immutable financial attestations binding an exact policy version to a source-complete, reconciled Logger sequence range.",
+            "scenario": "Permit automatic raw-data retirement only after explicit period clearance; closed period state or an empty outbox alone is insufficient.",
+            "service": "Billing",
+            "source": "repos/rtk_billing/migrations/072_raw_retention_schema_metadata.sql"
+          },
+          "kind": "table",
+          "name": "billing_raw_retention_clearances",
+          "schema": "public",
+          "version": 1
+        },
+        {
+          "details": {
+            "group": "Raw billing retention",
+            "purpose": "Durable financial or legal holds protecting raw-data archive evidence and decryption keys.",
+            "scenario": "Block new overlapping retirement admissions and record holds arriving after an accepted fence as PENDING_FENCED without reversing the earlier local retirement decision.",
+            "service": "Billing",
+            "source": "repos/rtk_billing/migrations/072_raw_retention_schema_metadata.sql"
+          },
+          "kind": "table",
+          "name": "billing_raw_retention_holds",
+          "schema": "public",
+          "version": 1
+        },
+        {
+          "details": {
+            "group": "Raw billing retention",
+            "purpose": "Crash-safe retirement decisions, exact evidence bindings and permanent terminal provenance.",
+            "scenario": "Maintain one ACTIVE or ABORT_REQUESTED fence per environment/store until authenticated Logger terminal evidence resolves it; separately identified never-accepted cancellations cannot authorize deletion.",
+            "service": "Billing",
+            "source": "repos/rtk_billing/migrations/072_raw_retention_schema_metadata.sql"
+          },
+          "kind": "table",
+          "name": "billing_raw_retention_operations",
+          "schema": "public",
+          "version": 1
+        },
+        {
+          "details": {
+            "group": "Raw billing retention",
+            "purpose": "Immutable, versioned financial policies and independent recovery approvals for raw-payload retirement.",
+            "scenario": "Authorize new automatic retirement admissions only while the exact policy version is active and recovery-approved; deactivation does not release accepted fences.",
+            "service": "Billing",
+            "source": "repos/rtk_billing/migrations/072_raw_retention_schema_metadata.sql"
+          },
+          "kind": "table",
+          "name": "billing_raw_retention_policies",
+          "schema": "public",
+          "version": 1
+        },
+        {
+          "details": {
             "group": "Commercial accounts and responsibility",
             "scenario": "Used during handoff or historical financial attribution queries.",
             "service": "Billing",
@@ -19086,7 +19293,10 @@
         "066_ota_storage_object_evidence.sql",
         "067_ota_pricing_publication.sql",
         "068_ota_pricing_drafts.sql",
-        "069_schema_documentation_metadata.sql"
+        "069_schema_documentation_metadata.sql",
+        "070_raw_retention_authority.sql",
+        "071_raw_retention_unaccepted_cancellation.sql",
+        "072_raw_retention_schema_metadata.sql"
       ],
       "service": "Billing",
       "store": "primary",
@@ -23903,6 +24113,627 @@
             {
               "definition": "CREATE TRIGGER provider_reversal_reviews_append_only BEFORE DELETE OR UPDATE ON billing_provider_reversal_reviews FOR EACH ROW EXECUTE FUNCTION reject_handoff_evidence_mutation()",
               "name": "provider_reversal_reviews_append_only"
+            }
+          ]
+        },
+        {
+          "checks": [
+            {
+              "definition": "CHECK (binding_sha256 ~ '^[a-f0-9]{64}$'::text)",
+              "name": "billing_raw_retention_audit_binding_sha256_check"
+            }
+          ],
+          "columns": [
+            {
+              "comment": "Database-assigned primary key of an append-only authorization or decision binding audit record.",
+              "default": "nextval('billing_raw_retention_audit_id_seq'::regclass)",
+              "name": "id",
+              "not_null": true,
+              "type": "bigint"
+            },
+            {
+              "comment": "",
+              "default": null,
+              "name": "environment",
+              "not_null": true,
+              "type": "text"
+            },
+            {
+              "comment": "",
+              "default": null,
+              "name": "store_id",
+              "not_null": true,
+              "type": "text"
+            },
+            {
+              "comment": "",
+              "default": null,
+              "name": "subject_id",
+              "not_null": true,
+              "type": "text"
+            },
+            {
+              "comment": "",
+              "default": null,
+              "name": "action",
+              "not_null": true,
+              "type": "text"
+            },
+            {
+              "comment": "",
+              "default": null,
+              "name": "binding_sha256",
+              "not_null": true,
+              "type": "text"
+            },
+            {
+              "comment": "",
+              "default": "clock_timestamp()",
+              "name": "recorded_at",
+              "not_null": true,
+              "type": "timestamp with time zone"
+            }
+          ],
+          "comment": "Append-only authorization, approval and retirement decision binding records.",
+          "fks": [],
+          "indexes": [
+            {
+              "columns": [
+                "id"
+              ],
+              "definition": "CREATE UNIQUE INDEX billing_raw_retention_audit_pkey ON public.billing_raw_retention_audit USING btree (id)",
+              "name": "billing_raw_retention_audit_pkey",
+              "partial": false,
+              "unique": true
+            }
+          ],
+          "name": "billing_raw_retention_audit",
+          "pk": [
+            "id"
+          ],
+          "schema": "public",
+          "triggers": [
+            {
+              "definition": "CREATE TRIGGER billing_raw_retention_audit_immutable BEFORE DELETE OR UPDATE ON billing_raw_retention_audit FOR EACH ROW EXECUTE FUNCTION reject_raw_retention_audit_mutation()",
+              "name": "billing_raw_retention_audit_immutable"
+            }
+          ]
+        },
+        {
+          "checks": [
+            {
+              "definition": "CHECK (attestation_sha256 ~ '^[a-f0-9]{64}$'::text)",
+              "name": "billing_raw_retention_clearances_attestation_sha256_check"
+            },
+            {
+              "definition": "CHECK (through_sequence >= from_sequence)",
+              "name": "billing_raw_retention_clearances_check"
+            },
+            {
+              "definition": "CHECK (from_sequence > 0)",
+              "name": "billing_raw_retention_clearances_from_sequence_check"
+            }
+          ],
+          "columns": [
+            {
+              "comment": "Immutable primary key of the explicit financial source-complete and reconciled range attestation.",
+              "default": null,
+              "name": "clearance_id",
+              "not_null": true,
+              "type": "text"
+            },
+            {
+              "comment": "References billing_raw_retention_policies.policy_id together with policy_version; the approved policy identity cannot be rewritten.",
+              "default": null,
+              "name": "policy_id",
+              "not_null": true,
+              "type": "text"
+            },
+            {
+              "comment": "References billing_raw_retention_policies.version together with policy_id; clearance cannot silently adopt a later policy version.",
+              "default": null,
+              "name": "policy_version",
+              "not_null": true,
+              "type": "bigint"
+            },
+            {
+              "comment": "",
+              "default": null,
+              "name": "environment",
+              "not_null": true,
+              "type": "text"
+            },
+            {
+              "comment": "",
+              "default": null,
+              "name": "store_id",
+              "not_null": true,
+              "type": "text"
+            },
+            {
+              "comment": "",
+              "default": null,
+              "name": "from_sequence",
+              "not_null": true,
+              "type": "bigint"
+            },
+            {
+              "comment": "",
+              "default": null,
+              "name": "through_sequence",
+              "not_null": true,
+              "type": "bigint"
+            },
+            {
+              "comment": "",
+              "default": null,
+              "name": "attestation",
+              "not_null": true,
+              "type": "jsonb"
+            },
+            {
+              "comment": "",
+              "default": null,
+              "name": "attestation_sha256",
+              "not_null": true,
+              "type": "text"
+            },
+            {
+              "comment": "One-way revocation flag for new admissions; revocation cannot regress or release an accepted retirement fence.",
+              "default": "false",
+              "name": "revoked",
+              "not_null": true,
+              "type": "boolean"
+            },
+            {
+              "comment": "",
+              "default": "clock_timestamp()",
+              "name": "created_at",
+              "not_null": true,
+              "type": "timestamp with time zone"
+            }
+          ],
+          "comment": "Immutable financial attestations binding an exact policy version to a source-complete, reconciled Logger sequence range.",
+          "fks": [
+            {
+              "columns": [
+                "policy_id",
+                "policy_version"
+              ],
+              "name": "billing_raw_retention_clearances_policy_id_policy_version_fkey",
+              "on_delete": "NO ACTION",
+              "on_update": "NO ACTION",
+              "parent": "billing_raw_retention_policies",
+              "parent_columns": [
+                "policy_id",
+                "version"
+              ]
+            }
+          ],
+          "indexes": [
+            {
+              "columns": [
+                "clearance_id"
+              ],
+              "definition": "CREATE UNIQUE INDEX billing_raw_retention_clearances_pkey ON public.billing_raw_retention_clearances USING btree (clearance_id)",
+              "name": "billing_raw_retention_clearances_pkey",
+              "partial": false,
+              "unique": true
+            }
+          ],
+          "name": "billing_raw_retention_clearances",
+          "pk": [
+            "clearance_id"
+          ],
+          "schema": "public",
+          "triggers": [
+            {
+              "definition": "CREATE TRIGGER billing_raw_retention_clearance_progress BEFORE DELETE OR UPDATE ON billing_raw_retention_clearances FOR EACH ROW EXECUTE FUNCTION guard_raw_retention_clearance()",
+              "name": "billing_raw_retention_clearance_progress"
+            }
+          ]
+        },
+        {
+          "checks": [
+            {
+              "definition": "CHECK (through_sequence >= from_sequence)",
+              "name": "billing_raw_retention_holds_check"
+            },
+            {
+              "definition": "CHECK ((from_sequence = 0) = (through_sequence = 0))",
+              "name": "billing_raw_retention_holds_check1"
+            },
+            {
+              "definition": "CHECK (from_sequence >= 0)",
+              "name": "billing_raw_retention_holds_from_sequence_check"
+            },
+            {
+              "definition": "CHECK (request_sha256 ~ '^[a-f0-9]{64}$'::text)",
+              "name": "billing_raw_retention_holds_request_sha256_check"
+            },
+            {
+              "definition": "CHECK (status = ANY (ARRAY['ACTIVE'::text, 'PENDING_FENCED'::text, 'RELEASE_PENDING'::text, 'RELEASED'::text]))",
+              "name": "billing_raw_retention_holds_status_check"
+            }
+          ],
+          "columns": [
+            {
+              "comment": "Permanent primary key and immutable idempotency identity of a financial or legal hold request.",
+              "default": null,
+              "name": "hold_id",
+              "not_null": true,
+              "type": "text"
+            },
+            {
+              "comment": "",
+              "default": null,
+              "name": "environment",
+              "not_null": true,
+              "type": "text"
+            },
+            {
+              "comment": "",
+              "default": null,
+              "name": "store_id",
+              "not_null": true,
+              "type": "text"
+            },
+            {
+              "comment": "",
+              "default": null,
+              "name": "from_sequence",
+              "not_null": true,
+              "type": "bigint"
+            },
+            {
+              "comment": "",
+              "default": null,
+              "name": "through_sequence",
+              "not_null": true,
+              "type": "bigint"
+            },
+            {
+              "comment": "",
+              "default": null,
+              "name": "request",
+              "not_null": true,
+              "type": "jsonb"
+            },
+            {
+              "comment": "",
+              "default": null,
+              "name": "request_sha256",
+              "not_null": true,
+              "type": "text"
+            },
+            {
+              "comment": "ACTIVE, PENDING_FENCED and RELEASE_PENDING block new overlapping admissions and protect archive/key evidence; RELEASED is final, and PENDING_FENCED cannot reverse an earlier accepted local operation.",
+              "default": null,
+              "name": "status",
+              "not_null": true,
+              "type": "text"
+            },
+            {
+              "comment": "",
+              "default": "clock_timestamp()",
+              "name": "created_at",
+              "not_null": true,
+              "type": "timestamp with time zone"
+            }
+          ],
+          "comment": "Durable financial or legal holds protecting raw-data archive evidence and decryption keys.",
+          "fks": [],
+          "indexes": [
+            {
+              "columns": [
+                "hold_id"
+              ],
+              "definition": "CREATE UNIQUE INDEX billing_raw_retention_holds_pkey ON public.billing_raw_retention_holds USING btree (hold_id)",
+              "name": "billing_raw_retention_holds_pkey",
+              "partial": false,
+              "unique": true
+            }
+          ],
+          "name": "billing_raw_retention_holds",
+          "pk": [
+            "hold_id"
+          ],
+          "schema": "public",
+          "triggers": [
+            {
+              "definition": "CREATE TRIGGER billing_raw_retention_hold_progress BEFORE DELETE OR UPDATE ON billing_raw_retention_holds FOR EACH ROW EXECUTE FUNCTION guard_raw_retention_hold()",
+              "name": "billing_raw_retention_hold_progress"
+            }
+          ]
+        },
+        {
+          "checks": [
+            {
+              "definition": "CHECK (through_sequence >= from_sequence)",
+              "name": "billing_raw_retention_operations_check"
+            },
+            {
+              "definition": "CHECK ((status = ANY (ARRAY['COMPLETED'::text, 'ABORTED'::text])) = (resolved_at IS NOT NULL))",
+              "name": "billing_raw_retention_operations_check2"
+            },
+            {
+              "definition": "CHECK (decision_origin = ANY (ARRAY['accepted'::text, 'cancelled-before-acceptance'::text]))",
+              "name": "billing_raw_retention_operations_decision_origin_check"
+            },
+            {
+              "definition": "CHECK (from_sequence > 0)",
+              "name": "billing_raw_retention_operations_from_sequence_check"
+            },
+            {
+              "definition": "CHECK (plan_sha256 ~ '^[a-f0-9]{64}$'::text)",
+              "name": "billing_raw_retention_operations_plan_sha256_check"
+            },
+            {
+              "definition": "CHECK (request_sha256 ~ '^[a-f0-9]{64}$'::text)",
+              "name": "billing_raw_retention_operations_request_sha256_check"
+            },
+            {
+              "definition": "CHECK (status = ANY (ARRAY['ACTIVE'::text, 'ABORT_REQUESTED'::text, 'COMPLETED'::text, 'ABORTED'::text]))",
+              "name": "billing_raw_retention_operations_status_check"
+            },
+            {
+              "definition": "CHECK (decision_origin = 'accepted'::text AND (status = ANY (ARRAY['COMPLETED'::text, 'ABORTED'::text])) = (terminal_receipt IS NOT NULL) OR decision_origin = 'cancelled-before-acceptance'::text AND status = 'ABORTED'::text AND terminal_receipt IS NULL AND consumer_proofs = '[]'::jsonb)",
+              "name": "billing_raw_retention_terminal_provenance"
+            }
+          ],
+          "columns": [
+            {
+              "comment": "Permanent primary key and idempotency identity of one retirement decision; ambiguous retries reuse the exact operation and plan.",
+              "default": null,
+              "name": "operation_id",
+              "not_null": true,
+              "type": "text"
+            },
+            {
+              "comment": "",
+              "default": null,
+              "name": "environment",
+              "not_null": true,
+              "type": "text"
+            },
+            {
+              "comment": "",
+              "default": null,
+              "name": "store_id",
+              "not_null": true,
+              "type": "text"
+            },
+            {
+              "comment": "",
+              "default": null,
+              "name": "from_sequence",
+              "not_null": true,
+              "type": "bigint"
+            },
+            {
+              "comment": "",
+              "default": null,
+              "name": "through_sequence",
+              "not_null": true,
+              "type": "bigint"
+            },
+            {
+              "comment": "",
+              "default": null,
+              "name": "plan_sha256",
+              "not_null": true,
+              "type": "text"
+            },
+            {
+              "comment": "",
+              "default": null,
+              "name": "request_sha256",
+              "not_null": true,
+              "type": "text"
+            },
+            {
+              "comment": "",
+              "default": null,
+              "name": "plan",
+              "not_null": true,
+              "type": "jsonb"
+            },
+            {
+              "comment": "",
+              "default": null,
+              "name": "consumer_proofs",
+              "not_null": true,
+              "type": "jsonb"
+            },
+            {
+              "comment": "ACTIVE and ABORT_REQUESTED retain the per-store fence; COMPLETED and ABORTED are immutable terminal states governed by decision_origin.",
+              "default": null,
+              "name": "status",
+              "not_null": true,
+              "type": "text"
+            },
+            {
+              "comment": "",
+              "default": null,
+              "name": "terminal_receipt",
+              "not_null": false,
+              "type": "jsonb"
+            },
+            {
+              "comment": "",
+              "default": "clock_timestamp()",
+              "name": "created_at",
+              "not_null": true,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "",
+              "default": null,
+              "name": "resolved_at",
+              "not_null": false,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "accepted requires authenticated Logger evidence at termination; cancelled-before-acceptance is a permanent local ABORTED tombstone with no Logger receipt and no deletion authority.",
+              "default": "'accepted'::text",
+              "name": "decision_origin",
+              "not_null": true,
+              "type": "text"
+            }
+          ],
+          "comment": "Crash-safe retirement decisions, exact evidence bindings and permanent terminal provenance.",
+          "fks": [],
+          "indexes": [
+            {
+              "columns": [
+                "environment",
+                "store_id"
+              ],
+              "definition": "CREATE UNIQUE INDEX billing_raw_retention_one_fence ON public.billing_raw_retention_operations USING btree (environment, store_id) WHERE (status = ANY (ARRAY['ACTIVE'::text, 'ABORT_REQUESTED'::text]))",
+              "name": "billing_raw_retention_one_fence",
+              "partial": true,
+              "unique": true
+            },
+            {
+              "columns": [
+                "operation_id"
+              ],
+              "definition": "CREATE UNIQUE INDEX billing_raw_retention_operations_pkey ON public.billing_raw_retention_operations USING btree (operation_id)",
+              "name": "billing_raw_retention_operations_pkey",
+              "partial": false,
+              "unique": true
+            }
+          ],
+          "name": "billing_raw_retention_operations",
+          "pk": [
+            "operation_id"
+          ],
+          "schema": "public",
+          "triggers": [
+            {
+              "definition": "CREATE TRIGGER billing_raw_retention_operation_progress BEFORE DELETE OR UPDATE ON billing_raw_retention_operations FOR EACH ROW EXECUTE FUNCTION guard_raw_retention_operation()",
+              "name": "billing_raw_retention_operation_progress"
+            }
+          ]
+        },
+        {
+          "checks": [
+            {
+              "definition": "CHECK (environment = ANY (ARRAY['dev'::text, 'staging'::text, 'prod'::text]))",
+              "name": "billing_raw_retention_policies_environment_check"
+            },
+            {
+              "definition": "CHECK (specification_sha256 ~ '^[a-f0-9]{64}$'::text)",
+              "name": "billing_raw_retention_policies_specification_sha256_check"
+            },
+            {
+              "definition": "CHECK (store_id ~ '^[a-f0-9]{32}$'::text)",
+              "name": "billing_raw_retention_policies_store_id_check"
+            },
+            {
+              "definition": "CHECK (version > 0)",
+              "name": "billing_raw_retention_policies_version_check"
+            }
+          ],
+          "columns": [
+            {
+              "comment": "Stable financial policy identifier; policy_id and version form the immutable composite primary key.",
+              "default": null,
+              "name": "policy_id",
+              "not_null": true,
+              "type": "text"
+            },
+            {
+              "comment": "Positive immutable policy version; paired with policy_id and referenced by the clearance composite foreign key.",
+              "default": null,
+              "name": "version",
+              "not_null": true,
+              "type": "bigint"
+            },
+            {
+              "comment": "",
+              "default": null,
+              "name": "environment",
+              "not_null": true,
+              "type": "text"
+            },
+            {
+              "comment": "",
+              "default": null,
+              "name": "store_id",
+              "not_null": true,
+              "type": "text"
+            },
+            {
+              "comment": "",
+              "default": null,
+              "name": "specification",
+              "not_null": true,
+              "type": "jsonb"
+            },
+            {
+              "comment": "",
+              "default": null,
+              "name": "specification_sha256",
+              "not_null": true,
+              "type": "text"
+            },
+            {
+              "comment": "",
+              "default": null,
+              "name": "recovery_approval_ref",
+              "not_null": false,
+              "type": "text"
+            },
+            {
+              "comment": "Admission switch: false blocks new operations only; existing ACTIVE or ABORT_REQUESTED fences remain recoverable.",
+              "default": "false",
+              "name": "active",
+              "not_null": true,
+              "type": "boolean"
+            },
+            {
+              "comment": "",
+              "default": "clock_timestamp()",
+              "name": "created_at",
+              "not_null": true,
+              "type": "timestamp with time zone"
+            }
+          ],
+          "comment": "Immutable, versioned financial policies and independent recovery approvals for raw-payload retirement.",
+          "fks": [],
+          "indexes": [
+            {
+              "columns": [
+                "environment",
+                "store_id"
+              ],
+              "definition": "CREATE UNIQUE INDEX billing_raw_retention_active_policy ON public.billing_raw_retention_policies USING btree (environment, store_id) WHERE active",
+              "name": "billing_raw_retention_active_policy",
+              "partial": true,
+              "unique": true
+            },
+            {
+              "columns": [
+                "policy_id",
+                "version"
+              ],
+              "definition": "CREATE UNIQUE INDEX billing_raw_retention_policies_pkey ON public.billing_raw_retention_policies USING btree (policy_id, version)",
+              "name": "billing_raw_retention_policies_pkey",
+              "partial": false,
+              "unique": true
+            }
+          ],
+          "name": "billing_raw_retention_policies",
+          "pk": [
+            "policy_id",
+            "version"
+          ],
+          "schema": "public",
+          "triggers": [
+            {
+              "definition": "CREATE TRIGGER billing_raw_retention_policy_progress BEFORE DELETE OR UPDATE ON billing_raw_retention_policies FOR EACH ROW EXECUTE FUNCTION guard_raw_retention_policy()",
+              "name": "billing_raw_retention_policy_progress"
             }
           ]
         },
@@ -30956,6 +31787,16 @@
         },
         {
           "details": {
+            "critical": "evidence",
+            "description": "Immutable payload digest acknowledged by the exact Billing usage-fact protocol; legacy delivery timestamps without this binding do not qualify raw-data retirement."
+          },
+          "kind": "column",
+          "name": "billing_usage_fact_outbox.billing_ack_payload_sha256",
+          "schema": "public",
+          "version": 1
+        },
+        {
+          "details": {
             "critical": "key",
             "description": "Primary key of billing_usage_fact_outbox."
           },
@@ -33983,6 +34824,10 @@
         {
           "checks": [
             {
+              "definition": "CHECK (billing_ack_payload_sha256 IS NULL OR billing_ack_payload_sha256 = payload_sha256 AND delivered_at IS NOT NULL)",
+              "name": "billing_usage_exact_ack_binding"
+            },
+            {
               "definition": "CHECK (attempts >= 0)",
               "name": "billing_usage_fact_outbox_attempts_check"
             },
@@ -34073,6 +34918,13 @@
               "name": "created_at",
               "not_null": true,
               "type": "timestamp with time zone"
+            },
+            {
+              "comment": "Exact Billing protocol acknowledgment bound to the immutable outbox payload; nullable until qualified.",
+              "default": null,
+              "name": "billing_ack_payload_sha256",
+              "not_null": false,
+              "type": "text"
             }
           ],
           "comment": "Usage facts awaiting Billing delivery, payload digests, and retry state.",
@@ -34109,6 +34961,16 @@
               "name": "billing_usage_fact_outbox_pkey",
               "partial": false,
               "unique": true
+            },
+            {
+              "columns": [
+                "created_at",
+                "fact_usage_id"
+              ],
+              "definition": "CREATE INDEX billing_usage_fact_outbox_unacknowledged ON public.billing_usage_fact_outbox USING btree (created_at, fact_usage_id) WHERE (billing_ack_payload_sha256 IS NULL)",
+              "name": "billing_usage_fact_outbox_unacknowledged",
+              "partial": true,
+              "unique": false
             }
           ],
           "name": "billing_usage_fact_outbox",
