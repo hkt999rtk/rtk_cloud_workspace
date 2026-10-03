@@ -1,13 +1,13 @@
 {
-  "captured_at": "2026-10-03T12:26:50.587386+00:00",
+  "captured_at": "2026-10-03T14:01:08.511648+00:00",
   "environment": null,
   "format_version": 1,
   "revisions": {
     "Account Manager": "48c5c63f6f8a",
-    "Billing": "dc036edc1cf6",
+    "Billing": "a16e12a8e445",
     "Cloud Admin": "97df544091f4",
     "Cloud Frontend": "475b9fe80d6c",
-    "Video Cloud": "6541234b8e77"
+    "Video Cloud": "6bb1ffb7be41"
   },
   "schema_hash": "281c8ab6334fb21d26fde53283c2857604fbd55b7ad7126857bb41dec7147b20",
   "source_dirty": {
