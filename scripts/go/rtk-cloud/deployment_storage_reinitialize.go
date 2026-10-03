@@ -155,7 +155,7 @@ func (c deploymentCredentialChecker) requireEmptyStorageDestination(store provis
 		}
 		var result struct {
 			XMLName   xml.Name
-			Name      string     `xml:"Name"`
+			Name      *string    `xml:"Name"`
 			Bucket    string     `xml:"Bucket"`
 			Truncated *bool      `xml:"IsTruncated"`
 			Contents  []struct{} `xml:"Contents"`
@@ -163,8 +163,20 @@ func (c deploymentCredentialChecker) requireEmptyStorageDestination(store provis
 			Markers   []struct{} `xml:"DeleteMarker"`
 			Uploads   []struct{} `xml:"Upload"`
 		}
-		if xml.Unmarshal(body, &result) != nil || result.XMLName.Local != root || (query != "uploads" && result.Name != store.bucket) || (query == "uploads" && result.Bucket != store.bucket) || result.Truncated == nil {
-			return errors.New("invalid destination inventory identity or XML")
+		if xml.Unmarshal(body, &result) != nil || result.XMLName.Local != root || result.Truncated == nil {
+			return fmt.Errorf("invalid destination %s inventory identity or XML", query)
+		}
+		identityMatches := result.Name != nil && *result.Name == store.bucket
+		if query == "uploads" {
+			identityMatches = result.Bucket == store.bucket
+		} else if query == "versions" && result.Name != nil && *result.Name == "" {
+			// Linode E3 returns an explicit empty Name for an empty version list.
+			// This routine still requires exact bucket identities from both the
+			// object and multipart listings using this same endpoint and key.
+			identityMatches = true
+		}
+		if !identityMatches {
+			return fmt.Errorf("invalid destination %s inventory identity or XML", query)
 		}
 		if *result.Truncated || len(result.Contents)+len(result.Versions)+len(result.Markers)+len(result.Uploads) != 0 {
 			return fmt.Errorf("reinitialization requires a completely empty destination; %s inventory is nonempty or incomplete", query)

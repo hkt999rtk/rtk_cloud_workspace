@@ -20,6 +20,11 @@ func TestReinitializeRequiresCompleteEmptyDestination(t *testing.T) {
 		{"multipart", "uploads", `<ListMultipartUploadsResult><Bucket>target</Bucket><IsTruncated>false</IsTruncated><Upload/></ListMultipartUploadsResult>`},
 		{"incomplete", "versions", `<ListVersionsResult><Name>target</Name><IsTruncated>true</IsTruncated></ListVersionsResult>`},
 		{"wrong bucket", "list-type", `<ListBucketResult><Name>different</Name><IsTruncated>false</IsTruncated></ListBucketResult>`},
+		{"wrong version bucket", "versions", `<ListVersionsResult><Name>different</Name><IsTruncated>false</IsTruncated></ListVersionsResult>`},
+		{"empty version name with version", "versions", `<ListVersionsResult><Name></Name><IsTruncated>false</IsTruncated><Version/></ListVersionsResult>`},
+		{"empty version name with delete marker", "versions", `<ListVersionsResult><Name></Name><IsTruncated>false</IsTruncated><DeleteMarker/></ListVersionsResult>`},
+		{"empty version name truncated", "versions", `<ListVersionsResult><Name></Name><IsTruncated>true</IsTruncated></ListVersionsResult>`},
+		{"empty version name missing termination proof", "versions", `<ListVersionsResult><Name></Name></ListVersionsResult>`},
 		{"wrong response", "versions", `<Error/>`},
 		{"bare objects", "list-type", `<ListBucketResult/>`},
 		{"bare versions", "versions", `<ListVersionsResult/>`},
@@ -44,6 +49,55 @@ func TestReinitializeRequiresCompleteEmptyDestination(t *testing.T) {
 			c := deploymentCredentialChecker{client: s.Client()}
 			if err := c.requireEmptyStorageDestination(provisionObjectStore{bucket: "target", endpoint: s.URL, region: "us-sea"}); err == nil {
 				t.Fatal("nonempty/incomplete destination accepted")
+			}
+		})
+	}
+}
+
+func TestReinitializeEmptyVersionNameRequiresOtherBucketIdentities(t *testing.T) {
+	for _, tc := range []struct {
+		name, objects, uploads string
+		valid                  bool
+	}{
+		{"Linode E3 empty versions", "target", "target", true},
+		{"wrong objects bucket", "different", "target", false},
+		{"empty objects name", "", "target", false},
+		{"wrong uploads bucket", "target", "different", false},
+		{"empty uploads bucket", "target", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reads := 0
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || r.URL.Path != "/target" {
+					t.Errorf("inventory left the exact read-only destination: %s %s", r.Method, r.URL.Path)
+				}
+				reads++
+				switch {
+				case r.URL.Query().Has("versions"):
+					fmt.Fprint(w, `<ListVersionsResult><Name></Name><Prefix></Prefix><IsTruncated>false</IsTruncated><MaxKeys>1000</MaxKeys></ListVersionsResult>`)
+				case r.URL.Query().Has("uploads"):
+					serveReinitializeEmptyInventory(w, r, tc.uploads)
+				default:
+					serveReinitializeEmptyInventory(w, r, tc.objects)
+				}
+			}))
+			defer s.Close()
+			c := deploymentCredentialChecker{client: s.Client()}
+			err := c.requireEmptyStorageDestination(provisionObjectStore{bucket: "target", endpoint: s.URL, region: "us-sea"})
+			if (err == nil) != tc.valid {
+				t.Fatalf("valid=%v error=%v", tc.valid, err)
+			}
+			if tc.valid && reads != 3 {
+				t.Fatal("empty version name accepted without all three inventory proofs")
+			}
+			if err != nil {
+				query := "objects"
+				if tc.objects == "target" {
+					query = "uploads"
+				}
+				if !strings.Contains(err.Error(), "destination "+query+" inventory") {
+					t.Fatalf("inventory error omitted operation: %v", err)
+				}
 			}
 		})
 	}
