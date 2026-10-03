@@ -199,6 +199,17 @@ one qualified contiguous retirement prefix and scheduled compaction. It never
 skips a failed prefix. `controller-status.json` is atomically persisted for the
 host's monitoring agent.
 
+Discovery lists published prefixes, but historical sets with a private durable
+`.registered.json` acknowledgement do not repeatedly read remote metadata or
+POST verification on each minute tick or restart. The acknowledgement is written
+only after Logger confirms registration and retains the exact manifest bytes and
+independently signed receipt; scope, approved keys and signature are revalidated
+locally. A `.verified.json` receipt alone is not a registration acknowledgement.
+Missing acknowledgement or an ambiguous response retries the same receipt;
+corrupt/private-permission or scope failures are reported, not silently cached.
+Retirement and recovery still independently read and verify remote archive bytes
+and live authority; this journal is not a new cleanup permit or an integrity audit.
+
 ## Ambiguous Results and Holds
 
 The controller saves an immutable `.plan.json` before sending its operation.

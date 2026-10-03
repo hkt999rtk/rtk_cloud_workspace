@@ -30,6 +30,7 @@ func runOneControllerCycle(t *testing.T, e Engine, store ManifestLister, local, 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	finished := make(chan error, 1)
+	started := time.Now().UTC()
 	go func() { finished <- Run(ctx, e, store, local, authority, time.Hour) }()
 	deadline := time.NewTimer(5 * time.Second)
 	defer deadline.Stop()
@@ -43,7 +44,8 @@ func runOneControllerCycle(t *testing.T, e Engine, store ManifestLister, local, 
 		case <-deadline.C:
 			t.Fatal("controller did not durably report its first cycle")
 		case <-tick.C:
-			if readPrivateJSON(filepath.Join(e.Config.Directory, "controller-status.json"), &status) != nil || status.UpdatedAt.IsZero() {
+			status = ControllerStatus{}
+			if readPrivateJSON(filepath.Join(e.Config.Directory, "controller-status.json"), &status) != nil || status.UpdatedAt.Before(started) {
 				continue
 			}
 			cancel()

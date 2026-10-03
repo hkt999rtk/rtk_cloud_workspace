@@ -1,10 +1,13 @@
 ARG GO_IMAGE=golang:1.25-alpine
 ARG POSTGRES_IMAGE
 FROM ${GO_IMAGE} AS builder
-WORKDIR /src
+WORKDIR /src/scripts/go
 COPY scripts/go/go.mod scripts/go/go.sum ./
+COPY repos/rtk_cloud_logger/go.mod repos/rtk_cloud_logger/go.sum /src/repos/rtk_cloud_logger/
 RUN go mod download
 COPY scripts/go/ ./
+# Preserve the reviewed workspace replace path; no remote Logger fallback.
+COPY repos/rtk_cloud_logger/ /src/repos/rtk_cloud_logger/
 RUN CGO_ENABLED=0 GOWORK=off go build -trimpath -o /out/rtk-cloud ./rtk-cloud
 
 # CI resolves POSTGRES_IMAGE to the same digest recorded in the backup config.

@@ -254,35 +254,42 @@ func (e Engine) readManifest(ctx context.Context, prefix string) (billingarchive
 	if err != nil {
 		return m, nil, err
 	}
-	m, err = billingarchive.DecodeManifest(strings.NewReader(string(b)))
+	m, err = e.validateManifest(prefix, b)
+	return m, b, err
+}
+
+// The registration journal retains the original manifest bytes, not a
+// re-encoding: the independently signed receipt binds those exact bytes.
+func (e Engine) validateManifest(prefix string, b []byte) (billingarchive.Manifest, error) {
+	m, err := billingarchive.DecodeManifest(strings.NewReader(string(b)))
 	if err != nil {
-		return m, nil, err
+		return m, err
 	}
 	if m.Environment != e.Config.Environment || m.Stack != e.Config.Stack || m.StoreID != e.Config.StoreID || Prefix(m, "snapshot") != prefix {
-		return m, nil, errors.New("manifest scope mismatch")
+		return m, errors.New("manifest scope mismatch")
 	}
 	if m.CreatedAt.After(time.Now().UTC().Add(30 * time.Second)) {
-		return m, nil, errors.New("future writer horizon rejected")
+		return m, errors.New("future writer horizon rejected")
 	}
 	approved := e.Config.SourceEnvironments()
 	if len(approved) != len(m.SourceEventEnvironments) {
-		return m, nil, errors.New("unapproved historical source environment mapping")
+		return m, errors.New("unapproved historical source environment mapping")
 	}
 	for i, environment := range approved {
 		if environment != m.SourceEventEnvironments[i] {
-			return m, nil, errors.New("source environment substitution")
+			return m, errors.New("source environment substitution")
 		}
 	}
 	recipients, ok := e.Config.EncryptionRecipients[m.EncryptionKeyID]
 	if !ok || len(recipients) != len(m.RecipientFingerprints) {
-		return m, nil, errors.New("unregistered archive encryption key")
+		return m, errors.New("unregistered archive encryption key")
 	}
 	for i, v := range recipients {
 		if billingarchive.Fingerprint(v) != m.RecipientFingerprints[i] {
-			return m, nil, errors.New("archive recipient substitution")
+			return m, errors.New("archive recipient substitution")
 		}
 	}
-	return m, b, nil
+	return m, nil
 }
 
 // Verify downloads to a new operation-owned private directory. Plaintext is

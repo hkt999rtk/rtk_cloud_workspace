@@ -22,6 +22,51 @@ type ManifestLister interface {
 	ListManifests(context.Context, string) ([]string, error)
 }
 
+// A verification receipt alone does not prove Logger accepted it. This journal
+// is written only after confirmed registration; an ambiguous POST is retried.
+type archiveRegistration struct {
+	Prefix        string                          `json:"prefix"`
+	ManifestBytes []byte                          `json:"manifest_bytes"`
+	Completion    billingarchive.SignedCompletion `json:"completion"`
+}
+
+func registeredArchive(e Engine, prefix string) (Verified, bool, error) {
+	var out Verified
+	id := filepath.Base(prefix)
+	if !billingarchive.SafeID(id) {
+		return out, false, errors.New("invalid registered archive identity")
+	}
+	file := filepath.Join(e.Config.Directory, id+".registered.json")
+	if _, err := os.Lstat(file); os.IsNotExist(err) {
+		return out, false, nil
+	} else if err != nil {
+		return out, false, err
+	}
+	var saved archiveRegistration
+	if err := readPrivateJSONLimit(file, &saved, 2*billingarchive.MaxManifestBytes); err != nil {
+		return out, false, err
+	}
+	if saved.Prefix != prefix {
+		return out, false, errors.New("registered archive prefix mismatch")
+	}
+	m, err := e.validateManifest(prefix, saved.ManifestBytes)
+	if err != nil {
+		return out, false, err
+	}
+	keys, _ := e.Config.PublicKeys()
+	if _, err = verifyCompletionNow(saved.Completion, m, saved.ManifestBytes, keys); err != nil {
+		return out, false, err
+	}
+	return Verified{m, saved.Completion, prefix}, true, nil
+}
+
+func recordProtection(status *ControllerStatus, m billingarchive.Manifest) {
+	if m.CreatedAt.After(status.VerifiedHorizon) {
+		status.VerifiedHorizon = m.CreatedAt
+		status.ProtectedHighWater = m.HighWater
+	}
+}
+
 // submitSavedPlan reads the authoritative decision first. Only an authenticated
 // 404 permits re-submission; a timeout never releases an ACTIVE fence. Financial
 // policy rotation cannot rewrite the saved immutable intent.
@@ -112,6 +157,10 @@ func submitSavedPlan(ctx context.Context, e Engine, local, authority Client, p r
 }
 
 func readPrivateJSON(file string, result any) error {
+	return readPrivateJSONLimit(file, result, 4<<20)
+}
+
+func readPrivateJSONLimit(file string, result any, limit int64) error {
 	i, err := os.Lstat(file)
 	if err != nil || !i.Mode().IsRegular() || i.Mode().Perm()&0077 != 0 {
 		return errors.New("private controller journal unavailable")
@@ -121,7 +170,7 @@ func readPrivateJSON(file string, result any) error {
 		return err
 	}
 	defer f.Close()
-	return billingarchive.StrictDecode(f, 4<<20, result)
+	return billingarchive.StrictDecode(f, limit, result)
 }
 
 func resumePending(ctx context.Context, e Engine, local, authority Client) (int, error) {
@@ -317,6 +366,19 @@ func Run(ctx context.Context, e Engine, objects ManifestLister, local, authority
 		// Newest manifests first for protection; retirement below is oldest first.
 		sort.Sort(sort.Reverse(sort.StringSlice(prefixes)))
 		for _, prefix := range prefixes {
+			// Revalidate the private durable acknowledgement and signature locally.
+			// Historical sets need no S3 GET or Logger mutation on minute ticks or
+			// process restart. Retirement still independently reads remote bytes.
+			registered, found, err := registeredArchive(e, prefix)
+			if err != nil {
+				status.Errors = append(status.Errors, "registration journal: "+err.Error())
+				continue
+			}
+			if found {
+				recordProtection(&status, registered.Manifest)
+				archives = append(archives, registered)
+				continue
+			}
 			m, raw, err := e.readManifest(ctx, prefix)
 			if err != nil {
 				status.Errors = append(status.Errors, "manifest: "+err.Error())
@@ -346,14 +408,15 @@ func Run(ctx context.Context, e Engine, objects ManifestLister, local, authority
 				status.Errors = append(status.Errors, "catalog registration: "+err.Error())
 				continue
 			}
-			if m.CreatedAt.After(status.VerifiedHorizon) {
-				status.VerifiedHorizon = m.CreatedAt
-				status.ProtectedHighWater = m.HighWater
-			}
 			if err = atomicJSON(filepath.Join(e.Config.Directory, m.SetID+".verified.json"), Verified{m, complete, prefix}); err != nil {
 				status.Errors = append(status.Errors, "receipt journal: "+err.Error())
 				continue
 			}
+			if err = atomicJSON(filepath.Join(e.Config.Directory, m.SetID+".registered.json"), archiveRegistration{prefix, raw, complete}); err != nil {
+				status.Errors = append(status.Errors, "registration journal: "+err.Error())
+				continue
+			}
+			recordProtection(&status, m)
 			archives = append(archives, Verified{m, complete, prefix})
 		}
 		status.ProtectionOverdue = status.VerifiedHorizon.IsZero() || time.Since(status.VerifiedHorizon) > 24*time.Hour

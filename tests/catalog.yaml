@@ -97,6 +97,42 @@ cases:
     evidence: [json, junit]
     verifies: [REQ-BILL-RAW-PROTECTION-001]
     status: active
+  - id: INT-WS-RAW-REGISTRATION-001
+    title: Controller confirms archive registration once and retries only ambiguous receipts
+    layer: integration
+    owner: cloud_platform
+    source: scripts/go/rtk-cloud/internal/billingbackup/runner_registration_test.go
+    selector: TestRunnerConfirmedRegistrationDoesNotReplayHistoricalObjectsAfterRestart
+    method: Private durable acknowledgement fixtures preserve exact noncanonical signed manifest bytes and verify zero historical remote reads or repeated registration after confirmation across process restart.
+    runner: test-coverage
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-BILL-RAW-PROTECTION-001]
+    status: active
+  - id: INT-WS-RAW-REGISTRATION-002
+    title: Ambiguous registration retries the identical signed receipt without false confirmation
+    layer: integration
+    owner: cloud_platform
+    source: scripts/go/rtk-cloud/internal/billingbackup/runner_registration_test.go
+    selector: TestRunnerAmbiguousRegistrationRetriesSameReceiptUntilDurablyConfirmed
+    method: A real local HTTP endpoint returns an ambiguous failure before later confirmation. The private journal does not manufacture acknowledgement and retries identical signed receipt bytes then stops replaying confirmed metadata.
+    runner: test-coverage
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-BILL-RAW-PROTECTION-001]
+    status: active
+  - id: INT-WS-RAW-REGISTRATION-003
+    title: Controller refuses corrupt or unapproved durable archive registrations
+    layer: integration
+    owner: cloud_platform
+    source: scripts/go/rtk-cloud/internal/billingbackup/runner_registration_test.go
+    selector: TestRunnerRegistrationJournalRejectsTamperingOrUnapprovedScope
+    method: Private journal negatives reject altered manifest signature prefix permissions or approved encryption and verifier registries instead of silently trusting file existence.
+    runner: test-coverage
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-BILL-RAW-PROTECTION-001]
+    status: active
   - { <<: *ui_smoke, id: UI-CA-PROVISIONING-RET-001, title: Retired CSV provisioning links return to Fleet Management, source: repos/rtk_cloud_admin/web/e2e/enterprise-console.spec.mjs, selector: "[UI-CA-PROVISIONING-RET-001]", tags: [smoke, enterprise], verifies: [REQ-UI-CA-PROVISIONING-RETIRED-001] }
   - { <<: *ui_local, id: UI-CA-CONSOLE-PERF-001, title: My Clouds and Developer Docs use in-app navigation without document reloads, source: repos/rtk_cloud_admin/web/e2e/console-navigation-performance.spec.mjs, selector: "[UI-CA-CONSOLE-PERF-001]", tags: [console], verifies: [REQ-CA-BFF-UI-001] }
   - { <<: *ui_local, id: UI-CA-CONSOLE-NAV-001, title: Clouds and documentation history retain one Console document, source: repos/rtk_cloud_admin/web/e2e/console-navigation.spec.mjs, selector: "[UI-CA-CONSOLE-NAV-001]", tags: [console], verifies: [REQ-CA-BFF-UI-001, REQ-UI-CA-DOCS-001] }
