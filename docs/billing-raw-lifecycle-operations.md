@@ -87,7 +87,7 @@ services and exact namespace/pod/port NetworkPolicy grants; it does not expose
 them through public ingress. Register any off-cluster authenticated access path
 separately; a private service name is not an off-cluster route.
 
-1. Migrate Billing's authority schema (`070` and `071`) with the migration owner. Keep protected
+1. Migrate Billing's authority schema (`070`, `071` and metadata-only `072`) with the migration owner. Keep protected
    environment startup migrations disabled. Deploy compatible Logger and Video
    binaries with new lifecycle features still disabled.
 2. Enable guarded lifecycle/migration and backup in Dev. Logger's online v2
