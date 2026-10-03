@@ -71,11 +71,17 @@ func TestPostgresRestoreTunedSourceDocker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	hostOwner := fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())
+	target := filepath.Join(root, "restore")
 	name := "rtk-pg-drill-" + postgresBackupRandomID()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	t.Cleanup(func() {
-		_ = exec.Command(docker, "exec", name, "chmod", "-R", "a+rwX", root).Run()
+		// Restore private host ownership before Go reads or removes bind-mounted files.
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cleanupCancel()
+		_ = exec.CommandContext(cleanupCtx, docker, "exec", "--user", "postgres", name, "pg_ctl", "-D", filepath.Join(target, "pgdata"), "-m", "fast", "-w", "-t", "5", "stop").Run()
+		_ = exec.CommandContext(cleanupCtx, docker, "exec", "--user", "root", name, "chown", "-R", hostOwner, root).Run()
 		_ = exec.Command(docker, "rm", "-fv", name).Run()
 		_ = os.RemoveAll(root)
 	})
@@ -107,16 +113,15 @@ func TestPostgresRestoreTunedSourceDocker(t *testing.T) {
 	query("rtk_account_manager", "CREATE TABLE organizations(id int); CREATE TABLE users(id int); CREATE TABLE organization_members(organization_id int,user_id int); INSERT INTO organizations VALUES(1); INSERT INTO users VALUES(2); INSERT INTO organization_members VALUES(1,2); CREATE TABLE device_operations(operation_id int); CREATE TABLE device_message_outbox(operation_id int,attempt_count int); INSERT INTO device_operations VALUES(3); INSERT INTO device_message_outbox VALUES(3,0)")
 	query("rtk_billing", "CREATE TABLE commercial_accounts(id int,currency text); CREATE TABLE balance_ledger_entries(account_id int,currency text,amount_minor bigint); INSERT INTO commercial_accounts VALUES(1,'TWD'); INSERT INTO balance_ledger_entries VALUES(1,'TWD',100)")
 	query("video_cloud", "CREATE TABLE devices(id int,info jsonb,config jsonb); INSERT INTO devices VALUES(1,'{}','{}'); CREATE TABLE device_presence_outbox(generation int,attempts int,status text); INSERT INTO device_presence_outbox VALUES(1,0,'online')")
-	target := filepath.Join(root, "restore")
 	if err := os.Mkdir(target, 0700); err != nil {
 		t.Fatal(err)
 	}
-	command("exec", name, "pg_basebackup", "-U", "postgres", "-D", filepath.Join(target, "pgdata"), "-Fp", "-X", "stream", "--checkpoint=spread")
-	command("exec", name, "pg_verifybackup", filepath.Join(target, "pgdata"))
+	command("exec", "--user", hostOwner, name, "pg_basebackup", "-U", "postgres", "-D", filepath.Join(target, "pgdata"), "-Fp", "-X", "stream", "--checkpoint=spread")
+	command("exec", "--user", hostOwner, name, "pg_verifybackup", filepath.Join(target, "pgdata"))
 	run := func(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
 		user := "postgres"
 		if args[0] == "env" {
-			user = "root"
+			user = hostOwner
 		}
 		if args[0] == "pg_ctl" && args[len(args)-1] == "start" {
 			command("exec", name, "chmod", "0711", root)
@@ -133,9 +138,13 @@ func TestPostgresRestoreTunedSourceDocker(t *testing.T) {
 		}
 		return nil
 	}
-	if err := postgresBackupVerifyRunningClusterWithExecutor(ctx, target, run); err != nil {
+	drillErr := postgresBackupVerifyRunningClusterWithExecutor(ctx, target, run)
+	// The helper stops the PostgreSQL-owned restored server before returning.
+	// Linux bind mounts preserve that UID, unlike Docker Desktop's host mapping.
+	command("exec", "--user", "root", name, "chown", "-R", hostOwner, target)
+	if drillErr != nil {
 		log, _ := os.ReadFile(filepath.Join(target, "postgres.log"))
-		t.Fatalf("tuned source drill failed: %v\n%s", err, log)
+		t.Fatalf("tuned source drill failed: %v\n%s", drillErr, log)
 	}
 	conf, err := os.ReadFile(filepath.Join(target, "postgresql.conf"))
 	if err != nil {

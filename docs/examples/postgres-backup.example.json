@@ -8,6 +8,7 @@
   "source_container": "postgres",
   "source_pvc": "data-postgresql-0",
   "scratch_storage": "60Gi",
+  "storage_class": "linode-block-storage",
   "image_pull_secret": "ghcr-pull",
   "schedule": "0 3 * * *",
   "time_zone": "Asia/Shanghai",

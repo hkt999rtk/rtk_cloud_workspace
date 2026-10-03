@@ -63,8 +63,11 @@ The example budgets 20 GiB of plaintext and 30 GiB of encrypted archive on a
 60 GiB scratch PVC, leaving space beyond the required 64 MiB reserve. It fits
 only when measured source data, growth and retry needs fit those limits and the
 source PVC is no larger than 20 GiB; increase the scratch size and limits together
-when necessary. Optional `storage_class` selects a reviewed cluster storage
-class; omission uses the cluster default.
+when necessary. Set `storage_class` explicitly for disposable scratch and drill
+PVCs. The example uses `linode-block-storage`; verify its `Delete` reclaim policy
+before configuring the backup. Staging's default observed on 2026-10-03 is
+`linode-block-storage-retain`, so omission selects retained storage. A `Retain`
+class requires separately reviewed PV/provider-volume cleanup after PVC removal.
 
 Record and review:
 
@@ -243,7 +246,10 @@ confirmation arguments to remove only that drill's resources after evidence is
 saved. Production replacement and application cutover require a separately
 reviewed coordinated recovery; the drill does not perform them.
 The isolated PVC contains decrypted database files until cleanup. Keep its
-namespace private and verify PVC/provider-volume cleanup as part of the evidence.
+namespace private and verify PVC, PV and provider-volume removal as part of the
+cleanup evidence. Apply the same checks when retiring the scratch PVC after its
+retained retry artifacts are no longer needed. With a `Retain` class, PVC removal
+alone does not establish that the underlying database files were removed.
 
 ## Monitoring and acceptance
 

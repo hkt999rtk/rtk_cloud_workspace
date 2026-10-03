@@ -2,6 +2,7 @@ package postgresbackup
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -21,13 +22,15 @@ func TestPhysicalPostgres16DockerRoundTrip(t *testing.T) {
 	}
 	docker, err := exec.LookPath("docker")
 	if err != nil {
-		t.Skip("Docker unavailable")
+		t.Fatal("opt-in native backup test requires Docker")
 	}
 	if exec.Command(docker, "image", "inspect", "postgres:16-alpine").Run() != nil {
-		t.Skip("local postgres:16-alpine image and Docker daemon required; test never pulls")
+		t.Fatal("opt-in native backup test requires a local postgres:16-alpine image and Docker daemon; test never pulls")
 	}
 	c, _, identity := workerFixture(t)
 	root := filepath.Dir(c.Directory)
+	hostOwner := fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())
+	var restoredData string
 	c.Source.Host = "127.0.0.1"
 	c.Source.SSLMode = "disable"
 	c.MaxPlaintextBytes = 256 << 20
@@ -39,7 +42,18 @@ func TestPhysicalPostgres16DockerRoundTrip(t *testing.T) {
 	if err = exec.CommandContext(ctx, docker, "run", "-d", "--network", "none", "--name", name, "--label", "rtk.postgres-backup.test=true", "--mount", "type=bind,source="+root+",target="+root, "-e", "POSTGRES_HOST_AUTH_METHOD=trust", "postgres:16-alpine", "postgres", "-c", "checkpoint_timeout=30s", "-c", "checkpoint_completion_target=0.1").Run(); err != nil {
 		t.Fatal("cannot start isolated PostgreSQL fixture")
 	}
-	t.Cleanup(func() { _ = exec.Command(docker, "rm", "-fv", name).Run() })
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cleanupCancel()
+		if restoredData != "" {
+			_ = exec.CommandContext(cleanupCtx, docker, "exec", "--user", "postgres", name, "pg_ctl", "-D", restoredData, "-m", "fast", "-w", "-t", "5", "stop").Run()
+		}
+		// Go's TempDir cleanup runs afterward and must retain access on Linux.
+		if err := exec.CommandContext(cleanupCtx, docker, "exec", "--user", "root", name, "chown", "-R", hostOwner, root).Run(); err != nil {
+			t.Error("cannot restore native fixture ownership to the host")
+		}
+		_ = exec.CommandContext(cleanupCtx, docker, "rm", "-fv", name).Run()
+	})
 	for {
 		if exec.CommandContext(ctx, docker, "exec", name, "sh", "-c", `[ "$(cat /proc/1/comm)" = postgres ] && pg_isready -U postgres`).Run() == nil {
 			break
@@ -64,7 +78,8 @@ func TestPhysicalPostgres16DockerRoundTrip(t *testing.T) {
 	query("5432", "postgres", "CREATE DATABASE billing")
 	query("5432", "billing", "CREATE TABLE receipts(id integer PRIMARY KEY); INSERT INTO receipts VALUES(42)")
 	e := Engine{Exec: func(ctx context.Context, args, env []string, out io.Writer) error {
-		argv := []string{"exec"}
+		// Native tools create private files readable by the host Go process.
+		argv := []string{"exec", "--user", hostOwner}
 		for _, entry := range env {
 			key, _, _ := strings.Cut(entry, "=")
 			if strings.HasPrefix(key, "PG") || key == "LC_ALL" || key == "LANG" {
@@ -124,6 +139,7 @@ func TestPhysicalPostgres16DockerRoundTrip(t *testing.T) {
 	if err = exec.CommandContext(ctx, docker, "exec", name, "chown", "-R", "postgres:postgres", pgdata).Run(); err != nil {
 		t.Fatal("fixture ownership")
 	}
+	restoredData = pgdata
 	if err = exec.CommandContext(ctx, docker, "exec", "-u", "postgres", name, "pg_ctl", "-D", pgdata, "-l", filepath.Join(pgdata, "restore.log"), "-o", "-p 55432 -h 127.0.0.1 -c archive_mode=off -c primary_conninfo=''", "-w", "start").Run(); err != nil {
 		t.Fatal("restored PostgreSQL failed to start")
 	}
@@ -141,5 +157,15 @@ func TestPhysicalPostgres16DockerRoundTrip(t *testing.T) {
 	}
 	if got := query("5432", "accounts", "SELECT value FROM records WHERE id=1"); got != "after-backup" {
 		t.Fatal("source data changed during restore")
+	}
+	if err = exec.CommandContext(ctx, docker, "exec", "--user", "postgres", name, "pg_ctl", "-D", pgdata, "-m", "fast", "-w", "stop").Run(); err != nil {
+		t.Fatal("restored PostgreSQL failed to stop")
+	}
+	restoredData = ""
+	if err = exec.CommandContext(ctx, docker, "exec", "--user", "root", name, "chown", "-R", hostOwner, pgdata).Run(); err != nil {
+		t.Fatal("cannot restore verified PostgreSQL files to host ownership")
+	}
+	if _, err = os.ReadFile(filepath.Join(pgdata, "PG_VERSION")); err != nil {
+		t.Fatal("host cannot read restored PostgreSQL files after shutdown")
 	}
 }
