@@ -124,3 +124,100 @@ func TestBillingLifecycleSecretRequirementsTrackOperatorEnabledFeatures(t *testi
 		}
 	}
 }
+
+func billingLifecycleAdapterStore(t *testing.T) (secretStore, string) {
+	t.Helper()
+	t.Setenv("RTK_CLOUD_WORKSPACE", "")
+	defaults := readTestFile(t, filepath.Join(mustWorkspaceRoot(t), "cloud_deploy", "adapters", "lke", "defaults.env"))
+	workspace := writeDeploymentFixture(t, "dev", "lke")
+	writeTestFile(t, filepath.Join(workspace, "cloud_deploy", "adapters", "lke", "defaults.env"), defaults)
+	t.Setenv("RTK_CLOUD_WORKSPACE", workspace)
+	for key := range billingDeploymentDefaults() {
+		t.Setenv(key, "")
+	}
+	return makeIsolatedTestSecretStore(t, "dev"), workspace
+}
+
+func TestBillingLifecycleAdapterOverrideRequiresCredentials(t *testing.T) {
+	for _, tc := range []struct{ flag, secret, binding string }{
+		{"LKE_BILLING_BACKUP_ENABLED", "cloud-logger-lifecycle-token", "cloud-logger-runtime"},
+		{"LKE_BILLING_RAW_RETENTION_AUTHORITY_ENABLED", "cloud-logger-lifecycle-read-token", "billing-raw-retention-runtime"},
+	} {
+		t.Run(tc.flag, func(t *testing.T) {
+			store, workspace := billingLifecycleAdapterStore(t)
+			var output bytes.Buffer
+			if err := ensureMissingRuntimeSecrets(&output, store); err != nil {
+				t.Fatal(err)
+			}
+			if err := verifySecretStoreContents(store); err != nil {
+				t.Fatalf("disabled adapter defaults: %v", err)
+			}
+			writeTestFile(t, filepath.Join(workspace, "cloud_env", "dev", "overrides", "adapter.env"), tc.flag+"=true\n")
+			if !billingLifecycleSecretRequired(store, tc.secret) || !billingLifecycleBindingRequired(store, tc.secret, secretK8SBinding{Secret: tc.binding}) {
+				t.Fatal("adapter override did not require the lifecycle secret and binding")
+			}
+			if err := verifySecretStoreContents(store); err == nil || !strings.Contains(err.Error(), tc.secret) {
+				t.Fatalf("enabled adapter passed without dedicated credentials: %v", err)
+			}
+			if err := store.write(filepath.Join("operator", "env", tc.flag), []byte("false\n"), true); err != nil {
+				t.Fatal(err)
+			}
+			if err := verifySecretStoreContents(store); err != nil {
+				t.Fatalf("canonical operator override did not disable the stage: %v", err)
+			}
+			t.Setenv(tc.flag, "true")
+			if !billingLifecycleSecretRequired(store, tc.secret) {
+				t.Fatal("explicit process override lost precedence")
+			}
+			if err := store.write(filepath.Join("operator", "env", tc.flag), []byte("true\n"), true); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv(tc.flag, "false")
+			if billingLifecycleSecretRequired(store, tc.secret) {
+				t.Fatal("explicit process false did not override canonical operator true")
+			}
+		})
+	}
+}
+
+func TestBillingLifecycleAdapterReadErrorsFailClosed(t *testing.T) {
+	for _, tc := range []struct{ name, path, body string }{
+		{"missing defaults", "cloud_deploy/adapters/lke/defaults.env", ""},
+		{"malformed defaults", "cloud_deploy/adapters/lke/defaults.env", "invalid\n"},
+		{"malformed override", "cloud_env/dev/overrides/adapter.env", "invalid\n"},
+		{"unknown override", "cloud_env/dev/overrides/adapter.env", "LKE_BILLING_BACKUP_ENABELD=true\n"},
+		{"invalid flag", "cloud_env/dev/overrides/adapter.env", "LKE_BILLING_BACKUP_ENABLED=yes\n"},
+		{"malformed selection", "cloud_env/dev/deployment.env", "invalid\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, workspace := billingLifecycleAdapterStore(t)
+			path := filepath.Join(workspace, tc.path)
+			if tc.body == "" {
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				writeTestFile(t, path, tc.body)
+			}
+			if _, err := billingLifecycleStoreFlags(store); err == nil {
+				t.Fatal("invalid intent was treated as disabled")
+			}
+			if !billingLifecycleSecretRequired(store, "billing-backup-access-key-id") || !billingLifecycleBindingRequired(store, "billing-backup-access-key-id", secretK8SBinding{Secret: "cloud-logger-runtime"}) {
+				t.Fatal("invalid intent bypassed required secret or binding")
+			}
+		})
+	}
+	t.Run("unreadable operator entry", func(t *testing.T) {
+		store, _ := billingLifecycleAdapterStore(t)
+		path := filepath.Join(store.Root, "operator", "env", "LKE_BILLING_BACKUP_ENABLED")
+		if err := os.WriteFile(path, []byte("true\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := billingLifecycleStoreFlags(store); err == nil {
+			t.Fatal("unsafe operator entry was treated as disabled")
+		}
+		if !billingLifecycleSecretRequired(store, "billing-backup-access-key-id") {
+			t.Fatal("unsafe operator entry bypassed a required secret")
+		}
+	})
+}

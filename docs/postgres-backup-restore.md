@@ -226,6 +226,14 @@ permissions before enabling scheduling. Keep interrupted multipart uploads and
 incomplete objects outside the successful-backup count; their cleanup policy must
 not delete committed backup objects or protected drill evidence.
 
+Automatic retention currently requires a never-versioned bucket
+(`GetBucketVersioning.Status` is empty) and writer permission to read bucket
+versioning. Enabled or suspended versioning requires a separately reviewed
+object-version cleanup policy; the current command refuses deletion in either
+case. Verify this prerequisite before enabling scheduling. The versioning check
+runs only when deletion candidates exist, so a successful dry-run or an early
+backup with no candidates does not establish compatibility.
+
 ## Isolated restore drill
 
 Use `postgres-restore drill` with `--id`, a unique `--drill-id`, the independently

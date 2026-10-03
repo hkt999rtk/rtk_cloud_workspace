@@ -127,6 +127,21 @@ unconfigured provider fails. GoDaddy reads authenticate against the selected
 zone. Route53 credential qualification reports `UNSUPPORTED`; it cannot pass.
 Read-only checks still verify advertised required Linode/key scopes.
 
+Dynamic Root policy checks validate the referenced issuer and its trust scope.
+A ready, active or retiring Root can legitimately have an empty distrust policy;
+`pki_root_distrust` records removed Roots, not every trusted Root. Missing or
+ineligible issuers and revoked/compromised Roots without a published distrust
+record still fail. Do not insert a distrust record for an active Root to satisfy
+a preflight check. Fixed Device Root consumer configuration is checked separately.
+
+The legacy-path check covers the selected workspace's runtime directory. When
+qualifying a clean release checkout that uses another workspace's existing
+runtime, also run `secrets verify --environment NAME --workspace EXISTING_WORKSPACE`
+from the clean release. This verifies the canonical SecretStore and the actual
+runtime's legacy paths without reading the other workspace's tracked deployment
+selection. Keep both results; an empty runtime in a new checkout does not clear
+legacy paths in the existing workspace.
+
 `--image` requires an exact `ghcr.io/...@sha256:...` reference; repeat it for each
 affected image. Without `--image`, GHCR checks repository read access. Full pulls
 use explicit auth in a private temporary Docker configuration and require a

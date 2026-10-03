@@ -76,6 +76,12 @@ Deployment intent exposes independent disabled switches:
 - `LKE_BILLING_RAW_RETIREMENT_ENABLED=false`.
 - `LKE_BILLING_INBOX_COMPACTION_ENABLED=false`.
 
+The shared defaults, including `LKE_BILLING_BACKUP_INTERVAL=12h`, are declared
+in `cloud_deploy/adapters/lke/defaults.env`. Environment-specific intent belongs
+in `cloud_env/<environment>/overrides/adapter.env`; `deployment.env` contains
+only the deployment selection keys (`DEPLOYMENT_ARCHITECTURE`,
+`DEPLOYMENT_ADAPTER`, and `DNS_ADAPTER`).
+
 Each enabled stage requires explicit reviewed configuration; missing dedicated
 credentials, keys, scope or bucket fails closed. Retirement additionally requires
 backup and authority. Compaction does not grant retirement authority.
