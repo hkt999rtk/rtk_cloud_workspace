@@ -17,6 +17,13 @@ inventory/checks configure the adapter; archive contents never supply commands.
 
 ## Decision and Scope
 
+For scheduled PostgreSQL-only protection, use
+[Daily PostgreSQL Backup and Restore](postgres-backup-restore.md). Its separate
+`postgres-physical` format captures the entire PostgreSQL instance online with
+native physical backup tools. It has no continuous WAL/PITR and does not replace
+the matched cross-system consistency, escrow or reconciliation required here.
+The shared operation lock prevents overlap with this maintenance procedure.
+
 Version 1 uses a **manual maintenance window**, not a zero-downtime backup.
 Stop all application writers and external ingress before taking one matched
 backup set. PostgreSQL and Redis stay available for logical exports; OpenBao

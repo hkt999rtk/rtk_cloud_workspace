@@ -24,6 +24,7 @@ LKE/Kubernetes; the legacy VM runtime is not an active deployment path.
 | Take over an existing environment | Transfer matching non-secret controller state and SecretStore -> `deployment preflight --operation acceptance` | Preflight does not |
 | Prepare or migrate Object Storage | [Storage policy](object-storage-policy.md) and [storage operations](storage-credential-lifecycle.md) | Only explicitly selected bootstrap/migration/cutover steps |
 | Restore core data after deployment | [Matched backup/restore procedure](backup-restore.md) under a maintenance/write fence | Explicit restore replaces selected datasets after a safety backup |
+| Schedule online PostgreSQL backups | [Daily PostgreSQL procedure](postgres-backup-restore.md) and isolated restore qualification | Creates dedicated backup resources; production scheduling requires measured evidence |
 | Accept an existing environment | `deployment acceptance` | Creates or updates test data; does not rebuild the deployment |
 | One-time environment rehearsal | `deployment test` | Creates resources and removes the owned resources at the end |
 | Remove an environment | `deployment remove` | Deletes resources owned by that stack |
@@ -579,6 +580,15 @@ means the handoff is incomplete. See
 transfer and permission requirements.
 
 ## Core Data Backup and Restore After Deployment
+
+For the platform PostgreSQL 16 instance, use
+[Daily PostgreSQL Backup and Restore](postgres-backup-restore.md) to plan/configure
+the native daily full backup and rehearse an isolated restore. Configure with the
+schedule suspended, qualify source impact and recovery, then explicitly enable
+the reviewed daily schedule with `--enable-schedule --qualification FILE`.
+The default time is 03:00 Asia/Shanghai. Its database-only archive and isolated drill do
+not perform production application cutover. Dated staging qualification remains
+pending until evidence is recorded in that procedure.
 
 Use [Core Backup and Restore](backup-restore.md) for the authoritative matched
 data procedure and `rtk-cloud backup` / `rtk-cloud restore` commands. V1 uses a

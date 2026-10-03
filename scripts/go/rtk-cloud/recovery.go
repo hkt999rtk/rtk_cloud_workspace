@@ -26,6 +26,27 @@ func recoveryMutationGuard(args []string) error {
 		return nil
 	}
 	switch args[0] {
+	case "postgres-backup-worker":
+		// The in-cluster worker has no controller SecretStore. Its shared cluster
+		// lock and maintenance-journal check enforce the same exclusion remotely.
+		return nil
+	case "postgres-backup":
+		if len(args) > 1 && (args[1] == "plan" || args[1] == "status") {
+			return nil
+		}
+		if len(args) > 1 && args[1] == "prune" {
+			dryRun := false
+			for _, arg := range args[2:] {
+				if arg == "--dry-run" || arg == "--dry-run=true" {
+					dryRun = true
+				} else if strings.HasPrefix(arg, "--dry-run=") {
+					dryRun = false
+				}
+			}
+			if dryRun {
+				return nil
+			}
+		}
 	case "backup", "restore", "docs-check", "contracts-check", "status-all", "monitor-inventory", "test-catalog", "test-inventory", "test-spec-inventory", "test-spec-impact", "test-coverage", "test-coverage-aggregate", "test-feature-coverage":
 		return nil
 	}

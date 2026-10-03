@@ -119,25 +119,26 @@ type Inventory struct {
 }
 
 type Config struct {
-	SchemaVersion        int             `json:"schema_version"`
-	Environment          string          `json:"environment"`
-	Stack                string          `json:"stack"`
-	InventoryFile        string          `json:"inventory_file"`
-	CertificateTool      string          `json:"certificate_tool,omitempty"`
-	CertificateInventory string          `json:"certificate_inventory,omitempty"`
-	Chromium             string          `json:"chromium,omitempty"`
-	Timezone             string          `json:"timezone,omitempty"`
-	DailyAt              string          `json:"daily_at,omitempty"`
-	TimeoutSeconds       int             `json:"timeout_seconds,omitempty"`
-	Concurrency          int             `json:"concurrency,omitempty"`
-	RetentionDays        int             `json:"retention_days,omitempty"`
-	HTTP                 []HTTPCheck     `json:"http,omitempty"`
-	TLS                  []TLSCheck      `json:"tls,omitempty"`
-	Tokens               []TokenCheck    `json:"tokens,omitempty"`
-	Postgres             []PostgresCheck `json:"postgres,omitempty"`
-	Redis                []RedisCheck    `json:"redis,omitempty"`
-	Metrics              []MetricCheck   `json:"metrics,omitempty"`
-	Synthetic            SyntheticConfig `json:"synthetic,omitempty"`
+	SchemaVersion        int                   `json:"schema_version"`
+	Environment          string                `json:"environment"`
+	Stack                string                `json:"stack"`
+	InventoryFile        string                `json:"inventory_file"`
+	CertificateTool      string                `json:"certificate_tool,omitempty"`
+	CertificateInventory string                `json:"certificate_inventory,omitempty"`
+	Chromium             string                `json:"chromium,omitempty"`
+	Timezone             string                `json:"timezone,omitempty"`
+	DailyAt              string                `json:"daily_at,omitempty"`
+	TimeoutSeconds       int                   `json:"timeout_seconds,omitempty"`
+	Concurrency          int                   `json:"concurrency,omitempty"`
+	RetentionDays        int                   `json:"retention_days,omitempty"`
+	HTTP                 []HTTPCheck           `json:"http,omitempty"`
+	TLS                  []TLSCheck            `json:"tls,omitempty"`
+	Tokens               []TokenCheck          `json:"tokens,omitempty"`
+	Postgres             []PostgresCheck       `json:"postgres,omitempty"`
+	PostgresBackups      []PostgresBackupCheck `json:"postgres_backups,omitempty"`
+	Redis                []RedisCheck          `json:"redis,omitempty"`
+	Metrics              []MetricCheck         `json:"metrics,omitempty"`
+	Synthetic            SyntheticConfig       `json:"synthetic,omitempty"`
 }
 
 type HTTPCheck struct {
@@ -212,6 +213,19 @@ type PostgresCheck struct {
 	Volume                *VolumeCheck `json:"volume,omitempty"`
 	MaxProbeLatencyMS     float64      `json:"max_probe_latency_ms,omitempty"`
 	MaxConnectionsPercent float64      `json:"max_connections_percent,omitempty"`
+}
+
+// PostgresBackupCheck reads the backup controller's redacted status ConfigMap.
+// It never starts a backup or a restore drill.
+type PostgresBackupCheck struct {
+	Name            string  `json:"name"`
+	Required        bool    `json:"required"`
+	Enabled         bool    `json:"enabled"`
+	Namespace       string  `json:"namespace"`
+	ClusterID       string  `json:"cluster_id"`
+	StatusConfigMap string  `json:"status_config_map"`
+	WarnAgeHours    float64 `json:"warn_age_hours,omitempty"`
+	FailAgeHours    float64 `json:"fail_age_hours,omitempty"`
 }
 
 type RedisCheck struct {

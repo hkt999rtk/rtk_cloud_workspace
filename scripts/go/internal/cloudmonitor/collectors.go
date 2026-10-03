@@ -61,6 +61,7 @@ func parallelCollections(ctx context.Context, cfg Config, tasks []func(context.C
 func CollectReadOnly(ctx context.Context, cfg Config, inv Inventory, rt Runtime, runner CommandRunner, now time.Time) Collection {
 	ctx, _ = collectorBudget(ctx, cfg)
 	tasks := []func() Collection{func() Collection { return CollectKubernetes(ctx, cfg, inv, rt, runner, now) }, func() Collection { return CollectHTTP(ctx, cfg, inv, rt, now) }, func() Collection { return CollectTLS(ctx, cfg, rt, now) }, func() Collection { return CollectCertificates(ctx, cfg, rt, runner, now) }, func() Collection { return CollectTokens(ctx, cfg, rt, now) }, func() Collection { return CollectDatabases(ctx, cfg, rt, runner, now) }, func() Collection { return CollectMetrics(ctx, cfg, rt, now) }}
+	tasks = append(tasks, func() Collection { return CollectPostgresBackups(ctx, cfg, rt, runner, now) })
 	var wg sync.WaitGroup
 	parts := make([]Collection, len(tasks))
 	for i, fn := range tasks {

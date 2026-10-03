@@ -549,14 +549,13 @@ func (e *Engine) InvocationLock(ctx context.Context) (func(), error) {
 	}
 	fmt.Fprintln(f, os.Getpid())
 	f.Close()
-	object := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]string{"name": lockName + "-command", "namespace": e.Config.LockNamespace}}
-	b, _ := json.Marshal(object)
-	if err = e.kube(ctx, bytes.NewReader(b), io.Discard, "-n", e.Config.LockNamespace, "create", "-f", "-"); err != nil {
+	release, err := acquireClusterLock(ctx, e.kube, e.Config.LockNamespace, fmt.Sprintf("core-controller-%d", os.Getpid()), false)
+	if err != nil {
 		os.Remove(p)
-		return nil, errors.New("cluster recovery command lock exists/unavailable; concurrent operations refused")
+		return nil, err
 	}
 	return func() {
-		if err := e.kube(context.WithoutCancel(ctx), nil, io.Discard, "-n", e.Config.LockNamespace, "delete", "configmap", lockName+"-command", "--wait=true"); err != nil {
+		if err := release(); err != nil {
 			fmt.Fprintln(os.Stderr, "Recovery command lock cleanup failed; confirm process stopped before manually removing the exact command locks.")
 			return
 		}

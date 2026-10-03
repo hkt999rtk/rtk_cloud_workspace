@@ -269,6 +269,13 @@ environment's `test/` tree. Encrypted core backups use a dedicated private
 directory/bucket outside release artifacts; unseal shares and backup decryption
 identities are escrowed independently. See [backup-restore.md](backup-restore.md).
 
+Scheduled PostgreSQL physical backups use dedicated backup-writer and read-only
+restore Object Storage credentials in the selected environment's `operator/env/`
+entries. See [SecretStore](secret-store.md#backup-and-recovery-boundary) for their
+exact names and [the PostgreSQL procedure](postgres-backup-restore.md) for the
+replication-password mount and independent age-identity escrow. Do not fall back
+to media/release credentials or place a decryption identity in the CronJob.
+
 ## Security Rules
 
 - Do not commit `.secrets/`, `.secrets.backup/`, private keys, raw env files,

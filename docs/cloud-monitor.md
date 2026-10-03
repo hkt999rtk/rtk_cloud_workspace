@@ -195,6 +195,53 @@ Memory at 70% warns. At 85%, history establishes whether the condition lasted
 five minutes; new rejected writes/OOM errors require immediate attention.
 Counter restarts and gaps are excluded from rate calculations.
 
+### PostgreSQL backup evidence
+
+Add one read-only check for each configured daily PostgreSQL backup source:
+
+```json
+{
+  "postgres_backups": [{
+    "name": "platform-postgres",
+    "required": true,
+    "enabled": true,
+    "namespace": "video-cloud-dev-platform",
+    "cluster_id": "REPLACE_WITH_REVIEWED_CLUSTER_ID",
+    "status_config_map": "rtk-postgres-backup-status",
+    "warn_age_hours": 26,
+    "fail_age_hours": 28
+  }]
+}
+```
+
+Use the selected environment's exact namespace and worker `cluster_id`. Grant
+only `get` on the named ConfigMap for this probe. The monitor reads `data[status.json]`
+and validates its version, environment, stack, cluster identity and timestamps.
+It does not read Object Storage credentials, start a Job, mount database volumes
+or issue synthetic writes. Check mode and the one-minute watch service category
+collect the same evidence. Missing configuration for an expected PostgreSQL
+service leaves a coverage gap.
+
+Freshness comes from `latest.manifest.finished_at`, the last committed backup's
+capture timestamp, with warning after 26 hours and failure after 28 hours by
+default. A retry or recent `generated_at` cannot refresh an old recovery point.
+An enabled source with no successful backup is FAIL. Missing, unreadable,
+malformed or mismatched evidence is UNKNOWN. Only an explicitly disabled source
+is NOT_APPLICABLE.
+
+The latest attempt is independent: failed is FAIL, skipped is WARN, and running
+for more than four hours is FAIL. Workers refused by the shared recovery lock
+leave status unchanged; their Job/log records the skip. `latest_drill` is assessed
+separately: missing
+evidence is UNKNOWN and a failed drill is FAIL. A successful upload cannot satisfy
+a restore drill. The result displays hours since the recorded drill and does not
+infer that newer backups have been exercised. Status strings and subprocess
+errors are never copied into reports.
+
+The status is controller evidence of completed remote verification, not a new
+remote readback on each monitor tick. Rehearse independent restore access and
+retain dated evidence using [the PostgreSQL procedure](postgres-backup-restore.md).
+
 ### Throughput and capacity forecasts
 
 Add Prometheus queries for actual service metrics. Use `warn_above`/`fail_above`

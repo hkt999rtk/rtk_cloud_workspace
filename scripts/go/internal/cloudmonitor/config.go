@@ -154,6 +154,24 @@ func LoadConfig(path, environment string) (Config, Inventory, error) {
 			return c, inv, err
 		}
 	}
+	for i := range c.PostgresBackups {
+		p := &c.PostgresBackups[i]
+		if err := unique("postgres-backup", p.Name, p.Name); err != nil {
+			return c, inv, err
+		}
+		if p.WarnAgeHours == 0 {
+			p.WarnAgeHours = 26
+		}
+		if p.FailAgeHours == 0 {
+			p.FailAgeHours = 28
+		}
+		if p.WarnAgeHours <= 0 || p.FailAgeHours <= p.WarnAgeHours {
+			return c, inv, errors.New("invalid PostgreSQL backup freshness thresholds")
+		}
+		if !strings.HasPrefix(p.Namespace, c.Stack+"-") || p.ClusterID == "" || p.StatusConfigMap == "" || strings.ContainsAny(p.StatusConfigMap, "/\\\x00\r\n ") {
+			return c, inv, errors.New("invalid environment-scoped PostgreSQL backup status source")
+		}
+	}
 	for _, r := range c.Redis {
 		if err := unique("redis", r.Name, r.Name); err != nil {
 			return c, inv, err
