@@ -10,6 +10,9 @@ func TestBucketIdentity(t *testing.T) {
 		{"dev", "runtime", "us-sea", "rtk-cloud-dev-runtime-us-sea"},
 		{"staging", "ota-firmware", "sg-sin-2", "rtk-cloud-staging-ota-firmware-sg-sin-2"},
 		{"shared", "artifacts", "us-sea", "rtk-cloud-shared-artifacts-us-sea"},
+		{"dev", "billing-backup", "us-sea", "rtk-cloud-dev-billing-backup-us-sea"},
+		{"staging", "billing-backup", "sg-sin-2", "rtk-cloud-staging-billing-backup-sg-sin-2"},
+		{"prod", "billing-backup", "us-iad", "rtk-cloud-prod-billing-backup-us-iad"},
 		{"qa-team", "pki-backup", "us-iad", "rtk-cloud-qa-team-pki-backup-us-iad"},
 	} {
 		got, err := Bucket(c.scope, c.purpose, c.region)
@@ -22,7 +25,7 @@ func TestBucketIdentity(t *testing.T) {
 	}
 }
 func TestRejectInvalidIdentity(t *testing.T) {
-	for _, c := range [][3]string{{"Dev", "runtime", "us-sea"}, {"dev", "media", "us-sea"}, {"shared", "runtime", "us-sea"}, {"dev", "runtime", "us-sea-1.linodeobjects.com"}, {"dev", "runtime", ""}, {strings.Repeat("a", 60), "runtime", "us-sea"}} {
+	for _, c := range [][3]string{{"Dev", "runtime", "us-sea"}, {"dev", "media", "us-sea"}, {"shared", "runtime", "us-sea"}, {"shared", "billing-backup", "us-sea"}, {"dev", "runtime", "us-sea-1.linodeobjects.com"}, {"dev", "runtime", ""}, {strings.Repeat("a", 60), "runtime", "us-sea"}} {
 		if _, err := Bucket(c[0], c[1], c[2]); err == nil {
 			t.Fatalf("accepted invalid identity %v", c)
 		}

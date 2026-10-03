@@ -8,7 +8,7 @@ import (
 )
 
 var label = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
-var purposes = map[string]bool{"runtime": true, "artifacts": true, "backup": true, "pki-backup": true, "test": true, "reports": true, "ota-firmware": true}
+var purposes = map[string]bool{"runtime": true, "artifacts": true, "backup": true, "billing-backup": true, "pki-backup": true, "test": true, "reports": true, "ota-firmware": true}
 
 // Bucket returns a stable managed bucket name. Region is the provider region ID,
 // never an endpoint hostname or a logical deployment-location alias.

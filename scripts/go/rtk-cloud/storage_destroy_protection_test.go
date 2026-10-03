@@ -7,10 +7,22 @@ import (
 )
 
 func TestDestroyRejectsRegisteredRetainedBucketNames(t *testing.T) {
-	for _, bucket := range []string{"rtk-cloud-staging-backup-us-sea", "rtk-cloud-staging-pki-backup-us-sea", "rtk-cloud-staging-reports-us-sea", "rtk-cloud-shared-reports-us-sea"} {
+	for _, bucket := range []string{"rtk-cloud-staging-backup-us-sea", "rtk-cloud-staging-billing-backup-us-sea", "rtk-cloud-staging-pki-backup-us-sea", "rtk-cloud-staging-reports-us-sea", "rtk-cloud-shared-reports-us-sea"} {
 		if err := validateDestroyRuntimeBucket(map[string]string{"CLOUD_ENV_NAME": "staging"}, bucket, "us-sea"); err == nil {
 			t.Errorf("allowed retained bucket misbound as runtime: %s", bucket)
 		}
+	}
+}
+
+func TestDestroyRejectsConfiguredBillingBackupRegardlessOfRegionAlias(t *testing.T) {
+	env := map[string]string{"CLOUD_ENV_NAME": "staging", "LKE_BILLING_BACKUP_BUCKET": "legacy-billing-evidence", "LKE_BILLING_BACKUP_REGION": "us-sea"}
+	for _, region := range []string{"", "us-sea", "us-east-1"} {
+		if err := validateDestroyRuntimeBucket(env, "legacy-billing-evidence", region); err == nil || !strings.Contains(err.Error(), "LKE_BILLING_BACKUP_BUCKET") {
+			t.Fatalf("configured billing backup not protected in region %q: %v", region, err)
+		}
+	}
+	if err := validateDestroyRuntimeBucket(env, "rtk-cloud-staging-runtime-us-sea", "us-sea"); err != nil {
+		t.Fatalf("unrelated runtime bucket rejected: %v", err)
 	}
 }
 

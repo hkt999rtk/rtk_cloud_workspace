@@ -5,13 +5,19 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"rtk-cloud-workspace/scripts/go/internal/storagepolicy"
 )
 
 func validateDestroyRegisteredStorage(env map[string]string, bucket, region string) error {
+	// Billing backup has separate recovery and retention authority. A signing
+	// region alias must not permit deleting its configured retained bucket.
+	if retained := strings.TrimSpace(env["LKE_BILLING_BACKUP_BUCKET"]); retained != "" && retained == bucket {
+		return fmt.Errorf("runtime bucket %s overlaps retained billing backup binding LKE_BILLING_BACKUP_BUCKET; refusing bucket destruction", bucket)
+	}
 	for _, scope := range []string{env["CLOUD_ENV_NAME"], "shared"} {
-		for _, purpose := range []string{"artifacts", "backup", "pki-backup", "reports"} {
+		for _, purpose := range []string{"artifacts", "backup", "billing-backup", "pki-backup", "reports"} {
 			name, err := storagepolicy.Bucket(scope, purpose, region)
 			if err == nil && name == bucket {
 				return fmt.Errorf("runtime bucket %s is registered %s storage and cannot be destroyed", bucket, purpose)
