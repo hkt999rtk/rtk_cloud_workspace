@@ -139,7 +139,7 @@ modules:
         canonical_key: go://billing-service/internal/billing#TestBuildDraftInvoiceAggregatesUsageAndReconciles
         purpose: Invoice pricing must remain fixed-precision and immutable.
     purpose: Protect the independent pricing wallet payment invoice and billing access source of truth.
-    method: Unit profile runs pure domain tests; PR profile adds isolated PostgreSQL 16 lifecycle and reconciliation tests.
+    method: Unit and PR profiles use isolated PostgreSQL 16 for lifecycle and reconciliation tests; PR profile additionally instruments internal cross-package calls.
 
   - test_id: SVC-CA-SUITE-001
     name: cloud-admin-backend
