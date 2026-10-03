@@ -9,6 +9,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/envroot"
 )
 
 func TestDeploymentRuntimeEndpointsPreferExplicitServiceDomains(t *testing.T) {
@@ -860,6 +862,129 @@ func TestResolveDeploymentConfigSupportsMultipleEnvironments(t *testing.T) {
 			t.Fatalf("%s = %q, want %q", key, cfg.AdapterResolved[key], want)
 		}
 	}
+}
+
+func billingDeploymentDefaults() map[string]string {
+	return map[string]string{
+		"LKE_BILLING_BACKUP_ENABLED":                  "false",
+		"LKE_BILLING_RAW_RETIREMENT_ENABLED":          "false",
+		"LKE_BILLING_INBOX_COMPACTION_ENABLED":        "false",
+		"LKE_BILLING_RAW_RETENTION_AUTHORITY_ENABLED": "false",
+		"LKE_BILLING_BACKUP_INTERVAL":                 "12h",
+	}
+}
+
+func TestTrackedDeploymentBillingDefaultsResolveAndLoad(t *testing.T) {
+	t.Setenv("RTK_CLOUD_WORKSPACE", "")
+	workspace := mustWorkspaceRoot(t)
+	defaults := billingDeploymentDefaults()
+	for key := range defaults {
+		t.Setenv(key, "")
+	}
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		t.Run(environment, func(t *testing.T) {
+			cfg, err := resolveDeploymentConfig(workspace, environment, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for key, want := range defaults {
+				if got := cfg.AdapterValues[key]; got != want {
+					t.Fatalf("adapter %s = %q, want %q", key, got, want)
+				}
+				if _, exists := cfg.Values[key]; exists {
+					t.Fatalf("provider setting %s leaked into shared values", key)
+				}
+			}
+			// Use tracked intent, but never materialize into an operator runtime.
+			cfg.RuntimeRoot = t.TempDir()
+			if err := materializeDeploymentRuntime(cfg); err != nil {
+				t.Fatal(err)
+			}
+			for _, path := range []string{"resolved/deployment.env", "env/stack.env"} {
+				if body := readTestFile(t, filepath.Join(cfg.RuntimeRoot, path)); strings.Contains(body, "LKE_") {
+					t.Fatalf("%s contains provider settings", path)
+				}
+			}
+			loaded, err := envroot.Load(cfg.RuntimeRoot, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for key, want := range defaults {
+				if got := loaded.Values[key]; got != want {
+					t.Fatalf("loaded %s = %q, want %q", key, got, want)
+				}
+			}
+			if err := validateLKEBillingLifecycleInputs(loaded.Values); err != nil {
+				t.Fatalf("disabled tracked defaults require lifecycle credentials: %v", err)
+			}
+		})
+	}
+}
+
+func TestDeploymentBillingAdapterAndOperatorOverrides(t *testing.T) {
+	t.Setenv("RTK_CLOUD_WORKSPACE", "")
+	trackedDefaults := readTestFile(t, filepath.Join(mustWorkspaceRoot(t), "cloud_deploy", "adapters", "lke", "defaults.env"))
+	workspace := writeDeploymentFixture(t, "qa", "lke")
+	writeTestFile(t, filepath.Join(workspace, "cloud_deploy", "adapters", "lke", "defaults.env"), trackedDefaults)
+	var overrides strings.Builder
+	want := billingDeploymentDefaults()
+	for key := range want {
+		t.Setenv(key, "")
+		want[key] = "true"
+		if key == "LKE_BILLING_BACKUP_INTERVAL" {
+			want[key] = "6h"
+		}
+		fmt.Fprintf(&overrides, "%s=%s\n", key, want[key])
+	}
+	writeTestFile(t, filepath.Join(workspace, "cloud_env", "qa", "overrides", "adapter.env"), overrides.String())
+	cfg, err := resolveDeploymentConfig(workspace, "qa", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := materializeDeploymentRuntime(cfg); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := envroot.Load(cfg.RuntimeRoot, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, value := range want {
+		if got := loaded.Values[key]; got != value {
+			t.Fatalf("loaded override %s = %q, want %q", key, got, value)
+		}
+	}
+	flags, err := lkeBillingLifecycleFlags(loaded.Values)
+	if err != nil || flags != (billingLifecycleFlags{Backup: true, Retirement: true, Compaction: true, Authority: true}) {
+		t.Fatalf("adapter flags = %+v, %v", flags, err)
+	}
+	t.Setenv("LKE_BILLING_INBOX_COMPACTION_ENABLED", "false")
+	flags, err = lkeBillingLifecycleFlags(loaded.Values)
+	if err != nil || flags != (billingLifecycleFlags{Backup: true, Retirement: true, Authority: true}) {
+		t.Fatalf("operator override flags = %+v, %v", flags, err)
+	}
+}
+
+func TestDeploymentBillingSettingsKeepStrictLayerGuards(t *testing.T) {
+	misplaced := billingDeploymentDefaults()
+	misplaced["UNKNOWN_SELECTION"] = "true"
+	for key, value := range misplaced {
+		t.Run(key, func(t *testing.T) {
+			workspace := writeDeploymentFixture(t, "dev", "lke")
+			appendFile(t, filepath.Join(workspace, "cloud_env", "dev", "deployment.env"), key+"="+value+"\n")
+			_, err := resolveDeploymentConfig(workspace, "dev", "")
+			if err == nil || !strings.Contains(err.Error(), "unknown deployment selection key "+key) {
+				t.Fatalf("misplaced selection got %v", err)
+			}
+		})
+	}
+	t.Run("misspelled adapter key", func(t *testing.T) {
+		workspace := writeDeploymentFixture(t, "dev", "lke")
+		writeTestFile(t, filepath.Join(workspace, "cloud_env", "dev", "overrides", "adapter.env"), "LKE_BILLING_BACKUP_ENABELD=true\n")
+		_, err := resolveDeploymentConfig(workspace, "dev", "")
+		if err == nil || !strings.Contains(err.Error(), "unknown lke adapter override LKE_BILLING_BACKUP_ENABELD") {
+			t.Fatalf("misspelled adapter override got %v", err)
+		}
+	})
 }
 
 func TestResolveDeploymentConfigRejectsLegacyRoot(t *testing.T) {
