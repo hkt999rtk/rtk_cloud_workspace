@@ -941,22 +941,29 @@ var (
 	errStorageKeyMissing     = errors.New("configured access-key ID was not found in Linode inventory")
 )
 
-func (c deploymentCredentialChecker) validateStorageReadWriteCanary(store provisionObjectStore, prefix string) error {
+func (c deploymentCredentialChecker) validateStorageReadWriteCanary(store provisionObjectStore, prefix string) (err error) {
 	query := url.Values{"list-type": {"2"}, "max-keys": {"1"}, "prefix": {strings.Trim(prefix, "/") + "/"}}
 	if _, err := provisionSignedObjectRequestWithClient(c.client, store, http.MethodGet, "", query, nil); err != nil {
 		return fmt.Errorf("signed list failed: %w", err)
 	}
 	body := []byte("rtk-cloud-storage-canary")
 	key := strings.Trim(prefix, "/") + "/__rtk_cloud_validation__/" + fmt.Sprintf("%d-%s", time.Now().UTC().UnixNano(), hex.EncodeToString(sha256.New().Sum(nil))[:8])
-	if _, err := provisionSignedObjectRequestWithClient(c.client, store, http.MethodPut, key, nil, body); err != nil {
-		return fmt.Errorf("write canary failed: %w", err)
-	}
 	cleaned := false
 	defer func() {
 		if !cleaned {
-			_, _ = provisionSignedObjectRequestWithClient(c.client, store, http.MethodDelete, key, nil, nil)
+			cleanupCtx, cancel := deploymentCleanupContext()
+			defer cancel()
+			cleanup := c
+			cleanup.trace = nil
+			cleanup = cleanup.withCheckContext(cleanupCtx)
+			if _, cleanupErr := provisionSignedObjectRequestWithClient(cleanup.client, store, http.MethodDelete, key, nil, nil); cleanupErr != nil {
+				err = errors.Join(err, fmt.Errorf("canary cleanup failed: %w", cleanupErr))
+			}
 		}
 	}()
+	if _, err := provisionSignedObjectRequestWithClient(c.client, store, http.MethodPut, key, nil, body); err != nil {
+		return fmt.Errorf("write canary failed: %w", err)
+	}
 	read, err := provisionSignedObjectRequestWithClient(c.client, store, http.MethodGet, key, nil, nil)
 	if err != nil {
 		return fmt.Errorf("read canary failed: %w", err)
@@ -983,7 +990,13 @@ func (c deploymentCredentialChecker) validateNewStorageKey(store provisionObject
 		if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusForbidden || attempt == attempts {
 			return err
 		}
-		time.Sleep(5 * time.Second)
+		timer := time.NewTimer(5 * time.Second)
+		select {
+		case <-c.checkContext().Done():
+			timer.Stop()
+			return c.checkContext().Err()
+		case <-timer.C:
+		}
 	}
 	return err
 }

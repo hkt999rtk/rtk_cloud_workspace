@@ -3,6 +3,7 @@ use warnings;
 use IO::Socket::UNIX;
 use Socket qw(SOCK_STREAM);
 
+$SIG{ALRM} = sub { die "CERTISSUER_SOCKET_TIMEOUT\n" };
 alarm 12;
 my $path = $ENV{APP_CERT_ISSUER_SOCKET} or die "CertIssuer socket is unset\n";
 my $host = $ENV{APP_CERT_ISSUER_BASE_URL} or die "CertIssuer origin is unset\n";

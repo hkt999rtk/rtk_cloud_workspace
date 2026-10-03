@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -75,15 +76,37 @@ func (c deploymentCredentialChecker) checkRolloutImage(values map[string]string,
 		check.Detail = "selected credential cannot read the exact image manifest; verify digest and package access"
 		return check
 	}
-	if err := pullRolloutImage(username, token, image); err != nil {
+	if c.pullSemaphore != nil {
+		select {
+		case c.pullSemaphore <- struct{}{}:
+			defer func() { <-c.pullSemaphore }()
+		case <-c.checkContext().Done():
+			check.Code, check.Detail = deploymentRequestCode(c.checkContext().Err()), "image pull canceled before execution"
+			return check
+		}
+	}
+	if err := pullRolloutImageContext(c.checkContext(), username, token, image); err != nil {
 		check.Detail = err.Error()
+		var pullErr *deploymentImagePullError
+		if errors.As(err, &pullErr) {
+			check.Code = pullErr.code
+			check.Status = "ERROR"
+		}
 		return check
 	}
 	check.Passed, check.Detail = true, "selected credential and full linux/amd64 digest pull verified (local image cache may be used)"
 	return check
 }
 
+type deploymentImagePullError struct{ code, detail string }
+
+func (e *deploymentImagePullError) Error() string { return e.detail }
+
 func pullRolloutImage(username, token, image string) error {
+	return pullRolloutImageContext(context.Background(), username, token, image)
+}
+
+func pullRolloutImageContext(parent context.Context, username, token, image string) error {
 	dir, err := os.MkdirTemp("", "rtk-rollout-pull-")
 	if err != nil {
 		return errors.New("cannot create private Docker credential directory")
@@ -96,12 +119,31 @@ func pullRolloutImage(username, token, image string) error {
 	if os.WriteFile(filepath.Join(dir, "config.json"), encoded, 0o600) != nil {
 		return errors.New("cannot write private Docker credential configuration")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(parent, 5*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "docker", "--config", dir, "pull", "--platform", "linux/amd64", image)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return os.ErrProcessDone
+		}
+		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		if errors.Is(err, syscall.ESRCH) {
+			return os.ErrProcessDone
+		}
+		return err
+	}
+	cmd.WaitDelay = time.Second
 	// Never return raw tool output: registry/helper diagnostics can contain secrets.
 	if err := cmd.Run(); err != nil {
-		return errors.New("linux/amd64 pull failed or timed out; check Docker daemon, digest availability and package access")
+		if ctx.Err() != nil {
+			return &deploymentImagePullError{code: deploymentRequestCode(ctx.Err()), detail: fmt.Sprintf("linux/amd64 pull canceled or timed out (%s)", deploymentRequestCode(ctx.Err()))}
+		}
+		var missing *exec.Error
+		if errors.As(err, &missing) {
+			return &deploymentImagePullError{code: "EXECUTABLE_MISSING", detail: "Docker executable unavailable; install Docker before full image qualification"}
+		}
+		return errors.New("linux/amd64 pull failed; check Docker daemon, digest availability and package access")
 	}
 	return nil
 }
