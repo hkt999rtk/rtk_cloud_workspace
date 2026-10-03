@@ -267,3 +267,20 @@ The subsequent full provider inventory contained only the five canonical
 buckets: the four targets above and shared artifacts. All 11 deleted legacy
 buckets remained absent. This account inventory does not establish Production
 ownership or recover any discarded data.
+
+At 16:01:58 UTC, Staging media reinitialization completed independently of
+OTA. All ten selected media Deployment definitions kept their UIDs, images
+and replica counts; all 14 selected replicas were Ready. Account Manager to
+certissuer app mTLS passed immediately before the switch. The OTA Deployment's
+UID and complete specification were identical before and after the media
+operation. Only that unqualified OTA controller and its existing Pod still
+referenced the deleted Staging source. Its credentials were not promoted, and
+no OTA activation or metrics qualification receipt was created.
+
+Read-only diagnosis confirmed that the Staging discrepancy persists with
+one-minute grouping by bucket and endpoint, by bucket alone, and five-minute
+grouping. The same bucket reports the probe's 8,388,608 uploaded bytes and five
+GETs, but only 274 downloaded bytes for its verified 16,777,216-byte successful
+range/full-download traffic. This supports a provider telemetry undercount;
+the provider's internal cause remains unproven. The exact filtered query
+responses and reproduction steps are retained privately for investigation.
