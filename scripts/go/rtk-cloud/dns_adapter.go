@@ -393,14 +393,18 @@ func validateDNSMutationAccess(ctx context.Context, adapter dnsAdapter, adapterC
 		if !created {
 			return
 		}
-		if cleanupErr := adapter.DeleteRecordValues(context.Background(), adapterCtx, zone, record); cleanupErr != nil {
+		cleanupCtx, cancel := deploymentCleanupContext()
+		defer cancel()
+		if cleanupErr := adapter.DeleteRecordValues(cleanupCtx, adapterCtx, zone, record); cleanupErr != nil {
 			err = errors.Join(err, fmt.Errorf("reserved DNS mutation record cleanup failed: %w", cleanupErr))
 		}
 	}()
+	// A timed-out PUT may still have reached the provider. Attempt cleanup of
+	// our reserved canary even when the mutation response is ambiguous.
+	created = true
 	if err := adapter.UpsertRecordSet(ctx, adapterCtx, zone, record); err != nil {
 		return fmt.Errorf("DNS record mutation permission is required: %w", err)
 	}
-	created = true
 	got, err := adapter.GetRecordSet(ctx, adapterCtx, zone, name, "TXT")
 	if err != nil {
 		return fmt.Errorf("DNS mutation verification read failed: %w", err)
@@ -433,19 +437,22 @@ func (a *goDaddyDNSAdapter) request(ctx context.Context, adapterCtx dnsAdapterCo
 	}
 	req, err := http.NewRequestWithContext(ctx, method, a.endpoint(adapterCtx, path), reader)
 	if err != nil {
-		return nil, err
+		return nil, errors.New("GoDaddy API request could not be created; check the configured endpoint")
 	}
 	key, secret := a.credentials(adapterCtx)
 	req.Header.Set("Authorization", "sso-key "+key+":"+secret)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, sanitizedDeploymentRequestError(err)
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	raw, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if readErr != nil {
+		return nil, sanitizedDeploymentRequestError(readErr)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("GoDaddy API %s %s returned %s", method, path, resp.Status)
+		return nil, fmt.Errorf("GoDaddy API request returned HTTP %d", resp.StatusCode)
 	}
 	return raw, nil
 }
@@ -457,15 +464,18 @@ func (a *goDaddyDNSAdapter) GetRecordSet(ctx context.Context, adapterCtx dnsAdap
 		return dnsRecordSet{}, err
 	}
 	var records []struct {
-		Data string `json:"data"`
-		TTL  int    `json:"ttl"`
+		Data *string `json:"data"`
+		TTL  int     `json:"ttl"`
 	}
-	if len(raw) > 0 && json.Unmarshal(raw, &records) != nil {
+	if json.Unmarshal(raw, &records) != nil || records == nil {
 		return dnsRecordSet{}, errors.New("invalid GoDaddy record response")
 	}
 	out := dnsRecordSet{Name: name, Type: recordType}
 	for _, record := range records {
-		out.Values = append(out.Values, record.Data)
+		if record.Data == nil || record.TTL < 0 {
+			return dnsRecordSet{}, errors.New("invalid GoDaddy record response")
+		}
+		out.Values = append(out.Values, *record.Data)
 		out.TTL = record.TTL
 	}
 	return out, nil

@@ -17,13 +17,20 @@ import (
 )
 
 type deploymentCredentialCheck struct {
-	Name   string
-	Passed bool
-	Detail string
+	Name                                                                string
+	Passed                                                              bool
+	Detail                                                              string
+	ID, Status, Code, Resource, NextAction, EvidenceTime, EvidenceLevel string
+	DurationMS                                                          int64
+	Attempts                                                            int
+	DependsOn                                                           []string
+	Required, Reused                                                    bool
 }
 
 type deploymentCredentialCheckOptions struct {
 	readOnly                         bool
+	fast                             bool
+	planOnly                         bool
 	selected                         map[string]bool
 	images                           []string
 	manifests                        []string
@@ -42,6 +49,10 @@ type deploymentCredentialChecker struct {
 	ghcrTokenRoot    string
 	ghcrRegistryRoot string
 	goDaddyAPIRoot   string
+	ctx              context.Context
+	session          *deploymentProviderSession
+	trace            *deploymentProviderTrace
+	pullSemaphore    chan struct{}
 }
 
 func defaultDeploymentCredentialEnvFile() string {
@@ -142,7 +153,7 @@ func (c deploymentCredentialChecker) checkWithOptions(cfg deploymentConfig, envF
 		if !options.selected[name] {
 			continue
 		}
-		if ((name == "linode" || name == "ghcr") && cfg.Adapter != "lke") || (name == "dns" && cfg.DNSAdapter != "godaddy") || (name == "storage" && !mediaEnabled && cfg.Storage.ReleaseArtifacts.Bucket == "") {
+		if ((name == "linode" || name == "ghcr") && cfg.Adapter != "lke") || (name == "dns" && cfg.DNSAdapter != "godaddy" && cfg.DNSAdapter != "route53") || (name == "storage" && !mediaEnabled && cfg.Storage.ReleaseArtifacts.Bucket == "") {
 			checks = append(checks, deploymentCredentialCheck{Name: name, Detail: "requested check is not configured for this environment"})
 		}
 	}
@@ -177,6 +188,8 @@ func (c deploymentCredentialChecker) checkWithOptions(cfg deploymentConfig, envF
 	}
 	if wanted("dns") && cfg.DNSAdapter == "godaddy" && fileCheck.Passed {
 		checks = append(checks, c.checkGoDaddy(cfg, values))
+	} else if wanted("dns") && cfg.DNSAdapter == "route53" {
+		checks = append(checks, deploymentCredentialCheck{Name: "Route53 DNS", Code: "UNSUPPORTED", Detail: "Route53 credential qualification is not implemented; DNS access remains unverified"})
 	}
 	if wanted("storage") && fileCheck.Passed {
 		if mediaEnabled {
@@ -431,27 +444,40 @@ func (c deploymentCredentialChecker) checkGHCR(values map[string]string) []deplo
 	}
 	checks := make([]deploymentCredentialCheck, 0, len(lkeServiceImageSources()))
 	for _, source := range lkeServiceImageSources() {
-		repository := "hkt999rtk/" + source.RepoName + "/" + source.Name
-		name := "GHCR pull " + repository
-		registryToken, err := c.exchangeGHCRToken(username, token, repository)
-		if err != nil {
-			checks = append(checks, deploymentCredentialCheck{Name: name, Detail: err.Error()})
-			continue
-		}
-		tagsURL := strings.TrimRight(c.ghcrRegistryRoot, "/") + "/v2/" + repository + "/tags/list?n=1"
-		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, tagsURL, nil)
-		if err != nil {
-			checks = append(checks, deploymentCredentialCheck{Name: name, Detail: "registry request could not be created"})
-			continue
-		}
-		req.Header.Set("Authorization", "Bearer "+registryToken)
-		if _, err := c.request(req); err != nil {
-			checks = append(checks, deploymentCredentialCheck{Name: name, Detail: err.Error()})
-			continue
-		}
-		checks = append(checks, deploymentCredentialCheck{Name: name, Passed: true, Detail: "token exchange and repository read access verified"})
+		checks = append(checks, c.checkGHCRRepository(values, "hkt999rtk/"+source.RepoName+"/"+source.Name))
 	}
 	return checks
+}
+
+func (c deploymentCredentialChecker) checkGHCRRepository(values map[string]string, repository string) deploymentCredentialCheck {
+	check := deploymentCredentialCheck{Name: "GHCR pull " + repository}
+	username, token := values["GHCR_PULL_USERNAME"], values["GHCR_PULL_TOKEN"]
+	if username == "" || token == "" {
+		check.Detail = "GHCR_PULL_USERNAME and GHCR_PULL_TOKEN are required"
+		return check
+	}
+	if strings.ContainsAny(username+token, "\r\n") {
+		check.Detail = "canonical GHCR credential contains CR/LF; normalize before copying into Secrets"
+		return check
+	}
+	registryToken, err := c.exchangeGHCRToken(username, token, repository)
+	if err != nil {
+		check.Detail = err.Error()
+		return check
+	}
+	tagsURL := strings.TrimRight(c.ghcrRegistryRoot, "/") + "/v2/" + repository + "/tags/list?n=1"
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, tagsURL, nil)
+	if err != nil {
+		check.Detail = "registry request could not be created"
+		return check
+	}
+	req.Header.Set("Authorization", "Bearer "+registryToken)
+	if _, err := c.request(req); err != nil {
+		check.Detail = err.Error()
+		return check
+	}
+	check.Passed, check.Detail = true, "token exchange and repository read access verified"
+	return check
 }
 
 func (c deploymentCredentialChecker) exchangeGHCRToken(username, token, repository string) (string, error) {
@@ -512,9 +538,15 @@ func (c deploymentCredentialChecker) checkGoDaddy(cfg deploymentConfig, values m
 		return deploymentCredentialCheck{Name: "GoDaddy DNS", Detail: err.Error()}
 	}
 	if c.readOnly {
-		return deploymentCredentialCheck{Name: "GoDaddy DNS", Passed: true, Detail: "authenticated zone discovery verified; record writes not tested"}
+		// DiscoverZone only resolves the configured name; an authenticated GET
+		// is required to prove the selected credentials can access that zone.
+		name := "_rtk-cloud-credential-preflight-" + cfg.Environment + "." + zone.Name
+		if _, err := adapter.GetRecordSet(c.checkContext(), adapterCtx, zone, name, "TXT"); err != nil {
+			return deploymentCredentialCheck{Name: "GoDaddy DNS", Detail: err.Error()}
+		}
+		return deploymentCredentialCheck{Name: "GoDaddy DNS", Passed: true, Detail: "authenticated record read verified; record writes not tested"}
 	}
-	if err := validateDNSMutationAccess(context.Background(), adapter, adapterCtx, zone, cfg.Environment); err != nil {
+	if err := validateDNSMutationAccess(c.checkContext(), adapter, adapterCtx, zone, cfg.Environment); err != nil {
 		return deploymentCredentialCheck{Name: "GoDaddy DNS", Detail: err.Error()}
 	}
 	return deploymentCredentialCheck{Name: "GoDaddy DNS", Passed: true, Detail: "authentication and reversible record read/write/delete access for " + domain + " verified"}
@@ -765,7 +797,7 @@ func (c deploymentCredentialChecker) request(req *http.Request) ([]byte, error) 
 func (c deploymentCredentialChecker) requestWithHeaders(req *http.Request) ([]byte, http.Header, error) {
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return nil, nil, errors.New("request failed")
+		return nil, nil, sanitizedDeploymentRequestError(err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))

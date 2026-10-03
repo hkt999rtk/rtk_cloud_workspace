@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -30,7 +29,7 @@ type livePKICRLManifestEntry struct {
 // The supported CRL consumers are deliberately enumerated. Other root/CRL
 // settings still need their own deployment contract before secrets verify can
 // accept them.
-func verifyMountedPKICRLManifests(kubeconfig, namespace, environment string, deployments liveDeploymentList, target string) error {
+func verifyMountedPKICRLManifests(kubeconfig, namespace, environment string, deployments liveDeploymentList, target string, runtimes ...*deploymentCheckRuntime) error {
 	specs := map[string][]struct{ container, setting, domain string }{
 		"account-manager": {{"pkimanagement", "PKI_MANAGEMENT_ACCOUNT_SERVICE_CLIENT_SERVER_CRL_MANIFEST", "service"}},
 		"certissuer": {
@@ -96,9 +95,9 @@ func verifyMountedPKICRLManifests(kubeconfig, namespace, environment string, dep
 					if err != nil {
 						return fmt.Errorf("%s: %w", spec.setting, err)
 					}
-					out, err := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", namespace, "get", "configmap", configMap, "-o", "json").Output()
+					out, err := secretCheckKubectl(runtimes, false, "--kubeconfig", kubeconfig, "-n", namespace, "get", "configmap", configMap, "-o", "json")
 					if err != nil {
-						return fmt.Errorf("%s ConfigMap is unavailable", spec.setting)
+						return secretCheckFailure(err, fmt.Sprintf("%s ConfigMap is unavailable", spec.setting))
 					}
 					var source struct {
 						Data map[string]string `json:"data"`
@@ -114,7 +113,7 @@ func verifyMountedPKICRLManifests(kubeconfig, namespace, environment string, dep
 						return fmt.Errorf("%s manifest cannot be read", spec.setting)
 					}
 					for _, entry := range entries {
-						if err := verifyLivePKICRLEvidence(kubeconfig, namespace, environment, target, spec.container, entry); err != nil {
+						if err := verifyLivePKICRLEvidence(kubeconfig, namespace, environment, target, spec.container, entry, runtimes...); err != nil {
 							return fmt.Errorf("%s issuer %s: %w", spec.setting, entry.Issuer.ID, err)
 						}
 					}
@@ -183,10 +182,10 @@ var livePKIIssuerIDPattern = regexp.MustCompile(`^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[
 
 // The public PVC state is checked against the registry's latest signed CRL
 // and the exact workload receipt. A valid ConfigMap alone is not acceptance.
-func verifyLivePKICRLEvidence(kubeconfig, namespace, environment, target, container string, entry livePKICRLManifestEntry) error {
-	stateRaw, err := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", namespace, "exec", "deployment/"+target, "-c", container, "--", "cat", entry.StatePath).Output()
+func verifyLivePKICRLEvidence(kubeconfig, namespace, environment, target, container string, entry livePKICRLManifestEntry, runtimes ...*deploymentCheckRuntime) error {
+	stateRaw, err := secretCheckKubectl(runtimes, false, "--kubeconfig", kubeconfig, "-n", namespace, "exec", "deployment/"+target, "-c", container, "--", "cat", entry.StatePath)
 	if err != nil || len(stateRaw) == 0 || len(stateRaw) > 1<<20 {
-		return fmt.Errorf("current CRL PVC state is unreadable")
+		return secretCheckFailure(err, "current CRL PVC state is unreadable")
 	}
 	var state struct {
 		IssuerFingerprint string `json:"issuer_fingerprint"`
@@ -228,21 +227,21 @@ func verifyLivePKICRLEvidence(kubeconfig, namespace, environment, target, contai
 		return fmt.Errorf("CRL issuer ID is invalid")
 	}
 	platformNamespace := "video-cloud-" + environment + "-platform"
-	podsRaw, err := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", platformNamespace, "get", "pods", "-l", "app.kubernetes.io/name=postgresql", "-o", "json").Output()
+	podsRaw, err := secretCheckKubectl(runtimes, false, "--kubeconfig", kubeconfig, "-n", platformNamespace, "get", "pods", "-l", "app.kubernetes.io/name=postgresql", "-o", "json")
 	var pods livePodList
 	if err != nil || json.Unmarshal(podsRaw, &pods) != nil || len(pods.Items) == 0 || pods.Items[0].Metadata.Name == "" {
-		return fmt.Errorf("cannot read PostgreSQL Pod for CRL receipt verification")
+		return secretCheckFailure(err, "cannot read PostgreSQL Pod for CRL receipt verification")
 	}
 	consumer := target
 	query := fmt.Sprintf(`SELECT json_build_object('digest',digest,'number',number::text,'ack',EXISTS(SELECT 1 FROM pki_crl_acknowledgments a WHERE a.issuer_id=c.issuer_id AND a.digest=c.digest AND a.consumer_id='%s')) FROM pki_crls c WHERE c.issuer_id='%s'::uuid ORDER BY c.number DESC LIMIT 1`, consumer, entry.Issuer.ID)
-	row, err := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", platformNamespace, "exec", pods.Items[0].Metadata.Name, "--", "psql", "-U", "postgres", "-d", "video_cloud", "-At", "-c", query).Output()
+	row, err := secretCheckKubectl(runtimes, false, "--kubeconfig", kubeconfig, "-n", platformNamespace, "exec", pods.Items[0].Metadata.Name, "--", "psql", "-U", "postgres", "-d", "video_cloud", "-At", "-c", query)
 	var latest struct {
 		Digest string `json:"digest"`
 		Number string `json:"number"`
 		Ack    bool   `json:"ack"`
 	}
 	if err != nil || json.Unmarshal(bytes.TrimSpace(row), &latest) != nil || latest.Digest != state.CRL.Digest || latest.Number != state.CRL.Number || !latest.Ack {
-		return fmt.Errorf("installed CRL is not the latest acknowledged registry record")
+		return secretCheckFailure(err, "installed CRL is not the latest acknowledged registry record")
 	}
 	return nil
 }

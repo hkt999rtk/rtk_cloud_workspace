@@ -48,3 +48,6 @@ scripts/cloud-monitor/inventory.*.json
 __pycache__/
 *.pyc
 .DS_Store
+
+# Isolated task checkouts.
+/worktrees/
