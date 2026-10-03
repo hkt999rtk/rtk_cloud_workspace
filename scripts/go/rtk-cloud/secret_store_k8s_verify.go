@@ -315,7 +315,7 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 			if err := verifyAutomaticDeviceTrustConsumers(store.Environment, kubeconfig, namespace, deployments, now, store.checkRuntime); err != nil {
 				failures = append(failures, err.Error())
 			}
-			if err := verifyLiveRootPolicyReferences(kubeconfig, stack+"-platform", deployments, store.checkRuntime); err != nil {
+			if err := verifyLiveRootPolicyReferences(kubeconfig, stack+"-platform", store.Environment, deployments, store.checkRuntime); err != nil {
 				failures = append(failures, err.Error())
 			}
 			if err := verifyCertIssuerStaticServingChain(namespace, secrets, deployments, now); err != nil {
@@ -534,25 +534,26 @@ func verifySelectedStackMetadata(store secretStore) error {
 	return nil
 }
 
-// Dynamic root consumers fetch a policy before serving. A deployment can have
-// valid certificates and Secrets yet loop on controller HTTP 503 when its root
-// ID has no policy row (for example after a dev database rebuild).
-func verifyLiveRootPolicyReferences(kubeconfig, platformNamespace string, deployments liveDeploymentList, runtimes ...*deploymentCheckRuntime) error {
-	fields := [][2]string{
-		{"VIDEO_CLOUD_ACCOUNT_MANAGER_SERVICE_ROOT_ID", "VIDEO_CLOUD_ACCOUNT_MANAGER_SERVICE_ROOT_STATE"},
-		{"VIDEO_CLOUD_ACCOUNT_MANAGER_RENEWAL_SERVICE_ROOT_ID", "VIDEO_CLOUD_ACCOUNT_MANAGER_RENEWAL_SERVICE_ROOT_STATE"},
-		{"VIDEO_CLOUD_LOG_INGESTER_MQTT_IDENTITY_SERVICE_ROOT_ID", "VIDEO_CLOUD_LOG_INGESTER_MQTT_IDENTITY_SERVICE_ROOT_STATE"},
-		{"VIDEO_CLOUD_LOG_INGESTER_MQTT_IDENTITY_RENEWAL_SERVICE_ROOT_ID", "VIDEO_CLOUD_LOG_INGESTER_MQTT_IDENTITY_RENEWAL_SERVICE_ROOT_STATE"},
-		{"VIDEO_CLOUD_MQTT_ROOT_ID", "VIDEO_CLOUD_MQTT_ROOT_STATE"},
-		{"VIDEO_CLOUD_AUTH_DEVICE_ROOT_TRUST_ROOT_ID", "VIDEO_CLOUD_AUTH_DEVICE_ROOT_TRUST_STATE"},
-		{"VIDEO_CLOUD_AUTH_APP_ROOT_TRUST_ROOT_ID", "VIDEO_CLOUD_AUTH_APP_ROOT_TRUST_STATE"},
-		{"PKI_BROKER_DEVICE_ROOT_ID", "PKI_BROKER_DEVICE_ROOT_STATE"},
-		{"PKI_BROKER_APP_ROOT_ID", "PKI_BROKER_APP_ROOT_STATE"},
-		{"FACTORY_ENROLL_CERT_ISSUER_SERVICE_ROOT_ID", "FACTORY_ENROLL_CERT_ISSUER_SERVICE_ROOT_STATE"},
-		{"FACTORY_ENROLL_ACCOUNT_MANAGER_SERVICE_ROOT_ID", "FACTORY_ENROLL_ACCOUNT_MANAGER_SERVICE_ROOT_STATE"},
-		{"PKI_TURN_APP_ROOT_ID", "PKI_TURN_APP_ROOT_STATE"},
+// Dynamic root consumers need a registered, eligible anchor and complete removal
+// history for its scope. An active Root can have an empty version-zero policy;
+// pki_root_distrust contains removed Roots, not every usable policy anchor.
+func verifyLiveRootPolicyReferences(kubeconfig, platformNamespace, environment string, deployments liveDeploymentList, runtimes ...*deploymentCheckRuntime) error {
+	fields := [][3]string{
+		{"VIDEO_CLOUD_ACCOUNT_MANAGER_SERVICE_ROOT_ID", "VIDEO_CLOUD_ACCOUNT_MANAGER_SERVICE_ROOT_STATE", "service"},
+		{"VIDEO_CLOUD_ACCOUNT_MANAGER_RENEWAL_SERVICE_ROOT_ID", "VIDEO_CLOUD_ACCOUNT_MANAGER_RENEWAL_SERVICE_ROOT_STATE", "service"},
+		{"VIDEO_CLOUD_LOG_INGESTER_MQTT_IDENTITY_SERVICE_ROOT_ID", "VIDEO_CLOUD_LOG_INGESTER_MQTT_IDENTITY_SERVICE_ROOT_STATE", "service"},
+		{"VIDEO_CLOUD_LOG_INGESTER_MQTT_IDENTITY_RENEWAL_SERVICE_ROOT_ID", "VIDEO_CLOUD_LOG_INGESTER_MQTT_IDENTITY_RENEWAL_SERVICE_ROOT_STATE", "service"},
+		{"VIDEO_CLOUD_MQTT_ROOT_ID", "VIDEO_CLOUD_MQTT_ROOT_STATE", "mqtt"},
+		{"VIDEO_CLOUD_AUTH_DEVICE_ROOT_TRUST_ROOT_ID", "VIDEO_CLOUD_AUTH_DEVICE_ROOT_TRUST_STATE", "device"},
+		{"VIDEO_CLOUD_AUTH_APP_ROOT_TRUST_ROOT_ID", "VIDEO_CLOUD_AUTH_APP_ROOT_TRUST_STATE", "app"},
+		{"PKI_BROKER_DEVICE_ROOT_ID", "PKI_BROKER_DEVICE_ROOT_STATE", "device"},
+		{"PKI_BROKER_APP_ROOT_ID", "PKI_BROKER_APP_ROOT_STATE", "app"},
+		{"FACTORY_ENROLL_CERT_ISSUER_SERVICE_ROOT_ID", "FACTORY_ENROLL_CERT_ISSUER_SERVICE_ROOT_STATE", "service"},
+		{"FACTORY_ENROLL_ACCOUNT_MANAGER_SERVICE_ROOT_ID", "FACTORY_ENROLL_ACCOUNT_MANAGER_SERVICE_ROOT_STATE", "service"},
+		{"PKI_TURN_APP_ROOT_ID", "PKI_TURN_APP_ROOT_STATE", "app"},
 	}
 	references := map[string][]string{}
+	domains := map[string]string{}
 	canonicalUUID := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 	for _, deployment := range deployments.Items {
 		for _, container := range deployment.Spec.Template.Spec.Containers {
@@ -569,6 +570,10 @@ func verifyLiveRootPolicyReferences(kubeconfig, platformNamespace string, deploy
 				if id == "" || state == "" || !canonicalUUID.MatchString(id) {
 					return fmt.Errorf("dynamic root policy reference is incomplete: %s", label)
 				}
+				if domain := domains[id]; domain != "" && domain != field[2] {
+					return fmt.Errorf("dynamic root policy reference crosses trust domains: %s", label)
+				}
+				domains[id] = field[2]
 				references[id] = append(references[id], label)
 			}
 		}
@@ -593,15 +598,38 @@ func verifyLiveRootPolicyReferences(kubeconfig, platformNamespace string, deploy
 	for i, id := range ids {
 		quoted[i] = "'" + id + "'"
 	}
-	query := "SELECT COALESCE(json_agg(issuer_id ORDER BY issuer_id),'[]'::json) FROM (SELECT DISTINCT issuer_id::text AS issuer_id FROM public.pki_root_distrust WHERE issuer_id::text IN (" + strings.Join(quoted, ",") + ")) policies"
+	// One SELECT keeps the anchor and all historical removals in one DB snapshot.
+	// Match Store.GetRootDistrust: ready/active/retiring anchors do not need their
+	// own removal row; revoked/compromised anchors must have been published.
+	query := `SELECT COALESCE(json_agg(json_build_object(
+'issuer_id',i.id,'environment',i.environment,'domain',i.domain,'kind',i.kind,'status',i.status,
+'document_matches',i.document->>'issuer_id'=i.id::text AND i.document->>'environment'=i.environment AND i.document->>'trust_domain'=i.domain AND i.document->>'kind'=i.kind AND i.document->>'status'=i.status,
+'published',EXISTS(SELECT 1 FROM public.pki_root_distrust d WHERE d.issuer_id=i.id AND d.environment=i.environment AND d.domain=i.domain),
+'policy_complete',NOT EXISTS(SELECT 1 FROM public.pki_issuers removed WHERE removed.environment=i.environment AND removed.domain=i.domain AND removed.kind='root' AND removed.status IN ('revoked','compromised') AND NOT EXISTS(SELECT 1 FROM public.pki_root_distrust d WHERE d.issuer_id=removed.id AND d.environment=removed.environment AND d.domain=removed.domain))
+) ORDER BY i.id),'[]'::json) FROM public.pki_issuers i WHERE i.id::text IN (` + strings.Join(quoted, ",") + `)`
 	output, commandErr := secretCheckKubectl(runtimes, true, "--kubeconfig", kubeconfig, "-n", platformNamespace, "exec", pods.Items[0].Metadata.Name, "--", "psql", "-U", "postgres", "-d", "video_cloud", "-At", "-c", query)
-	var present []string
-	if commandErr != nil || json.Unmarshal([]byte(strings.TrimSpace(string(output))), &present) != nil {
+	var roots []struct {
+		ID              string `json:"issuer_id"`
+		Environment     string `json:"environment"`
+		Domain          string `json:"domain"`
+		Kind            string `json:"kind"`
+		Status          string `json:"status"`
+		DocumentMatches bool   `json:"document_matches"`
+		Published       bool   `json:"published"`
+		PolicyComplete  bool   `json:"policy_complete"`
+	}
+	if commandErr != nil || json.Unmarshal([]byte(strings.TrimSpace(string(output))), &roots) != nil {
 		return secretCheckFailure(commandErr, "dynamic root policy verification did not return valid database metadata")
 	}
 	found := map[string]bool{}
-	for _, id := range present {
-		found[id] = true
+	seen := map[string]bool{}
+	for _, root := range roots {
+		if _, expected := references[root.ID]; !expected || seen[root.ID] {
+			return errors.New("dynamic root policy verification returned unexpected or duplicate anchors")
+		}
+		seen[root.ID] = true
+		eligible := root.Status == "ready" || root.Status == "active" || root.Status == "retiring" || ((root.Status == "revoked" || root.Status == "compromised") && root.Published)
+		found[root.ID] = root.Environment == environment && root.Domain == domains[root.ID] && root.Kind == "root" && root.DocumentMatches && root.PolicyComplete && eligible
 	}
 	var missing []string
 	for _, id := range ids {
@@ -610,7 +638,7 @@ func verifyLiveRootPolicyReferences(kubeconfig, platformNamespace string, deploy
 		}
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("dynamic root policy is missing from the PKI registry: %s", strings.Join(missing, "; "))
+		return fmt.Errorf("dynamic root policy anchor is unavailable or inconsistent in the PKI registry: %s", strings.Join(missing, "; "))
 	}
 	return nil
 }

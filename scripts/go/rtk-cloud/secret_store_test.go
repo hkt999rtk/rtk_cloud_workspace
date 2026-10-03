@@ -1439,33 +1439,94 @@ func TestLiveDeploymentBootstrapSessionCheckRejectsPendingServiceClientIssuance(
 	}
 }
 
-func TestLiveRootPolicyPrecheckRejectsMissingPolicy(t *testing.T) {
+func TestLiveRootPolicyPrecheckUsesIssuerEligibilityAndRemovalHistory(t *testing.T) {
 	const rootID = "697e8e86-5af6-4580-8456-7f91d17634f2"
-	var deployments liveDeploymentList
-	raw := `{"items":[{"metadata":{"name":"video-cloud-api"},"spec":{"template":{"spec":{"containers":[{"name":"app","env":[{"name":"VIDEO_CLOUD_ACCOUNT_MANAGER_SERVICE_ROOT_ID","value":"` + rootID + `"},{"name":"VIDEO_CLOUD_ACCOUNT_MANAGER_SERVICE_ROOT_STATE","value":"/private/root.json"}]}]}}}}]}`
-	if err := json.Unmarshal([]byte(raw), &deployments); err != nil {
-		t.Fatal(err)
+	for _, tc := range []struct {
+		name, key string
+		value     any
+		raw       string
+		wantOK    bool
+	}{
+		{name: "active root with empty removal history", wantOK: true},
+		{name: "ready root with empty removal history", key: "status", value: "ready", wantOK: true},
+		{name: "retiring root with empty removal history", key: "status", value: "retiring", wantOK: true},
+		{name: "published revoked root", key: "status", value: "revoked", wantOK: true},
+		{name: "published compromised root", key: "status", value: "compromised", wantOK: true},
+		{name: "unknown root", raw: "[]"},
+		{name: "null response", raw: "null"},
+		{name: "malformed response", raw: "not-json"},
+		{name: "wrong environment", key: "environment", value: "staging"},
+		{name: "wrong domain", key: "domain", value: "device"},
+		{name: "nonroot issuer", key: "kind", value: "intermediate"},
+		{name: "inactive issuer", key: "status", value: "retired"},
+		{name: "invalid status", key: "status", value: "unknown"},
+		{name: "revoked without publication", key: "status", value: "revoked"},
+		{name: "compromised without publication", key: "status", value: "compromised"},
+		{name: "historical removed root unpublished", key: "policy_complete", value: false},
+		{name: "absent completeness metadata", key: "policy_complete", value: nil},
+		{name: "document mismatch", key: "document_matches", value: false},
+		{name: "unexpected root", key: "issuer_id", value: "bd0fbda7-a67a-4408-8a20-12b4fa3b9cee"},
+		{name: "duplicate root", raw: "duplicate"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var deployments liveDeploymentList
+			input := `{"items":[{"metadata":{"name":"video-cloud-api"},"spec":{"template":{"spec":{"containers":[{"name":"app","env":[{"name":"VIDEO_CLOUD_ACCOUNT_MANAGER_SERVICE_ROOT_ID","value":"` + rootID + `"},{"name":"VIDEO_CLOUD_ACCOUNT_MANAGER_SERVICE_ROOT_STATE","value":"/private/root.json"}]}]}}}}]}`
+			if err := json.Unmarshal([]byte(input), &deployments); err != nil {
+				t.Fatal(err)
+			}
+			root := map[string]any{"issuer_id": rootID, "environment": "dev", "domain": "service", "kind": "root", "status": "active", "document_matches": true, "published": false, "policy_complete": true}
+			if tc.key != "" {
+				root[tc.key] = tc.value
+			}
+			if strings.HasPrefix(tc.name, "published ") {
+				root["published"] = true
+			}
+			rows := []map[string]any{root}
+			if tc.raw == "duplicate" {
+				rows = append(rows, root)
+			}
+			report, err := json.Marshal(rows)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.raw != "" && tc.raw != "duplicate" {
+				report = []byte(tc.raw)
+			}
+			kubectl := filepath.Join(t.TempDir(), "kubectl")
+			script := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in\n  *'get pods -l app.kubernetes.io/name=postgresql -o json'*) printf '%%s' '{\"items\":[{\"metadata\":{\"name\":\"postgresql-0\"}}]}' ;;\n  *'pki_root_distrust'*) printf '%%s' '%s' ;;\n  *) exit 1 ;;\nesac\n", report)
+			if err := os.WriteFile(kubectl, []byte(script), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+			err = verifyLiveRootPolicyReferences("/tmp/kubeconfig", "video-cloud-dev-platform", "dev", deployments)
+			if (err == nil) != tc.wantOK {
+				t.Fatalf("policy eligibility: %v, want success=%v", err, tc.wantOK)
+			}
+		})
 	}
-	kubectl := filepath.Join(t.TempDir(), "kubectl")
-	script := "#!/bin/sh\ncase \"$*\" in\n  *'get pods -l app.kubernetes.io/name=postgresql -o json'*) printf '%s' '{\"items\":[{\"metadata\":{\"name\":\"postgresql-0\"}}]}' ;;\n  *'pki_root_distrust'*) printf '%s' '[]' ;;\n  *) exit 1 ;;\nesac\n"
-	if err := os.WriteFile(kubectl, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
-	err := verifyLiveRootPolicyReferences("/tmp/kubeconfig", "video-cloud-dev-platform", deployments)
-	if err == nil || !strings.Contains(err.Error(), rootID) || !strings.Contains(err.Error(), "video-cloud-api/app") {
-		t.Fatalf("missing root policy error = %v", err)
-	}
-	script = strings.Replace(script, "'[]'", "'[\""+rootID+"\"]'", 1)
-	if err := os.WriteFile(kubectl, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := verifyLiveRootPolicyReferences("/tmp/kubeconfig", "video-cloud-dev-platform", deployments); err != nil {
-		t.Fatalf("present root policy: %v", err)
-	}
-	deployments.Items[0].Spec.Template.Spec.Containers[0].Env[1].Value = ""
-	if err := verifyLiveRootPolicyReferences("/tmp/kubeconfig", "video-cloud-dev-platform", deployments); err == nil || !strings.Contains(err.Error(), "incomplete") {
-		t.Fatalf("incomplete root policy error = %v", err)
+}
+
+func TestLiveRootPolicyPrecheckRejectsIncompleteAndCrossDomainReferences(t *testing.T) {
+	const rootID = "697e8e86-5af6-4580-8456-7f91d17634f2"
+	for _, tc := range []struct{ name, settings, want string }{
+		{"missing state", `{"name":"PKI_BROKER_DEVICE_ROOT_ID","value":"` + rootID + `"}`, "incomplete"},
+		{"missing ID", `{"name":"PKI_BROKER_DEVICE_ROOT_STATE","value":"/private/root.json"}`, "incomplete"},
+		{"invalid ID", `{"name":"PKI_BROKER_DEVICE_ROOT_ID","value":"not-a-uuid"},{"name":"PKI_BROKER_DEVICE_ROOT_STATE","value":"/private/root.json"}`, "incomplete"},
+		{"same root across trust domains", `{"name":"PKI_BROKER_DEVICE_ROOT_ID","value":"` + rootID + `"},{"name":"PKI_BROKER_DEVICE_ROOT_STATE","value":"/private/device.json"},{"name":"PKI_BROKER_APP_ROOT_ID","value":"` + rootID + `"},{"name":"PKI_BROKER_APP_ROOT_STATE","value":"/private/app.json"}`, "crosses trust domains"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var deployments liveDeploymentList
+			input := `{"items":[{"metadata":{"name":"mqtt-pki"},"spec":{"template":{"spec":{"containers":[{"name":"pkibroker","env":[` + tc.settings + `]}]}}}}]}`
+			if err := json.Unmarshal([]byte(input), &deployments); err != nil {
+				t.Fatal(err)
+			}
+			// Configuration failures must be rejected before any cluster call.
+			t.Setenv("RTK_CLOUD_KUBECTL", filepath.Join(t.TempDir(), "must-not-execute"))
+			err := verifyLiveRootPolicyReferences("/tmp/kubeconfig", "video-cloud-staging-platform", "staging", deployments)
+			if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "mqtt-pki/pkibroker") {
+				t.Fatalf("invalid reference: %v", err)
+			}
+		})
 	}
 }
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 )
@@ -69,20 +70,44 @@ func billingLifecycleSecretRequired(store secretStore, id string) bool {
 func billingLifecycleStoreFlags(store secretStore) (billingLifecycleFlags, error) {
 	values := map[string]string{}
 	if workspace, err := workspaceRoot(); err == nil {
+		environmentRoot := filepath.Join(workspace, "cloud_env", store.Environment)
 		for _, file := range []string{"environment.env", "deployment.env", "storage.env"} {
-			if entries, err := readStrictEnv(filepath.Join(workspace, "cloud_env", store.Environment, file)); err == nil {
-				for key, value := range entries {
-					values[key] = value
+			entries, err := readOptionalStrictEnv(filepath.Join(environmentRoot, file))
+			if err != nil {
+				return billingLifecycleFlags{}, err
+			}
+			for key, value := range entries {
+				values[key] = value
+			}
+		}
+		if values["DEPLOYMENT_ADAPTER"] == "lke" {
+			defaults, err := readStrictEnv(filepath.Join(workspace, "cloud_deploy", "adapters", "lke", "defaults.env"))
+			if err != nil {
+				return billingLifecycleFlags{}, err
+			}
+			overrides, err := readOptionalStrictEnv(filepath.Join(environmentRoot, "overrides", "adapter.env"))
+			if err != nil {
+				return billingLifecycleFlags{}, err
+			}
+			for key, value := range overrides {
+				if _, exists := defaults[key]; !exists {
+					return billingLifecycleFlags{}, fmt.Errorf("unknown lke adapter override %s", key)
 				}
+				defaults[key] = value
+			}
+			for key, value := range defaults {
+				values[key] = value
 			}
 		}
 	}
 	// Operator values are the actual deploy overrides, not tracked templates.
 	// Never read recovery/private-key custody trees when resolving enable flags.
-	if operator, err := store.readOperator(); err == nil {
-		for key, value := range operator {
-			values[key] = value
-		}
+	operator, err := store.readOperator()
+	if err != nil {
+		return billingLifecycleFlags{}, err
+	}
+	for key, value := range operator {
+		values[key] = value
 	}
 	return lkeBillingLifecycleFlags(values)
 }
