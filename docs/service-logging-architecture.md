@@ -4,7 +4,7 @@ Status: implementation handoff.
 
 Owner: `rtk_cloud_workspace`.
 
-Last reviewed: 2026-06-01.
+Last reviewed: 2026-10-03 (billing boundary and backup-policy links only).
 
 ## Purpose
 
@@ -45,6 +45,7 @@ deployment network unless an explicit authenticated proxy is added.
 | Type | Owner | Storage | Notes |
 | --- | --- | --- | --- |
 | Service logs | Each service, schema owned by `rtk_cloud_logger` | Logger backend | Zap JSON events emitted by servers, workers, migrations, and jobs. |
+| Billing raw usage | Producers and `rtk_cloud_logger`; commercial facts owned by Billing | Dedicated retained bbolt inbox; guarded private archive | Financial evidence is not an operational Loki log; separate credentials, collection, retention and recovery. See [billing lifecycle design](design/billing-raw-data-lifecycle.md). |
 | Audit events | Product service that owns the action | Service database or audit store | User-visible or compliance-sensitive events; do not replace with debug logs. |
 | Device runtime logs | `rtk_video_cloud` runtime log ingestion contract | Runtime log store | Device-originated diagnostic records, not cloud service logs. |
 | Metrics | Service Prometheus endpoints | Prometheus-compatible store | Numeric counters/gauges/histograms, not log search. |
@@ -244,12 +245,19 @@ Current status:
 | Artifacts and cleanup | K8s-owned | Logger inventory and redacted runtime evidence should come from K8s resources. |
 | Cloud Admin dashboard | Implemented in `rtk_cloud_admin` submodule pointer | Cloud Admin owns the v1 UI; Grafana remains optional. |
 
-Future System Logger backups follow the `backup` purpose and reserved namespace
+Future operational System Logger backups follow the `backup` purpose and reserved namespace
 in [Object Storage Policy](object-storage-policy.md). Sharing a backup bucket
 requires matching access, retention and recovery requirements; otherwise review
 the boundary before provisioning. No backup writer, retention policy, restore
 test, or bucket is implemented yet; the current Loki-backed store remains the
-active log storage.
+active operational log storage. This statement does not describe the billing
+raw inbox: its retained bbolt storage is specified in the
+[Logger billing inbox design](../repos/rtk_cloud_logger/docs/spec.md#durable-billing-inbox-and-collection).
+Billing raw-data backups use the separate `billing-backup` purpose registered in
+[Object Storage Policy](object-storage-policy.md#billing-raw-data-backup-boundary).
+The 90-day hot lifecycle, off-volume verification and safe retirement
+gates are in the [billing raw-data lifecycle design](design/billing-raw-data-lifecycle.md);
+code is guarded and default-disabled; no environment is qualified by this document.
 
 ## Repository Responsibilities
 

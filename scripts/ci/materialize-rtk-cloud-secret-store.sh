@@ -24,6 +24,17 @@ esac
 [[ -f "$bundle" && ! -L "$bundle" ]] || { echo "bundle must be a regular file" >&2; exit 2; }
 jq -e '((.operator // {}) | type == "object") and ((.runtime // {}) | type == "object") and ((.files // {}) | type == "object")' "$bundle" >/dev/null
 
+# Recovery identities are never ordinary deployment/CI material. Check the
+# entire bundle before secrets init or the first write, not while iterating it.
+# This also rejects misplaced identity files outside the reserved subtree.
+if ! jq -e 'all(((.files // {}) | keys[]) ;
+  (ascii_downcase | startswith("operator/recovery/") | not) and
+  (ascii_downcase | endswith(".agekey") | not) and
+  (ascii_downcase | endswith(".ed25519key") | not))' "$bundle" >/dev/null; then
+  echo "recovery identities and signing keys are forbidden in CI bundles" >&2
+  exit 2
+fi
+
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 go run "$repo_root/scripts/go/rtk-cloud" -- secrets init \
   --environment "$environment" --config-root "$RTK_CLOUD_CONFIG_ROOT" >/dev/null

@@ -27,6 +27,60 @@ func postgresBackupTestConfig(t *testing.T) postgresBackupDeployment {
 	return postgresBackupDeployment{Version: 1, Environment: "staging", Stack: "video-cloud-staging", Namespace: "video-cloud-staging-platform", RunnerImage: "registry.example.test/runner@sha256:" + strings.Repeat("b", 64), SourcePod: "postgresql-0", SourceContainer: "postgres", SourcePVC: "data-postgresql-0", ScratchStorage: "60Gi", Worker: postgresbackup.Config{Version: 1, Environment: "staging", Stack: "video-cloud-staging", ClusterID: "main", Directory: "/backup", Source: postgresbackup.Source{Host: "postgresql.video-cloud-staging-platform.svc.cluster.local", Port: 5432, User: "rtk_postgres_backup", PasswordFile: "/run/postgres-backup/source-password", SSLMode: "disable", PostgresImage: image, SystemIdentifier: "123456789", MaxRate: "10M"}, Recipients: []string{identity.Recipient().String()}, Remote: recovery.Remote{Endpoint: "https://backup.example.test", Region: "us-test", Bucket: "private-backup", Prefix: "staging/postgres"}, TimeoutSeconds: 14400, MaxArchiveBytes: 22 << 30, MaxPlaintextBytes: 20 << 30, RetentionDays: 14, MinimumBackups: 14}}
 }
 
+func TestPostgresBackupImagePreservesReviewedWorkspaceModule(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mod, err := os.ReadFile(filepath.Join(workspace, "scripts", "go", "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(mod), "replace github.com/hkt999rtk/rtk_cloud_logger => ../../repos/rtk_cloud_logger") {
+		t.Fatal("test must track the actual reviewed Logger module replacement")
+	}
+	raw, err := os.ReadFile(filepath.Join(workspace, "cloud_deploy", "architectures", "kubernetes", "postgres-backup", "Dockerfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Download must see both manifests at the unchanged relative replacement
+	// path. Compilation must then use that same pinned submodule's source.
+	directives := []string{
+		"WORKDIR /src/scripts/go\n",
+		"COPY scripts/go/go.mod scripts/go/go.sum ./\n",
+		"COPY repos/rtk_cloud_logger/go.mod repos/rtk_cloud_logger/go.sum /src/repos/rtk_cloud_logger/\n",
+		"RUN go mod download\n",
+		"COPY scripts/go/ ./\n",
+		"COPY repos/rtk_cloud_logger/ /src/repos/rtk_cloud_logger/\n",
+		"RUN CGO_ENABLED=0 GOWORK=off go build -trimpath -o /out/rtk-cloud ./rtk-cloud\n",
+	}
+	validLayout := func(body string) bool {
+		for _, directive := range directives {
+			index := strings.Index(body, directive)
+			if index < 0 {
+				return false
+			}
+			body = body[index+len(directive):]
+		}
+		return true
+	}
+	if !validLayout(string(raw)) {
+		t.Fatal("backup builder no longer preserves the workspace module layout before download/build")
+	}
+	for name, broken := range map[string]string{
+		"flattened-workdir": strings.Replace(string(raw), directives[0], "WORKDIR /src\n", 1),
+		"missing-manifests": strings.Replace(string(raw), directives[2], "", 1),
+		"missing-source":    strings.Replace(string(raw), directives[5], "", 1),
+		"late-manifests":    strings.Replace(string(raw), directives[2], "", 1) + directives[2],
+	} {
+		t.Run(name, func(t *testing.T) {
+			if validLayout(broken) {
+				t.Fatal("regression did not reject an unavailable or unreviewed module dependency")
+			}
+		})
+	}
+}
+
 func TestPostgresBackupConfigBoundaries(t *testing.T) {
 	base := postgresBackupTestConfig(t)
 	if err := base.validate(); err != nil {

@@ -1785,6 +1785,9 @@ spec:
 }
 
 func lkeAllowPublicIngressNetworkPolicyManifest(env map[string]string, namespace string, ports []int) string {
+	if lkeBillingAuthorityEnabled(env) && namespace == lkeNamespaceName(env, "billing") {
+		return lkeBillingLifecycleScopedPublicIngressManifest(env)
+	}
 	uniquePorts := []int{}
 	seen := map[int]bool{}
 	for _, port := range ports {
@@ -3018,6 +3021,9 @@ func ensureLKEDeployImages(env map[string]string, opts provisionOptions) error {
 }
 
 func validateLKEDeployInputs(env map[string]string, opts provisionOptions) error {
+	if err := validateLKEBillingLifecycleInputs(env); err != nil {
+		return err
+	}
 	if err := validateLKEConsoleDeployInputs(env, opts, lkeRuntimeSecretValue); err != nil {
 		return err
 	}
@@ -3492,6 +3498,9 @@ func lkeApplyTargetedRuntimeDependencies(_ provisionPaths, env map[string]string
 			return err
 		}
 		if err := kubectlApply(lkeBillingSecretManifest(env)); err != nil {
+			return err
+		}
+		if err := lkeApplyBillingLifecycleRuntime(env, "billing"); err != nil {
 			return err
 		}
 		_ = runKubectl("-n", lkeNamespaceName(env, "billing"), "delete", "job", "billing-database-ensure", "--ignore-not-found")
@@ -4126,6 +4135,9 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 		if err := kubectlApply(lkeBillingSecretManifest(env)); err != nil {
 			return err
 		}
+		if err := lkeApplyBillingLifecycleRuntime(env, "billing"); err != nil {
+			return err
+		}
 		_ = runKubectl("-n", lkeNamespaceName(env, "billing"), "delete", "job", "billing-database-ensure", "--ignore-not-found")
 		if err := kubectlApply(lkeBillingDatabaseEnsureJobManifest(env)); err != nil {
 			return err
@@ -4241,6 +4253,9 @@ func lkeApplyCloudLogger(env map[string]string, opts provisionOptions) error {
 	if !lkeWorkloadSelected(env, opts, "cloud-logger") {
 		return nil
 	}
+	if err := validateLKEBillingLifecycleInputs(env); err != nil {
+		return err
+	}
 	if lkeLoggerRetentionStorageEnabled(env) {
 		if err := lkeRequireLokiDataMigration(env); err != nil {
 			return err
@@ -4287,6 +4302,9 @@ func lkeApplyCloudLogger(env map[string]string, opts provisionOptions) error {
 	if err := kubectlApply(lkeCloudLoggerBillingInboxPVCManifest(env)); err != nil {
 		return err
 	}
+	if err := lkeApplyBillingLifecycleRuntime(env, "cloud-logger"); err != nil {
+		return err
+	}
 	if err := kubectlApply(lkeCloudLoggerDeploymentManifest(env)); err != nil {
 		return err
 	}
@@ -4315,6 +4333,9 @@ func lkeRemoveK8sCoturnRuntime(env map[string]string) error {
 }
 
 func lkeApplyVideoCloudAuxiliaryServices(env map[string]string, opts provisionOptions) error {
+	if err := lkeApplyBillingLifecycleRuntime(env, "video-cloud"); err != nil {
+		return err
+	}
 	if err := kubectlApply(lkeVideoCloudWorkersSecretManifest(env)); err != nil {
 		return err
 	}
@@ -7251,15 +7272,20 @@ type: Opaque
 stringData:
   RTK_CLOUD_LOGGER_TOKEN: %q
   RTK_CLOUD_LOGGER_BILLING_USAGE_TOKEN: %q
-`, lkeNamespaceName(env, "logger"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("cloud-logger-ingest-token"), lkeRuntimeSecretValue("cloud-logger-billing-usage-token"))
+`, lkeNamespaceName(env, "logger"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("cloud-logger-ingest-token"), lkeRuntimeSecretValue("cloud-logger-billing-usage-token")) + lkeBillingLifecycleLoggerSecretData(env)
 }
 
 func lkeCloudLoggerDeploymentManifest(env map[string]string) string {
+	backupInit, backupEnv, backupMount, backupVolumes := lkeBillingLifecycleLoggerPodParts(env)
+	backupPort := ""
+	if lkeBillingBackupEnabled(env) {
+		backupPort = "            - name: lifecycle\n              containerPort: 8081\n"
+	}
 	initializeArg := ""
 	if strings.EqualFold(strings.TrimSpace(firstNonEmpty(os.Getenv("LKE_CLOUD_LOGGER_INITIALIZE_BILLING_INBOX"), env["LKE_CLOUD_LOGGER_INITIALIZE_BILLING_INBOX"])), "true") {
 		initializeArg = "            - \"-initialize-billing-inbox\"\n"
 	}
-	return fmt.Sprintf(`apiVersion: apps/v1
+	manifest := fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: cloud-logger
@@ -7294,7 +7320,7 @@ spec:
           volumeMounts:
             - name: billing-inbox
               mountPath: /var/lib/rtk-cloud-logger
-      containers:
+%s      containers:
         - name: app
           image: %s
           imagePullPolicy: IfNotPresent
@@ -7307,7 +7333,7 @@ spec:
           ports:
             - name: http
               containerPort: 18090
-          env:
+%s          env:
             - name: RTK_CLOUD_LOGGER_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -7320,14 +7346,18 @@ spec:
                   key: RTK_CLOUD_LOGGER_BILLING_USAGE_TOKEN
             - name: RTK_CLOUD_LOGGER_LOKI_URL
               value: %q
-          volumeMounts:
+%s          volumeMounts:
             - name: billing-inbox
               mountPath: /var/lib/rtk-cloud-logger
-%s      volumes:
+%s%s      volumes:
         - name: billing-inbox
           persistentVolumeClaim:
             claimName: cloud-logger-billing-inbox
-`, lkeNamespaceName(env, "logger"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkeImagePullSecretName(env), lkeCloudLoggerImage(env), initializeArg, lkeCloudLoggerLokiURL(env), lkeContainerResourcesManifest(env, "cloud-logger"))
+%s`, lkeNamespaceName(env, "logger"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkeImagePullSecretName(env), backupInit, lkeCloudLoggerImage(env), initializeArg, backupPort, lkeCloudLoggerLokiURL(env), backupEnv, backupMount, lkeContainerResourcesManifest(env, "cloud-logger"), backupVolumes)
+	if lkeBillingBackupEnabled(env) {
+		manifest = strings.Replace(manifest, "    metadata:\n      labels:", fmt.Sprintf("    metadata:\n      annotations:\n        rtk.realtek.com/billing-lifecycle-checksum: %q\n      labels:", lkeConfigChecksum(lkeBillingLifecycleConfigMapManifest(env), lkeBillingLifecycleLoggerSecretData(env))), 1)
+	}
+	return manifest
 }
 
 func lkeCloudLoggerBillingInboxPVCManifest(env map[string]string) string {
@@ -7386,6 +7416,9 @@ func lkeVideoCloudAuxiliaryDeploymentManifest(env map[string]string, service lke
             - name: %s
               containerPort: %d
 `, firstNonEmpty(service.PortName, "http"), service.Port)
+	}
+	if service.Name == "video-cloud-mqttusage" && lkeBillingAuthorityEnabled(env) {
+		ports += "            - name: raw-lifecycle\n              containerPort: 19401\n"
 	}
 	logIngesterEnv := ""
 	loggerIdentityMount := ""
@@ -7497,6 +7530,7 @@ func lkeVideoCloudAuxiliaryDeploymentManifest(env map[string]string, service lke
             - name: VIDEO_CLOUD_BILLING_USAGE_FORWARD_INTERVAL
               value: "10s"
 `, lkeNamespaceName(env, "billing"))
+		mqttUsageEnv += lkeVideoBillingLifecycleEnvManifest(env)
 		mqttUsageVolumeMount = `            - name: mqtt-usage-checkpoint
               mountPath: /var/lib/video-cloud/mqtt-usage
 `
@@ -7665,7 +7699,11 @@ spec:
           emptyDir: {}
 %s`, service.Name, lkeNamespaceName(env, "video-cloud"), service.Name, env["CLOUD_STACK_NAME"], replicas, mqttUsageStrategy, service.Name, service.Name, env["CLOUD_STACK_NAME"], lkeDeploymentImagePullSecretsManifest(env)+mqttUsageInitContainers, lkeVideoCloudImage(env), service.Binary, lkeContainerResourcesManifest(env, service.Name), ports, mqttUsageVolumeMount+loggerIdentityMount, firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOG_LEVEL"), "info"), lkeNamespaceName(env, "platform"), lkeCloudLoggerEndpoint(env), firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOGGER_SPOOL_MAX_BYTES"), "104857600"), lkeVideoCloudWorkerDBMaxOpenConns(env), lkeVideoCloudWorkerDBMaxIdleConns(env), lkeVideoCloudDBConnMaxLifetime(env), lkeMQTTInternalAddr(env), strconv.FormatBool(lkeMQTTTenantNamespaceEnabled(env)), service.Name, lkeVideoCloudAuxiliaryMQTTCleanSession(env, service), logIngesterEnv+clipVerifierEnv, service.Name, mqttUsageEnv, mqttUsageVolume+loggerIdentityVolume)
 	body = strings.Replace(body, "      volumes:\n", lkeBlobEnvironmentManifest(env, "video-cloud-runtime")+"      volumes:\n", 1)
-	body = strings.Replace(body, "    metadata:\n      labels:", fmt.Sprintf("    metadata:\n      annotations:\n        rtk.realtek.com/runtime-checksum: %q\n      labels:", lkeVideoCloudRuntimeChecksum(env)), 1)
+	runtimeChecksum := lkeVideoCloudRuntimeChecksum(env)
+	if service.Name == "video-cloud-mqttusage" && lkeBillingAuthorityEnabled(env) {
+		runtimeChecksum = lkeConfigChecksum(runtimeChecksum, lkeVideoBillingLifecycleSecretManifest(env), lkeVideoBillingLifecycleEnvManifest(env))
+	}
+	body = strings.Replace(body, "    metadata:\n      labels:", fmt.Sprintf("    metadata:\n      annotations:\n        rtk.realtek.com/runtime-checksum: %q\n      labels:", runtimeChecksum), 1)
 	return body
 }
 
@@ -10067,13 +10105,21 @@ func lkeDeploymentManifestWithVideoSurge(env map[string]string, workload lkeWork
 		}
 	}
 	if workload.Key == "billing" {
+		checksumValues := []string{lkeBillingDatabaseURL(env), lkeBillingServiceToken(), lkeBillingCloudCreationToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkePaymentSimulatorInternalURL(env), lkePaymentReferenceEncryptionKey(env), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkeNewebPayEndpointBaseURL(env), lkeNewebPayNotifyURL(env), lkeNewebPayReturnURL(env)}
+		if lkeBillingAuthorityEnabled(env) {
+			checksumValues = append(checksumValues, lkeBillingRawRetentionSecretManifest(env))
+			extraPorts += "            - name: raw-retention\n              containerPort: 8081\n"
+		}
 		templateAnnotations = fmt.Sprintf(`      annotations:
         rtk.realtek.com/runtime-checksum: %q
-`, lkeConfigChecksum(lkeBillingDatabaseURL(env), lkeBillingServiceToken(), lkeBillingCloudCreationToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkePaymentSimulatorInternalURL(env), lkePaymentReferenceEncryptionKey(env), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkeNewebPayEndpointBaseURL(env), lkeNewebPayNotifyURL(env), lkeNewebPayReturnURL(env)))
+`, lkeConfigChecksum(checksumValues...))
 		envFrom = `          envFrom:
             - secretRef:
                 name: billing-runtime
 `
+		if lkeBillingAuthorityEnabled(env) {
+			envFrom += "            - secretRef:\n                name: billing-raw-retention-runtime\n"
+		}
 	}
 	if workload.Key == "video-cloud" {
 		templateAnnotations = fmt.Sprintf(`      annotations:
