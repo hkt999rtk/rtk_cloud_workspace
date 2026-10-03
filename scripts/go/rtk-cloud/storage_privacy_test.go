@@ -1,7 +1,10 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,6 +12,77 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestNewStorageKeyWaitsForReadablePrivacyBeforeCanary(t *testing.T) {
+	for _, delayed := range []struct {
+		query  string
+		status int
+	}{{"acl", http.StatusForbidden}, {"policy", http.StatusForbidden}, {"acl", http.StatusNotFound}} {
+		t.Run(fmt.Sprintf("%s-%d", delayed.query, delayed.status), func(t *testing.T) {
+			t.Parallel()
+			reads, writes := 0, 0
+			private := false
+			var object []byte
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Query().Has(delayed.query) {
+					reads++
+					if reads == 1 {
+						w.WriteHeader(delayed.status)
+						return
+					}
+				}
+				switch {
+				case r.URL.Query().Has("acl"):
+					fmt.Fprint(w, privateStorageACLForTest)
+				case r.URL.Query().Has("policy"):
+					private = true
+					fmt.Fprint(w, `{"Statement":{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam:::user/limited-key"}}}`)
+				case r.URL.Query().Get("list-type") == "2":
+					fmt.Fprint(w, `<ListBucketResult/>`)
+				case r.Method == http.MethodPut:
+					if !private {
+						t.Error("canary write preceded privacy proof")
+					}
+					writes++
+					object, _ = io.ReadAll(r.Body)
+				case r.Method == http.MethodGet:
+					w.Write(object)
+				case r.Method == http.MethodDelete:
+					object = nil
+				default:
+					t.Errorf("unexpected request %s", r.Method)
+				}
+			}))
+			defer server.Close()
+			checker := deploymentCredentialChecker{client: server.Client()}
+			store := provisionObjectStore{bucket: "bucket", endpoint: server.URL, region: "us-sea", accessKey: "access", secretKey: "secret"}
+			if err := checker.validateNewStorageKey(store, "prefix"); err != nil {
+				t.Fatal(err)
+			}
+			if reads != 2 || writes != 1 || len(object) != 0 {
+				t.Fatalf("privacy reads=%d canary writes=%d remaining bytes=%d", reads, writes, len(object))
+			}
+		})
+	}
+}
+
+func TestNewStorageKeyPrivacyRetryHonorsCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || !r.URL.Query().Has("acl") {
+			t.Error("request continued without readable privacy proof")
+		}
+		cancel()
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer server.Close()
+	checker := deploymentCredentialChecker{client: server.Client(), ctx: ctx}
+	store := provisionObjectStore{bucket: "bucket", endpoint: server.URL, region: "us-sea", accessKey: "access", secretKey: "secret"}
+	if err := checker.validateNewStorageKey(store, "prefix"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("privacy retry cancellation = %v", err)
+	}
+}
 
 const privateStorageACLForTest = `<AccessControlPolicy><Owner><ID>owner</ID></Owner><AccessControlList><Grant><Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="CanonicalUser"><ID>owner</ID></Grantee><Permission>FULL_CONTROL</Permission></Grant></AccessControlList></AccessControlPolicy>`
 

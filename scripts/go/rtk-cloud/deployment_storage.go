@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -291,9 +292,6 @@ func (c deploymentCredentialChecker) bootstrapRuntimeStorage(cfg deploymentConfi
 		if err := updateDeploymentCredentialEnvFile(environmentFile, map[string]string{"LINODE_MEDIA_OBJ_ACCESS_KEY_ID": access, "LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY": secret}); err != nil {
 			return err
 		}
-		if err := c.validateStoragePrivacy(store); err != nil {
-			return err
-		}
 		if err := c.validateNewStorageKey(store, target.Prefix); err != nil {
 			return fmt.Errorf("new media key validation failed: %w", err)
 		}
@@ -378,9 +376,6 @@ func (c deploymentCredentialChecker) bootstrapOTAStorage(cfg deploymentConfig, v
 		return err
 	}
 	if err := updateDeploymentCredentialEnvFile(environmentFile, map[string]string{"LINODE_OTA_OBJ_ACCESS_KEY_ID": access, "LINODE_OTA_OBJ_SECRET_ACCESS_KEY": secret}); err != nil {
-		return err
-	}
-	if err := c.validateStoragePrivacy(store); err != nil {
 		return err
 	}
 	if err := c.validateNewStorageKey(store, target.Prefix); err != nil {
@@ -490,9 +485,6 @@ func (c deploymentCredentialChecker) bootstrapArtifactStorage(cfg deploymentConf
 		"LINODE_ARTIFACT_OBJ_SECRET_ACCESS_KEY": secret,
 	}
 	if err := updateDeploymentCredentialEnvFile(environmentFile, replacements); err != nil {
-		return err
-	}
-	if err := c.validateStoragePrivacy(store); err != nil {
 		return err
 	}
 	if err := c.validateNewStorageKey(store, target.Prefix); err != nil {
@@ -1037,12 +1029,20 @@ func (c deploymentCredentialChecker) validateNewStorageKey(store provisionObject
 	const attempts = 6
 	var err error
 	for attempt := 1; attempt <= attempts; attempt++ {
-		err = c.validateStorageReadWriteCanary(store, prefix)
+		// New buckets and limited-key grants can take time to become readable.
+		// Privacy must pass before any canary writes.
+		err = c.validateStoragePrivacy(store)
+		if err == nil {
+			err = c.validateStorageReadWriteCanary(store, prefix)
+		}
 		if err == nil {
 			return nil
 		}
 		var httpErr *provisionObjectStorageHTTPError
-		if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusForbidden || attempt == attempts {
+		var networkErr net.Error
+		retryable := errors.As(err, &httpErr) && (httpErr.StatusCode == http.StatusForbidden || httpErr.StatusCode == http.StatusNotFound)
+		retryable = retryable || (errors.As(err, &networkErr) && networkErr.Timeout())
+		if !retryable || attempt == attempts {
 			return err
 		}
 		timer := time.NewTimer(5 * time.Second)
