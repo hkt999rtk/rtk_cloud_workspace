@@ -722,7 +722,7 @@ func TestDedicatedOTAStorageLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	const bucketName = "rtk-ota-firmware-dev-us-sea"
+	const bucketName = "rtk-cloud-dev-ota-firmware-us-sea"
 	var mu sync.Mutex
 	created, keyIssued, requestedMetricsEndpoint := false, false, false
 	keyIssueCount := 0
