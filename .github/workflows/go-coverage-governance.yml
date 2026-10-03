@@ -72,6 +72,8 @@ jobs:
     if: needs.changes.outputs.run_unit == 'true'
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 30
+    env:
+      BILLING_UNIT_POSTGRES_CONTAINER_ID: ""
     strategy:
       fail-fast: false
       max-parallel: 2
@@ -130,6 +132,45 @@ jobs:
           echo "VIDEO_CLOUD_TEST_DSN=postgres://integration:integration_password@127.0.0.1:${pg_port}/integration?sslmode=disable" >> "$GITHUB_ENV"
           echo "RTK_AUTOMATIC_PKI_TEST_ADDR=http://127.0.0.1:${bao_port}" >> "$GITHUB_ENV"
           echo 'GOFLAGS=-p=1' >> "$GITHUB_ENV"
+      - name: Start isolated Billing unit PostgreSQL fixture
+        if: matrix.module == 'billing-service'
+        shell: bash
+        run: |
+          set -euo pipefail
+          pg="rtk-bill-unit-pg-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo 'BILLING_UNIT_POSTGRES_CONTAINER_ID=' >> "$GITHUB_ENV"
+          pg_id="$(docker run -d --rm --name "$pg" \
+            --tmpfs /var/lib/postgresql/data:rw,size=2g \
+            -e POSTGRES_USER=integration -e POSTGRES_PASSWORD=integration_password \
+            -e POSTGRES_DB=integration -p 127.0.0.1::5432 postgres:16)"
+          echo "BILLING_UNIT_POSTGRES_CONTAINER_ID=$pg_id" >> "$GITHUB_ENV"
+          pg_binding="$(docker port "$pg" 5432/tcp)"
+          if [[ ! "$pg_binding" =~ ^127\.0\.0\.1:([0-9]{1,5})$ ]]; then
+            echo 'isolated Billing PostgreSQL fixture has an invalid loopback binding' >&2
+            exit 1
+          fi
+          pg_port="${BASH_REMATCH[1]}"
+          if (( 10#$pg_port < 1 || 10#$pg_port > 65535 )); then
+            echo 'isolated Billing PostgreSQL fixture has an invalid loopback port' >&2
+            exit 1
+          fi
+          ready=0
+          for attempt in {1..60}; do
+            if docker exec "$pg" pg_isready -h 127.0.0.1 -U integration -d integration >/dev/null 2>&1; then
+              ready=$((ready + 1))
+            else
+              ready=0
+            fi
+            if [ "$ready" -ge 3 ]; then
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" -lt 3 ]; then
+            echo 'isolated Billing PostgreSQL fixture did not become ready' >&2
+            exit 1
+          fi
+          echo "TEST_DATABASE_URL=postgres://integration:integration_password@127.0.0.1:${pg_port}/integration?sslmode=disable" >> "$GITHUB_ENV"
       - name: Run governed unit coverage
         working-directory: scripts/go
         shell: bash
@@ -142,6 +183,44 @@ jobs:
             args+=(--base-ref "$BASE_REF" --head-ref HEAD)
           fi
           go run ./rtk-cloud -- test-coverage "${args[@]}"
+      - name: Verify Billing Logger private retention wire
+        if: matrix.module == 'billing-service'
+        working-directory: repos/rtk_billing
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${TEST_DATABASE_URL:-}"
+          test -n "${BILLING_UNIT_POSTGRES_CONTAINER_ID:-}"
+          wire_workspace="$(mktemp -d "$RUNNER_TEMP/rtk-billing-logger-wire.XXXXXX")"
+          cleanup_workspace() {
+            rm -f -- "$wire_workspace/go.work" "$wire_workspace/go.work.sum"
+            rmdir -- "$wire_workspace"
+          }
+          trap cleanup_workspace EXIT
+          (
+            cd "$wire_workspace"
+            GOWORK=off go work init "$GITHUB_WORKSPACE/repos/rtk_billing" "$GITHUB_WORKSPACE/repos/rtk_cloud_logger"
+          )
+          evidence_dir="$GITHUB_WORKSPACE/.artifacts/test-runs/gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-billing-service/coverage/modules/billing-service"
+          mkdir -p "$evidence_dir"
+          GOWORK="$wire_workspace/go.work" go test -json -count=1 -tags=billing_logger_integration \
+            -run '^TestRawRetentionActualLoggerPgPrivateWire$' -timeout=180s ./internal/api \
+            | tee "$evidence_dir/logger-private-wire.json"
+          jq -e -s '
+            def passed($name): any(.[]; .Test == $name and .Action == "pass");
+            passed("TestRawRetentionActualLoggerPgPrivateWire") and
+            passed("TestRawRetentionActualLoggerPgPrivateWire/completed") and
+            passed("TestRawRetentionActualLoggerPgPrivateWire/aborted") and
+            passed("TestRawRetentionActualLoggerPgPrivateWire/recovery-fenced") and
+            all(.[]; .Action != "skip" or ((.Test // "") | startswith("TestRawRetentionActualLoggerPgPrivateWire") | not))
+          ' "$evidence_dir/logger-private-wire.json" >/dev/null
+      - name: Stop isolated Billing unit PostgreSQL fixture
+        if: always() && matrix.module == 'billing-service'
+        shell: bash
+        run: |
+          if [ -n "${BILLING_UNIT_POSTGRES_CONTAINER_ID:-}" ]; then
+            docker rm --force --volumes "$BILLING_UNIT_POSTGRES_CONTAINER_ID" || true
+          fi
       - name: Stop isolated Video Cloud unit fixtures
         if: always() && matrix.module == 'video-cloud'
         shell: bash

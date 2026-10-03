@@ -53,6 +53,11 @@ func recoveryMutationGuard(args []string) error {
 	if len(args) > 1 && args[0] == "secrets" && (args[1] == "verify" || args[1] == "inventory" || args[1] == "plan") {
 		return nil
 	}
+	if len(args) > 1 && args[0] == "billing-lifecycle" && (args[1] == "status" || args[1] == "operation-status" || args[1] == "restore-stage" || args[1] == "recovery-status" || args[1] == "recovery-admit") {
+		// Admission additionally requires a short-lived, scope-bound approval
+		// signed by the independent recovery custodian, not the CLI/verifier.
+		return nil
+	}
 	for _, a := range args {
 		if a == "--help" || a == "-h" {
 			return nil

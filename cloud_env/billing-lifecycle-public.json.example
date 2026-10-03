@@ -1,0 +1,26 @@
+{
+  "lifecycle": {
+    "environment": "dev",
+    "stack": "video-cloud-dev",
+    "source_event_environments": ["dev"],
+    "scratch_dir": "/var/lib/rtk-billing-backup/work",
+    "scratch_capacity_bytes": 137438953472,
+    "encryption_key_id": "approved-age-key-id",
+    "recipients": ["REPLACE_WITH_APPROVED_PUBLIC_AGE_X25519_RECIPIENT"],
+    "verifier_keys": {"approved-verifier-id": "REPLACE_WITH_BASE64_ED25519_PUBLIC_KEY"},
+    "recovery_keys": {},
+    "authority_url": "http://billing-raw-retention.video-cloud-dev-billing.svc.cluster.local:80",
+    "retention_days": 90,
+    "part_bytes": 268435456,
+    "backup_enabled": false,
+    "retirement_enabled": false,
+    "compaction_enabled": false
+  },
+  "object_store": {
+    "endpoint": "https://us-sea-1.linodeobjects.com",
+    "region": "us-sea",
+    "signing_region": "us-east-1",
+    "bucket": "rtk-cloud-dev-billing-backup-us-sea",
+    "environment": "dev"
+  }
+}

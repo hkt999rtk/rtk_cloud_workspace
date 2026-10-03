@@ -4,9 +4,9 @@ Open the [Crow’s-foot ER atlas](database-er-atlas.html).
 
 ## Notation and navigation
 
-The single-file atlas opens with an **Overall** view of five schema owners and only evidence-backed cross-service mappings. Select a service to reach topical groups of at most eight entities. Every group explains the data domain and operation context; every entity has its own data-purpose and usage-scenario description. Group membership is editorial, **not** an extra FK or a claim that every member is directly connected. All 253 entities, including isolated tables, occur in exactly one group. Descriptions and group assignments come from the databases' `COMMENT` and `schema_metadata` entries; regeneration fails when a new table lacks an explanation.
+The single-file atlas opens with an **Overall** view of five schema owners and only evidence-backed cross-service mappings. Select a service to reach topical groups of at most eight entities. Every group explains the data domain and operation context; every entity has its own data-purpose and usage-scenario description. Group membership is editorial, **not** an extra FK or a claim that every member is directly connected. All 258 entities, including isolated tables, occur in exactly one group. Descriptions and group assignments come from the databases' `COMMENT` and `schema_metadata` entries; regeneration fails when a new table lacks an explanation.
 
-Search indexes all 253 entities and 254 FK relationships. Entity nodes open complete columns, descriptions, and outgoing/incoming FK lists. Each FK detail explicitly links both the referencing (child) and referenced (parent) entity; the parent catalog links back to every child that references it. Relationship lines, R labels, and group links open a stable relationship anchor. Direct `file://...#entity-...` or `#relation-...` links expand the containing details; browser Back/Forward follows those anchors. Return links lead to Overall.
+Search indexes all 258 entities and 255 FK relationships. Entity nodes open complete columns, descriptions, and outgoing/incoming FK lists. Each FK detail explicitly links both the referencing (child) and referenced (parent) entity; the parent catalog links back to every child that references it. Relationship lines, R labels, and group links open a stable relationship anchor. Direct `file://...#entity-...` or `#relation-...` links expand the containing details; browser Back/Forward follows those anchors. Return links lead to Overall.
 
 Each Crow’s-foot detail diagram places a referencing entity beside the entities it references. Both endpoints of every extracted foreign key appear together. Related entities may recur in several diagrams; the complete entity catalog links to every occurrence. Diagrams have at most four entity boxes and three relationships. Native expandable sections keep the document navigable; fixed minimum drawing width preserves readable text on smaller screens.
 
@@ -22,7 +22,7 @@ Each Crow’s-foot detail diagram places a referencing entity beside the entitie
 | Schema owner | Tables | Declared relationships | Models |
 | --- | ---: | ---: | ---: |
 | Account Manager | 93 | 134 | 83 |
-| Billing | 60 | 76 | 50 |
+| Billing | 65 | 77 | 51 |
 | Video Cloud | 78 | 41 | 32 |
 | Cloud Admin | 14 | 2 | 2 |
 | Cloud Frontend | 8 | 1 | 1 |
@@ -40,8 +40,8 @@ workspace; it is not necessarily a pure snapshot of those commits.
 | Source checkout | Base commit |
 | --- | --- |
 | Account Manager | `48c5c63f6f8a` |
-| Billing | `3027631c1079` |
-| Video Cloud | `0a3b3b201bde` |
+| Billing | `a16e12a8e445` |
+| Video Cloud | `6bb1ffb7be41` |
 | Cloud Admin | `97df544091f4` |
 | Cloud Frontend | `475b9fe80d6c` |
 

@@ -6,7 +6,7 @@ Classification: source.
 
 Owner: `rtk_cloud_workspace`; each registered bucket has an accountable service owner.
 
-Last reviewed: 2026-10-02.
+Last reviewed: 2026-10-03.
 
 Applies to: RTK-managed Linode Object Storage buckets and their object namespaces.
 Local MinIO fixtures are outside the Linode inventory. Shared wire and payload
@@ -39,10 +39,11 @@ rtk-cloud-<scope>-<purpose>-<region>
 
 - `scope` is a registered logical environment, such as `dev`, `staging` or
   `prod`. `shared` is allowed only for `artifacts`, `test` or `reports` with a
-  documented consumer shared across environments. Runtime, OTA, backup and PKI
-  buckets remain environment-owned.
-- `purpose` is one of `runtime`, `artifacts`, `backup`, `pki-backup`, `test`,
-  `reports` or `ota-firmware`. A new purpose requires an explicit policy change.
+  documented consumer shared across environments. Runtime, OTA, general backup,
+  billing backup and PKI buckets remain environment-owned.
+- `purpose` is one of `runtime`, `artifacts`, `backup`, `billing-backup`,
+  `pki-backup`, `test`, `reports` or `ota-firmware`. A new purpose requires an
+  explicit policy change.
 - `region` is the actual Linode Object Storage region ID, such as `us-sea`,
   `us-iad`, `us-lax` or `sg-sin-2`; it is not a historical alias or the S3
   signing-region value. Record the exact assigned endpoint separately.
@@ -65,15 +66,18 @@ merely to reduce the bucket count.
 | `ota-firmware` | `rtk-cloud-dev-ota-firmware-us-lax` | Dedicated private E3 OTA bucket, separate writer, credentials and delivery/billing evidence. |
 | `artifacts` | `rtk-cloud-shared-artifacts-us-sea` | Formal releases and SDK handoffs; CI prefixes have separate retention. |
 | `backup` | `rtk-cloud-dev-backup-us-sea` | Private recovery data with reviewed restore and retention requirements. |
+| `billing-backup` | `rtk-cloud-dev-billing-backup-us-sea` | Dedicated private raw billing evidence and retained-inbox recovery; separate financial access, retention and replay boundary. |
 | `pki-backup` | `rtk-cloud-dev-pki-backup-us-iad` | PKI owner and recovery boundary; separate from general artifacts and tests. |
 | `test` | `rtk-cloud-staging-test-sg-sin-2` | Disposable test payloads with registered run prefixes. |
 | `reports` | `rtk-cloud-shared-reports-us-sea` | Routine reports and separately held qualification evidence. |
 
-These are naming examples, not provisioned-resource claims. A future System
-Logger backup may use the `backup` bucket and its own namespace only if access,
-retention and recovery requirements agree with that bucket's owner. Otherwise
-review its boundary before provisioning. An empty planned PKI or OTA bucket can
-remain `reserved`; lack of objects is not evidence that it is waste.
+These are naming examples, not provisioned-resource claims. A future operational
+System Logger backup may use the `backup` bucket and its own namespace only if
+access, retention and recovery requirements agree with that bucket's owner.
+Otherwise review its boundary before provisioning. Billing raw-data backup uses
+the dedicated boundary below, not that operational log namespace. An empty
+planned PKI, billing or OTA bucket can remain `reserved`; lack of objects is not
+evidence that it is waste.
 
 The dedicated OTA E3 requirement remains in force for CDN and signed-GET
 delivery. Dev's approved region is `us-lax`; Staging's is `sg-sin-2`. A newly
@@ -81,6 +85,40 @@ named destination must independently pass endpoint, signed URL, metrics and
 service cutover qualification. A rename cannot upgrade an E1 bucket to E3.
 Production has no approved destination until ownership and E3 availability are
 verified; preserve its explicit legacy configuration meanwhile.
+
+### Billing Raw-data Backup Boundary
+
+Raw `billing_usage` archives and retained billing-inbox snapshots use:
+
+```text
+rtk-cloud-<environment>-billing-backup-<region>
+```
+
+`environment` is the registered logical environment, not a tenant or stack ID;
+`region` is the actual selected Object Storage region ID. Examples include
+`rtk-cloud-dev-billing-backup-us-sea`,
+`rtk-cloud-staging-billing-backup-sg-sin-2` and
+`rtk-cloud-prod-billing-backup-us-iad`. These examples do not assign or approve
+regions for any environment. Register and qualify the chosen region, endpoint
+and exact bucket before use. `shared` is not permitted for this purpose.
+
+The bucket is private and dedicated to financial raw evidence and its recovery
+metadata. Do not co-locate operational Loki logs, product media, temporary CI
+data, general core backups, payment-provider payloads or PKI private material.
+Use distinct bucket-scoped credentials for the backup writer and authorized
+recovery/audit readers; ordinary log/support and tenant credentials have no
+access. Separate deletion authority from routine writing wherever the qualified
+provider permissions support it, and test the allowed and denied operations.
+
+The [billing raw-data lifecycle design](design/billing-raw-data-lifecycle.md)
+owns the proposed export, verification, replay and local-retirement gates. This
+policy registers the destination and namespaces only; neither the bucket nor a
+backup/retirement job is asserted to exist.
+
+The proposed [billing key custody design](design/billing-backup-key-custody.md)
+keeps decryption identities and their independent escrow outside the bucket and
+workload cluster. Storage credentials are separate from decryption identities;
+bucket creation does not establish key custody or recoverability.
 
 ## Object Namespaces and Compatibility
 
@@ -102,7 +140,9 @@ replace a stored identifier as part of bucket migration.
 | Core recovery | Preserve configured `<remote.prefix>/<stack>/<backup-id>.age` and its `<backup-id>.complete.json` companion. Do not turn this implemented archive layout into a directory-per-backup layout. |
 | Daily PostgreSQL recovery | `<remote.prefix>/<stack>/<cluster_id>/<backup-id>.age`, matching `<backup-id>.complete.json`, and `drills/<backup-id>-<nonce>.json`. `remote.prefix` begins with `<environment>/` and is separate from core archives. Keep explicit `<backup-id>.hold.json` retention holds. See the [PostgreSQL procedure](postgres-backup-restore.md). |
 | PKI recovery | Preserve the PKI owner's existing archive keys and contract; record them during inventory before any migration. |
-| Future Logger backup | `logger-backups/<stack>/<YYYY>/<MM>/<DD>/<backup-id>/...`; reserved namespace, not an implemented backup job. |
+| Future operational Logger backup | `logger-backups/<stack>/<YYYY>/<MM>/<DD>/<backup-id>/...` in the `backup` bucket; reserved namespace, not an implemented backup job or billing archive. |
+| Billing raw archive | `billing-raw/<stack>/<store-id>/<YYYY>/<MM>/<DD>/<archive-id>/...` in the dedicated `billing-backup` bucket; reserved for immutable receipt-range exports and their manifests/completion markers. |
+| Billing inbox recovery snapshot | `billing-inbox-snapshots/<stack>/<store-id>/<YYYY>/<MM>/<DD>/<backup-id>/...` in the same environment's `billing-backup` bucket; reserved for consistent inbox snapshots and recovery metadata. |
 | CI output | `ci/<repository>/<run-id>/<attempt>/<platform>/...`; repository is the basename (for example `rtk_cloud_client`), with explicit retry attempt and platform. |
 | Temporary data | `tmp/<producer>/<run-id>/<attempt>/...`; the SDK producer is `rtk-cloud-client-sdk`. New temporary writers and readers adopt the same prefix together. |
 | Routine report | `reports/<producer>/<run-id>/...`. |
@@ -114,6 +154,14 @@ or underscores, without dots or embedded slashes. Existing flat CI prefixes such
 as `ci/rtk-cloud-client-ci-<run>-<attempt>-<platform>/` and old
 `sdk/staging/<run>/<attempt>/` objects remain bounded migration/cleanup inputs;
 new CI/SDK temporary writes use the registered layouts above.
+
+For both billing namespaces, `stack` is the registered deployment stack and
+`store-id` is the Logger's persisted inbox identity. Dates are UTC export or
+snapshot creation dates, not producer event dates or retention cutoffs. Record
+the actual receipt range and timestamps in the manifest. Assign each archive or
+backup ID once, persist it and reuse it on retry; never overwrite a completed
+set with different content. File formats and publication gates are proposed in
+the lifecycle design and require implementation qualification before writing.
 
 Existing writers and manifests are the source for exact compatible suffixes.
 Formal deployment and handoff consumers resolve an explicit version and its
@@ -132,7 +180,18 @@ are known.
 | Routine output under `reports/` | Expire after 30 days. |
 | Registered storage canary prefix | Immediate cleanup by the validator, with a 1-day expiry fallback. |
 | Formal releases, SDK handoffs, product/runtime data, OTA firmware, backups and PKI | No blanket expiry; owner-approved product, release or recovery retention applies. |
+| Billing raw archives and inbox recovery snapshots | No blanket expiry. The financial data owner and recovery owner must approve archive/snapshot retention, dispute/hold handling and recovery dependencies before any deletion rule. |
 | Held evidence | No automatic expiry until the evidence owner releases the hold. |
+
+The proposed billing hot-store target is 90 days, measured from trusted Logger
+receipt time, not producer event time. It is a local-retirement eligibility
+threshold, not a 90-day Object Storage expiry or permission to delete data.
+Off-volume backup must start before that threshold; local retirement additionally
+requires the lifecycle design's verified archive, consumer/replay, reconciliation
+and hold gates. Long-term financial retention remains owner-approved; this
+policy does not invent a statutory retention period. Do not install automatic
+expiry on `billing-raw/`, `billing-inbox-snapshots/` or billing holds before
+those policies and restore dependencies are qualified.
 
 These defaults require reviewed provider lifecycle configuration and readback;
 they are not evidence that lifecycle is currently installed. Match the exact
