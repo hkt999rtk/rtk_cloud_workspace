@@ -115,6 +115,9 @@ else
         ;;
       repos/rtk_cloud_logger|repos/rtk_cloud_logger/*)
         add_unique cloud-logger "${go_modules[@]}"
+        # The Billing unit job owns the Pg fixture and tagged private-wire
+        # acceptance against this exact Logger revision.
+        add_unique billing-service "${go_modules[@]}"
         policy=true
         ;;
       repos/rtk_video_cloud|repos/rtk_video_cloud/*)

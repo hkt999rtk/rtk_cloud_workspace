@@ -23,6 +23,7 @@ modules:
     differential: true
     package_policies:
       - { package: rtk-cloud-workspace/scripts/go/rtk-cloud, risk: high, minimum_statement_percent: 70.0, target_statement_percent: 70.0 }
+      - { package: rtk-cloud-workspace/scripts/go/rtk-cloud/internal/billingbackup, risk: critical, minimum_statement_percent: 80.0, target_statement_percent: 80.0 }
       - { package: rtk-cloud-workspace/scripts/go/cloud-mqtt-test, risk: high, minimum_statement_percent: 70.8, target_statement_percent: 70.0 }
       - { package: rtk-cloud-workspace/scripts/go/linode-object-storage, risk: wiring, exclusion_reason: Thin object-storage CLI wiring is covered by service integration and release smoke tests. }
     purpose: Protect workspace CLI, catalog, deployment, and test orchestration behavior.
@@ -106,13 +107,14 @@ modules:
     packages: [./...]
     cover_packages: [./internal/...]
     pr_required_env: [TEST_DATABASE_URL]
-    pr_required_tests: [TestBillingPersistenceInvoiceLifecycle, TestBillingAccessStateIsVersionedAndFailClosed, TestIntegrationInternalBillingDebitAuthenticationAndIdempotency, TestIntegrationPaymentAPIAuthorizationLifecycleAndRedaction, TestIntegrationPaymentSimulatorHostedSetupActivatesMethodWithoutPersistingRawToken, TestLedgerTriggerAndIntentCreditAreExactlyOnce, TestTimeoutReconcilesToOneCredit, TestQueryUsesFixedSandboxEndpointAndVerifiesResponse, TestVerifyWebhookAuthenticatesAndNormalizesOnlySafeFields]
+    pr_required_tests: [TestBillingPersistenceInvoiceLifecycle, TestBillingAccessStateIsVersionedAndFailClosed, TestIntegrationInternalBillingDebitAuthenticationAndIdempotency, TestIntegrationPaymentAPIAuthorizationLifecycleAndRedaction, TestIntegrationPaymentSimulatorHostedSetupActivatesMethodWithoutPersistingRawToken, TestLedgerTriggerAndIntentCreditAreExactlyOnce, TestTimeoutReconcilesToOneCredit, TestQueryUsesFixedSandboxEndpointAndVerifiesResponse, TestVerifyWebhookAuthenticatesAndNormalizesOnlySafeFields, TestAuthorityHoldAndActiveDecisionRaceLinearizes, TestUnknownCancellationAndAdmissionRaceLinearizes, TestInactivePolicyBlocksNewAdmissionButKeepsExactFenceRecovery]
     minimum_statement_percent: 21.8
     pr_minimum_statement_percent: 61.5
     target_statement_percent: 80.0
     differential: true
     package_policies:
       - { package: github.com/hkt999rtk/rtk_billing/internal/billing, risk: critical, minimum_statement_percent: 80.0, target_statement_percent: 80.0 }
+      - { package: github.com/hkt999rtk/rtk_billing/internal/rawretention, risk: critical, minimum_statement_percent: 80.0, target_statement_percent: 80.0 }
       - { package: github.com/hkt999rtk/rtk_billing/internal/payment, risk: critical, minimum_statement_percent: 95.0, target_statement_percent: 80.0 }
       - { package: github.com/hkt999rtk/rtk_billing/internal/paymentcrypto, risk: critical, minimum_statement_percent: 87.5, target_statement_percent: 80.0 }
       - { package: github.com/hkt999rtk/rtk_billing/internal/paymentprovider/newebpay, risk: critical, minimum_statement_percent: 86.3, target_statement_percent: 80.0 }
@@ -137,7 +139,7 @@ modules:
         canonical_key: go://billing-service/internal/billing#TestBuildDraftInvoiceAggregatesUsageAndReconciles
         purpose: Invoice pricing must remain fixed-precision and immutable.
     purpose: Protect the independent pricing wallet payment invoice and billing access source of truth.
-    method: Unit profile runs pure domain tests; PR profile adds isolated PostgreSQL 16 lifecycle and reconciliation tests.
+    method: Unit and PR profiles use isolated PostgreSQL 16 for lifecycle and reconciliation tests; PR profile additionally instruments internal cross-package calls.
 
   - test_id: SVC-CA-SUITE-001
     name: cloud-admin-backend
@@ -220,7 +222,7 @@ modules:
     packages: [./...]
     cover_packages: [./internal/...]
     pr_required_env: [VIDEO_CLOUD_TEST_DSN, VIDEO_CLOUD_MQTT_TEST_ADDR]
-    pr_required_tests: [TestRepositoriesIntegration, TestBrokerPublishSubscribeIntegration]
+    pr_required_tests: [TestRepositoriesIntegration, TestBrokerPublishSubscribeIntegration, TestRawLifecycleReconciliationRequiresEveryExactAcknowledgedMeasurement, TestRawLifecycleLegacyDeliveredMarkersRequireProtocolReacknowledgment, TestRawLifecycleHistoricalReacknowledgmentsRotateWithoutStarvingFreshFacts]
     minimum_statement_percent: 51.4
     pr_minimum_statement_percent: 65.0
     target_statement_percent: 65.0
