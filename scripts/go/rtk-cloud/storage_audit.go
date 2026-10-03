@@ -43,33 +43,34 @@ func (c deploymentCredentialChecker) storageAccountInventory(token, resource str
 	if resource != "buckets" && resource != "keys" {
 		return errors.New("unsupported storage inventory resource")
 	}
-	var combined []json.RawMessage
-	for page := 1; ; page++ {
-		body, err := c.linodeAuthorizedRequest(token, http.MethodGet, fmt.Sprintf("/object-storage/%s?page_size=500&page=%d", resource, page), nil)
-		if err != nil {
-			return fmt.Errorf("storage %s inventory page %d: %w", resource, page, err)
+	return c.cachedStorageInventory(resource, result, func() ([]byte, error) {
+		var combined []json.RawMessage
+		for page := 1; ; page++ {
+			if err := c.checkContext().Err(); err != nil {
+				return nil, err
+			}
+			body, err := c.linodeAuthorizedRequest(token, http.MethodGet, fmt.Sprintf("/object-storage/%s?page_size=500&page=%d", resource, page), nil)
+			if err != nil {
+				return nil, fmt.Errorf("storage %s inventory page %d: %w", resource, page, err)
+			}
+			var response struct {
+				Data  []json.RawMessage `json:"data"`
+				Page  int               `json:"page"`
+				Pages int               `json:"pages"`
+			}
+			if err := json.Unmarshal(body, &response); err != nil || response.Data == nil {
+				return nil, errors.New("storage inventory returned invalid JSON data")
+			}
+			if response.Page != 0 && response.Page != page {
+				return nil, errors.New("storage inventory returned an unexpected page")
+			}
+			combined = append(combined, response.Data...)
+			if response.Pages <= page {
+				break
+			}
 		}
-		var response struct {
-			Data  []json.RawMessage `json:"data"`
-			Page  int               `json:"page"`
-			Pages int               `json:"pages"`
-		}
-		if err := json.Unmarshal(body, &response); err != nil {
-			return err
-		}
-		if response.Page != 0 && response.Page != page {
-			return errors.New("storage inventory returned an unexpected page")
-		}
-		combined = append(combined, response.Data...)
-		if response.Pages <= page {
-			break
-		}
-	}
-	body, err := json.Marshal(combined)
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(body, result)
+		return json.Marshal(combined)
+	})
 }
 
 func storageAuditCredentials(values map[string]string, keys []linodeStorageKey, bucket linodeStorageBucket) (provisionObjectStore, bool) {

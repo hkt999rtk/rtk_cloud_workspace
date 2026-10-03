@@ -59,6 +59,18 @@ applying the new runtime bindings, then `secrets verify` after deployment.
 
 ## Backup and Recovery Boundary
 
+The [daily PostgreSQL backup](postgres-backup-restore.md) uses dedicated
+environment-local `operator/env/RTK_POSTGRES_BACKUP_ACCESS_KEY_ID` and
+`RTK_POSTGRES_BACKUP_SECRET_ACCESS_KEY` entries. Independent restore access uses
+`RTK_POSTGRES_RESTORE_ACCESS_KEY_ID` and `RTK_POSTGRES_RESTORE_SECRET_ACCESS_KEY`
+under the same `operator/env/` directory. Keep their grants confined to the
+reviewed private backup namespace; restore access is read-only. The runner's
+dedicated PostgreSQL replication password (`runtime/postgres-backup`) is mirrored through a Kubernetes Secret
+to a protected mounted file. Public age recipients belong in reviewed backup
+configuration; private identities remain in independent escrow and are supplied
+only for the explicit restore drill. Neither the runner nor status reports may
+print secret values. Scheduling configuration and redacted status are not escrow.
+
 Follow [Core Backup and Restore](backup-restore.md) for the matched OpenBao,
 PostgreSQL and runtime-secret backup set. Explicitly selected `runtime/`, `pki/`
 and OpenBao TLS files are encrypted with the core archive; selected Kubernetes

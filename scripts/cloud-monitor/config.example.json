@@ -13,6 +13,7 @@
   "tls": [],
   "tokens": [],
   "postgres": [],
+  "postgres_backups": [],
   "redis": [],
   "metrics": [],
   "synthetic": {"auth": [], "mqtt": [], "turn": []}

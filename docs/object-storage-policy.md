@@ -138,6 +138,7 @@ replace a stored identifier as part of bucket migration.
 | Registered OTA | Preserve `environments/<stack>/ota-billable-v1/<brand>/<product>/<release>/firmware.bin` in the dedicated OTA bucket. |
 | Legacy OTA | Preserve stored `ota/` and historical `firmware/` keys, references and issued URLs in legacy media until the separate drain/migration procedure passes. Never rewrite them as billable `ota-billable-v1/` objects. |
 | Core recovery | Preserve configured `<remote.prefix>/<stack>/<backup-id>.age` and its `<backup-id>.complete.json` companion. Do not turn this implemented archive layout into a directory-per-backup layout. |
+| Daily PostgreSQL recovery | `<remote.prefix>/<stack>/<cluster_id>/<backup-id>.age`, matching `<backup-id>.complete.json`, and `drills/<backup-id>-<nonce>.json`. `remote.prefix` begins with `<environment>/` and is separate from core archives. Keep explicit `<backup-id>.hold.json` retention holds. See the [PostgreSQL procedure](postgres-backup-restore.md). |
 | PKI recovery | Preserve the PKI owner's existing archive keys and contract; record them during inventory before any migration. |
 | Future operational Logger backup | `logger-backups/<stack>/<YYYY>/<MM>/<DD>/<backup-id>/...` in the `backup` bucket; reserved namespace, not an implemented backup job or billing archive. |
 | Billing raw archive | `billing-raw/<stack>/<store-id>/<YYYY>/<MM>/<DD>/<archive-id>/...` in the dedicated `billing-backup` bucket; reserved for immutable receipt-range exports and their manifests/completion markers. |
@@ -198,6 +199,16 @@ registered prefix, including its trailing `/` and any configured environment
 prefix. Do not apply these defaults with an empty prefix to an entire bucket.
 The Object Storage defaults do not change GitHub artifact retention or local
 test-report policies.
+
+Daily PostgreSQL backups have an approved retention floor: keep the union of all
+successful backups captured in the last 14 days, the newest 14 successful backups,
+and the backup referenced by the last successful restore drill. A failed job or
+drill cannot reduce that floor. Pruning requires valid, environment-bound completed
+backup metadata and protects the last successful drill's reference. Do not apply a
+14-day bucket lifecycle rule: it could delete the only drilled backup or violate
+the successful-count floor after missed runs. An incomplete multipart upload is
+not a successful backup; bounded cleanup must distinguish it from a committed
+artifact. See the [retention procedure](postgres-backup-restore.md#retention).
 
 Before enabling expiration, classify existing objects and isolate held evidence
 outside every matching expiration rule, or verify a supported exclusion. A

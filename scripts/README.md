@@ -90,56 +90,103 @@ LINODE_OBJ_ENDPOINT=https://REGION.linodeobjects.com
 LINODE_OBJ_BUCKET=artifact bucket name
 ```
 
-Never put `GHCR_PULL_TOKEN` in tracked `env/stack.env`, Git, a PR, or logs. Run the credential preflight before deployment:
+## Existing Environment Deployment Checks
+
+`deployment check` combines SecretStore/PKI and selected credential checks for an
+**existing environment**. Its shell entry builds the Go checker once and executes
+it once, preserving the checker's exit status. It does not bootstrap an empty
+environment or perform complete release qualification.
 
 ```sh
-scripts/check-deployment-credentials.sh --environment staging
-```
-
-Run applicable credential qualification **before** migrations, rollout, new
-credentials, or billable backup preparation. Start with the existing checker in
-read-only mode; scope targeted rollouts to the dependencies they actually use:
-
-```sh
-scripts/check-deployment-credentials.sh --environment staging --read-only
-# Registry provider checks for a targeted image update (SecretStore verification still runs):
-scripts/check-deployment-credentials.sh --environment staging --read-only --checks ghcr
-# Before a protected Video Cloud PKI schema migration, also require its
-# separate migration-owner binding (missing/wrong role/password fails closed):
-scripts/check-deployment-credentials.sh --environment staging --read-only \
-  --require-pki-migration
-# Before Product PKI lifecycle acceptance, require a pinned, active Device Root:
-scripts/check-deployment-credentials.sh --environment staging --read-only \
-  --require-product-pki
-# Use an actual reviewed CI digest (repeat --image for each affected image):
+scripts/check-deployment-credentials.sh --environment staging --fast \
+  --report /tmp/staging-deployment-check.json
+# The same checker can be invoked directly:
+go run ./scripts/go/rtk-cloud -- deployment check --environment staging --fast
+# Registry checks for an affected image; use an actual reviewed CI digest:
+scripts/check-deployment-credentials.sh --environment staging --fast \
+  --checks ghcr --image "$RELEASE_IMAGE"
+# Require a full controller-host pull of that image:
 scripts/check-deployment-credentials.sh --environment staging --read-only \
   --checks ghcr --image "$RELEASE_IMAGE"
-# Local TLS and complete rendered workload checks; no operator credentials needed:
-scripts/check-deployment-credentials.sh --environment staging --read-only \
-  --checks tls,mounts --tls-cert "$SERVER_FULLCHAIN" --tls-key "$SERVER_KEY" \
+# Optional gates before a PKI migration or Product PKI lifecycle acceptance:
+scripts/check-deployment-credentials.sh --environment staging --fast \
+  --require-pki-migration --require-product-pki
+```
+
+| Mode | DNS/storage canaries and receipts | With `--image` |
+| --- | --- | --- |
+| Default | Existing write/read/delete probes and storage receipts remain enabled for selected checks | Full `linux/amd64` Docker pull |
+| `--read-only` | No canaries or new validation receipts; write ability remains unverified | Full Docker pull remains enabled |
+| `--fast` | Implies read-only; no canaries or new validation receipts | Registry manifest/config metadata and `linux/amd64` platform check; full pull is explicitly skipped |
+
+`--checks` accepts `linode,ghcr,dns,storage,tls,mounts`. Without it, configured
+providers and supplied local checks run. **SecretStore, Kubernetes mirror and
+live PKI checks remain required in every mode**, including `--checks tls,mounts`.
+Missing kubeconfig blocks dependent live checks. An explicitly requested but
+unconfigured provider fails. GoDaddy reads authenticate against the selected
+zone. Route53 credential qualification reports `UNSUPPORTED`; it cannot pass.
+Read-only checks still verify advertised required Linode/key scopes.
+
+`--image` requires an exact `ghcr.io/...@sha256:...` reference; repeat it for each
+affected image. Without `--image`, GHCR checks repository read access. Full pulls
+use explicit auth in a private temporary Docker configuration and require a
+running Docker daemon. Docker's layer cache may be reused. Manifest access,
+controller-host pull, and cluster rollout are distinct evidence: neither of the
+first two proves cold-node downloads or the live `imagePullSecret`. Raw GHCR
+credentials containing CR/LF fail. Never put tokens in tracked files or logs.
+
+The checker runs at most four independent read probes and two full image pulls
+at once; DNS/storage mutations stay sequential. It shares inventory reads within
+one invocation. Re-run after changing credentials, configuration, environment or
+image inputs. `--timeout` sets the check execution deadline: default **2m with
+`--fast`, 10m otherwise**. CLI/configuration validation and the shell's binary
+build precede that deadline.
+
+Individual operations also have bounded deadlines, capped by the remaining
+overall budget: HTTP 15s, Kubernetes requests 10s and commands 20s, SQL
+statements 10s and exec commands 30s, and each Docker pull 5m. Read-only
+requests retry once for temporary connection failures or HTTP 429/502/503/504,
+respecting `Retry-After` and the remaining budget. Authentication failures and
+invalid responses are not retried.
+
+Cancellation stops new work and terminates controlled subprocesses. A canary
+that was already created gets an independent cleanup budget of at most 30s;
+this can extend execution beyond the overall deadline. Cleanup failures appear
+as separate `CANARY_CLEANUP_FAILED` results. The checker prints each check's
+start and completion, progress every 10s during long steps, and a final summary
+with root causes and the three slowest checks.
+
+`--report PATH` writes a sanitized, mode-0600 JSON report; its parent directory
+must exist. Schema version 1 includes environment, mode, scope, overall result,
+start time, duration, coverage counts and results in stable `check_id` order.
+Each result records status/code, resource, required flag, duration, attempts,
+dependencies, message, next action, evidence time/level and reuse when applicable.
+Final statuses are `PASS`, `FAIL`, `ERROR`, `BLOCKED`, and `SKIPPED`; progress also
+shows pending/running checks. Intentional optional skips do not count as passed.
+The shell and compiled CLI return **0** when required selected checks pass,
+**1** for failed/incomplete checks or report errors, and **2** for invalid inputs
+or configuration. `go run` may wrap a program's nonzero status as 1; use the shell
+entry when automation needs the exact code.
+
+The legacy `deployment credentials-check` command retains its existing
+provider/local-only behavior and remains used by provisioning flows. For a
+local-only TLS/mount check without the facade's required live baseline, use:
+
+```sh
+go run ./scripts/go/rtk-cloud -- deployment credentials-check \
+  --environment staging --read-only --checks tls,mounts \
+  --tls-cert "$SERVER_FULLCHAIN" --tls-key "$SERVER_KEY" \
   --tls-ca "$TRUSTED_CA" --tls-name "$SERVICE_DNS" --min-valid-days 7 \
   --manifest "$RENDERED_WORKLOAD_JSON"
 ```
 
-`--checks` accepts `linode,ghcr,dns,storage,tls,mounts`. Without it, configured
-providers and supplied local checks run. An explicitly requested but unconfigured
-check fails. `--read-only` suppresses DNS/storage canaries and storage receipts;
-it still verifies advertised required Linode/key scopes. **Write ability remains
-unverified.** Without this flag, the existing temporary-write checks remain in
-place. Do not combine scoped qualification with bucket/key repair flags. Failures
-are aggregated with a nonzero exit; secrets and raw registry errors are not printed.
-Before a protected rollout with direct clip upload, run the full credential
-check without --read-only before the write fence, then run deployment plan.
-The full check creates the validated runtime-media receipt that the deployer
-needs to populate the blob endpoint; the read-only check does not.
+Run applicable qualification before migrations, rollout, new credentials or
+billable backup preparation. Before a protected rollout with direct clip upload,
+run the full check without `--fast` or `--read-only`, then `deployment plan`.
+The full check creates the validated runtime-media receipt the deployer uses to
+populate the blob endpoint. Run bucket/key repairs separately from scoped,
+read-only or fast qualification.
 
-- `--image` requires an exact `ghcr.io/...@sha256:...` reference. It verifies the
-  selected credential via token exchange and exact manifest access, then performs
-  a `linux/amd64` Docker pull with explicit auth in a private temporary config,
-  removed afterward. Docker must be running. Its layer cache may be reused; this
-  does not prove a cold node can download every blob or that live imagePullSecrets
-  match. Empty Docker config alone is not proof of anonymous access. Raw GHCR
-  credential files containing CR/LF fail, even if the SecretStore reader trims them.
 - `--require-pki-migration` is an opt-in live Secret gate for an offline PKI
   schema upgrade. It verifies `pki-migration-database:url` in the selected Video
   Cloud namespace against that environment's canonical PostgreSQL migration
@@ -162,13 +209,12 @@ needs to populate the blob endpoint; the read-only check does not.
   or restricted mounts without provable access fail rather than claiming success.
   This is a declaration check, not proof of live Secret contents or access.
 
-OpenBao health/capabilities/workload authorization, live Secret key bindings and
-actual container access, and acceptance-user login remain separate release gates.
-A scoped or read-only PASS alone is not deployment approval. Use the matching
-`deployment preflight --operation ...` for configuration/tooling prerequisites;
-it does not replace credentials-check. Recheck affected inputs after changes.
-The credential checker verifies the selected environment's live SecretStore and
-Kubernetes bindings before scoped provider checks. Its Service client registry
+A PASS supplies evidence for the selected checks. Complete release approval also
+requires the [deployment release gates](../docs/deployment-operations.md#upgrade-persistent-staging-release-gates),
+including applicable OpenBao authorization, actual container access, Console,
+login and data-flow acceptance. Use `deployment preflight --operation ...` for
+configuration/tooling prerequisites. The facade verifies the selected
+environment's SecretStore and Kubernetes bindings before scoped provider writes. Its Service client registry
 inventory is required once the controller declares any Service registry setting.
 Before adoption, it instead verifies that no Service issuer or pending issuance
 exists and checks any retained bootstrap sessions. A planned Service registry
@@ -191,7 +237,20 @@ and use `sync-env` to regenerate the derived stack and service domains.
 The selected environment must also include its approved App and Device CSR key
 algorithm lists before test-data enrollment begins.
 
-By default, the command reads individual `0600` files only from `~/.config/rtk_cloud/<environment>/operator/env/`. Shared profiles, `--env-file`, and process-environment overrides are rejected; missing values fail closed. The environment-specific check covers Linode profile/LKE read access plus the required deployment read/write OAuth scopes, pull access to every registered service GHCR repository, and reversible GoDaddy TXT-record read/write/delete access. When clip direct upload is enabled it also checks Object Storage inventory, limited-key scope, signed listing, and a write/read/delete canary. The DNS and Object Storage probes use reserved preflight names and remove their canary data before returning. Failures return nonzero. `deployment create`, `deployment upgrade`, `deployment provision`, and `deployment test` first run the matching full deployment preflight and then the same credential checks before writing runtime files, resolving images, or creating cloud resources. `create` refuses a stack that already owns provider resources. `upgrade` requires an existing LKE stack and a bound PostgreSQL PVC, and never invokes reset or storage purge. Secret values are never printed; a redacted storage receipt is stored in ignored runtime state.
+Linode, GHCR, GoDaddy and storage credentials come from the selected environment's
+canonical `0600` operator files; shared profiles and `--env-file` are rejected.
+Route53 uses its adapter's AWS credential chain. Default checks cover Linode
+profile/LKE access and required OAuth scopes, registered GHCR repositories, and
+selected-provider DNS access. Enabled storage checks include inventory, key
+scope, signed listing and, outside read-only modes, canary write/read/delete.
+Canaries use reserved names and cleanup is part of their result.
+
+`deployment create`, `upgrade`, `provision`, and `test` retain their matching
+preflight and legacy credential gates before deployment mutation. `create`
+refuses existing owned resources; `upgrade` requires an existing LKE stack and a
+bound PostgreSQL PVC and preserves storage. Use the
+[new-environment procedure](../docs/deployment-operations.md#create-a-new-environment)
+for bootstrap; the facade requires existing-environment live inputs.
 
 If the only failure is HTTP 404 for the configured Object Storage bucket, explicitly create it and immediately repeat signed-read validation:
 
@@ -201,7 +260,9 @@ scripts/check-deployment-credentials.sh \
   --create-missing-object-storage-bucket
 ```
 
-This flag is valid only for `credentials-check`. Normal checks and deployment never create a bucket automatically. Creation or validation failure returns nonzero and blocks deployment.
+This explicit repair remains available through the shell facade and legacy
+`credentials-check`. Normal checks never create a bucket automatically. Creation
+or validation failure returns nonzero and blocks deployment.
 
 If an existing bucket returns HTTP 403, explicitly use `LINODE_TOKEN` to create a replacement limited key with `read_write` access to that bucket:
 

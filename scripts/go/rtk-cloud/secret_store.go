@@ -57,9 +57,10 @@ type secretInventoryEntry struct {
 }
 
 type secretStore struct {
-	ConfigRoot  string
-	Environment string
-	Root        string
+	ConfigRoot   string
+	Environment  string
+	Root         string
+	checkRuntime *deploymentCheckRuntime
 }
 
 var activeSecretEnvironmentRoot string
@@ -989,7 +990,7 @@ func verifySecretStore(out io.Writer, store secretStore, workspace string) error
 		}
 	}
 	if len(failures) > 0 {
-		return fmt.Errorf("secret verification failed:\n- %s", strings.Join(failures, "\n- "))
+		return secretCheckSummary(fmt.Sprintf("secret verification failed:\n- %s", strings.Join(failures, "\n- ")))
 	}
 	fmt.Fprintf(out, "verified %s secret store\n", store.Environment)
 	return nil
@@ -1004,6 +1005,11 @@ func verifySecretStoreK8SBindings(store secretStore) error {
 		return nil
 	} else if err != nil {
 		return err
+	}
+	if store.checkRuntime != nil {
+		if _, err := store.checkRuntime.secretInventory(kubeconfig); err != nil {
+			return secretCheckFailure(err, "cannot read live Kubernetes Secret inventory while verifying bindings")
+		}
 	}
 	stack := "video-cloud-" + store.Environment
 	var failures []string
@@ -1035,17 +1041,21 @@ func verifySecretStoreK8SBindings(store secretStore) error {
 			if !loaded && !unreadable[secretName] {
 				var out []byte
 				var commandErr error
-				for attempt := 0; attempt < 2; attempt++ {
+				attempts := 2
+				if store.checkRuntime != nil {
+					attempts = 1
+				}
+				for attempt := 0; attempt < attempts; attempt++ {
 					if attempt != 0 {
 						time.Sleep(200 * time.Millisecond)
 					}
-					out, commandErr = exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", stack+binding.NamespaceSuffix, "get", "secret", binding.Secret, "-o", "json").Output()
+					out, commandErr = secretCheckKubectl([]*deploymentCheckRuntime{store.checkRuntime}, false, "--kubeconfig", kubeconfig, "-n", stack+binding.NamespaceSuffix, "get", "secret", binding.Secret, "-o", "json")
 					if commandErr == nil {
 						break
 					}
 				}
 				if commandErr != nil {
-					failures = append(failures, fmt.Sprintf("cannot read Kubernetes Secret %s while verifying bindings", secretName))
+					failures = append(failures, secretCheckFailure(commandErr, fmt.Sprintf("cannot read Kubernetes Secret %s while verifying bindings", secretName)).Error())
 					unreadable[secretName] = true
 					continue
 				}
@@ -1071,10 +1081,10 @@ func verifySecretStoreK8SBindings(store secretStore) error {
 			if encoded == "" && handoffOnlySecret(entry.ID) {
 				if !handoffWorkerChecked {
 					handoffWorkerChecked = true
-					out, err := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", stack+"-account-manager",
-						"get", "deployment", "account-manager-handoff-worker", "--ignore-not-found=true", "-o", "name").Output()
+					out, err := secretCheckKubectl([]*deploymentCheckRuntime{store.checkRuntime}, false, "--kubeconfig", kubeconfig, "-n", stack+"-account-manager",
+						"get", "deployment", "account-manager-handoff-worker", "--ignore-not-found=true", "-o", "name")
 					if err != nil {
-						return errors.New("cannot inspect Account Manager handoff worker while verifying inactive Secret bindings")
+						return secretCheckFailure(err, "cannot inspect Account Manager handoff worker while verifying inactive Secret bindings")
 					}
 					switch strings.TrimSpace(string(out)) {
 					case "":
@@ -1099,7 +1109,7 @@ func verifySecretStoreK8SBindings(store secretStore) error {
 		}
 	}
 	if len(failures) > 0 {
-		return errors.New(strings.Join(failures, "; "))
+		return secretCheckSummary(strings.Join(failures, "; "))
 	}
 	return nil
 }

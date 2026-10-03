@@ -51,6 +51,9 @@ var commands = map[string]commandSpec{
 	"backup":                           {run: runBackup},
 	"billing-lifecycle":                {run: runBillingLifecycle},
 	"restore":                          {run: runRestore},
+	"postgres-backup":                  {run: runPostgresBackup},
+	"postgres-restore":                 {run: runPostgresRestore},
+	"postgres-backup-worker":           {run: runPostgresBackupWorker},
 	"bind-devices":                     {run: runBindDevices},
 	"account-manager-email-deploy":     {run: runAccountManagerEmailDeploy},
 	"activate-load-owner":              {run: runActivateLoadOwner},
@@ -170,8 +173,12 @@ func run(args []string) error {
 		return nil
 	}
 	args = normalizeLegacyPathArgs(args)
-	if err := recoveryMutationGuard(args); err != nil {
-		return err
+	// The deployment-check facade validates all arguments before consulting
+	// the same maintenance fence. Other commands retain their existing order.
+	if !(len(args) > 1 && args[0] == "deployment" && args[1] == "check") {
+		if err := recoveryMutationGuard(args); err != nil {
+			return err
+		}
 	}
 	var err error
 	args, err = normalizeEnvironmentArgs(args)
@@ -204,7 +211,7 @@ func run(args []string) error {
 }
 
 func normalizeEnvironmentArgs(args []string) ([]string, error) {
-	if len(args) == 0 || args[0] == "deployment" || args[0] == "monitor-inventory" || args[0] == "secrets" || args[0] == "backup" || args[0] == "restore" || args[0] == "billing-lifecycle" || args[0] == "test-feature-coverage" || args[0] == "object-storage-audit" || args[0] == "object-storage-lifecycle-plan" {
+	if len(args) == 0 || args[0] == "deployment" || args[0] == "monitor-inventory" || args[0] == "secrets" || args[0] == "backup" || args[0] == "restore" || args[0] == "billing-lifecycle" || args[0] == "postgres-backup" || args[0] == "postgres-restore" || args[0] == "postgres-backup-worker" || args[0] == "test-feature-coverage" || args[0] == "object-storage-audit" || args[0] == "object-storage-lifecycle-plan" {
 		return args, nil
 	}
 	var environment, workspace string

@@ -13,7 +13,6 @@ import (
 	"net"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -44,10 +43,10 @@ func verifyPKIMigrationDatabaseSecret(store secretStore) error {
 		return errors.New("PKI migration requires the selected environment kubeconfig")
 	}
 	namespace := "video-cloud-" + store.Environment + "-video-cloud"
-	out, err := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", namespace,
-		"get", "secret", "pki-migration-database", "-o", "json").Output()
+	out, err := secretCheckKubectl([]*deploymentCheckRuntime{store.checkRuntime}, false, "--kubeconfig", kubeconfig, "-n", namespace,
+		"get", "secret", "pki-migration-database", "-o", "json")
 	if err != nil {
-		return fmt.Errorf("PKI migration requires Kubernetes Secret %s/pki-migration-database:url", namespace)
+		return secretCheckFailure(err, fmt.Sprintf("PKI migration requires Kubernetes Secret %s/pki-migration-database:url", namespace))
 	}
 	var secret struct {
 		Data map[string]string `json:"data"`
@@ -91,10 +90,10 @@ func verifyProductPKIReadiness(store secretStore) error {
 		return errors.New("Product PKI requires the selected environment kubeconfig")
 	}
 	namespace := "video-cloud-" + store.Environment + "-video-cloud"
-	raw, err := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", namespace,
-		"get", "deployment", "pki-controller", "-o", "json").Output()
+	raw, err := secretCheckKubectl([]*deploymentCheckRuntime{store.checkRuntime}, false, "--kubeconfig", kubeconfig, "-n", namespace,
+		"get", "deployment", "pki-controller", "-o", "json")
 	if err != nil {
-		return errors.New("Product PKI controller deployment is unavailable")
+		return secretCheckFailure(err, "Product PKI controller deployment is unavailable")
 	}
 	var deployment liveDeployment
 	if json.Unmarshal(raw, &deployment) != nil {
@@ -105,21 +104,21 @@ func verifyProductPKIReadiness(store secretStore) error {
 		return err
 	}
 	platform := "video-cloud-" + store.Environment + "-platform"
-	podsRaw, err := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", platform,
-		"get", "pods", "-l", "app.kubernetes.io/name=postgresql", "-o", "json").Output()
+	podsRaw, err := secretCheckKubectl([]*deploymentCheckRuntime{store.checkRuntime}, false, "--kubeconfig", kubeconfig, "-n", platform,
+		"get", "pods", "-l", "app.kubernetes.io/name=postgresql", "-o", "json")
 	if err != nil {
-		return errors.New("Product PKI cannot read PostgreSQL Pod metadata")
+		return secretCheckFailure(err, "Product PKI cannot read PostgreSQL Pod metadata")
 	}
 	var pods livePodList
 	if json.Unmarshal(podsRaw, &pods) != nil || len(pods.Items) == 0 || pods.Items[0].Metadata.Name == "" {
 		return errors.New("Product PKI requires an available PostgreSQL Pod")
 	}
 	query := "SELECT document FROM public.pki_issuers WHERE id='" + rootID + "'::uuid"
-	row, err := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", platform,
+	row, err := secretCheckKubectl([]*deploymentCheckRuntime{store.checkRuntime}, false, "--kubeconfig", kubeconfig, "-n", platform,
 		"exec", pods.Items[0].Metadata.Name, "--", "psql", "-U", "postgres", "-d",
-		"video_cloud", "-At", "-c", query).Output()
+		"video_cloud", "-At", "-c", query)
 	if err != nil {
-		return errors.New("Product PKI Device Root registry query failed")
+		return secretCheckFailure(err, "Product PKI Device Root registry query failed")
 	}
 	var issuer struct {
 		Environment string `json:"environment"`
@@ -255,9 +254,9 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 		return err
 	}
 	stack := "video-cloud-" + store.Environment
-	secretRaw, err := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "get", "secrets", "--all-namespaces", "-o", "json").Output()
+	secretRaw, err := secretCheckKubectl([]*deploymentCheckRuntime{store.checkRuntime}, false, "--kubeconfig", kubeconfig, "get", "secrets", "--all-namespaces", "-o", "json")
 	if err != nil {
-		return errors.New("cannot read live Kubernetes Secret metadata")
+		return secretCheckFailure(err, "cannot read live Kubernetes Secret metadata")
 	}
 	var secrets liveSecretList
 	if json.Unmarshal(secretRaw, &secrets) != nil {
@@ -298,25 +297,25 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 
 	namespace := stack + "-video-cloud"
 	serviceClientController, serviceClientRegistryConfigured := false, false
-	deploymentRaw, err := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", namespace, "get", "deployments", "-o", "json").Output()
+	deploymentRaw, err := secretCheckKubectl([]*deploymentCheckRuntime{store.checkRuntime}, false, "--kubeconfig", kubeconfig, "-n", namespace, "get", "deployments", "-o", "json")
 	if err != nil {
-		failures = append(failures, "cannot read live Video Cloud deployment status")
+		failures = append(failures, secretCheckFailure(err, "cannot read live Video Cloud deployment status").Error())
 	} else {
 		var deployments liveDeploymentList
 		if json.Unmarshal(deploymentRaw, &deployments) != nil {
 			failures = append(failures, "live Video Cloud deployment metadata is invalid")
 		} else {
 			serviceClientController, serviceClientRegistryConfigured = serviceClientRegistryInputs(deployments)
-			if err := verifyCertIssuerBootstrapConfiguration(kubeconfig, namespace, deployments); err != nil {
+			if err := verifyCertIssuerBootstrapConfiguration(kubeconfig, namespace, deployments, store.checkRuntime); err != nil {
 				failures = append(failures, err.Error())
 			}
-			if err := verifyMountedPKICRLManifests(kubeconfig, namespace, store.Environment, deployments, "certissuer"); err != nil {
+			if err := verifyMountedPKICRLManifests(kubeconfig, namespace, store.Environment, deployments, "certissuer", store.checkRuntime); err != nil {
 				failures = append(failures, err.Error())
 			}
-			if err := verifyAutomaticDeviceTrustConsumers(store.Environment, kubeconfig, namespace, deployments, now); err != nil {
+			if err := verifyAutomaticDeviceTrustConsumers(store.Environment, kubeconfig, namespace, deployments, now, store.checkRuntime); err != nil {
 				failures = append(failures, err.Error())
 			}
-			if err := verifyLiveRootPolicyReferences(kubeconfig, stack+"-platform", deployments); err != nil {
+			if err := verifyLiveRootPolicyReferences(kubeconfig, stack+"-platform", deployments, store.checkRuntime); err != nil {
 				failures = append(failures, err.Error())
 			}
 			if err := verifyCertIssuerStaticServingChain(namespace, secrets, deployments, now); err != nil {
@@ -339,19 +338,19 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 			}
 			if serviceClientController {
 				if serviceClientRegistryConfigured {
-					if err := verifyLiveServiceClientRegistry(kubeconfig, namespace, deployments); err != nil {
+					if err := verifyLiveServiceClientRegistry(kubeconfig, namespace, deployments, store.checkRuntime); err != nil {
 						failures = append(failures, err.Error())
 					}
-				} else if err := verifyUnadoptedServiceClientRegistry(kubeconfig, stack+"-platform", now); err != nil {
+				} else if err := verifyUnadoptedServiceClientRegistry(kubeconfig, stack+"-platform", now, store.checkRuntime); err != nil {
 					failures = append(failures, err.Error())
 				}
 			}
 		}
 	}
 	accountNamespace := stack + "-account-manager"
-	accountRaw, err := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", accountNamespace, "get", "deployments", "-o", "json").Output()
+	accountRaw, err := secretCheckKubectl([]*deploymentCheckRuntime{store.checkRuntime}, false, "--kubeconfig", kubeconfig, "-n", accountNamespace, "get", "deployments", "-o", "json")
 	if err != nil {
-		failures = append(failures, "cannot read live Account Manager deployment status")
+		failures = append(failures, secretCheckFailure(err, "cannot read live Account Manager deployment status").Error())
 	} else {
 		var deployments liveDeploymentList
 		if json.Unmarshal(accountRaw, &deployments) != nil {
@@ -360,13 +359,13 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 			if err := verifyAccountManagerPKIConfiguration(deployments); err != nil {
 				failures = append(failures, err.Error())
 			}
-			if err := verifyMountedPKICRLManifests(kubeconfig, accountNamespace, store.Environment, deployments, "account-manager"); err != nil {
+			if err := verifyMountedPKICRLManifests(kubeconfig, accountNamespace, store.Environment, deployments, "account-manager", store.checkRuntime); err != nil {
 				failures = append(failures, err.Error())
 			}
 		}
 	}
 	if serviceClientController && serviceClientRegistryConfigured {
-		if err := verifyLiveDeploymentBootstrapSessions(kubeconfig, stack+"-platform", now); err != nil {
+		if err := verifyLiveDeploymentBootstrapSessions(kubeconfig, stack+"-platform", now, store.checkRuntime); err != nil {
 			failures = append(failures, err.Error())
 		}
 	}
@@ -374,12 +373,12 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 		return nil
 	}
 	sort.Strings(failures)
-	return fmt.Errorf("live Kubernetes secret validation failed: %s", strings.Join(failures, "; "))
+	return secretCheckSummary(fmt.Sprintf("live Kubernetes secret validation failed: %s", strings.Join(failures, "; ")))
 }
 
 // Product CA creation waits for receipts from these workloads. If either
 // automatic trust consumer is disabled, a new Product remains pending forever.
-func verifyAutomaticDeviceTrustConsumers(environment, kubeconfig, namespace string, deployments liveDeploymentList, now time.Time) error {
+func verifyAutomaticDeviceTrustConsumers(environment, kubeconfig, namespace string, deployments liveDeploymentList, now time.Time, runtimes ...*deploymentCheckRuntime) error {
 	settings := map[string]map[string]string{}
 	for _, deployment := range deployments.Items {
 		for _, container := range deployment.Spec.Template.Spec.Containers {
@@ -395,7 +394,7 @@ func verifyAutomaticDeviceTrustConsumers(environment, kubeconfig, namespace stri
 		return nil
 	}
 	if controller["PKI_FIXED_DEVICE_ROOT_TRUST"] != "" || controller["PKI_DEV_FIXED_DEVICE_ROOT_TRUST"] != "" {
-		return verifyFixedDeviceRootTrust(environment, kubeconfig, namespace, deployments, settings, now)
+		return verifyFixedDeviceRootTrust(environment, kubeconfig, namespace, deployments, settings, now, runtimes...)
 	}
 	consumers := firstNonEmpty(controller["PKI_REQUIRED_BUNDLE_CONSUMERS_DEVICE"], controller["PKI_REQUIRED_CONSUMERS_DEVICE"])
 	if consumers == "" {
@@ -427,7 +426,7 @@ func verifyAutomaticDeviceTrustConsumers(environment, kubeconfig, namespace stri
 
 // Fixed trust is valid only when both consumers use the same fixed Root
 // as the controller and registry status enforcement remains enabled.
-func verifyFixedDeviceRootTrust(environment, kubeconfig, namespace string, deployments liveDeploymentList, settings map[string]map[string]string, now time.Time) error {
+func verifyFixedDeviceRootTrust(environment, kubeconfig, namespace string, deployments liveDeploymentList, settings map[string]map[string]string, now time.Time, runtimes ...*deploymentCheckRuntime) error {
 	controller := settings["pki-controller/pki-controller"]
 	fixed, legacy := controller["PKI_FIXED_DEVICE_ROOT_TRUST"], controller["PKI_DEV_FIXED_DEVICE_ROOT_TRUST"]
 	if (environment != "dev" && environment != "staging") || controller["PKI_ENVIRONMENT"] != environment || (fixed != "true" && legacy != "true") || (fixed != "" && legacy != "") || (legacy != "" && environment != "dev") || controller["PKI_DEVICE_ROOT_ID"] == "" || len(controller["PKI_DEVICE_ROOT_SHA256"]) != 64 {
@@ -445,14 +444,14 @@ func verifyFixedDeviceRootTrust(environment, kubeconfig, namespace string, deplo
 		{"video-cloud-api-pki", "app", api["VIDEO_CLOUD_AUTH_DEVICE_CA_CERT"]},
 		{"mqtt-pki", "pkibroker", "/run/pki-device/roots.pem"},
 	} {
-		if err := verifyMountedDeviceRoot(kubeconfig, namespace, deployments, target.deployment, target.container, target.path, controller["PKI_DEVICE_ROOT_SHA256"], now); err != nil {
+		if err := verifyMountedDeviceRoot(kubeconfig, namespace, deployments, target.deployment, target.container, target.path, controller["PKI_DEVICE_ROOT_SHA256"], now, runtimes...); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func verifyMountedDeviceRoot(kubeconfig, namespace string, deployments liveDeploymentList, deploymentName, containerName, path, fingerprint string, now time.Time) error {
+func verifyMountedDeviceRoot(kubeconfig, namespace string, deployments liveDeploymentList, deploymentName, containerName, path, fingerprint string, now time.Time, runtimes ...*deploymentCheckRuntime) error {
 	for _, deployment := range deployments.Items {
 		if deployment.Metadata.Name != deploymentName {
 			continue
@@ -468,9 +467,9 @@ func verifyMountedDeviceRoot(kubeconfig, namespace string, deployments liveDeplo
 				key := strings.TrimPrefix(path, mount.MountPath+"/")
 				for _, volume := range deployment.Spec.Template.Spec.Volumes {
 					if volume.Name == mount.Name && volume.ConfigMap.Name != "" {
-						raw, err := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", namespace, "get", "configmap", volume.ConfigMap.Name, "-o", "json").Output()
+						raw, err := secretCheckKubectl(runtimes, false, "--kubeconfig", kubeconfig, "-n", namespace, "get", "configmap", volume.ConfigMap.Name, "-o", "json")
 						if err != nil {
-							return fmt.Errorf("%s fixed Device Root ConfigMap is unreadable", deploymentName)
+							return secretCheckFailure(err, fmt.Sprintf("%s fixed Device Root ConfigMap is unreadable", deploymentName))
 						}
 						var config struct {
 							Data map[string]string `json:"data"`
@@ -521,7 +520,7 @@ func verifySelectedStackMetadata(store secretStore) error {
 		return nil
 	}
 	if err != nil {
-		return errors.New("selected environment stack metadata cannot be read")
+		return secretCheckFailure(err, "selected environment stack metadata cannot be read")
 	}
 	expected := "video-cloud-" + store.Environment
 	if values["CLOUD_ENV_NAME"] != store.Environment || values["CLOUD_STACK_NAME"] != expected {
@@ -538,7 +537,7 @@ func verifySelectedStackMetadata(store secretStore) error {
 // Dynamic root consumers fetch a policy before serving. A deployment can have
 // valid certificates and Secrets yet loop on controller HTTP 503 when its root
 // ID has no policy row (for example after a dev database rebuild).
-func verifyLiveRootPolicyReferences(kubeconfig, platformNamespace string, deployments liveDeploymentList) error {
+func verifyLiveRootPolicyReferences(kubeconfig, platformNamespace string, deployments liveDeploymentList, runtimes ...*deploymentCheckRuntime) error {
 	fields := [][2]string{
 		{"VIDEO_CLOUD_ACCOUNT_MANAGER_SERVICE_ROOT_ID", "VIDEO_CLOUD_ACCOUNT_MANAGER_SERVICE_ROOT_STATE"},
 		{"VIDEO_CLOUD_ACCOUNT_MANAGER_RENEWAL_SERVICE_ROOT_ID", "VIDEO_CLOUD_ACCOUNT_MANAGER_RENEWAL_SERVICE_ROOT_STATE"},
@@ -582,9 +581,9 @@ func verifyLiveRootPolicyReferences(kubeconfig, platformNamespace string, deploy
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
-	podsRaw, err := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", platformNamespace, "get", "pods", "-l", "app.kubernetes.io/name=postgresql", "-o", "json").Output()
+	podsRaw, err := secretCheckKubectl(runtimes, false, "--kubeconfig", kubeconfig, "-n", platformNamespace, "get", "pods", "-l", "app.kubernetes.io/name=postgresql", "-o", "json")
 	if err != nil {
-		return errors.New("cannot read PostgreSQL Pod metadata for root policy verification")
+		return secretCheckFailure(err, "cannot read PostgreSQL Pod metadata for root policy verification")
 	}
 	var pods livePodList
 	if json.Unmarshal(podsRaw, &pods) != nil || len(pods.Items) == 0 || pods.Items[0].Metadata.Name == "" {
@@ -595,10 +594,10 @@ func verifyLiveRootPolicyReferences(kubeconfig, platformNamespace string, deploy
 		quoted[i] = "'" + id + "'"
 	}
 	query := "SELECT COALESCE(json_agg(issuer_id ORDER BY issuer_id),'[]'::json) FROM (SELECT DISTINCT issuer_id::text AS issuer_id FROM public.pki_root_distrust WHERE issuer_id::text IN (" + strings.Join(quoted, ",") + ")) policies"
-	output, commandErr := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", platformNamespace, "exec", pods.Items[0].Metadata.Name, "--", "psql", "-U", "postgres", "-d", "video_cloud", "-At", "-c", query).CombinedOutput()
+	output, commandErr := secretCheckKubectl(runtimes, true, "--kubeconfig", kubeconfig, "-n", platformNamespace, "exec", pods.Items[0].Metadata.Name, "--", "psql", "-U", "postgres", "-d", "video_cloud", "-At", "-c", query)
 	var present []string
 	if commandErr != nil || json.Unmarshal([]byte(strings.TrimSpace(string(output))), &present) != nil {
-		return errors.New("dynamic root policy verification did not return valid database metadata")
+		return secretCheckFailure(commandErr, "dynamic root policy verification did not return valid database metadata")
 	}
 	found := map[string]bool{}
 	for _, id := range present {
@@ -656,7 +655,7 @@ func verifyAccountManagerPKIConfiguration(deployments liveDeploymentList) error 
 	return nil
 }
 
-func verifyCertIssuerBootstrapConfiguration(kubeconfig, namespace string, deployments liveDeploymentList) error {
+func verifyCertIssuerBootstrapConfiguration(kubeconfig, namespace string, deployments liveDeploymentList, runtimes ...*deploymentCheckRuntime) error {
 	var certissuer *liveDeployment
 	for i := range deployments.Items {
 		if deployments.Items[i].Metadata.Name == "certissuer" {
@@ -711,9 +710,9 @@ func verifyCertIssuerBootstrapConfiguration(kubeconfig, namespace string, deploy
 			return errors.New("certissuer service-client provisioner pattern is invalid")
 		}
 	}
-	policyRaw, err := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", namespace, "get", "networkpolicies", "-o", "json").Output()
+	policyRaw, err := secretCheckKubectl(runtimes, false, "--kubeconfig", kubeconfig, "-n", namespace, "get", "networkpolicies", "-o", "json")
 	if err != nil {
-		return errors.New("cannot read NetworkPolicy metadata for certissuer bootstrap verification")
+		return secretCheckFailure(err, "cannot read NetworkPolicy metadata for certissuer bootstrap verification")
 	}
 	var policies struct {
 		Items []struct {
@@ -885,20 +884,20 @@ func parsePEMCertificates(raw []byte) ([]*x509.Certificate, error) {
 // verifyLiveDeploymentBootstrapSessions prevents a second signing attempt from
 // starting while an earlier deployment bootstrap owns its caller or a Service
 // client issuance still awaits reconciliation. It reports only non-secret metadata.
-func verifyLiveDeploymentBootstrapSessions(kubeconfig, namespace string, now time.Time) error {
-	podsRaw, err := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", namespace, "get", "pods", "-l", "app.kubernetes.io/name=postgresql", "-o", "json").Output()
+func verifyLiveDeploymentBootstrapSessions(kubeconfig, namespace string, now time.Time, runtimes ...*deploymentCheckRuntime) error {
+	podsRaw, err := secretCheckKubectl(runtimes, false, "--kubeconfig", kubeconfig, "-n", namespace, "get", "pods", "-l", "app.kubernetes.io/name=postgresql", "-o", "json")
 	if err != nil {
-		return errors.New("cannot read PostgreSQL Pod metadata for deployment bootstrap verification")
+		return secretCheckFailure(err, "cannot read PostgreSQL Pod metadata for deployment bootstrap verification")
 	}
 	var pods livePodList
 	if json.Unmarshal(podsRaw, &pods) != nil || len(pods.Items) == 0 || pods.Items[0].Metadata.Name == "" {
 		return errors.New("PostgreSQL Pod is unavailable for deployment bootstrap verification")
 	}
 	query := `SELECT json_build_object('sessions',COALESCE((SELECT json_agg(json_build_object('caller',caller,'deployment_id',deployment_id,'expires_at',expires_at) ORDER BY created_at) FROM public.pki_deployment_bootstrap_sessions WHERE status='active'),'[]'::json),'pending_issuances',COALESCE((SELECT json_agg(json_build_object('caller',caller,'request_id',request_id,'created_at',created_at) ORDER BY created_at) FROM (SELECT caller,request_id,created_at FROM public.pki_service_client_issuances WHERE status='issuing' ORDER BY created_at LIMIT 20) pending),'[]'::json),'pending_count',(SELECT count(*) FROM public.pki_service_client_issuances WHERE status='issuing'),'active_caller_index',EXISTS(SELECT 1 FROM pg_indexes WHERE schemaname='public' AND tablename='pki_deployment_bootstrap_sessions' AND indexname='pki_deployment_bootstrap_sessions_active_caller_idx' AND indexdef LIKE '%WHERE (status = ''active''::text)%'),'legacy_caller_constraint',EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='public.pki_deployment_bootstrap_sessions'::regclass AND conname='pki_deployment_bootstrap_sessions_environment_caller_key'))`
-	output, commandErr := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", namespace, "exec", pods.Items[0].Metadata.Name, "--", "psql", "-U", "postgres", "-d", "video_cloud", "-At", "-c", query).CombinedOutput()
+	output, commandErr := secretCheckKubectl(runtimes, true, "--kubeconfig", kubeconfig, "-n", namespace, "exec", pods.Items[0].Metadata.Name, "--", "psql", "-U", "postgres", "-d", "video_cloud", "-At", "-c", query)
 	var report liveDeploymentBootstrapReport
 	if commandErr != nil || json.Unmarshal([]byte(strings.TrimSpace(string(output))), &report) != nil {
-		return errors.New("deployment bootstrap session verification did not return valid metadata")
+		return secretCheckFailure(commandErr, "deployment bootstrap session verification did not return valid metadata")
 	}
 	if !report.ActiveCallerIndex || report.LegacyCallerConstraint {
 		return errors.New("deployment bootstrap caller schema is outdated; active-only caller ownership migration is required before signing")
@@ -963,35 +962,35 @@ func serviceClientRegistryInputs(deployments liveDeploymentList) (controllerPres
 	return false, false
 }
 
-func verifyUnadoptedServiceClientRegistry(kubeconfig, namespace string, now time.Time) error {
-	podsRaw, err := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", namespace, "get", "pods", "-l", "app.kubernetes.io/name=postgresql", "-o", "json").Output()
+func verifyUnadoptedServiceClientRegistry(kubeconfig, namespace string, now time.Time, runtimes ...*deploymentCheckRuntime) error {
+	podsRaw, err := secretCheckKubectl(runtimes, false, "--kubeconfig", kubeconfig, "-n", namespace, "get", "pods", "-l", "app.kubernetes.io/name=postgresql", "-o", "json")
 	if err != nil {
-		return errors.New("cannot read PostgreSQL Pod metadata for Service client registry verification")
+		return secretCheckFailure(err, "cannot read PostgreSQL Pod metadata for Service client registry verification")
 	}
 	var pods livePodList
 	if json.Unmarshal(podsRaw, &pods) != nil || len(pods.Items) == 0 || pods.Items[0].Metadata.Name == "" {
 		return errors.New("PostgreSQL Pod is unavailable for Service client registry verification")
 	}
 	query := `SELECT json_build_object('bootstrap_table',to_regclass('public.pki_deployment_bootstrap_sessions') IS NOT NULL,'service_issuers',(SELECT count(*) FROM public.pki_issuers WHERE domain='service'),'pending_issuances',(SELECT count(*) FROM public.pki_service_client_issuances WHERE status='issuing'))`
-	output, commandErr := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", namespace, "exec", pods.Items[0].Metadata.Name, "--", "psql", "-U", "postgres", "-d", "video_cloud", "-At", "-c", query).CombinedOutput()
+	output, commandErr := secretCheckKubectl(runtimes, true, "--kubeconfig", kubeconfig, "-n", namespace, "exec", pods.Items[0].Metadata.Name, "--", "psql", "-U", "postgres", "-d", "video_cloud", "-At", "-c", query)
 	var state struct {
 		BootstrapTable   bool `json:"bootstrap_table"`
 		ServiceIssuers   int  `json:"service_issuers"`
 		PendingIssuances int  `json:"pending_issuances"`
 	}
 	if commandErr != nil || json.Unmarshal([]byte(strings.TrimSpace(string(output))), &state) != nil {
-		return errors.New("unadopted Service client registry verification did not return valid database metadata")
+		return secretCheckFailure(commandErr, "unadopted Service client registry verification did not return valid database metadata")
 	}
 	if state.ServiceIssuers != 0 || state.PendingIssuances != 0 {
 		return fmt.Errorf("Service client registry is not configured but has issuers=%d pending_issuances=%d", state.ServiceIssuers, state.PendingIssuances)
 	}
 	if state.BootstrapTable {
-		return verifyLiveDeploymentBootstrapSessions(kubeconfig, namespace, now)
+		return verifyLiveDeploymentBootstrapSessions(kubeconfig, namespace, now, runtimes...)
 	}
 	return nil
 }
 
-func verifyLiveServiceClientRegistry(kubeconfig, namespace string, deployments liveDeploymentList) error {
+func verifyLiveServiceClientRegistry(kubeconfig, namespace string, deployments liveDeploymentList, runtimes ...*deploymentCheckRuntime) error {
 	var controller *liveDeployment
 	for i := range deployments.Items {
 		if deployments.Items[i].Metadata.Name == "pki-controller" {
@@ -1016,15 +1015,15 @@ func verifyLiveServiceClientRegistry(kubeconfig, namespace string, deployments l
 	if issuerID == "" || rootSHA == "" || consumers == "" {
 		return errors.New("pki-controller Service client registry issuer settings are incomplete")
 	}
-	podsRaw, err := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", namespace, "get", "pods", "-l", "app.kubernetes.io/name=pki-controller", "-o", "json").Output()
+	podsRaw, err := secretCheckKubectl(runtimes, false, "--kubeconfig", kubeconfig, "-n", namespace, "get", "pods", "-l", "app.kubernetes.io/name=pki-controller", "-o", "json")
 	if err != nil {
-		return errors.New("cannot read pki-controller Pod metadata")
+		return secretCheckFailure(err, "cannot read pki-controller Pod metadata")
 	}
 	var pods livePodList
 	if json.Unmarshal(podsRaw, &pods) != nil || len(pods.Items) == 0 || pods.Items[0].Metadata.Name == "" {
 		return errors.New("pki-controller Pod is unavailable for Service client registry verification")
 	}
-	output, commandErr := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", namespace, "exec", pods.Items[0].Metadata.Name, "--", "/app/pkicontroller", "recovery-inventory-service-client", issuerID, rootSHA, consumers).CombinedOutput()
+	output, commandErr := secretCheckKubectl(runtimes, true, "--kubeconfig", kubeconfig, "-n", namespace, "exec", pods.Items[0].Metadata.Name, "--", "/app/pkicontroller", "recovery-inventory-service-client", issuerID, rootSHA, consumers)
 	start, end := strings.IndexByte(string(output), '{'), strings.LastIndexByte(string(output), '}')
 	var report struct {
 		Status                 string `json:"status"`
@@ -1035,13 +1034,13 @@ func verifyLiveServiceClientRegistry(kubeconfig, namespace string, deployments l
 		MissingAcknowledgments int    `json:"missing_acknowledgments"`
 	}
 	if start < 0 || end < start || json.Unmarshal(output[start:end+1], &report) != nil {
-		return errors.New("pki-controller Service client registry verification did not return a valid report")
+		return secretCheckFailure(commandErr, "pki-controller Service client registry verification did not return a valid report")
 	}
 	if report.Status == "service-client-registry-inventory-incomplete" {
-		return errors.New("pki-controller Service client registry inventory did not complete; check controller database grants and query errors")
+		return secretCheckFailure(commandErr, "pki-controller Service client registry inventory did not complete; check controller database grants and query errors")
 	}
 	if commandErr != nil || report.Status != "service-client-registry-inventory-checked" || report.Issuances == 0 || report.PendingIssuances != 0 || report.InvalidRecords != 0 || report.UnpublishedRevocations != 0 || report.MissingAcknowledgments != 0 {
-		return fmt.Errorf("pki-controller Service client registry is incomplete: issuances=%d pending=%d invalid=%d unpublished_revocations=%d missing_acknowledgments=%d", report.Issuances, report.PendingIssuances, report.InvalidRecords, report.UnpublishedRevocations, report.MissingAcknowledgments)
+		return secretCheckFailure(commandErr, fmt.Sprintf("pki-controller Service client registry is incomplete: issuances=%d pending=%d invalid=%d unpublished_revocations=%d missing_acknowledgments=%d", report.Issuances, report.PendingIssuances, report.InvalidRecords, report.UnpublishedRevocations, report.MissingAcknowledgments))
 	}
 	return nil
 }
