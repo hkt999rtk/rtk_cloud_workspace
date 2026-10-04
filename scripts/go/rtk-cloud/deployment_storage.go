@@ -151,7 +151,7 @@ func runDeploymentStorageLifecyclePurpose(action string, cfg deploymentConfig, e
 				if metricErr != nil {
 					endpointStatus["ota_firmware"] = metricErr.Error()
 				} else {
-					endpointStatus["ota_firmware"] = "assigned " + endpointType + "; storage-bootstrap --purpose ota will create the bucket"
+					endpointStatus["ota_firmware"] = "available " + endpointType + "; storage-bootstrap --purpose ota will create the bucket and verify its assigned endpoint"
 				}
 			default:
 				return bucketErr
@@ -361,9 +361,6 @@ func (c deploymentCredentialChecker) bootstrapOTAStorage(cfg deploymentConfig, v
 		return err
 	}
 	endpoint, err := normalizeLinodeS3Endpoint(bucket.S3Endpoint)
-	if err != nil {
-		endpoint, err = c.resolveStorageEndpoint(token, target.Region)
-	}
 	if err != nil {
 		return err
 	}
@@ -1098,6 +1095,9 @@ func (c deploymentCredentialChecker) resolveStorageEndpoint(token, region string
 	return "", fmt.Errorf("Linode API reported no Object Storage endpoint for region %s", region)
 }
 
+// Used only before bucket creation. The endpoint inventory lists available
+// account/region types; s3_endpoint is null until that type has been assigned.
+// The created bucket must independently report E3 and its assigned endpoint.
 func (c deploymentCredentialChecker) resolveOTAMetricsEndpointType(token, region string) (string, error) {
 	body, err := c.linodeAuthorizedRequest(token, http.MethodGet, "/object-storage/endpoints?page_size=500", nil)
 	if err != nil {
@@ -1107,18 +1107,17 @@ func (c deploymentCredentialChecker) resolveOTAMetricsEndpointType(token, region
 		Data []struct {
 			Region       string `json:"region"`
 			EndpointType string `json:"endpoint_type"`
-			S3Endpoint   string `json:"s3_endpoint"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &inventory); err != nil {
 		return "", errors.New("OTA Object Storage endpoint inventory returned invalid JSON")
 	}
 	for _, item := range inventory.Data {
-		if item.Region == region && item.EndpointType == "E3" && item.S3Endpoint != "" {
+		if item.Region == region && item.EndpointType == "E3" {
 			return "E3", nil
 		}
 	}
-	return "", fmt.Errorf("region %s has no assigned E3 Object Storage endpoint for billable OTA direct delivery", region)
+	return "", fmt.Errorf("region %s has no available E3 Object Storage endpoint type for OTA bucket creation", region)
 }
 
 func normalizeLinodeS3Endpoint(raw string) (string, error) {
