@@ -1,15 +1,15 @@
 {
-  "captured_at": "2026-10-04T06:26:03.926289+00:00",
+  "captured_at": "2026-10-04T16:42:01.231364+00:00",
   "environment": null,
   "format_version": 1,
   "revisions": {
-    "Account Manager": "48c5c63f6f8a",
+    "Account Manager": "faf424e57c73",
     "Billing": "a16e12a8e445",
     "Cloud Admin": "4035e920404d",
     "Cloud Frontend": "475b9fe80d6c",
-    "Video Cloud": "12b3580cb862"
+    "Video Cloud": "ce53d62b50a3"
   },
-  "schema_hash": "281c8ab6334fb21d26fde53283c2857604fbd55b7ad7126857bb41dec7147b20",
+  "schema_hash": "fccd9354a7c1343cdf9168fcc4c0c1fbb0039c66c548c639286081c97414d47f",
   "source_dirty": {
     "Account Manager": false,
     "Billing": false,
@@ -33098,6 +33098,16 @@
         {
           "details": {
             "critical": "key",
+            "description": "References the exact authorized pki_operations.id within this database."
+          },
+          "kind": "column",
+          "name": "pki_operator_authorizations.operation_id",
+          "schema": "public",
+          "version": 1
+        },
+        {
+          "details": {
+            "critical": "key",
             "description": "References pki_issuers.id within this database."
           },
           "kind": "column",
@@ -34416,6 +34426,18 @@
           },
           "kind": "table",
           "name": "pki_operations",
+          "schema": "public",
+          "version": 1
+        },
+        {
+          "details": {
+            "group": "PKI issuance governance",
+            "scenario": "Records the configured environment operator authorizing an exact operation digest and signer reference.",
+            "service": "Video Cloud",
+            "source": "repos/rtk_video_cloud/internal/pki/schema.sql"
+          },
+          "kind": "table",
+          "name": "pki_operator_authorizations",
           "schema": "public",
           "version": 1
         },
@@ -41194,6 +41216,102 @@
           ],
           "schema": "public",
           "triggers": []
+        },
+        {
+          "checks": [
+            {
+              "definition": "CHECK (digest ~ '^[a-f0-9]{64}$'::text)",
+              "name": "pki_operator_authorizations_digest_check"
+            }
+          ],
+          "columns": [
+            {
+              "comment": "References the exact authorized pki_operations.id within this database.",
+              "default": null,
+              "name": "operation_id",
+              "not_null": true,
+              "type": "uuid"
+            },
+            {
+              "comment": "",
+              "default": null,
+              "name": "principal_id",
+              "not_null": true,
+              "type": "text"
+            },
+            {
+              "comment": "",
+              "default": null,
+              "name": "environment",
+              "not_null": true,
+              "type": "text"
+            },
+            {
+              "comment": "",
+              "default": null,
+              "name": "digest",
+              "not_null": true,
+              "type": "text"
+            },
+            {
+              "comment": "",
+              "default": null,
+              "name": "signer_reference",
+              "not_null": true,
+              "type": "text"
+            },
+            {
+              "comment": "",
+              "default": null,
+              "name": "auth_time",
+              "not_null": true,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "",
+              "default": "now()",
+              "name": "authorized_at",
+              "not_null": true,
+              "type": "timestamp with time zone"
+            }
+          ],
+          "comment": "Immutable configured-operator authorization evidence for an environment PKI operation.",
+          "fks": [
+            {
+              "columns": [
+                "operation_id"
+              ],
+              "name": "pki_operator_authorizations_operation_id_fkey",
+              "on_delete": "NO ACTION",
+              "on_update": "NO ACTION",
+              "parent": "pki_operations",
+              "parent_columns": [
+                "id"
+              ]
+            }
+          ],
+          "indexes": [
+            {
+              "columns": [
+                "operation_id"
+              ],
+              "definition": "CREATE UNIQUE INDEX pki_operator_authorizations_pkey ON public.pki_operator_authorizations USING btree (operation_id)",
+              "name": "pki_operator_authorizations_pkey",
+              "partial": false,
+              "unique": true
+            }
+          ],
+          "name": "pki_operator_authorizations",
+          "pk": [
+            "operation_id"
+          ],
+          "schema": "public",
+          "triggers": [
+            {
+              "definition": "CREATE TRIGGER pki_operator_authorization_immutable BEFORE DELETE OR UPDATE ON pki_operator_authorizations FOR EACH ROW EXECUTE FUNCTION pki_immutable_history()",
+              "name": "pki_operator_authorization_immutable"
+            }
+          ]
         },
         {
           "checks": [
