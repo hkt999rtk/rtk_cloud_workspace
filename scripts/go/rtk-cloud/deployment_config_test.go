@@ -1040,6 +1040,45 @@ func TestResolveDeploymentConfigRejectsProviderKeyInEnvironment(t *testing.T) {
 	}
 }
 
+func TestResolveCheckedInDeploymentConfigsAndStagingOTAIntent(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		t.Run(environment, func(t *testing.T) {
+			cfg, err := resolveDeploymentConfig(workspace, environment, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if environment != "staging" {
+				return
+			}
+			cfg.RuntimeRoot = t.TempDir()
+			if err := materializeDeploymentRuntime(cfg); err != nil {
+				t.Fatal(err)
+			}
+			adapter, err := readStrictEnv(filepath.Join(cfg.RuntimeRoot, "adapters", "lke", "config.env"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for key, want := range map[string]string{
+				"LKE_OTA_SERVICE_REGISTRATION_ENABLED":   "true",
+				"LKE_OTA_CORE_CUTOVER_ENABLED":           "true",
+				"LKE_OTA_SERVICE_EDGE_ENABLED":           "true",
+				"LKE_OTA_REGISTRAR_REGISTRATION_ENABLED": "false",
+			} {
+				if _, found := cfg.Values[key]; found {
+					t.Fatalf("provider switch %s escaped its adapter layer", key)
+				}
+				if cfg.AdapterValues[key] != want || adapter[key] != want {
+					t.Fatalf("%s: selected=%q materialized=%q want=%q", key, cfg.AdapterValues[key], adapter[key], want)
+				}
+			}
+		})
+	}
+}
+
 func TestResolveDeploymentConfigAllowsTrackedNonSecretServiceSettings(t *testing.T) {
 	workspace := writeDeploymentFixture(t, "dev", "lke")
 	appendFile(t, filepath.Join(workspace, "cloud_env", "dev", "environment.env"), "PRIVACY_POLICY_URL=https://frontend.dev.example.test/privacy\nGOOGLE_ANALYTICS_MEASUREMENT_ID=G-TEST123456\nCHIPSET_PROVIDER_ALLOWED_HOSTS=admin.dev.example.test\nAUTH_TOKEN_BASE_URL=https://admin.dev.example.test\nSOCIAL_LOGIN_CALLBACK_URL=https://admin.dev.example.test/api/auth/social/callback\nGOOGLE_LOGIN_ENABLED=true\nGOOGLE_OAUTH_CLIENT_ID=client.apps.googleusercontent.com\nGITHUB_LOGIN_ENABLED=true\nGITHUB_OAUTH_CLIENT_ID=github-client\nSENDMAIL_HTTP_BASE_URL=https://sm.realtekconnect.com\nVIDEO_CLOUD_OTA_CDN_BASE_URL=https://firmware.example.test\nVIDEO_CLOUD_OTA_CDN_TOKEN_NAME=__token__\n")

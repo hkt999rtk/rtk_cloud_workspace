@@ -230,7 +230,7 @@ func (c deploymentCredentialChecker) reinitializeStorage(cfg deploymentConfig, p
 		return err
 	}
 	token := active["LINODE_TOKEN"]
-	selectedEnv := appendMap(cfg.Values, active)
+	selectedEnv := appendMap(appendMap(cfg.Values, cfg.AdapterValues), active)
 	selectedEnv["CLOUD_STACK_NAME"] = cfg.Values["CLOUD_STACK_NAME"]
 	if token == "" {
 		return errors.New("selected environment LINODE_TOKEN is required")

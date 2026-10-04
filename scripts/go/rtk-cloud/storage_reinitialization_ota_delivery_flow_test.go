@@ -329,6 +329,24 @@ func TestReinitializeOTADeliveryQualifiedActivation(t *testing.T) {
 	}
 }
 
+func TestReinitializeOTADeliveryUsesSelectedAdapterIntent(t *testing.T) {
+	f := newOTADeliveryReinitializeFixture(t, "", "")
+	f.cfg.AdapterValues = map[string]string{}
+	for _, key := range []string{"LKE_OTA_SERVICE_REGISTRATION_ENABLED", "LKE_OTA_CORE_CUTOVER_ENABLED", "LKE_OTA_SERVICE_EDGE_ENABLED", "LKE_OTA_REGISTRAR_REGISTRATION_ENABLED"} {
+		f.cfg.AdapterValues[key] = f.cfg.Values[key]
+		delete(f.cfg.Values, key)
+	}
+	writeOTADeliveryReinitializeMetrics(t, f, false)
+	captureStdout(t, func() {
+		if err := f.checker.reinitializeStorage(f.cfg, "ota", f.source, f.candidate, "old", true); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if f.storageWrites != 0 || otaDeliveryLegacyQueries(t) != 0 {
+		t.Fatal("selected completed adapter handoff triggered storage writes or a legacy drain")
+	}
+}
+
 func TestReinitializeOTALegacyDrainFallback(t *testing.T) {
 	for _, quiet := range []time.Duration{49 * time.Hour, 47 * time.Hour} {
 		t.Run(quiet.String(), func(t *testing.T) {
