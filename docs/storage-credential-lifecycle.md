@@ -235,8 +235,14 @@ memory to query the selected region for `obj_requests_get` and
 `obj_bytes_downloaded` with one-minute granularity. It requires a complete
 `success` matrix, exact bucket and endpoint labels, in-window timestamps,
 whole nonnegative values, and GET/download totals at least as large as the
-verified successful probe bodies. A positive count of error-response bytes,
-partial payload accounting or unrelated traffic does not establish qualification.
+verified successful probe bodies by default. When the operator has authorized
+a small measurement variance, add `--accept-small-probe-shortfall` to this
+export command. It permits a downloaded-byte shortfall only when the actual
+gap is both at most 1,024 bytes and at most one basis point (0.01%) of the
+verified successful body total. The relative limit uses exact integer
+arithmetic, rounded down to whole bytes. GET totals must still cover every
+verified successful request. A positive count of error-response bytes,
+larger partial payload accounting or unrelated traffic does not establish qualification.
 Before writing any file, the
 command selects only the exact OTA bucket and endpoint series and discards the
 rest of the account-wide response. It writes the filtered JSON and exact probe
@@ -244,9 +250,13 @@ evidence to separate `0600` files under `runtime/artifacts/ota-metrics/`, using
 exclusive creation and file sync. It then atomically writes
 `runtime/state/ota-metrics-qualification.json`. It never stores the service
 token. The receipt binds both archive SHA-256 values and includes the UTC window, bucket hostname, endpoint,
-metric totals, export time and operator identity. Subsequent deployment checks
+metric totals, export time and operator identity. If a small shortfall was
+explicitly accepted, the receipt and command output record the actual gap as
+`accepted_probe_shortfall_bytes`; the provider totals and verified probe remain
+unchanged. A missing or zero field retains strict byte coverage. Subsequent deployment checks
 reparse both archives, check the exact target/window and successful probe
-totals, compare the metric totals and require the export and window to be
+totals, recompute any accepted gap and require an exact receipt match within
+both limits, compare the metric totals and require the export and window to be
 within 72 hours. Existing receipts without probe evidence must be requalified.
 The operator remains responsible for recording the actual verified bodies and
 isolating the controlled interval; bucket aggregates cannot attribute traffic
@@ -262,7 +272,9 @@ provider's monthly invoice. The provider retains these metrics for 93 days;
 retain monthly exports and independent completeness proof before that window
 expires. Inactive minutes can appear as empty-string values in a returned
 series; the qualification sum skips those placeholders and still requires
-provider totals that cover the verified successful probe bodies. Collection
+provider totals that cover the verified successful probe bodies, subject only
+to the explicitly accepted bounded variance above. Large undercounts remain
+blocked. Collection
 delays or gaps need separate investigation before closing a charged month.
 The export follows Akamai's [service token](https://techdocs.akamai.com/linode-api/reference/post-get-token),
 [metrics query](https://techdocs.akamai.com/linode-api/reference/post-read-metric),

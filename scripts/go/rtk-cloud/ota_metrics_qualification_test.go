@@ -124,6 +124,77 @@ func TestOTAMetricsQualificationAcceptsMatchingRecentArchive(t *testing.T) {
 	}
 }
 
+func TestOTAMetricsProbeShortfallRequiresExactBoundedAcceptance(t *testing.T) {
+	const verified = int64(16777216)
+	for _, tc := range []struct {
+		name                                 string
+		verified, gets, downloaded, accepted int64
+		pass                                 bool
+	}{
+		{"strict complete", verified, 3, verified, 0, true},
+		{"strict rejects observed variance", verified, 7, verified - 717, 0, false},
+		{"accepted observed variance", verified, 7, verified - 717, 717, true},
+		{"wrong recorded variance", verified, 7, verified - 717, 716, false},
+		{"absolute boundary", verified, 3, verified - 1024, 1024, true},
+		{"absolute limit exceeded", verified, 3, verified - 1025, 1025, false},
+		{"relative boundary", 10000000, 3, 10000000 - 1000, 1000, true},
+		{"relative limit exceeded", 9999999, 3, 9999999 - 1000, 1000, false},
+		{"small payload", 4096, 3, 4095, 1, false},
+		{"large provider undercount", verified, 5, 826, verified - 826, false},
+		{"missing successful GET", verified, 2, verified - 717, 717, false},
+		{"negative acceptance", verified, 3, verified, -1, false},
+		{"invented acceptance", verified, 3, verified + 1, 1, false},
+		{"large total without overflow", 1<<63 - 1, 3, (1<<63 - 1) - 1024, 1024, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			proof := otaMetricsProbe{SuccessfulGETRequests: 3, SuccessfulDownloadedBytes: tc.verified}
+			err := validateOTAMetricsProbeCounts(proof, tc.gets, tc.downloaded, tc.accepted)
+			if (err == nil) != tc.pass {
+				t.Fatalf("qualification result = %v, want pass=%v", err, tc.pass)
+			}
+		})
+	}
+}
+
+func TestOTAMetricsQualificationRevalidatesAcceptedProbeShortfall(t *testing.T) {
+	now := time.Date(2026, 9, 28, 8, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name                 string
+		downloaded, accepted int64
+		pass                 bool
+	}{
+		{"exact recorded variance", 16777216 - 717, 717, true},
+		{"missing acceptance", 16777216 - 717, 0, false},
+		{"changed acceptance", 16777216 - 717, 718, false},
+		{"negative acceptance", 16777216 - 717, -1, false},
+		{"absolute limit exceeded", 16777216 - 1025, 1025, false},
+		{"large provider undercount", 826, 16777216 - 826, false},
+		{"no actual shortfall", 16777216, 717, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, receipt := otaMetricsFixture(t, now)
+			archive := otaMetricsMatrixFixture(t, receipt.BucketHostname, "sg-sin-1.linodeobjects.com", now.Add(-90*time.Minute), 7, tc.downloaded)
+			if err := os.WriteFile(filepath.Join(root, receipt.ExportFile), archive, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			sum := sha256.Sum256(archive)
+			receipt.ExportSHA256, receipt.GETRequests, receipt.DownloadedBytes = hex.EncodeToString(sum[:]), 7, tc.downloaded
+			receipt.AcceptedProbeShortfallBytes = tc.accepted
+			start, _ := time.Parse(time.RFC3339, receipt.WindowStart)
+			end, _ := time.Parse(time.RFC3339, receipt.WindowEnd)
+			proof := otaMetricsProbeFixture(receipt.Environment, receipt.Bucket, receipt.Region, receipt.Endpoint, start, end, 3, 16777216)
+			body := writeOTAMetricsProbeFixture(t, filepath.Join(root, receipt.ProbeFile), proof)
+			probeSum := sha256.Sum256(body)
+			receipt.ProbeSHA256 = hex.EncodeToString(probeSum[:])
+			writeOTAMetricsReceipt(t, root, receipt)
+			err := validateOTAMetricsQualification(root, receipt.Environment, receipt.Bucket, receipt.Region, receipt.Endpoint, now)
+			if (err == nil) != tc.pass {
+				t.Fatalf("receipt revalidation = %v, want pass=%v", err, tc.pass)
+			}
+		})
+	}
+}
+
 func TestOTAMetricsProbeRejectsMismatchedOrIncompleteProof(t *testing.T) {
 	now := time.Date(2026, 9, 28, 8, 0, 0, 0, time.UTC)
 	start, end := now.Add(-2*time.Hour), now.Add(-time.Hour)

@@ -14,29 +14,33 @@ import (
 	"time"
 )
 
-const otaMetricsQualificationMaxAge = 72 * time.Hour
+const (
+	otaMetricsQualificationMaxAge = 72 * time.Hour
+	otaMetricsMaxProbeShortfall   = 1024
+)
 
 // otaMetricsQualification is an operator attestation about a short Cloud Pulse
 // export. The export itself is archived under runtime/artifacts/ota-metrics/.
 type otaMetricsQualification struct {
-	Source                string `json:"source"`
-	Environment           string `json:"environment"`
-	Bucket                string `json:"bucket"`
-	BucketHostname        string `json:"bucket_hostname"`
-	Region                string `json:"region"`
-	Endpoint              string `json:"endpoint"`
-	WindowStart           string `json:"window_start"`
-	WindowEnd             string `json:"window_end"`
-	ExportedAt            string `json:"exported_at"`
-	RecordedBy            string `json:"recorded_by"`
-	ExportFile            string `json:"export_file"`
-	ExportSHA256          string `json:"export_sha256"`
-	GETMetric             string `json:"get_metric"`
-	GETRequests           int64  `json:"get_requests"`
-	DownloadedBytesMetric string `json:"downloaded_bytes_metric"`
-	DownloadedBytes       int64  `json:"downloaded_bytes"`
-	ProbeFile             string `json:"probe_file"`
-	ProbeSHA256           string `json:"probe_sha256"`
+	Source                      string `json:"source"`
+	Environment                 string `json:"environment"`
+	Bucket                      string `json:"bucket"`
+	BucketHostname              string `json:"bucket_hostname"`
+	Region                      string `json:"region"`
+	Endpoint                    string `json:"endpoint"`
+	WindowStart                 string `json:"window_start"`
+	WindowEnd                   string `json:"window_end"`
+	ExportedAt                  string `json:"exported_at"`
+	RecordedBy                  string `json:"recorded_by"`
+	ExportFile                  string `json:"export_file"`
+	ExportSHA256                string `json:"export_sha256"`
+	GETMetric                   string `json:"get_metric"`
+	GETRequests                 int64  `json:"get_requests"`
+	DownloadedBytesMetric       string `json:"downloaded_bytes_metric"`
+	DownloadedBytes             int64  `json:"downloaded_bytes"`
+	AcceptedProbeShortfallBytes int64  `json:"accepted_probe_shortfall_bytes,omitempty"`
+	ProbeFile                   string `json:"probe_file"`
+	ProbeSHA256                 string `json:"probe_sha256"`
 }
 
 // otaMetricsProbe is the operator's record of successfully verified GetObject
@@ -91,9 +95,21 @@ func parseOTAMetricsProbe(body []byte, environment, bucket, region, endpoint str
 	return proof, nil
 }
 
-func validateOTAMetricsProbeCounts(proof otaMetricsProbe, gets, downloaded int64) error {
-	if gets < proof.SuccessfulGETRequests || downloaded < proof.SuccessfulDownloadedBytes {
+func validateOTAMetricsProbeCounts(proof otaMetricsProbe, gets, downloaded, acceptedShortfall int64) error {
+	if gets < proof.SuccessfulGETRequests || downloaded < 0 {
 		return fmt.Errorf("OTA provider metrics undercount the verified probe: GET=%d (need at least %d), downloaded_bytes=%d (need at least %d)", gets, proof.SuccessfulGETRequests, downloaded, proof.SuccessfulDownloadedBytes)
+	}
+	var shortfall int64
+	if downloaded < proof.SuccessfulDownloadedBytes {
+		shortfall = proof.SuccessfulDownloadedBytes - downloaded
+	}
+	if acceptedShortfall < 0 || acceptedShortfall != shortfall {
+		return fmt.Errorf("OTA provider metrics undercount or accepted probe shortfall disagrees with the verified bodies: actual_shortfall_bytes=%d accepted_probe_shortfall_bytes=%d", shortfall, acceptedShortfall)
+	}
+	// One basis point is 1/10,000. Division preserves the exact integer limit
+	// without overflowing when the verified body total is large.
+	if shortfall > otaMetricsMaxProbeShortfall || shortfall > proof.SuccessfulDownloadedBytes/10000 {
+		return fmt.Errorf("OTA provider metrics undercount exceeds the allowed probe shortfall: shortfall_bytes=%d (maximum 1024 bytes and 0.01%% of verified bytes)", shortfall)
 	}
 	return nil
 }
@@ -187,7 +203,7 @@ func validateOTAMetricsQualification(runtimeRoot, environment, bucket, region, e
 	if err != nil {
 		return err
 	}
-	if err := validateOTAMetricsProbeCounts(proof, gets, downloaded); err != nil {
+	if err := validateOTAMetricsProbeCounts(proof, gets, downloaded, receipt.AcceptedProbeShortfallBytes); err != nil {
 		return err
 	}
 	return nil

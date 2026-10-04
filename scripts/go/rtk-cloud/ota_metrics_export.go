@@ -189,7 +189,7 @@ func parseOTAMetricsMatrix(raw []byte, bucketHostname, endpointHost string, star
 	return counts["obj_requests_get"], counts["obj_bytes_downloaded"], nil
 }
 
-func runDeploymentOTAMetricsExport(cfg deploymentConfig, environmentFile, startText, endText, recorder, probeFile string) error {
+func runDeploymentOTAMetricsExport(cfg deploymentConfig, environmentFile, startText, endText, recorder, probeFile string, acceptSmallProbeShortfall bool) error {
 	if cfg.Storage.OTAMode != "dedicated" || strings.TrimSpace(recorder) == "" {
 		return errors.New("OTA metrics export requires dedicated OTA storage and --recorded-by")
 	}
@@ -197,10 +197,10 @@ func runDeploymentOTAMetricsExport(cfg deploymentConfig, environmentFile, startT
 	if !check.Passed {
 		return errors.New(check.Detail)
 	}
-	return defaultDeploymentCredentialChecker().exportOTAMetrics(cfg, values["LINODE_TOKEN"], startText, endText, recorder, probeFile, time.Now().UTC())
+	return defaultDeploymentCredentialChecker().exportOTAMetrics(cfg, values["LINODE_TOKEN"], startText, endText, recorder, probeFile, acceptSmallProbeShortfall, time.Now().UTC())
 }
 
-func (c deploymentCredentialChecker) exportOTAMetrics(cfg deploymentConfig, linodeToken, startText, endText, recorder, probeFile string, now time.Time) error {
+func (c deploymentCredentialChecker) exportOTAMetrics(cfg deploymentConfig, linodeToken, startText, endText, recorder, probeFile string, acceptSmallProbeShortfall bool, now time.Time) error {
 	start, end, err := parseOTAMetricsWindow(startText, endText, now)
 	if err != nil {
 		return err
@@ -304,7 +304,11 @@ func (c deploymentCredentialChecker) exportOTAMetrics(cfg deploymentConfig, lino
 	if gets <= 0 || downloaded <= 0 {
 		return errors.New("controlled OTA signed GET must yield positive bucket GET and downloaded-byte metrics")
 	}
-	if err := validateOTAMetricsProbeCounts(proof, gets, downloaded); err != nil {
+	var acceptedShortfall int64
+	if acceptSmallProbeShortfall && downloaded < proof.SuccessfulDownloadedBytes {
+		acceptedShortfall = proof.SuccessfulDownloadedBytes - downloaded
+	}
+	if err := validateOTAMetricsProbeCounts(proof, gets, downloaded, acceptedShortfall); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Join(cfg.RuntimeRoot, "artifacts", "ota-metrics"), 0o700); err != nil {
@@ -329,7 +333,8 @@ func (c deploymentCredentialChecker) exportOTAMetrics(cfg deploymentConfig, lino
 		RecordedBy: recorder, ExportFile: relative, ExportSHA256: hex.EncodeToString(sum[:]),
 		GETMetric: "obj_requests_get", GETRequests: gets,
 		DownloadedBytesMetric: "obj_bytes_downloaded", DownloadedBytes: downloaded,
-		ProbeFile: probeRelative, ProbeSHA256: hex.EncodeToString(probeSum[:]),
+		AcceptedProbeShortfallBytes: acceptedShortfall,
+		ProbeFile:                   probeRelative, ProbeSHA256: hex.EncodeToString(probeSum[:]),
 	}
 	if err := writeOTAMetricsQualificationReceipt(cfg.RuntimeRoot, receipt); err != nil {
 		return err
@@ -337,7 +342,7 @@ func (c deploymentCredentialChecker) exportOTAMetrics(cfg deploymentConfig, lino
 	if err := validateOTAMetricsQualification(cfg.RuntimeRoot, cfg.Environment, bucket.Label, cfg.Storage.OTAFirmware.Region, endpoint, now); err != nil {
 		return err
 	}
-	fmt.Printf("OTA Cloud Pulse qualification: bucket=%s window=%s..%s GET=%d downloaded_bytes=%d archive=%s\n", bucket.Label, startText, endText, gets, downloaded, relative)
+	fmt.Printf("OTA Cloud Pulse qualification: bucket=%s window=%s..%s GET=%d downloaded_bytes=%d accepted_probe_shortfall_bytes=%d archive=%s\n", bucket.Label, startText, endText, gets, downloaded, acceptedShortfall, relative)
 	return nil
 }
 
