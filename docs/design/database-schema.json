@@ -1,11 +1,11 @@
 {
-  "captured_at": "2026-10-04T05:09:53.362703+00:00",
+  "captured_at": "2026-10-04T06:26:03.926289+00:00",
   "environment": null,
   "format_version": 1,
   "revisions": {
     "Account Manager": "48c5c63f6f8a",
     "Billing": "a16e12a8e445",
-    "Cloud Admin": "97df544091f4",
+    "Cloud Admin": "4035e920404d",
     "Cloud Frontend": "475b9fe80d6c",
     "Video Cloud": "12b3580cb862"
   },
