@@ -6,7 +6,8 @@ import (
 )
 
 // Managed environments remain private previews until indexing is explicitly
-// enabled. Enforce at the TLS ingress, including non-HTML responses.
+// enabled. Enforce at HTTP-terminating ingress, including non-HTML responses.
+// CertIssuer TLS passthrough retains its workload's mandatory client authentication.
 const lkeNoIndexHeader = `more_set_headers "X-Robots-Tag: noindex, nofollow, noarchive, nosnippet, noimageindex";`
 
 const lkeNoIndexServerSnippet = lkeNoIndexHeader + `
