@@ -837,6 +837,27 @@ cases:
       title: load-owner-activation-live-e2e.mjs follows the canonical sign-in button label
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/localization-quality.test.mjs#documentation%20protects%20inline%20code%20separately%20from%20executable%20examples
+      module: cloud-admin-web
+      language: javascript
+      source: src/localization-quality.test.mjs
+      title: documentation protects inline code separately from executable examples
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/localization-quality.test.mjs#localization%20catches%20technical%20identifiers%20lost%20in%20prose%20and%20diagrams
+      module: cloud-admin-web
+      language: javascript
+      source: src/localization-quality.test.mjs
+      title: localization catches technical identifiers lost in prose and diagrams
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/localization-quality.test.mjs#localization%20preserves%20UART%20options%20and%20baud%20units%20without%20requiring%20a%20Chinese%20replacement
+      module: cloud-admin-web
+      language: javascript
+      source: src/localization-quality.test.mjs
+      title: localization preserves UART options and baud units without requiring a Chinese replacement
+      owner: rtk_cloud_admin
+      status: active
     - canonical_key: js://cloud-admin-web/src/managed-clouds.test.mjs#managed%20routes%20bind%20valid%20cloud%20and%20Product%20identities%2C%20not%20a%20selected%20global%20cloud
       module: cloud-admin-web
       language: javascript
