@@ -129,7 +129,7 @@ async function translate(catalogPath, translationsDir, locale) {
     body: JSON.stringify({
       model: process.env.TRANSLATION_MODEL || 'gpt-5.2',
       store: false,
-      instructions: `Translate English product UI strings into ${locale}. Preserve every {{placeholder}}, URL, product name, and markup exactly. Use concise professional language. Return only the requested JSON schema.`,
+      instructions: `Translate English developer-facing product strings into ${locale}. Read each string's context and use the supplied glossary according to its technical meaning. Use natural ${locale === 'zh-TW' ? 'Taiwan Traditional Chinese (裝置、韌體、伺服器、欄位、回應、連線、除錯)' : 'Mainland Simplified Chinese (设备、固件、服务器、字段、响应、连接、调试)'}. Write actions and outcomes directly. Preserve negation, authorization boundaries, success conditions, numbers, units, every {{placeholder}}, URL, product name, markup, filename, command-line flag, API field, MQTT topic, JSON literal, and inline code exactly. Keep established names such as MQTT, JWT, Bearer, SigV4, Web Serial, Webhook, CR, LF, CRLF, SHA-256 and baud in English. Device claim means device ownership registration; JWT claims mean token assertions. Firmware burn means flashing firmware. Interpret ambiguous words using the caller context, never a dictionary's unrelated meaning. Do not invent translated technical names or turn software concepts into people, geography, or physical objects. Return only the requested JSON schema.`,
       input: JSON.stringify({ glossary: catalog.glossary || {}, strings: needed }),
       text: {
         format: {
