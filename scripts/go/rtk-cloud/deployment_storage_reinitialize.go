@@ -274,11 +274,7 @@ func (c deploymentCredentialChecker) reinitializeStorage(cfg deploymentConfig, p
 		return err
 	}
 	defer restore()
-	if purpose == "ota" {
-		if err := lkeRequireLegacyOTADrain(selectedEnv); err != nil {
-			return err
-		}
-	}
+	var otaBoundary storageReinitializationOTABoundary
 	var mediaIsolation *storageReinitializationMediaIsolation
 	if purpose == "media" && cfg.Storage.OTAMode == "dedicated" {
 		mediaIsolation = &storageReinitializationMediaIsolation{stack: cfg.Values["CLOUD_STACK_NAME"], sourceBucket: source.bucket}
@@ -294,6 +290,9 @@ func (c deploymentCredentialChecker) reinitializeStorage(cfg deploymentConfig, p
 				return nil, err
 			}
 			if err := validateStorageReinitializationOTADelivery(body, selectedEnv); err != nil {
+				return nil, err
+			}
+			if err := otaBoundary.verify(body, selectedEnv); err != nil {
 				return nil, err
 			}
 			if selectedEnv["VIDEO_CLOUD_OTA_CDN_BASE_URL"] == "" {

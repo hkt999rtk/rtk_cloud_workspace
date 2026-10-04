@@ -109,10 +109,22 @@ migration evidence. `storage-rollback` refuses a deleted-source journal;
 recovery requires repairing or reconciling the destination, including any new
 writes. Preserve a failed journal before a separately reviewed retry.
 
-`--purpose ota` retains E3 endpoint, registration, metrics/CDN, legacy drain and
-ready-service gates. It updates only an existing OTA Deployment and its owned
-Pods. It does not introduce a service, change routes or select new images.
-Deleting old firmware does not waive the database drain or billing gates.
+`--purpose ota` retains E3 endpoint, registration, metrics/CDN and new
+ready-service gates. It repairs only the storage binding of an existing dedicated
+OTA Deployment and its owned Pods. The existing dedicated command, image and
+registration must be preserved. A selected and observed completed core cutover
+and correct device edge, including the historical artifact route to core, permits
+this repair without repeating the legacy drain. Otherwise the original full
+legacy drain is required, so storage can be repaired before its initial handoff.
+The chosen handoff state, core and ingress identities and configuration are pinned and
+rechecked before the journal and credential promotion; drift stops activation.
+The deleted-source OTA service need not already be Ready, but the repaired service
+must have a Ready endpoint before credentials or its receipt are activated.
+
+This bounded repair does not introduce a service or move core handlers or device
+routes. The full legacy database drain and 48-hour quiet window below remain
+mandatory for those handoffs. Discarding old firmware does not waive that drain or the
+billing and metering gates. There is no operator switch to skip the drain.
 
 With `RUNTIME_OTA_STORAGE_MODE=dedicated`, media reinitialization leaves the
 exact existing OTA Deployment and its owned ReplicaSets and Pods unchanged.
