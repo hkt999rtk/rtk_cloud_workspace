@@ -96,7 +96,7 @@ func parseOTAMetricsProbe(body []byte, environment, bucket, region, endpoint str
 }
 
 func validateOTAMetricsProbeCounts(proof otaMetricsProbe, gets, downloaded, acceptedShortfall int64) error {
-	if gets < proof.SuccessfulGETRequests || downloaded < 0 {
+	if gets < proof.SuccessfulGETRequests || downloaded < 0 || (acceptedShortfall == 0 && downloaded < proof.SuccessfulDownloadedBytes) {
 		return fmt.Errorf("OTA provider metrics undercount the verified probe: GET=%d (need at least %d), downloaded_bytes=%d (need at least %d)", gets, proof.SuccessfulGETRequests, downloaded, proof.SuccessfulDownloadedBytes)
 	}
 	var shortfall int64
@@ -104,7 +104,7 @@ func validateOTAMetricsProbeCounts(proof otaMetricsProbe, gets, downloaded, acce
 		shortfall = proof.SuccessfulDownloadedBytes - downloaded
 	}
 	if acceptedShortfall < 0 || acceptedShortfall != shortfall {
-		return fmt.Errorf("OTA provider metrics undercount or accepted probe shortfall disagrees with the verified bodies: actual_shortfall_bytes=%d accepted_probe_shortfall_bytes=%d", shortfall, acceptedShortfall)
+		return fmt.Errorf("OTA provider metrics undercount the verified probe or accepted shortfall disagrees: actual_shortfall_bytes=%d accepted_probe_shortfall_bytes=%d", shortfall, acceptedShortfall)
 	}
 	// One basis point is 1/10,000. Division preserves the exact integer limit
 	// without overflowing when the verified body total is large.
