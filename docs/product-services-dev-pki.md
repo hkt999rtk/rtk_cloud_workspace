@@ -6,6 +6,58 @@ It does not activate Product writes or strict device grants. Keep the existing
 Service Root, retired issuer evidence, CRL ConfigMaps, identity PVCs, and live
 PKI workloads intact throughout the change.
 
+## Public CertIssuer mTLS qualification
+
+An internal managed App socket probe does not qualify the public CertIssuer
+hostname. When `CERT_ISSUER_SERVICE_CLIENT_PKI_ENABLED=true`, the public path
+must preserve the original caller's direct mTLS connection. Terminating TLS
+at ingress and opening an unauthenticated HTTPS upstream returns a gateway
+failure; giving that upstream the ingress operator's own client identity does
+not authenticate the original caller. Do not enable trusted identity headers
+as a repair for this mode.
+
+The canonical `deployment check` / `secrets verify` live PKI check now inspects
+configured nginx CertIssuer ingress routes for TLS passthrough, a direct
+`certissuer` Service backend in the Video Cloud namespace, and coverage of the
+public host by the managed serving DNS configuration. A terminating route,
+the HTTP ExternalName bridge, or an internal-only managed DNS configuration
+fails this structural check. It does not prove public connectivity, controller
+passthrough enablement, the loaded certificate, an approved issuer policy, or
+successful authenticated requests. Preserve the release's required endpoint
+list separately, including when an ingress is absent.
+
+The ingress-nginx TCP passthrough implementation sends traffic to the backend
+Service ClusterIP, rather than its individual endpoints. Follow its
+[TLS passthrough documentation](https://kubernetes.github.io/ingress-nginx/user-guide/tls/#ssl-passthrough)
+and verify `--enable-ssl-passthrough` on the selected controller. Do not reuse
+the ExternalName HTTP bridge for this path.
+
+For an internal-only serving certificate or immutable issuer DNS policy,
+prepare a successor Service intermediate under the current Root. Preserve all
+current server names and Service subjects and add only the required public
+hostname. Use the authenticated registry request, independent `pki_admin`
+approval, provision and consumer-acknowledged activation procedures. The
+request's creator cannot approve it; never edit registry policy or fabricate
+approval records through SQL. Install the successor's signed bundle and CRL
+evidence for every affected consumer before identity adoption.
+
+After that policy is approved and usable, reconcile the managed server identity
+through its supported enrollment/renewal path, preserving predecessor state
+and the internal name needed by existing callers. Qualify the actual public
+SAN, Service Root trust and live reload before changing the route. Persist a
+reviewed renderer configuration for the direct passthrough Ingress, remove the
+conflicting legacy route with current API preconditions, and retain rollback
+metadata. Public Service mTLS clients must verify the approved Service trust
+domain and public SNI; the edge's Web PKI certificate is not the backend's
+managed identity.
+
+Require both the internal safe App probe and an approved client's safe public
+incomplete request to reach HTTP 400 `user_id_required`, without issuing a
+certificate. Independently verify that an anonymous public request is denied
+by client-certificate authentication and that other public routes remain
+healthy. Leave the release NO-GO until these checks and configuration
+persistence pass.
+
 ## Read-only baseline (2026-09-26)
 
 The active Service intermediate is
