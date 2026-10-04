@@ -268,11 +268,6 @@ func (c deploymentCredentialChecker) reinitializeStorage(cfg deploymentConfig, p
 		if err := lkeValidateOTACDNBaseURL(selectedEnv); err != nil {
 			return err
 		}
-		if selectedEnv["VIDEO_CLOUD_OTA_CDN_BASE_URL"] == "" {
-			if err := validateOTAMetricsQualification(cfg.RuntimeRoot, cfg.Environment, target.Bucket, target.Region, target.Endpoint, time.Now().UTC()); err != nil {
-				return err
-			}
-		}
 	}
 	restore, err := storageCutoverKubeconfig(cfg.Environment)
 	if err != nil {
@@ -294,7 +289,19 @@ func (c deploymentCredentialChecker) reinitializeStorage(cfg deploymentConfig, p
 			return nil, err
 		}
 		if purpose == "ota" {
-			return storageReinitializationOTAInventory(body, cfg.Values["CLOUD_STACK_NAME"], source.bucket)
+			body, err = storageReinitializationOTAInventory(body, cfg.Values["CLOUD_STACK_NAME"], source.bucket)
+			if err != nil {
+				return nil, err
+			}
+			if err := validateStorageReinitializationOTADelivery(body, selectedEnv); err != nil {
+				return nil, err
+			}
+			if selectedEnv["VIDEO_CLOUD_OTA_CDN_BASE_URL"] == "" {
+				if err := validateOTAMetricsQualification(cfg.RuntimeRoot, cfg.Environment, target.Bucket, target.Region, target.Endpoint, time.Now().UTC()); err != nil {
+					return nil, err
+				}
+			}
+			return body, nil
 		}
 		if mediaIsolation != nil {
 			return mediaIsolation.filter(body)
@@ -370,7 +377,7 @@ func (c deploymentCredentialChecker) reinitializeStorage(cfg deploymentConfig, p
 	if clusterUID == "" {
 		return errors.New("cannot identify reinitialization cluster")
 	}
-	if mediaIsolation != nil {
+	if mediaIsolation != nil || purpose == "ota" {
 		if _, err := inspect(); err != nil {
 			return err
 		}
@@ -406,7 +413,7 @@ func (c deploymentCredentialChecker) reinitializeStorage(cfg deploymentConfig, p
 	if err := verifyStorageReinitializationProfiles(proof, sourceFile, candidateFile); err != nil {
 		return err
 	}
-	if mediaIsolation != nil {
+	if mediaIsolation != nil || purpose == "ota" {
 		if _, err := inspect(); err != nil {
 			return err
 		}
