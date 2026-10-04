@@ -112,6 +112,12 @@ func verifyMountedPKICRLManifests(kubeconfig, namespace, environment string, dep
 					if err := json.Unmarshal([]byte(source.Data[key]), &entries); err != nil {
 						return fmt.Errorf("%s manifest cannot be read", spec.setting)
 					}
+					if spec.domain == "service" {
+						bundleSetting := strings.TrimSuffix(spec.setting, "_SERVER_CRL_MANIFEST") + "_BUNDLE_MANIFEST"
+						if err := verifyMountedServiceCRLCoverage(kubeconfig, namespace, deployment, spec.container, bundleSetting, entries, runtimes...); err != nil {
+							return fmt.Errorf("%s: %w", spec.setting, err)
+						}
+					}
 					for _, entry := range entries {
 						if err := verifyLivePKICRLEvidence(kubeconfig, namespace, environment, target, spec.container, entry, runtimes...); err != nil {
 							return fmt.Errorf("%s issuer %s: %w", spec.setting, entry.Issuer.ID, err)
@@ -125,29 +131,93 @@ func verifyMountedPKICRLManifests(kubeconfig, namespace, environment string, dep
 }
 
 func mountedPKICRLConfigMap(deployment liveDeployment, containerName, path string) (string, string, error) {
-	if !filepath.IsAbs(path) || filepath.Clean(path) != path || filepath.Base(path) != "crls.json" {
-		return "", "", fmt.Errorf("CRL manifest path must be an absolute crls.json file")
+	return mountedPKIConfigMapFile(deployment, containerName, path, "crls.json", "CRL manifest")
+}
+
+func mountedPKIConfigMapFile(deployment liveDeployment, containerName, path, filename, label string) (string, string, error) {
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path || filepath.Base(path) != filename {
+		return "", "", fmt.Errorf("%s path must be an absolute %s file", label, filename)
 	}
 	for _, container := range deployment.Spec.Template.Spec.Containers {
 		if container.Name != containerName {
 			continue
 		}
 		for _, mount := range container.VolumeMounts {
-			if !strings.HasPrefix(path, mount.MountPath+"/") || strings.TrimPrefix(path, mount.MountPath+"/") != "crls.json" {
+			if !strings.HasPrefix(path, mount.MountPath+"/") || strings.TrimPrefix(path, mount.MountPath+"/") != filename {
 				continue
 			}
 			if !mount.ReadOnly {
-				return "", "", fmt.Errorf("CRL manifest mount is not read-only")
+				return "", "", fmt.Errorf("%s mount is not read-only", label)
 			}
 			for _, volume := range deployment.Spec.Template.Spec.Volumes {
 				if volume.Name == mount.Name && volume.ConfigMap.Name != "" {
-					return volume.ConfigMap.Name, "crls.json", nil
+					return volume.ConfigMap.Name, filename, nil
 				}
 			}
-			return "", "", fmt.Errorf("CRL manifest mount is not backed by a ConfigMap")
+			return "", "", fmt.Errorf("%s mount is not backed by a ConfigMap", label)
 		}
 	}
-	return "", "", fmt.Errorf("CRL manifest has no matching read-only ConfigMap mount")
+	return "", "", fmt.Errorf("%s has no matching read-only ConfigMap mount", label)
+}
+
+// Adopting a successor bundle without its CRL leaves newly renewed Service
+// clients unable to authenticate even when every older CRL is current.
+func verifyMountedServiceCRLCoverage(kubeconfig, namespace string, deployment liveDeployment, containerName, settingName string, entries []livePKICRLManifestEntry, runtimes ...*deploymentCheckRuntime) error {
+	count, path, indirect := 0, "", false
+	for _, container := range deployment.Spec.Template.Spec.Containers {
+		if container.Name == containerName {
+			for _, setting := range container.Env {
+				if setting.Name == settingName {
+					count++
+					path, indirect = setting.Value, setting.ValueFrom != nil
+				}
+			}
+		}
+	}
+	if count == 0 {
+		return nil // Legacy listeners without bundle adoption retain their checks.
+	}
+	if count != 1 || indirect || path == "" {
+		return fmt.Errorf("%s requires exactly one explicit bundle manifest path", settingName)
+	}
+	name, key, err := mountedPKIConfigMapFile(deployment, containerName, path, "issuers.json", "Service bundle manifest")
+	if err != nil {
+		return err
+	}
+	raw, err := secretCheckKubectl(runtimes, false, "--kubeconfig", kubeconfig, "-n", namespace, "get", "configmap", name, "-o", "json")
+	if err != nil {
+		return secretCheckFailure(err, "Service bundle ConfigMap is unavailable")
+	}
+	var source struct {
+		Data map[string]string `json:"data"`
+	}
+	if json.Unmarshal(raw, &source) != nil {
+		return fmt.Errorf("Service bundle ConfigMap metadata is invalid")
+	}
+	return validateServiceCRLCoverage(source.Data[key], entries)
+}
+
+func validateServiceCRLCoverage(raw string, entries []livePKICRLManifestEntry) error {
+	var bundles []struct {
+		ID string `json:"issuer_id"`
+	}
+	if len(raw) == 0 || len(raw) > 1<<20 || json.Unmarshal([]byte(raw), &bundles) != nil || len(bundles) == 0 || len(bundles) > 128 {
+		return fmt.Errorf("Service bundle manifest is invalid")
+	}
+	covered, seen := map[string]bool{}, map[string]bool{}
+	for _, entry := range entries {
+		covered[entry.Issuer.ID] = true
+	}
+	for _, bundle := range bundles {
+		if !livePKIIssuerIDPattern.MatchString(bundle.ID) || seen[bundle.ID] {
+			return fmt.Errorf("Service bundle manifest has an invalid or duplicate issuer")
+		}
+		if !covered[bundle.ID] {
+			return fmt.Errorf("Service bundle issuer %s has no CRL manifest entry", bundle.ID)
+		}
+		seen[bundle.ID] = true
+	}
+	return nil
 }
 
 func validateMountedPKICRLManifest(raw, environment, domain string, deployment liveDeployment, containerName string) error {

@@ -54,7 +54,11 @@ session succeed.
    verifies the signed CRL and expiry, then compares its digest and number to
    the latest registry CRL and that workload's acknowledgment. Empty, stale,
    mismatched, or unacknowledged state fails. Other unreviewed CRL or root
-   settings still fail. Workload readiness and adoption of the current CRL in
+   settings still fail. When a Service bundle manifest is configured, each of
+   its issuer IDs must also appear in the same listener's CRL manifest. Install
+   the successor's signed CRL evidence before using identities renewed onto it;
+   current older CRLs alone cannot admit the successor. Workload readiness and
+   adoption of the current CRL in
    a running listener remain separate live acceptance gates.
 3. If a reviewed CRL ConfigMap reference needs reconciliation, render a
    strategic merge patch with

@@ -18,6 +18,81 @@ import (
 	"time"
 )
 
+func TestServiceCRLCoverageRequiresEveryAdoptedIssuer(t *testing.T) {
+	root := "697e8e86-5af6-4580-8456-7f91d17634f2"
+	old := "c160c01f-a742-4c06-bcb7-d90be90e820b"
+	successor := "cf348f82-f4cc-434e-a59d-c37eee8222cf"
+	entries := make([]livePKICRLManifestEntry, 3)
+	for n, id := range []string{root, old, successor} {
+		entries[n].Issuer.ID = id
+	}
+	for _, tc := range []struct {
+		name, raw, want string
+		entries         []livePKICRLManifestEntry
+	}{
+		{"successor missing", `[{"issuer_id":"` + root + `"},{"issuer_id":"` + successor + `"}]`, successor + " has no CRL", entries[:2]},
+		{"root missing", `[{"issuer_id":"` + root + `"},{"issuer_id":"` + successor + `"}]`, root + " has no CRL", entries[1:]},
+		{"complete", `[{"issuer_id":"` + root + `"},{"issuer_id":"` + successor + `"}]`, "", entries},
+		{"retained extra CRLs", `[{"issuer_id":"` + old + `"}]`, "", entries},
+		{"empty", `[]`, "invalid", entries},
+		{"null", `null`, "invalid", entries},
+		{"malformed", `{`, "invalid", entries},
+		{"invalid ID", `[{"issuer_id":"not-an-issuer"}]`, "invalid", entries},
+		{"duplicate ID", `[{"issuer_id":"` + root + `"},{"issuer_id":"` + root + `"}]`, "duplicate", entries},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateServiceCRLCoverage(tc.raw, tc.entries)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("coverage error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestLivePKICRLManifestRejectsAdoptedIssuerWithoutCRL(t *testing.T) {
+	deployment := testLiveCRLDeployment(t, "account-manager", "pkimanagement", "PKI_MANAGEMENT_ACCOUNT_SERVICE_CLIENT_SERVER_CRL_MANIFEST", true)
+	raw, err := json.Marshal(deployment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var data map[string]any
+	if err := json.Unmarshal(raw, &data); err != nil {
+		t.Fatal(err)
+	}
+	container := data["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)
+	container["env"] = append(container["env"].([]any), map[string]string{"name": "PKI_MANAGEMENT_ACCOUNT_SERVICE_CLIENT_BUNDLE_MANIFEST", "value": "/run/service-crls/issuers.json"})
+	raw, _ = json.Marshal(data)
+	if err := json.Unmarshal(raw, &deployment); err != nil {
+		t.Fatal(err)
+	}
+	manifest, _, _ := testLiveCRLEvidence(t, "service", false)
+	successor := "cf348f82-f4cc-434e-a59d-c37eee8222cf"
+	configMap, err := json.Marshal(map[string]any{"data": map[string]string{"crls.json": manifest, "issuers.json": `[{"issuer_id":"` + successor + `"}]`}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	fixture, kubectl := filepath.Join(dir, "configmap.json"), filepath.Join(dir, "kubectl")
+	if err := os.WriteFile(fixture, configMap, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A state or receipt read would fail: coverage must reject this mismatch
+	// before treating valid older CRLs as evidence for the new issuer.
+	script := "#!/bin/sh\ncase \"$*\" in\n *'get configmap'*) cat '" + fixture + "';;\n *) exit 1;;\nesac\n"
+	if err := os.WriteFile(kubectl, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	err = verifyMountedPKICRLManifests("kubeconfig", "video-cloud-dev-account-manager", "dev", liveDeploymentList{Items: []liveDeployment{deployment}}, "account-manager")
+	if err == nil || !strings.Contains(err.Error(), successor+" has no CRL manifest entry") {
+		t.Fatalf("adopted successor coverage error = %v", err)
+	}
+}
+
 func testLiveCRLEvidence(t *testing.T, domain string, expired bool) (string, string, string) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
