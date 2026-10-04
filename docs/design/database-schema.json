@@ -1,5 +1,5 @@
 {
-  "captured_at": "2026-10-03T14:01:08.511648+00:00",
+  "captured_at": "2026-10-04T05:09:53.362703+00:00",
   "environment": null,
   "format_version": 1,
   "revisions": {
@@ -7,7 +7,7 @@
     "Billing": "a16e12a8e445",
     "Cloud Admin": "97df544091f4",
     "Cloud Frontend": "475b9fe80d6c",
-    "Video Cloud": "6bb1ffb7be41"
+    "Video Cloud": "12b3580cb862"
   },
   "schema_hash": "281c8ab6334fb21d26fde53283c2857604fbd55b7ad7126857bb41dec7147b20",
   "source_dirty": {
