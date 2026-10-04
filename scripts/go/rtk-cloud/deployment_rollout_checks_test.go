@@ -182,6 +182,9 @@ func TestRolloutReadOnlyStorageLeavesNoReceipt(t *testing.T) {
 			w.WriteHeader(500)
 			return
 		}
+		if serveMigrationBucketInspection(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/v4/regions/sg-sin-2":
 			fmt.Fprint(w, `{"id":"sg-sin-2","status":"ok","capabilities":["Kubernetes","Object Storage"]}`)

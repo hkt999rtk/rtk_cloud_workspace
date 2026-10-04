@@ -92,6 +92,11 @@ func runDestroyEnvironmentResources(args []string) error {
 	}
 	envValues := envroot.Derive(stackValues)
 	stack := firstNonEmpty(envValues["CLOUD_STACK_NAME"], "video-cloud-staging")
+	if *includeObjectStorage && !*onlyLKECluster {
+		if err := validateDestroyBackupConfigurations(workspace, envRoot, envValues); err != nil {
+			return err
+		}
+	}
 	plan, err := buildLinodeDestroyPlan(token, envValues, stack, *loadTestPrefix)
 	if err != nil {
 		return err
@@ -338,6 +343,9 @@ func validateDestroyRuntimeBucket(env map[string]string, bucket, region string) 
 	shared, err := storagepolicy.Bucket("shared", "artifacts", region)
 	if err == nil && bucket == shared {
 		return fmt.Errorf("runtime bucket %s is shared artifact storage and cannot be destroyed", bucket)
+	}
+	if err := validateDestroyRegisteredStorage(env, bucket, region); err != nil {
+		return err
 	}
 	for _, prefix := range []string{
 		"SDK_ARTIFACT_", "RELEASE_ARTIFACT_STORAGE_", "REPORT_OBJECT_STORAGE_",

@@ -29,6 +29,12 @@ func activateStorageCandidate(cfg deploymentConfig, candidate, purpose string) e
 	if !check.Passed {
 		return errors.New(check.Detail)
 	}
+	return activateStorageCandidateValues(cfg, values, purpose, nil)
+}
+
+// Reinitialization passes the already verified candidate and its observed active
+// pair. Promotion must not reread a mutable candidate after workload rollout.
+func activateStorageCandidateValues(cfg deploymentConfig, values map[string]string, purpose string, expectedBefore map[string]string) error {
 	if values["RTK_STORAGE_CANDIDATE_ENVIRONMENT"] != cfg.Environment {
 		return errors.New("storage activation requires this environment's candidate profile")
 	}
@@ -45,6 +51,16 @@ func activateStorageCandidate(cfg deploymentConfig, candidate, purpose string) e
 		return err
 	}
 	prefix := map[string]string{"media": "LINODE_MEDIA_OBJ_", "ota": "LINODE_OTA_OBJ_", "artifacts": "LINODE_ARTIFACT_OBJ_"}[purpose]
+	if expectedBefore != nil {
+		for _, suffix := range []string{"ACCESS_KEY_ID", "SECRET_ACCESS_KEY"} {
+			key := prefix + suffix
+			got, present := active[key]
+			want, existed := expectedBefore[key]
+			if present != existed || got != want {
+				return errors.New("active storage credentials changed during reinitialization; refusing promotion")
+			}
+		}
+	}
 	state := storageCredentialPromotion{Environment: cfg.Environment, Purpose: purpose, Before: map[string]string{}, After: map[string]string{}}
 	for _, suffix := range []string{"ACCESS_KEY_ID", "SECRET_ACCESS_KEY"} {
 		key := prefix + suffix

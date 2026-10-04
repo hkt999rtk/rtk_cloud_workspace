@@ -246,6 +246,14 @@ func serveMigrationBucketInspection(w http.ResponseWriter, r *http.Request) bool
 	if r.Method != http.MethodGet {
 		return false
 	}
+	if r.URL.Query().Has("acl") {
+		fmt.Fprint(w, privateStorageACLForTest)
+		return true
+	}
+	if r.URL.Query().Has("policy") {
+		w.WriteHeader(http.StatusNotFound)
+		return true
+	}
 	for query, root := range map[string]string{"versioning": "VersioningConfiguration", "versions": "ListVersionsResult", "uploads": "ListMultipartUploadsResult"} {
 		if r.URL.Query().Has(query) {
 			fmt.Fprintf(w, "<%s/>", root)
@@ -442,6 +450,10 @@ type storagePurposeFixture struct {
 func newStoragePurposeFixture(t *testing.T, exists bool, failure string) (deploymentCredentialChecker, deploymentConfig, *storagePurposeFixture) {
 	t.Helper()
 	f := &storagePurposeFixture{objects: &migrationTestStorage{objects: map[string]storageObjectSnapshot{}}, bucketExists: exists, failure: failure}
+	bucketName := "destination"
+	if !exists {
+		bucketName = "rtk-cloud-shared-artifacts-test"
+	}
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		bucket := func() string {
@@ -449,7 +461,7 @@ func newStoragePurposeFixture(t *testing.T, exists bool, failure string) (deploy
 			if f.failure == "endpoint" {
 				endpoint = "ftp://storage.invalid"
 			}
-			return fmt.Sprintf(`{"label":"destination","region":"test","s3_endpoint":%q,"endpoint_type":"E3"}`, endpoint)
+			return fmt.Sprintf(`{"label":%q,"region":"test","s3_endpoint":%q,"endpoint_type":"E3"}`, bucketName, endpoint)
 		}
 		switch r.URL.Path {
 		case "/v4/object-storage/buckets":
@@ -475,7 +487,7 @@ func newStoragePurposeFixture(t *testing.T, exists bool, failure string) (deploy
 				return
 			}
 			var body map[string]string
-			if json.NewDecoder(r.Body).Decode(&body) != nil || body["label"] != "destination" || body["region"] != "test" {
+			if json.NewDecoder(r.Body).Decode(&body) != nil || body["label"] != bucketName || body["region"] != "test" {
 				t.Error("bucket creation changed reviewed identity")
 			}
 			f.bucketExists = true
@@ -490,7 +502,7 @@ func newStoragePurposeFixture(t *testing.T, exists bool, failure string) (deploy
 			return
 		case "/v4/object-storage/keys":
 			if r.Method == http.MethodGet {
-				fmt.Fprint(w, `{"data":[{"id":7,"access_key":"candidate-access","bucket_access":[{"bucket_name":"destination","region":"test","permissions":"read_write"}]}]}`)
+				fmt.Fprintf(w, `{"data":[{"id":7,"access_key":"candidate-access","bucket_access":[{"bucket_name":%q,"region":"test","permissions":"read_write"}]}]}`, bucketName)
 				return
 			}
 			f.keyCreates++
@@ -500,7 +512,7 @@ func newStoragePurposeFixture(t *testing.T, exists bool, failure string) (deploy
 			}
 			// Inspect scope without retaining the generated access-key secret.
 			raw, _ := io.ReadAll(r.Body)
-			if !bytes.Contains(raw, []byte(`"bucket_name":"destination"`)) || !bytes.Contains(raw, []byte(`"permissions":"read_write"`)) {
+			if !bytes.Contains(raw, []byte(fmt.Sprintf(`"bucket_name":%q`, bucketName))) || !bytes.Contains(raw, []byte(`"permissions":"read_write"`)) {
 				t.Error("key is not limited to the reviewed bucket")
 			}
 			fmt.Fprint(w, `{"access_key":"candidate-access","secret_key":"candidate-secret"}`)
@@ -528,7 +540,7 @@ func newStoragePurposeFixture(t *testing.T, exists bool, failure string) (deploy
 		f.objects.serve(w, r)
 	}))
 	t.Cleanup(server.Close)
-	target := deploymentStorageTarget{Bucket: "destination", Region: "test", Prefix: "new", Endpoint: server.URL}
+	target := deploymentStorageTarget{Bucket: bucketName, Region: "test", Prefix: "new", Endpoint: server.URL}
 	cfg := deploymentConfig{Environment: "dev", RuntimeRoot: t.TempDir(), Storage: deploymentStoragePlan{RuntimeMedia: target, ReleaseArtifacts: target, OTAFirmware: target, OTAMode: "dedicated"}}
 	return deploymentCredentialChecker{client: server.Client(), linodeAPIRoot: server.URL + "/v4", readOnly: true}, cfg, f
 }

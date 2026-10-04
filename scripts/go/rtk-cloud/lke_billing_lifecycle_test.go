@@ -138,6 +138,26 @@ func TestBillingLifecycleRendererPublicConfigurationPrivateScratchAndScope(t *te
 	}
 }
 
+func TestBillingLifecycleRendererRejectsNoncanonicalBucketIdentity(t *testing.T) {
+	env := billingLifecycleDeployFixture(t)
+	for _, tc := range []struct{ scope, region string }{
+		{"dev", "us--sea"}, {"dev", "us_sea"}, {"dev", "us-sea-"},
+		{"dev", strings.Repeat("a", 45)}, {"shared", "us-sea"},
+	} {
+		t.Run(tc.scope+"/"+tc.region, func(t *testing.T) {
+			values := appendMap(env, nil)
+			values["CLOUD_ENV_NAME"] = tc.scope
+			values["CLOUD_STACK_NAME"] = "video-cloud-" + tc.scope
+			values["LKE_BILLING_BACKUP_REGION"] = tc.region
+			values["LKE_BILLING_BACKUP_BUCKET"] = "rtk-cloud-" + tc.scope + "-billing-backup-" + tc.region
+			values["LKE_BILLING_BACKUP_UPLOADER_BUCKET_SCOPE"] = values["LKE_BILLING_BACKUP_BUCKET"]
+			if _, err := lkeBillingPublicConfiguration(values); err == nil {
+				t.Fatal("noncanonical billing bucket identity accepted")
+			}
+		})
+	}
+}
+
 func TestBillingLifecycleAuthorityOnlyAPIAndPrivatePorts(t *testing.T) {
 	env := billingLifecycleDeployFixture(t)
 	billing := lkeDeploymentManifest(env, lkeWorkload{Key: "billing", Name: "billing", Namespace: lkeNamespaceName(env, "billing"), Image: env["LKE_BILLING_IMAGE"], Port: 8080}, nil)

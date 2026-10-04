@@ -229,6 +229,15 @@ func TestOTAMetricsExportRejectsTrailingPositionalArguments(t *testing.T) {
 	}
 }
 
+func TestOTAMetricsExportRequiresProbeAndRejectsMisplacedProbeFlag(t *testing.T) {
+	if err := runDeploymentWithOperations([]string{"storage-metrics-export", "--environment", "dev", "--purpose", "ota"}, deploymentOperations{}); err == nil || !strings.Contains(err.Error(), "--probe-evidence-file is required") {
+		t.Fatalf("missing controlled probe evidence error = %v", err)
+	}
+	if err := runDeploymentWithOperations([]string{"plan", "--probe-evidence-file", "/private/probe.json"}, deploymentOperations{}); err == nil || !strings.Contains(err.Error(), "probe flags require") {
+		t.Fatalf("misplaced controlled probe evidence error = %v", err)
+	}
+}
+
 func TestDeploymentCredentialFailureStopsBeforeRuntimeMutation(t *testing.T) {
 	for _, action := range []string{"provision", "test"} {
 		t.Run(action, func(t *testing.T) {
@@ -1028,6 +1037,45 @@ func TestResolveDeploymentConfigRejectsProviderKeyInEnvironment(t *testing.T) {
 	appendFile(t, filepath.Join(workspace, "cloud_env", "dev", "environment.env"), "LKE_REGION=us-sea\n")
 	if _, err := resolveDeploymentConfig(workspace, "dev", ""); err == nil || !strings.Contains(err.Error(), "unknown environment key LKE_REGION") {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestResolveCheckedInDeploymentConfigsAndStagingOTAIntent(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		t.Run(environment, func(t *testing.T) {
+			cfg, err := resolveDeploymentConfig(workspace, environment, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if environment != "staging" {
+				return
+			}
+			cfg.RuntimeRoot = t.TempDir()
+			if err := materializeDeploymentRuntime(cfg); err != nil {
+				t.Fatal(err)
+			}
+			adapter, err := readStrictEnv(filepath.Join(cfg.RuntimeRoot, "adapters", "lke", "config.env"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for key, want := range map[string]string{
+				"LKE_OTA_SERVICE_REGISTRATION_ENABLED":   "true",
+				"LKE_OTA_CORE_CUTOVER_ENABLED":           "true",
+				"LKE_OTA_SERVICE_EDGE_ENABLED":           "true",
+				"LKE_OTA_REGISTRAR_REGISTRATION_ENABLED": "false",
+			} {
+				if _, found := cfg.Values[key]; found {
+					t.Fatalf("provider switch %s escaped its adapter layer", key)
+				}
+				if cfg.AdapterValues[key] != want || adapter[key] != want {
+					t.Fatalf("%s: selected=%q materialized=%q want=%q", key, cfg.AdapterValues[key], adapter[key], want)
+				}
+			}
+		})
 	}
 }
 

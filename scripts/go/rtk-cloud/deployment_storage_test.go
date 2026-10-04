@@ -169,34 +169,90 @@ func TestResolveStorageEndpointSkipsUnavailableEndpointTypes(t *testing.T) {
 	}
 }
 
-func TestResolveOTAMetricsEndpointTypeRequiresAssignedE3(t *testing.T) {
-	assignedE3 := false
+func TestResolveOTAMetricsEndpointTypeRequiresAvailableE3(t *testing.T) {
+	inventory := ""
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if serveMigrationBucketInspection(w, r) {
-			return
-		}
-		if r.Method == http.MethodGet && r.URL.Query().Has("tagging") {
-			_, _ = w.Write([]byte(`<Tagging><TagSet/></Tagging>`))
-			return
-		}
-		if r.URL.Path != "/v4/object-storage/endpoints" {
+		if r.Method != http.MethodGet || r.URL.Path != "/v4/object-storage/endpoints" {
+			t.Errorf("unexpected endpoint discovery request: %s %s", r.Method, r.URL.Path)
 			http.NotFound(w, r)
 			return
 		}
-		if assignedE3 {
-			_, _ = w.Write([]byte(`{"data":[{"region":"us-lax","endpoint_type":"E2","s3_endpoint":"us-lax-1.linodeobjects.com"},{"region":"us-lax","endpoint_type":"E3","s3_endpoint":"us-lax-2.linodeobjects.com"}]}`))
-		} else {
-			_, _ = w.Write([]byte(`{"data":[{"region":"us-lax","endpoint_type":"E2","s3_endpoint":"us-lax-1.linodeobjects.com"},{"region":"us-lax","endpoint_type":"E3","s3_endpoint":null}]}`))
-		}
+		_, _ = w.Write([]byte(inventory))
 	}))
 	defer server.Close()
 	checker := deploymentCredentialChecker{client: server.Client(), linodeAPIRoot: server.URL + "/v4"}
-	if _, err := checker.resolveOTAMetricsEndpointType("token", "us-lax"); err == nil || !strings.Contains(err.Error(), "no assigned E3") {
-		t.Fatalf("E2-only OTA endpoint was accepted: %v", err)
+	for _, tc := range []struct{ name, body, wantError string }{
+		{"unassigned E3", `{"data":[{"region":"us-lax","endpoint_type":"E2","s3_endpoint":"us-lax-1.linodeobjects.com"},{"region":"us-lax","endpoint_type":"E3","s3_endpoint":null}]}`, ""},
+		{"assigned E3", `{"data":[{"region":"us-lax","endpoint_type":"E3","s3_endpoint":"us-lax-4.linodeobjects.com"}]}`, ""},
+		{"E2 only", `{"data":[{"region":"us-lax","endpoint_type":"E2","s3_endpoint":"us-lax-1.linodeobjects.com"}]}`, "no available E3"},
+		{"E3 in another region", `{"data":[{"region":"us-sea","endpoint_type":"E3","s3_endpoint":null}]}`, "no available E3"},
+		{"missing region", `{"data":[]}`, "no available E3"},
+		{"invalid inventory", `{`, "invalid JSON"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			inventory = tc.body
+			got, err := checker.resolveOTAMetricsEndpointType("token", "us-lax")
+			if tc.wantError == "" {
+				if err != nil || got != "E3" {
+					t.Fatalf("available E3 type = %q, %v", got, err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tc.wantError) || got != "" {
+				t.Fatalf("unavailable E3 accepted: type=%q error=%v", got, err)
+			}
+		})
 	}
-	assignedE3 = true
-	if got, err := checker.resolveOTAMetricsEndpointType("token", "us-lax"); err != nil || got != "E3" {
-		t.Fatalf("assigned E3 OTA endpoint = %q, %v", got, err)
+}
+
+func TestOTABootstrapRequiresCreatedBucketE3AssignedEndpoint(t *testing.T) {
+	for _, tc := range []struct{ name, bucketType, endpoint, want string }{
+		{"wrong endpoint type", "E2", "https://assigned.example.test", "requires an E3 bucket"},
+		{"missing assigned endpoint", "E3", "", "omitted s3_endpoint"},
+		{"invalid assigned endpoint", "E3", "http://insecure.example.test", "invalid s3_endpoint"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const bucketName = "rtk-cloud-dev-ota-firmware-us-sea"
+			created, endpointReads, keyPosts, s3Requests := 0, 0, 0, 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/v4/regions/us-sea":
+					fmt.Fprint(w, `{"id":"us-sea","status":"ok","capabilities":["Kubernetes","Object Storage"]}`)
+				case r.Method == http.MethodGet && r.URL.Path == "/v4/object-storage/endpoints":
+					endpointReads++
+					// A different assigned type must never fill in the created
+					// E3 bucket's missing endpoint.
+					fmt.Fprint(w, `{"data":[{"region":"us-sea","endpoint_type":"E3","s3_endpoint":null},{"region":"us-sea","endpoint_type":"E1","s3_endpoint":"assigned.example.test"}]}`)
+				case r.Method == http.MethodGet && r.URL.Path == "/v4/object-storage/buckets":
+					fmt.Fprint(w, `{"data":[]}`)
+				case r.Method == http.MethodPost && r.URL.Path == "/v4/object-storage/buckets":
+					created++
+					var request map[string]string
+					if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request["endpoint_type"] != "E3" || request["label"] != bucketName || request["region"] != "us-sea" {
+						t.Errorf("incorrect E3 creation request: %#v, %v", request, err)
+					}
+					fmt.Fprintf(w, `{"label":%q,"region":"us-sea","endpoint_type":%q,"s3_endpoint":%q}`, bucketName, tc.bucketType, tc.endpoint)
+				case r.Method == http.MethodPost && r.URL.Path == "/v4/object-storage/keys":
+					keyPosts++
+					http.Error(w, "key issuance must not occur", http.StatusBadRequest)
+				default:
+					s3Requests++
+					t.Errorf("unexpected request after invalid bucket response: %s %s", r.Method, r.URL.Path)
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			checker := deploymentCredentialChecker{client: server.Client(), linodeAPIRoot: server.URL + "/v4"}
+			cfg := deploymentConfig{Environment: "dev", RuntimeRoot: t.TempDir(), Storage: deploymentStoragePlan{OTAMode: "dedicated", OTAFirmware: deploymentStorageTarget{Purpose: "ota-firmware", Bucket: bucketName, Region: "us-sea", Prefix: "environments/video-cloud-dev"}}}
+			profile := filepath.Join(t.TempDir(), "candidate.env")
+			err := checker.bootstrapOTAStorage(cfg, map[string]string{"LINODE_TOKEN": "test-token"}, profile)
+			if err == nil || !strings.Contains(err.Error(), tc.want) || created != 1 || endpointReads != 1 || keyPosts != 0 || s3Requests != 0 {
+				t.Fatalf("invalid created bucket was accepted or used: error=%v creates=%d endpoint_reads=%d key_posts=%d s3_requests=%d", err, created, endpointReads, keyPosts, s3Requests)
+			}
+			for _, path := range []string{profile, filepath.Join(cfg.RuntimeRoot, "state", "storage-preflight-ota.json"), filepath.Join(cfg.RuntimeRoot, "state", "storage-cutover-ota.json")} {
+				if _, err := os.Stat(path); !os.IsNotExist(err) {
+					t.Fatalf("invalid created bucket left credentials or receipt: %s: %v", path, err)
+				}
+			}
+		})
 	}
 }
 
@@ -722,7 +778,7 @@ func TestDedicatedOTAStorageLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	const bucketName = "rtk-ota-firmware-dev-us-sea"
+	const bucketName = "rtk-cloud-dev-ota-firmware-us-sea"
 	var mu sync.Mutex
 	created, keyIssued, requestedMetricsEndpoint := false, false, false
 	keyIssueCount := 0
@@ -742,7 +798,11 @@ func TestDedicatedOTAStorageLifecycle(t *testing.T) {
 			_, _ = w.Write([]byte(`{"id":"us-sea","status":"ok","capabilities":["Kubernetes","Object Storage"]}`))
 			return
 		case r.URL.Path == "/v4/object-storage/endpoints":
-			_, _ = fmt.Fprintf(w, `{"data":[{"region":"us-sea","endpoint_type":"E3","s3_endpoint":%q}]}`, server.URL)
+			if created {
+				_, _ = fmt.Fprintf(w, `{"data":[{"region":"us-sea","endpoint_type":"E3","s3_endpoint":%q}]}`, server.URL)
+			} else {
+				_, _ = w.Write([]byte(`{"data":[{"region":"us-sea","endpoint_type":"E3","s3_endpoint":null}]}`))
+			}
 			return
 		case r.URL.Path == "/v4/object-storage/buckets" && r.Method == http.MethodGet:
 			if created {
@@ -812,8 +872,13 @@ func TestDedicatedOTAStorageLifecycle(t *testing.T) {
 	defer server.Close()
 	t.Setenv("RTK_CLOUD_LINODE_API_ROOT", server.URL+"/v4")
 	cfg := deploymentConfig{Environment: "dev", RuntimeRoot: t.TempDir(), Values: map[string]string{"VIDEO_CLOUD_OTA_CDN_BASE_URL": "https://firmware.example.test"}, AdapterResolved: map[string]string{"LKE_REGION": "us-sea"}, Storage: deploymentStoragePlan{RuntimeMedia: deploymentStorageTarget{Purpose: "runtime-media", Bucket: "rtk-video-media-dev-us-sea", Region: "us-sea"}, OTAMode: "dedicated", OTAFirmware: deploymentStorageTarget{Purpose: "ota-firmware", Policy: "colocated", Bucket: bucketName, Prefix: "environments/video-cloud-dev", Region: "us-sea"}, ReleaseArtifacts: deploymentStorageTarget{Purpose: "release-artifacts", Bucket: "rtk-release-shared-us-sea", Region: "us-sea"}}}
-	if err := runDeploymentStorageLifecyclePurpose("storage-plan", cfg, profile, "", 0, "ota"); err != nil {
-		t.Fatal(err)
+	plan := captureStdout(t, func() {
+		if err := runDeploymentStorageLifecyclePurpose("storage-plan", cfg, profile, "", 0, "ota"); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(plan, "available E3") || strings.Contains(plan, "assigned E3;") {
+		t.Fatalf("first-bucket plan misreported unassigned E3 availability: %s", plan)
 	}
 	if err := runDeploymentStorageLifecyclePurpose("storage-bootstrap", cfg, profile, "", 0, "ota"); err != nil {
 		t.Fatal(err)
@@ -959,13 +1024,13 @@ func TestDedicatedOTAStorageLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	archiveHash := sha256.Sum256(archive)
-	writeOTAMetricsReceipt(t, cutoverCfg.RuntimeRoot, otaMetricsQualification{
+	writeOTAMetricsReceipt(t, cutoverCfg.RuntimeRoot, attachOTAMetricsProbeFixture(t, cutoverCfg.RuntimeRoot, otaMetricsQualification{
 		Source: "akamai_cloud_pulse", Environment: "dev", Bucket: bucketName, BucketHostname: bucketName + "." + endpointHost, Region: "us-sea", Endpoint: server.URL,
 		WindowStart: metricsNow.Add(-10 * time.Minute).Format(time.RFC3339), WindowEnd: metricsNow.Add(-2 * time.Minute).Format(time.RFC3339),
 		ExportedAt: metricsNow.Add(-time.Minute).Format(time.RFC3339), RecordedBy: "test-operator",
 		ExportFile: archiveRelative, ExportSHA256: hex.EncodeToString(archiveHash[:]),
 		GETMetric: "obj_requests_get", GETRequests: 1, DownloadedBytesMetric: "obj_bytes_downloaded", DownloadedBytes: 32,
-	})
+	}))
 	if err := runDeploymentStorageLifecyclePurpose("storage-cutover", cutoverCfg, profile, sourceFile, 0, "ota"); err == nil || !strings.Contains(err.Error(), "migration receipt") {
 		t.Fatalf("OTA cutover accepted missing migration inventory: %v", err)
 	}

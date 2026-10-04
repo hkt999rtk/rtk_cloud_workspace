@@ -14,27 +14,104 @@ import (
 	"time"
 )
 
-const otaMetricsQualificationMaxAge = 72 * time.Hour
+const (
+	otaMetricsQualificationMaxAge = 72 * time.Hour
+	otaMetricsMaxProbeShortfall   = 1024
+)
 
 // otaMetricsQualification is an operator attestation about a short Cloud Pulse
 // export. The export itself is archived under runtime/artifacts/ota-metrics/.
 type otaMetricsQualification struct {
-	Source                string `json:"source"`
-	Environment           string `json:"environment"`
-	Bucket                string `json:"bucket"`
-	BucketHostname        string `json:"bucket_hostname"`
-	Region                string `json:"region"`
-	Endpoint              string `json:"endpoint"`
-	WindowStart           string `json:"window_start"`
-	WindowEnd             string `json:"window_end"`
-	ExportedAt            string `json:"exported_at"`
-	RecordedBy            string `json:"recorded_by"`
-	ExportFile            string `json:"export_file"`
-	ExportSHA256          string `json:"export_sha256"`
-	GETMetric             string `json:"get_metric"`
-	GETRequests           int64  `json:"get_requests"`
-	DownloadedBytesMetric string `json:"downloaded_bytes_metric"`
-	DownloadedBytes       int64  `json:"downloaded_bytes"`
+	Source                      string `json:"source"`
+	Environment                 string `json:"environment"`
+	Bucket                      string `json:"bucket"`
+	BucketHostname              string `json:"bucket_hostname"`
+	Region                      string `json:"region"`
+	Endpoint                    string `json:"endpoint"`
+	WindowStart                 string `json:"window_start"`
+	WindowEnd                   string `json:"window_end"`
+	ExportedAt                  string `json:"exported_at"`
+	RecordedBy                  string `json:"recorded_by"`
+	ExportFile                  string `json:"export_file"`
+	ExportSHA256                string `json:"export_sha256"`
+	GETMetric                   string `json:"get_metric"`
+	GETRequests                 int64  `json:"get_requests"`
+	DownloadedBytesMetric       string `json:"downloaded_bytes_metric"`
+	DownloadedBytes             int64  `json:"downloaded_bytes"`
+	AcceptedProbeShortfallBytes int64  `json:"accepted_probe_shortfall_bytes,omitempty"`
+	ProbeFile                   string `json:"probe_file"`
+	ProbeSHA256                 string `json:"probe_sha256"`
+}
+
+// otaMetricsProbe is the operator's record of successfully verified GetObject
+// bodies. LIST responses and rejected GETs do not contribute to these totals.
+type otaMetricsProbe struct {
+	Version                   int    `json:"version"`
+	Environment               string `json:"environment"`
+	Bucket                    string `json:"bucket"`
+	Region                    string `json:"region"`
+	Endpoint                  string `json:"endpoint"`
+	StartedAt                 string `json:"started_at"`
+	CompletedAt               string `json:"completed_at"`
+	WindowStart               string `json:"window_start"`
+	WindowEnd                 string `json:"window_end"`
+	FixtureSHA256             string `json:"fixture_sha256"`
+	SuccessfulGETRequests     int64  `json:"successful_get_requests"`
+	SuccessfulDownloadedBytes int64  `json:"successful_downloaded_bytes"`
+}
+
+func parseOTAMetricsProbe(body []byte, environment, bucket, region, endpoint string, start, end, now time.Time) (otaMetricsProbe, error) {
+	var proof otaMetricsProbe
+	if len(body) == 0 || len(body) > 1<<20 {
+		return proof, fmt.Errorf("OTA probe evidence must be nonempty and at most 1 MiB")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&proof); err != nil {
+		return proof, fmt.Errorf("OTA probe evidence is invalid: %w", err)
+	}
+	var extra any
+	if decoder.Decode(&extra) != io.EOF {
+		return proof, fmt.Errorf("OTA probe evidence contains trailing data")
+	}
+	wantEndpoint, wantErr := normalizeLinodeS3Endpoint(endpoint)
+	gotEndpoint, gotErr := normalizeLinodeS3Endpoint(proof.Endpoint)
+	if proof.Version != 1 || proof.Environment != environment || proof.Bucket != bucket || proof.Region != region ||
+		wantErr != nil || gotErr != nil || gotEndpoint != wantEndpoint {
+		return proof, fmt.Errorf("OTA probe evidence does not match the selected version, environment, bucket, region or endpoint")
+	}
+	started, startedErr := time.Parse(time.RFC3339Nano, proof.StartedAt)
+	completed, completedErr := time.Parse(time.RFC3339Nano, proof.CompletedAt)
+	if proof.WindowStart != start.Format(time.RFC3339) || proof.WindowEnd != end.Format(time.RFC3339) ||
+		startedErr != nil || completedErr != nil || !strings.HasSuffix(proof.StartedAt, "Z") || !strings.HasSuffix(proof.CompletedAt, "Z") ||
+		started.Before(start) || !started.Before(completed) || !completed.Before(end) || completed.After(now) {
+		return proof, fmt.Errorf("OTA probe evidence must match the export window and contain a completed UTC probe within [start,end)")
+	}
+	digest, digestErr := hex.DecodeString(proof.FixtureSHA256)
+	if digestErr != nil || len(digest) != sha256.Size || proof.FixtureSHA256 != strings.ToLower(proof.FixtureSHA256) ||
+		proof.SuccessfulGETRequests <= 0 || proof.SuccessfulDownloadedBytes <= 0 {
+		return proof, fmt.Errorf("OTA probe evidence requires a fixture SHA-256 and positive verified GetObject body totals")
+	}
+	return proof, nil
+}
+
+func validateOTAMetricsProbeCounts(proof otaMetricsProbe, gets, downloaded, acceptedShortfall int64) error {
+	if gets < proof.SuccessfulGETRequests || downloaded < 0 || (acceptedShortfall == 0 && downloaded < proof.SuccessfulDownloadedBytes) {
+		return fmt.Errorf("OTA provider metrics undercount the verified probe: GET=%d (need at least %d), downloaded_bytes=%d (need at least %d)", gets, proof.SuccessfulGETRequests, downloaded, proof.SuccessfulDownloadedBytes)
+	}
+	var shortfall int64
+	if downloaded < proof.SuccessfulDownloadedBytes {
+		shortfall = proof.SuccessfulDownloadedBytes - downloaded
+	}
+	if acceptedShortfall < 0 || acceptedShortfall != shortfall {
+		return fmt.Errorf("OTA provider metrics undercount the verified probe or accepted shortfall disagrees: actual_shortfall_bytes=%d accepted_probe_shortfall_bytes=%d", shortfall, acceptedShortfall)
+	}
+	// One basis point is 1/10,000. Division preserves the exact integer limit
+	// without overflowing when the verified body total is large.
+	if shortfall > otaMetricsMaxProbeShortfall || shortfall > proof.SuccessfulDownloadedBytes/10000 {
+		return fmt.Errorf("OTA provider metrics undercount exceeds the allowed probe shortfall: shortfall_bytes=%d (maximum 1024 bytes and 0.01%% of verified bytes)", shortfall)
+	}
+	return nil
 }
 
 // validateOTAMetricsQualification checks the current operator attestation,
@@ -110,7 +187,47 @@ func validateOTAMetricsQualification(runtimeRoot, environment, bucket, region, e
 	if gets != receipt.GETRequests || downloaded != receipt.DownloadedBytes {
 		return fmt.Errorf("OTA metrics qualification archived bucket counts disagree with the receipt")
 	}
+	probePath, err := otaMetricsArchivePath(runtimeRoot, receipt.ProbeFile)
+	if err != nil {
+		return fmt.Errorf("OTA metrics qualification probe archive: %w", err)
+	}
+	probeBody, err := readPrivateOTAMetricsProbe(probePath)
+	if err != nil {
+		return err
+	}
+	probeSum := sha256.Sum256(probeBody)
+	if receipt.ProbeSHA256 != hex.EncodeToString(probeSum[:]) {
+		return fmt.Errorf("OTA metrics qualification probe SHA-256 does not match archived bytes")
+	}
+	proof, err := parseOTAMetricsProbe(probeBody, environment, bucket, region, endpoint, start, end, observed)
+	if err != nil {
+		return err
+	}
+	if err := validateOTAMetricsProbeCounts(proof, gets, downloaded, receipt.AcceptedProbeShortfallBytes); err != nil {
+		return err
+	}
 	return nil
+}
+
+func readPrivateOTAMetricsProbe(path string) ([]byte, error) {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 || info.Size() > 1<<20 {
+		return nil, fmt.Errorf("OTA probe evidence must be a private regular file of at most 1 MiB")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("OTA probe evidence could not be opened: %w", err)
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !os.SameFile(info, opened) || !opened.Mode().IsRegular() || opened.Mode().Perm()&0o077 != 0 {
+		return nil, fmt.Errorf("OTA probe evidence changed while being opened")
+	}
+	body, err := io.ReadAll(io.LimitReader(file, (1<<20)+1))
+	if err != nil || len(body) == 0 || len(body) > 1<<20 {
+		return nil, fmt.Errorf("OTA probe evidence could not be read completely within its size limit")
+	}
+	return body, nil
 }
 
 func otaMetricsArchivePath(runtimeRoot, relative string) (string, error) {

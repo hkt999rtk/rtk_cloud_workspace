@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"filippo.io/age"
+	"rtk-cloud-workspace/scripts/go/internal/storagepolicy"
 )
 
 type billingLifecycleFlags struct{ Backup, Retirement, Compaction, Authority bool }
@@ -199,7 +200,10 @@ func lkeBillingPublicConfiguration(env map[string]string) (lkeBillingPublicConfi
 	if err != nil || endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" || endpoint.Path != "" || endpoint.Port() != "" || !strings.HasSuffix(endpoint.Hostname(), ".linodeobjects.com") {
 		return cfg, errors.New("billing backup requires explicit HTTPS Linode Object Storage endpoint without path or credentials")
 	}
-	if !secretEnvironmentPattern.MatchString(cfg.ObjectStore.Region) || !secretEnvironmentPattern.MatchString(cfg.ObjectStore.SigningRegion) || cfg.ObjectStore.Bucket != "rtk-cloud-"+environment+"-billing-backup-"+cfg.ObjectStore.Region || lkeEnvValue(env, "LKE_BILLING_BACKUP_UPLOADER_BUCKET_SCOPE") != cfg.ObjectStore.Bucket {
+	if err := storagepolicy.Validate(cfg.ObjectStore.Bucket, environment, "billing-backup", cfg.ObjectStore.Region); err != nil {
+		return cfg, fmt.Errorf("billing backup storage identity: %w", err)
+	}
+	if !secretEnvironmentPattern.MatchString(cfg.ObjectStore.SigningRegion) || lkeEnvValue(env, "LKE_BILLING_BACKUP_UPLOADER_BUCKET_SCOPE") != cfg.ObjectStore.Bucket {
 		return cfg, errors.New("billing backup requires exact environment bucket naming, signing region and explicitly acknowledged dedicated uploader bucket scope")
 	}
 	capacity, err := strconv.ParseInt(lkeEnvValue(env, "LKE_BILLING_BACKUP_SCRATCH_CAPACITY_BYTES"), 10, 64)

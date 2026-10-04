@@ -6,7 +6,7 @@ Classification: source.
 
 Owner: `rtk_cloud_workspace`; each registered bucket has an accountable service owner.
 
-Last reviewed: 2026-10-03.
+Last reviewed: 2026-10-04.
 
 Applies to: RTK-managed Linode Object Storage buckets and their object namespaces.
 Local MinIO fixtures are outside the Linode inventory. Shared wire and payload
@@ -80,9 +80,15 @@ planned PKI, billing or OTA bucket can remain `reserved`; lack of objects is not
 evidence that it is waste.
 
 The dedicated OTA E3 requirement remains in force for CDN and signed-GET
-delivery. Dev's approved region is `us-lax`; Staging's is `sg-sin-2`. A newly
-named destination must independently pass endpoint, signed URL, metrics and
-service cutover qualification. A rename cannot upgrade an E1 bucket to E3.
+delivery. Dev's approved region is `us-lax`. On 2026-10-04, the operator approved
+Staging's cross-region target `rtk-cloud-staging-ota-firmware-us-lax` after the
+Singapore E3 endpoint repeatedly underreported verified download bytes. Staging
+compute and runtime media remain in `sg-sin-2`. The prepared Singapore OTA bucket
+remains private and unactivated while Linode support ticket `27525319` is open.
+The new Staging target must independently pass endpoint, signed URL, metrics and
+service cutover qualification before activation; Dev's proof cannot qualify it.
+Any later return to Singapore needs fresh qualification. A rename cannot upgrade
+an E1 bucket to E3.
 Production has no approved destination until ownership and E3 availability are
 verified; preserve its explicit legacy configuration meanwhile.
 
@@ -249,6 +255,25 @@ Limited access keys are scoped per bucket; a key label or prefix is not an acces
 boundary. Custom bucket policies must preserve existing limited-key rules and
 be tested for both allowed and denied operations.
 
+A legacy naming exception permits use of an existing registered resource only.
+It never authorizes recreating a missing noncanonical bucket. Validate the
+canonical name again at creation, and verify both ACL and bucket policy before
+the write canary or successful bootstrap receipt. Fixed-principal policies used
+by Linode's limited keys remain valid; public ACL grants and wildcard allow
+principals fail privacy qualification.
+
+### Browser access to shared artifacts
+
+The registered browser consumers are the Dev and Staging Portal and Cloud Admin:
+`https://frontend.video-cloud-<environment>.realtekconnect.com` and
+`https://admin.video-cloud-<environment>.realtekconnect.com`, with environment
+equal to `dev` or `staging`. Their CORS rules allow `GET` and `HEAD` for signed
+artifact downloads. Use explicit origins and separate environment rule IDs.
+CI and operator uploads do not require browser write methods or wildcard
+origins. A new browser writer or Production origin requires registration of its
+purpose and exact origin before expanding CORS. CORS does not grant object
+access; bucket privacy and scoped credentials remain required.
+
 ## Existing Bucket Migration and Retirement
 
 1. Inventory the live account and exact endpoint. Enumerate current objects,
@@ -286,6 +311,13 @@ The current storage commands cover only their documented operations; this policy
 does not imply that they implement account-wide reconciliation, generic cleanup,
 version-history migration or bucket deletion. Preserve the dated inventory when
 recording a newer observation rather than rewriting historical state.
+
+If the owner explicitly discards the data and the source is already deleted,
+the [reinitialization procedure](storage-credential-lifecycle.md#reinitialize-after-an-authorized-source-deletion)
+can activate a verified empty canonical destination. It records the loss and
+absence of data rollback separately from migration proof. Source absence must
+come from the provider inventory; a failed read with an obsolete key is not
+proof of deletion. Runtime readiness and OTA qualification still apply.
 
 ## Provider References
 

@@ -6,7 +6,7 @@ Classification: source for operator commands and credential handling.
 
 Owner: `rtk_cloud_workspace`.
 
-Last reviewed: 2026-10-02.
+Last reviewed: 2026-10-03.
 
 [Object Storage Policy](object-storage-policy.md) is the sole authority for bucket
 names, object namespaces, retention, creation, migration and retirement rules.
@@ -16,15 +16,15 @@ from naming targets. Runtime intent is in `cloud_env/<environment>/storage.env`;
 shared release intent is in `cloud_deploy/storage/release-artifacts.env`.
 The CLI discovers endpoints from Linode's API.
 
-Names observed on 2026-09-27/28 remain migration sources or explicit compatibility
-exceptions. Dedicated Dev and Staging OTA buckets were privately validated as E3
+Names observed on 2026-09-27/28 are historical inventory, not proof that the
+resources still exist. Dedicated Dev and Staging OTA buckets were privately validated as E3
 on 2026-09-28; workload cutover and each environment's remaining qualification
 are separate gates. A new naming target does not inherit that qualification.
 Production's account ownership and assigned E3 endpoint still require verification.
 
 ## Configuration and credentials
 
-Set `RUNTIME_MEDIA_STORAGE_*` and `RUNTIME_OTA_STORAGE_*` in the environment's `storage.env`. Dedicated OTA requires `RUNTIME_OTA_STORAGE_MODE=dedicated` and a dedicated bucket selected under [the naming policy](object-storage-policy.md#bucket-naming-and-boundaries), distinct from media. Existing configured names are compatibility exceptions until migration passes. Use `RUNTIME_OTA_STORAGE_POLICY=colocated` when the selected Object Storage region matches compute; the OTA region then comes from `LKE_REGION`. When that region has no assigned E3 endpoint, an explicitly reviewed cross-region target uses `RUNTIME_OTA_STORAGE_POLICY=cross-region` and `RUNTIME_OTA_STORAGE_REGION=<provider region>`. The latter must differ from `LKE_REGION`; configuration validation checks the bucket's environment and actual-region suffix. Endpoint selection and Cloud Pulse qualification still use the provider's live inventory. This policy selects where the OTA bucket lives; it does not change the CDN-versus-signed-GET grant rule or enable runtime failover. `legacy-shared` preserves a legacy environment until its dedicated migration passes. Tracked `dedicated` intent alone does not mean its live workload has switched.
+Set `RUNTIME_MEDIA_STORAGE_*` and `RUNTIME_OTA_STORAGE_*` in the environment's `storage.env`. Dedicated OTA requires `RUNTIME_OTA_STORAGE_MODE=dedicated` and a dedicated bucket selected under [the naming policy](object-storage-policy.md#bucket-naming-and-boundaries), distinct from media. Existing configured names are compatibility exceptions until migration passes. Use `RUNTIME_OTA_STORAGE_POLICY=colocated` when the selected Object Storage region matches compute; the OTA region then comes from `LKE_REGION`. When the colocated endpoint cannot pass the required E3 or transfer qualification, an explicitly reviewed cross-region target uses `RUNTIME_OTA_STORAGE_POLICY=cross-region` and `RUNTIME_OTA_STORAGE_REGION=<provider region>`. The latter must differ from `LKE_REGION`; configuration validation checks the bucket's environment and actual-region suffix. Record the approved target and reason in the naming policy. Endpoint selection and Cloud Pulse qualification still use the provider's live inventory. This policy selects where the OTA bucket lives; it does not change the CDN-versus-signed-GET grant rule or enable runtime failover. `legacy-shared` preserves a legacy environment until its dedicated migration passes. Tracked `dedicated` intent alone does not mean its live workload has switched.
 
 When a configured media target has been prepared but the live workloads still use the old bucket, set `RUNTIME_MEDIA_STORAGE_CUTOVER_REQUIRED=true` for that environment. Normal create, upgrade, provision, and test commands then require a matching `storage-cutover.json` receipt before changing workloads. It must match the environment, bucket, region and prefix, contain a valid past cutover time, and bind the unchanged migration proof to a completed private journal with the same cutover ID. A copied or edited receipt alone cannot satisfy the gate. Bootstrap and migration remain available. Keep the gate until the live cutover and rollback check are complete; a tracked bucket name alone does not authorize a deployment switch.
 
@@ -58,7 +58,7 @@ The private plan includes the exact existing lifecycle XML, its hash and read st
 
 Bootstrap, migration and cutover require `--destination-env-file`: an absolute path to a private `0600` candidate profile, separate from the active operator profile. Bootstrap creates the marked candidate and writes the selected purpose's replacement credentials there. Migration and cutover reuse that candidate. Active credentials are promoted only after the workload rollout and service verification pass. Preserve the candidate, source profile and private rollback records through the observation period.
 
-Creation and retention rules are defined in [Object Storage Policy](object-storage-policy.md#registration-and-creation). `--purpose media` is the compatibility default. OTA bootstrap requires an assigned E3 endpoint, including when CDN is configured. It verifies the bucket's reported type and refuses an existing E0/E1/E2 bucket before creating another key. Reusing the same bucket name does not change its endpoint type.
+Creation and retention rules are defined in [Object Storage Policy](object-storage-policy.md#registration-and-creation). `--purpose media` is the compatibility default. OTA bootstrap requires an E3 endpoint type available to the account in the selected region, including when CDN is configured. The [endpoint inventory](https://techdocs.akamai.com/linode-api/reference/get-object-storage-endpoints) can report `s3_endpoint: null` before that type has been assigned; this permits requesting `endpoint_type: E3` for the first bucket. The created bucket must independently report E3 and its own valid assigned endpoint before a key or storage receipt is created. No other regional endpoint fills in a missing bucket endpoint. An existing E0/E1/E2 bucket is refused before creating another key. Reusing the same bucket name does not change its endpoint type. Private access, key validation, transfer qualification and activation gates remain required after creation.
 
 Media migration includes `clips/`, `brands/`, `snapshots/`, `clip-index/`, and historical `ota/` / `firmware/`. OTA migration includes only `ota-billable-v1/`. Both require a preserved `--source-env-file` for migration and cutover, with the source bucket, region, endpoint and credentials. An explicit `LINODE_OBJ_PREFIX` binds the source prefix, including an explicitly empty value. The compatibility behavior when it is absent inventories both legacy unprefixed and environment-prefixed keys. Preserve logical keys; never rewrite a historical `ota/` key into `ota-billable-v1/`.
 
@@ -69,6 +69,78 @@ Enabled/suspended versioning, non-null version history, delete markers and incom
 Media cutover inventories Deployments, StatefulSets, DaemonSets, Jobs, CronJobs, ReplicaSets and Pods, including regular, init and ephemeral containers. It resolves `envFrom` and `valueFrom` Secret/ConfigMap references for source identification, honoring source order and explicit environment overrides. Indirect source settings require a reviewed literal mapping before automatic cutover. Standalone source-bound Pods block cutover; managed source Pods must belong to a selected controller and terminate before completion. It verifies literal source bucket, endpoint, region and prefix before changing matched consumers, including API variants, videostorage, cleaner, verifier and legacy OTA. Unfinished Jobs must be finished or recreated separately; affected CronJobs must already be suspended. Indirect or ambiguous storage settings require explicit reconciliation. Matching consumers outside the selected stack block the switch. Changes use the recorded Kubernetes object identity, resource version and old environment values; concurrent changes stop the operation. Source credential Secrets and old settings are retained privately. Rollout checks and a repeat consumer inventory precede completion.
 
 OTA cutover verifies the existing dedicated OTA Deployment's source, or the live core API source when introducing the dedicated service, before changing workloads. Its bucket, region, endpoint and prefix must match the verified migration. Preserve the separate registration, metrics, routing and legacy drain gates below.
+
+### Reinitialize after an authorized source deletion
+
+When an owner has explicitly authorized discarding the source data and the
+bucket has already been deleted, use `storage-reinitialize`. Do not manufacture
+an empty migration receipt or remove the deployment activation gate.
+
+First bootstrap and verify the canonical destination with an isolated candidate
+profile. Create a private source identity file containing
+`RTK_STORAGE_SOURCE_ENVIRONMENT`, `LINODE_OBJ_BUCKET`, `LINODE_OBJ_REGION`,
+`LINODE_OBJ_ENDPOINT` and an explicit `LINODE_OBJ_PREFIX` (which can be empty
+for a historical root prefix). Deleted source credentials are not required.
+
+```bash
+rtk-cloud deployment storage-reinitialize --environment dev --purpose media \
+  --source-env-file /secure/deleted-media-source.env \
+  --destination-env-file /secure/dev-media-candidate.env \
+  --acknowledge-discarded-source <exact-deleted-bucket> --plan
+# Execute the reviewed plan with the same identities:
+rtk-cloud deployment storage-reinitialize --environment dev --purpose media \
+  --source-env-file /secure/deleted-media-source.env \
+  --destination-env-file /secure/dev-media-candidate.env \
+  --acknowledge-discarded-source <exact-deleted-bucket> --confirm video-cloud-dev
+```
+
+The read-only plan proves source absence through the full provider inventory
+and verifies that the destination has no current objects, versions, delete
+markers or incomplete multipart uploads. It checks privacy, exact scoped
+credentials and the existing consumer mapping. Execution repeats these checks,
+validates a bounded write/read/delete canary, and updates consumers with guarded
+Kubernetes changes while preserving their images. A failed rollout does not
+activate the candidate credentials or produce a completed receipt.
+
+The private journal and receipt explicitly record `operation=reinitialize`,
+the acknowledged discarded source, destination proof and unavailable data
+rollback. The deployment gate accepts this completed proof separately from
+migration evidence. `storage-rollback` refuses a deleted-source journal;
+recovery requires repairing or reconciling the destination, including any new
+writes. Preserve a failed journal before a separately reviewed retry.
+
+`--purpose ota` retains E3 endpoint, registration, metrics/CDN and new
+ready-service gates. It repairs only the storage binding of an existing dedicated
+OTA Deployment and its owned Pods. The existing dedicated command, image and
+registration must be preserved. A selected and observed completed core cutover
+and correct device edge, including the historical artifact route to core, permits
+this repair without repeating the legacy drain. Otherwise the original full
+legacy drain is required, so storage can be repaired before its initial handoff.
+The chosen handoff state, core and ingress identities and configuration are pinned and
+rechecked before the journal and credential promotion; drift stops activation.
+The deleted-source OTA service need not already be Ready, but the repaired service
+must have a Ready endpoint before credentials or its receipt are activated.
+
+This bounded repair does not introduce a service or move core handlers or device
+routes. The full legacy database drain and 48-hour quiet window below remain
+mandatory for those handoffs. Discarding old firmware does not waive that drain or the
+billing and metering gates. There is no operator switch to skip the drain.
+
+With `RUNTIME_OTA_STORAGE_MODE=dedicated`, media reinitialization leaves the
+exact existing OTA Deployment and its owned ReplicaSets and Pods unchanged.
+Media may be activated while OTA qualification is still blocked; qualify and
+activate OTA separately with `--purpose ota`. Unknown or foreign source-bound
+OTA consumers still require an explicit owner mapping. An excluded OTA consumer
+must not reference any destination Secret that the media operation would write.
+
+Keep the excluded OTA controller tree steady during this bounded operation.
+The media plan pins its UIDs, specifications and resolved storage bindings,
+then checks them again before mutation and credential promotion. OTA Pod or
+ReplicaSet replacement, removal, or specification changes stop the operation
+without a completed receipt; preserve its private journal and review a new plan.
+Routine readiness/status changes do not invalidate this snapshot. Candidate and
+source proof hashes are derived from the same private bytes used for parsing;
+profile replacement during provider validation also stops activation.
 
 ### Shared artifact preparation
 
@@ -107,8 +179,10 @@ The live drain query only covers releases whose stored object key begins `ota/`,
 For direct delivery, first perform a controlled private signed GET on the
 actual E3 OTA bucket. After Cloud Pulse has reported that request, export a
 recent UTC interval with the operator command below. Its window is
-minute-aligned and half-open `[start,end)`; the API query ends one second before
-`end` so adjacent intervals cannot count the same minute twice. This command
+minute-aligned and half-open `[start,end)`. The provider query includes `end`,
+so even a one-minute interval sends a full 60 seconds. Before archiving, the
+tool removes points exactly at `end`; adjacent local intervals cannot count
+the same boundary twice. Every other out-of-window point is rejected. This command
 is a **cutover qualification**, with a maximum 24-hour window. It is not a
 complete monthly evidence export.
 
@@ -116,12 +190,42 @@ complete monthly evidence export.
 rtk-cloud deployment storage-metrics-export --environment staging --purpose ota \
   --destination-env-file /secure/staging-ota-candidate.env \
   --window-start '<recent-start-utc>' --window-end '<recent-end-utc>' \
+  --probe-evidence-file /secure/staging-ota-probe.json \
   --recorded-by '<operator-id>' --confirm video-cloud-staging
 ```
 
 Replace the window placeholders with minute-aligned RFC3339 UTC timestamps
 (for example, `YYYY-MM-DDTHH:MM:00Z`) that include the controlled test and satisfy
 the 72-hour freshness limit. Do not reuse a historical qualification window.
+
+Create the private `0600` probe evidence from a completed, verified download.
+It records only successful `GetObject` response bodies (`200` or `206`), whose
+contents matched the fixture. Exclude `ListObjects` bodies, denied or expired
+GETs, and protocol overhead. For a range/resume test, count each verified range
+body once; verify the reconstructed fixture digest. The selected window must
+contain the probe and the reported provider samples, including any collection
+delay. Its identity and window must exactly match the export:
+
+```json
+{
+  "version": 1,
+  "environment": "staging",
+  "bucket": "rtk-cloud-staging-ota-firmware-sg-sin-2",
+  "region": "sg-sin-2",
+  "endpoint": "https://sg-sin-1.linodeobjects.com",
+  "started_at": "<probe-start-UTC>",
+  "completed_at": "<probe-completion-UTC>",
+  "window_start": "<selected-minute-UTC>",
+  "window_end": "<selected-minute-UTC>",
+  "fixture_sha256": "<verified-64-character-lowercase-SHA-256>",
+  "successful_get_requests": 3,
+  "successful_downloaded_bytes": 16777216
+}
+```
+
+The example counts describe an 8 MiB fixture downloaded once through two
+verified ranges and once through a full GET. Use the actual completed probe's
+counts, times and digest. The tool has no arbitrary minimum-byte override.
 
 The command reads `LINODE_TOKEN` from the selected credential profile; the
 example uses the candidate prepared from the environment's operator profile.
@@ -130,17 +234,33 @@ and does not accept an `entity_id` query filter. The token is used only in
 memory to query the selected region for `obj_requests_get` and
 `obj_bytes_downloaded` with one-minute granularity. It requires a complete
 `success` matrix, exact bucket and endpoint labels, in-window timestamps,
-whole nonnegative values and positive totals. Before writing any file, the
+whole nonnegative values, and GET/download totals at least as large as the
+verified successful probe bodies by default. When the operator has authorized
+a small measurement variance, add `--accept-small-probe-shortfall` to this
+export command. It permits a downloaded-byte shortfall only when the actual
+gap is both at most 1,024 bytes and at most one basis point (0.01%) of the
+verified successful body total. The relative limit uses exact integer
+arithmetic, rounded down to whole bytes. GET totals must still cover every
+verified successful request. A positive count of error-response bytes,
+larger partial payload accounting or unrelated traffic does not establish qualification.
+Before writing any file, the
 command selects only the exact OTA bucket and endpoint series and discards the
-rest of the account-wide response. It archives that filtered JSON under
-`runtime/artifacts/ota-metrics/` with a SHA-256 digest and atomically
-writes `runtime/state/ota-metrics-qualification.json`. It never stores the
-service token. The receipt includes the UTC window, bucket hostname, endpoint,
-metric totals, export time and operator identity. Subsequent deployment checks
-reparse the archived series, compare both totals and require the export and
-window to be within 72 hours. The operator must compare the controlled GET's
-time and transferred bytes with this result; an empty interval or unrelated
-traffic is not proof of qualification. The local archive and receipt are
+rest of the account-wide response. It writes the filtered JSON and exact probe
+evidence to separate `0600` files under `runtime/artifacts/ota-metrics/`, using
+exclusive creation and file sync. It then atomically writes
+`runtime/state/ota-metrics-qualification.json`. It never stores the service
+token. The receipt binds both archive SHA-256 values and includes the UTC window, bucket hostname, endpoint,
+metric totals, export time and operator identity. If a small shortfall was
+explicitly accepted, the receipt and command output record the actual gap as
+`accepted_probe_shortfall_bytes`; the provider totals and verified probe remain
+unchanged. A missing or zero field retains strict byte coverage. Subsequent deployment checks
+reparse both archives, check the exact target/window and successful probe
+totals, recompute any accepted gap and require an exact receipt match within
+both limits, compare the metric totals and require the export and window to be
+within 72 hours. Existing receipts without probe evidence must be requalified.
+The operator remains responsible for recording the actual verified bodies and
+isolating the controlled interval; bucket aggregates cannot attribute traffic
+to individual requests. The local archives and receipt are
 operator-held evidence, not independent authentication of provider origin.
 The 2026-09-28 Dev E3 run verified the provider's actual matrix labels and
 response shape against this parser. Requalify each bucket and environment
@@ -152,7 +272,9 @@ provider's monthly invoice. The provider retains these metrics for 93 days;
 retain monthly exports and independent completeness proof before that window
 expires. Inactive minutes can appear as empty-string values in a returned
 series; the qualification sum skips those placeholders and still requires
-positive GET and downloaded-byte totals from the controlled test. Collection
+provider totals that cover the verified successful probe bodies, subject only
+to the explicitly accepted bounded variance above. Large undercounts remain
+blocked. Collection
 delays or gaps need separate investigation before closing a charged month.
 The export follows Akamai's [service token](https://techdocs.akamai.com/linode-api/reference/post-get-token),
 [metrics query](https://techdocs.akamai.com/linode-api/reference/post-read-metric),

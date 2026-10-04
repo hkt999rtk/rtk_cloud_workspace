@@ -540,6 +540,10 @@ func lkeRequireActiveOTADeviceEdgeRoute(env map[string]string) error {
 	if err != nil {
 		return fmt.Errorf("OTA core cutover requires device mTLS ingress: %w", err)
 	}
+	return lkeValidateActiveOTADeviceEdgeRoute(env, ingress)
+}
+
+func lkeValidateActiveOTADeviceEdgeRoute(env map[string]string, ingress map[string]any) error {
 	if !lkeIngressRequiresDeviceMTLS(ingress) {
 		return fmt.Errorf("OTA core cutover requires device mTLS ingress authentication")
 	}

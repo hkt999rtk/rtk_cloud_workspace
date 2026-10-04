@@ -174,17 +174,19 @@ type storageCutoverMutation struct {
 }
 
 type storageCutoverJournal struct {
-	SourceFile         string                   `json:"source_profile"`
-	SourceAccessSHA256 string                   `json:"source_access_sha256"`
-	DestinationFile    string                   `json:"destination_profile"`
-	MigrationSHA256    string                   `json:"migration_receipt_sha256"`
-	Environment        string                   `json:"environment"`
-	Purpose            string                   `json:"purpose"`
-	ClusterUID         string                   `json:"cluster_uid"`
-	ID                 string                   `json:"id"`
-	Status             string                   `json:"status"`
-	Mutations          []storageCutoverMutation `json:"mutations"`
-	SourceSecrets      []map[string]any         `json:"source_secrets,omitempty"`
+	Operation          string                        `json:"operation,omitempty"`
+	Reinitialization   *storageReinitializationProof `json:"reinitialization,omitempty"`
+	SourceFile         string                        `json:"source_profile"`
+	SourceAccessSHA256 string                        `json:"source_access_sha256"`
+	DestinationFile    string                        `json:"destination_profile"`
+	MigrationSHA256    string                        `json:"migration_receipt_sha256"`
+	Environment        string                        `json:"environment"`
+	Purpose            string                        `json:"purpose"`
+	ClusterUID         string                        `json:"cluster_uid"`
+	ID                 string                        `json:"id"`
+	Status             string                        `json:"status"`
+	Mutations          []storageCutoverMutation      `json:"mutations"`
+	SourceSecrets      []map[string]any              `json:"source_secrets,omitempty"`
 }
 
 func storageCutoverMap(value any) map[string]any { m, _ := value.(map[string]any); return m }
@@ -685,6 +687,11 @@ func waitMediaStorageConsumers(journal storageCutoverJournal, stack string, sour
 }
 
 func planMediaStorageConsumers(body []byte, stack string, source provisionObjectStore, target deploymentStorageTarget, access, secret string, afterRollout ...storageCutoverJournal) ([]storageCutoverMutation, []map[string]any, error) {
+	return planStorageConsumers(body, stack, source, target, access, secret, "media", afterRollout...)
+}
+
+func planStorageConsumers(body []byte, stack string, source provisionObjectStore, target deploymentStorageTarget, access, secret, credentialPurpose string, afterRollout ...storageCutoverJournal) ([]storageCutoverMutation, []map[string]any, error) {
+	secretName := "rtk-storage-" + credentialPurpose
 	if access == "" || secret == "" {
 		return nil, nil, errors.New("destination storage credentials are missing")
 	}
@@ -771,7 +778,8 @@ func planMediaStorageConsumers(body []byte, stack string, source provisionObject
 					if kind == "Pod" {
 						if len(afterRollout) > 0 {
 							p := strings.Trim(effective[prefix+"PREFIX"], "/")
-							if !strings.HasPrefix(ns, stack+"-") || strings.TrimRight(effective[prefix+"ENDPOINT"], "/") != strings.TrimRight(source.endpoint, "/") || effective[prefix+"REGION"] != source.region || (source.prefixSet && p != source.prefix) || (!source.prefixSet && p != "" && p != target.Prefix) {
+							endpointMatches := strings.TrimRight(effective[prefix+"ENDPOINT"], "/") == strings.TrimRight(source.endpoint, "/") || (source.reinitializeEmptyEndpoint && effective[prefix+"ENDPOINT"] == "" && !indirect[prefix+"ENDPOINT"])
+							if !strings.HasPrefix(ns, stack+"-") || !endpointMatches || effective[prefix+"REGION"] != source.region || (source.prefixSet && p != source.prefix) || (!source.prefixSet && p != "" && p != target.Prefix) {
 								return nil, nil, fmt.Errorf("source-bound Pod %s/%s storage binding differs from verified migration source", ns, name)
 							}
 						}
@@ -788,11 +796,18 @@ func planMediaStorageConsumers(body []byte, stack string, source provisionObject
 						return nil, nil, fmt.Errorf("source bucket consumer %s/%s is outside stack %s", ns, name, stack)
 					}
 					endpointIndex, ok := names[prefix+"ENDPOINT"]
+					if !ok && source.reinitializeEmptyEndpoint && !indirect[prefix+"ENDPOINT"] {
+						endpointIndex = len(env)
+						names[prefix+"ENDPOINT"] = endpointIndex
+						env = append(env, map[string]any{"name": prefix + "ENDPOINT", "value": ""})
+						ok = true
+					}
 					if !ok {
 						return nil, nil, fmt.Errorf("%s/%s source endpoint is not explicit", ns, name)
 					}
 					liveEndpoint := storageCutoverMap(env[endpointIndex])
-					if liveEndpoint["valueFrom"] != nil || strings.TrimRight(storageCutoverString(liveEndpoint["value"]), "/") != strings.TrimRight(source.endpoint, "/") {
+					endpointValue := storageCutoverString(liveEndpoint["value"])
+					if liveEndpoint["valueFrom"] != nil || (strings.TrimRight(endpointValue, "/") != strings.TrimRight(source.endpoint, "/") && !(source.reinitializeEmptyEndpoint && endpointValue == "")) {
 						return nil, nil, fmt.Errorf("%s/%s bucket matches but endpoint differs", ns, name)
 					}
 					prefixIndex, ok := names[prefix+"PREFIX"]
@@ -851,7 +866,7 @@ func planMediaStorageConsumers(body []byte, stack string, source provisionObject
 					} else if entry["valueFrom"] != nil {
 						return nil, nil, fmt.Errorf("%s/%s has unsupported storage credential reference", ns, name)
 					}
-					env[i] = map[string]any{"name": credential, "valueFrom": map[string]any{"secretKeyRef": map[string]any{"name": "rtk-storage-media", "key": credential}}}
+					env[i] = map[string]any{"name": credential, "valueFrom": map[string]any{"secretKeyRef": map[string]any{"name": secretName, "key": credential}}}
 				}
 				fields[fmt.Sprintf("%s/%s/%d/env", podPath, containerType, index)] = env
 				namespaces[ns] = true
@@ -896,12 +911,12 @@ func planMediaStorageConsumers(body []byte, stack string, source provisionObject
 	}
 	sort.Strings(sortedNamespaces)
 	for _, ns := range sortedNamespaces {
-		desired := map[string]any{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": "rtk-storage-media", "namespace": ns, "labels": map[string]any{"rtk.realtek.com/stack": stack, "rtk.realtek.com/storage-purpose": "media"}}, "type": "Opaque", "data": map[string]any{"AWS_ACCESS_KEY_ID": base64.StdEncoding.EncodeToString([]byte(access)), "AWS_SECRET_ACCESS_KEY": base64.StdEncoding.EncodeToString([]byte(secret))}}
-		live, err := storageCutoverRead("Secret", ns, "rtk-storage-media")
+		desired := map[string]any{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": secretName, "namespace": ns, "labels": map[string]any{"rtk.realtek.com/stack": stack, "rtk.realtek.com/storage-purpose": credentialPurpose}}, "type": "Opaque", "data": map[string]any{"AWS_ACCESS_KEY_ID": base64.StdEncoding.EncodeToString([]byte(access)), "AWS_SECRET_ACCESS_KEY": base64.StdEncoding.EncodeToString([]byte(secret))}}
+		live, err := storageCutoverRead("Secret", ns, secretName)
 		if err != nil {
 			return nil, nil, err
 		}
-		if live != nil && (storageCutoverGet(live, "/metadata/labels/rtk.realtek.com~1stack") != stack || storageCutoverGet(live, "/metadata/labels/rtk.realtek.com~1storage-purpose") != "media") {
+		if live != nil && (storageCutoverGet(live, "/metadata/labels/rtk.realtek.com~1stack") != stack || storageCutoverGet(live, "/metadata/labels/rtk.realtek.com~1storage-purpose") != credentialPurpose) {
 			return nil, nil, errors.New("existing destination Secret is not owned by the selected storage cutover")
 		}
 		m, err := storageCutoverDesiredMutation(desired, live)
@@ -1089,6 +1104,9 @@ func storageCutoverMigrationPath(cfg deploymentConfig, purpose string) string {
 }
 
 func validateStorageRollbackData(cfg deploymentConfig, journal storageCutoverJournal) error {
+	if journal.Operation == "reinitialize" {
+		return errors.New("reinitialized storage has no source data to restore; rollback to the deleted source is prohibited")
+	}
 	attempted := false
 	for _, m := range journal.Mutations {
 		if m.Attempted {

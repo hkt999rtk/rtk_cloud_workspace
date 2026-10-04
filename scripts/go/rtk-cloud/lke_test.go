@@ -8049,7 +8049,7 @@ func TestLKEFrontendSDKDownloadsSecretAndDeployment(t *testing.T) {
 	t.Setenv("SDK_ARTIFACT_ENDPOINT", "https://objects.example.test")
 	t.Setenv("SDK_ARTIFACT_ACCESS_KEY_ID", "read-only-key")
 	t.Setenv("SDK_ARTIFACT_SECRET_ACCESS_KEY", "read-only-secret")
-	env := map[string]string{"CLOUD_STACK_NAME": "sdk-test", "LKE_FRONTEND_IMAGE": "frontend:test"}
+	env := map[string]string{"CLOUD_ENV_NAME": "sdk-test", "CLOUD_STACK_NAME": "video-cloud-sdk-test", "LKE_FRONTEND_IMAGE": "frontend:test"}
 	secret, err := lkeFrontendSDKDownloadsSecretManifest(env)
 	if err != nil {
 		t.Fatal(err)
@@ -8085,7 +8085,7 @@ func TestLKEDeployWorkloadsAppliesFrontendSDKSecretBeforeRuntimeDependencies(t *
 	t.Setenv("SDK_ARTIFACT_ENDPOINT", "https://objects.example.test")
 	t.Setenv("SDK_ARTIFACT_ACCESS_KEY_ID", "read-only-key")
 	t.Setenv("SDK_ARTIFACT_SECRET_ACCESS_KEY", "read-only-secret")
-	env := map[string]string{"CLOUD_STACK_NAME": "sdk-test", "LKE_FRONTEND_IMAGE": "frontend:test"}
+	env := map[string]string{"CLOUD_ENV_NAME": "sdk-test", "CLOUD_STACK_NAME": "video-cloud-sdk-test", "LKE_FRONTEND_IMAGE": "frontend:test"}
 	err := lkeDeployWorkloads(provisionPaths{}, env, provisionOptions{workloads: []string{"frontend"}})
 	if err == nil || !strings.Contains(err.Error(), "required existing K8s secret") {
 		t.Fatalf("deploy error = %v, want later runtime dependency error", err)
@@ -8101,7 +8101,7 @@ func TestLKEDeployWorkloadsAppliesFrontendSDKSecretBeforeRuntimeDependencies(t *
 
 func TestLKEDeployWorkloadsRejectsMissingFrontendSDKCredentials(t *testing.T) {
 	t.Setenv("SDK_DOWNLOADS_ENABLED", "true")
-	env := map[string]string{"CLOUD_STACK_NAME": "sdk-test", "LKE_FRONTEND_IMAGE": "frontend:test"}
+	env := map[string]string{"CLOUD_ENV_NAME": "sdk-test", "CLOUD_STACK_NAME": "video-cloud-sdk-test", "LKE_FRONTEND_IMAGE": "frontend:test"}
 	err := lkeDeployWorkloads(provisionPaths{}, env, provisionOptions{workloads: []string{"frontend"}})
 	if err == nil || !strings.Contains(err.Error(), "SDK_ARTIFACT_BUCKET is required") {
 		t.Fatalf("deploy error = %v, want missing SDK credential error", err)
@@ -8121,7 +8121,7 @@ func TestLKEDeployWorkloadsReturnsFrontendSDKSecretApplyError(t *testing.T) {
 	t.Setenv("SDK_ARTIFACT_ENDPOINT", "https://objects.example.test")
 	t.Setenv("SDK_ARTIFACT_ACCESS_KEY_ID", "read-only-key")
 	t.Setenv("SDK_ARTIFACT_SECRET_ACCESS_KEY", "read-only-secret")
-	env := map[string]string{"CLOUD_STACK_NAME": "sdk-test", "LKE_FRONTEND_IMAGE": "frontend:test"}
+	env := map[string]string{"CLOUD_ENV_NAME": "sdk-test", "CLOUD_STACK_NAME": "video-cloud-sdk-test", "LKE_FRONTEND_IMAGE": "frontend:test"}
 	if err := lkeDeployWorkloads(provisionPaths{}, env, provisionOptions{workloads: []string{"frontend"}}); err == nil {
 		t.Fatal("expected SDK secret apply failure")
 	}

@@ -3,7 +3,6 @@ package storagepolicy
 import (
 	"fmt"
 	"strings"
-	"unicode"
 )
 
 // RetentionDays implements the disposable-prefix defaults from the canonical
@@ -33,13 +32,8 @@ func Expirations(purpose, configuredPrefix string) ([]Expiration, error) {
 	if purpose != "artifacts" && purpose != "media" && purpose != "ota" {
 		return nil, fmt.Errorf("unsupported storage retention purpose %q", purpose)
 	}
-	if strings.HasPrefix(configuredPrefix, "/") || strings.HasSuffix(configuredPrefix, "/") || strings.Contains(configuredPrefix, "//") || strings.ContainsFunc(configuredPrefix, unicode.IsSpace) {
-		return nil, fmt.Errorf("invalid configured storage prefix")
-	}
-	for _, part := range strings.Split(configuredPrefix, "/") {
-		if part == "." || part == ".." {
-			return nil, fmt.Errorf("invalid configured storage prefix")
-		}
+	if err := ValidatePrefix(configuredPrefix); err != nil {
+		return nil, err
 	}
 	var result []Expiration
 	if purpose == "artifacts" {

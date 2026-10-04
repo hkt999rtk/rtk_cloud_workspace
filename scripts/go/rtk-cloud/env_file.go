@@ -10,6 +10,10 @@ func readEnvFile(path string) (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parseEnvFileBytes(data), nil
+}
+
+func parseEnvFileBytes(data []byte) map[string]string {
 	out := map[string]string{}
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
@@ -22,5 +26,5 @@ func readEnvFile(path string) (map[string]string, error) {
 		}
 		out[strings.TrimSpace(key)] = strings.Trim(strings.TrimSpace(value), `"`)
 	}
-	return out, nil
+	return out
 }

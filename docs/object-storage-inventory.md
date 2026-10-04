@@ -4,7 +4,7 @@ Classification: supporting-note; dated observations and migration targets.
 
 Owner: `rtk_cloud_workspace`.
 
-Historical observation dates: 2026-09-27 and 2026-09-28. Naming targets reviewed: 2026-10-02. A separate 2026-10-02 reconciliation appears below.
+Historical observation dates: 2026-09-27 and 2026-09-28. Naming targets reviewed: 2026-10-02. Separate 2026-10-02 and 2026-10-03 reconciliations appear below.
 
 Observed through the Linode bucket API on 2026-09-27 and 2026-09-28 using the Dev and Staging operator accounts. This is a dated snapshot, not proof of current consumers or contents. Verify ownership and key scope before migration or deletion. The opening inventory and qualification notes retain those dates. The later reconciliation section records a separate observation. Naming targets follow [Object Storage Policy](object-storage-policy.md) and are not deployed-state claims.
 
@@ -166,3 +166,200 @@ consumer cutover or retirement, complete the writer fence, exact copy and
 verification, reader/publisher reconciliation, and the relevant environment
 qualification. The Dev and Staging PKI findings above still block runtime
 storage cutover.
+
+## Retirement and artifact reconciliation: 2026-10-03
+
+Kevin explicitly authorized permanent deletion of all 11 noncanonical buckets
+listed in the opening inventory and their contents, accepting service failure.
+Deletion completed at 13:34:23 UTC and each bucket was verified absent. The
+operation removed 7,293 current objects totaling 77,884,691,086 bytes; its private
+inventory also checked versions, delete markers and incomplete uploads. The
+historical preparation and preservation notes above describe earlier state.
+They do not authorize recreating those legacy names or imply retained data.
+
+The retained shared bucket is `rtk-cloud-shared-artifacts-us-sea`, at
+`https://us-sea-1.linodeobjects.com`. Client, Video Cloud, Account Manager, Admin
+and Logger publisher settings now select that bucket. Dev and Staging SDK
+readers use separate read-only keys. Both live frontends have verified
+`pro2-examples/dev/` or `pro2-examples/staging/` in their operator configuration,
+SDK Secret and effective Pod environment. Their existing image digest and
+readiness were verified after reload. Deleted SDK/PRO2 releases and discovery
+objects were not republished; the catalogs remain unavailable until a verified
+release is published again.
+
+A fresh shared-bucket inventory contained three current CI files totaling
+278,229,914 bytes, all beneath `ci/rtk_video_cloud/37127913489/1/linux/`. There
+were no noncurrent versions, non-null version IDs, delete markers, incomplete
+uploads or held evidence. The owner-only ACL and fixed-principal bucket policy
+were retained. The policy's `ci/` 30-day, `tmp/` 7-day, `reports/` 30-day and
+`releases/__rtk_cloud_validation__/` 1-day expiry rules were installed and
+verified by provider readback. Formal releases, SDK/PRO2 handoffs and held
+namespaces have no automatic expiry rule. This is rule installation evidence,
+not a claim that asynchronous expiry has already removed data.
+
+CORS now has separate Dev and Staging browser rules for the exact Admin and
+Portal origins, `GET` and `HEAD`, with provider readback verified. The old
+wildcard-origin browser write rule was removed. CI uploads use server-side
+credentials and do not require that rule.
+
+The runtime media and dedicated OTA destinations still require their own
+bootstrap, empty-destination reinitialization and service qualification. The
+new command records discarded-source proof separately from migration. The
+Dev/Staging credential prechecks still report the PKI failures recorded above;
+Staging Account Manager-to-certissuer app mTLS passed. Scoped frontend and
+artifact operations do not establish full platform acceptance. Production's
+account ownership and dedicated OTA region remain pending separate approval.
+
+## Runtime preparation and OTA verification: 2026-10-03
+
+A later same-day check created and verified these four private canonical
+buckets, with separate environment- and purpose-scoped keys. All passed an
+owner-only ACL/fixed-principal policy check and a write/read/delete canary:
+
+| Environment | Purpose | Bucket | Assigned endpoint |
+| --- | --- | --- | --- |
+| Dev | Media | `rtk-cloud-dev-runtime-us-sea` | `us-sea-1.linodeobjects.com` |
+| Dev | OTA | `rtk-cloud-dev-ota-firmware-us-lax` | `us-lax-4.linodeobjects.com` (E3) |
+| Staging | Media | `rtk-cloud-staging-runtime-sg-sin-2` | `sg-sin-1.linodeobjects.com` |
+| Staging | OTA | `rtk-cloud-staging-ota-firmware-sg-sin-2` | `sg-sin-1.linodeobjects.com` (E3) |
+
+Both OTA provider probes passed private unsigned-request rejection, exact
+`206 Range`, expired-URL rejection, fresh-URL resume with matching SHA-256,
+and a full synthetic 8 MiB download. The first Staging attempt timed out;
+its subsequent complete retry passed. Temporary probe objects were deleted.
+Dev Cloud Pulse for 15:15–15:20 UTC recorded 5 GETs and 16,777,993 downloaded
+bytes, consistent with the controlled full download and resumed download.
+
+Dev OTA reinitialization completed at 15:40:11 UTC. The provider proved the
+acknowledged source bucket absent and the destination empty before activation.
+The legacy database drain found no open campaigns, deployments or unexpired
+grants. Its existing Deployment kept the same image digest, became Ready 1/1,
+and passed private service endpoint verification. Its completed receipt records
+that source data was discarded and data rollback is unavailable.
+
+Dev's expired Service, OpenBao TLS and MQTT Root CRLs were renewed using their
+existing keys through the guarded dev recovery procedure and independently
+reviewed signing requests. Actual consumers acknowledged the replacements;
+the controller refreshed the relevant intermediates. The selected Dev
+credential checker subsequently passed all seven required checks. This does
+not qualify the separate App PKI flow or physical-device OTA acceptance.
+
+Staging's successful 15:30–15:31 UTC OTA probe still lacks matching downloaded
+byte metrics: Cloud Pulse recorded 5 GETs but only 274 bytes in its 15:32
+sample. This repeats the earlier Staging measurement discrepancy. A small
+positive error-response byte count is not the observed firmware transfer;
+no OTA qualification receipt or workload activation is accepted from it.
+The separate broker Device Root policy finding remains unresolved. Storage-only
+operations use a recorded bounded exception; full platform acceptance remains
+unqualified. Production ownership and its OTA region are still undecided.
+
+At 15:52:43 UTC, Dev media reinitialization also completed. The selected
+12 Deployment definitions (media plus OTA) retained their UIDs, image digests
+and desired replica counts; all 11 active replicas were Ready. The intentionally
+scaled-to-zero clip verifier remained at zero. No active selected Deployment or
+Pod still referenced `rtk-video-dev-us-west`. The API restart exposed an
+existing Service intermediate missing from the controller's CRL manifest;
+a controller-only manifest replacement, using the verified current signed CRL
+and the same image, restored authentication before the normal storage command
+completed. Its private journal and successful receipt were retained.
+
+The subsequent full provider inventory contained only the five canonical
+buckets: the four targets above and shared artifacts. All 11 deleted legacy
+buckets remained absent. This account inventory does not establish Production
+ownership or recover any discarded data.
+
+At 16:01:58 UTC, Staging media reinitialization completed independently of
+OTA. All ten selected media Deployment definitions kept their UIDs, images
+and replica counts; all 14 selected replicas were Ready. Account Manager to
+certissuer app mTLS passed immediately before the switch. The OTA Deployment's
+UID and complete specification were identical before and after the media
+operation. Only that unqualified OTA controller and its existing Pod still
+referenced the deleted Staging source. Its credentials were not promoted, and
+no OTA activation or metrics qualification receipt was created.
+
+Read-only diagnosis confirmed that the Staging discrepancy persists with
+one-minute grouping by bucket and endpoint, by bucket alone, and five-minute
+grouping. The same bucket reports the probe's 8,388,608 uploaded bytes and five
+GETs, but only 274 downloaded bytes for its verified 16,777,216-byte successful
+range/full-download traffic. This supports a provider telemetry undercount;
+the provider's internal cause remains unproven. The exact filtered query
+responses and reproduction steps are retained privately for investigation.
+The same three queries were repeated at 16:40:14–16:40:26 UTC, more than an
+hour after the successful probe. Their filtered responses were unchanged;
+elapsed time did not resolve the discrepancy or qualify OTA activation.
+
+The four new media/OTA buckets also received the registered canary fallback:
+one enabled `rtk-storage-canary` lifecycle rule expires only
+`environments/video-cloud-<environment>/__rtk_cloud_validation__/` after one day.
+The initial inventory found all four unversioned and empty, with no existing
+lifecycle, versions, delete markers or incomplete uploads. Exact rule readback
+was confirmed again at 16:11:54–16:11:55 UTC after an interrupted session;
+no write was repeated. No noncurrent-version or multipart expiry was added.
+This records policy installation, not later asynchronous deletion.
+
+## Staging cross-region OTA trial: 2026-10-04
+
+The operator approved an independent trial of
+`rtk-cloud-staging-ota-firmware-us-lax`, while Staging compute and runtime media
+remain in Singapore. The new private bucket uses the provider-assigned
+`us-lax-4.linodeobjects.com` E3 endpoint and a separate Staging-only limited key.
+The empty, unversioned destination passed privacy and write/read/delete canary
+validation. Its one-day lifecycle fallback matches only the registered
+environment validation-canary prefix; firmware has no automatic expiry.
+
+The first download attempt timed out. Two later probes passed unsigned-request
+and expired-URL rejection, exact Range/resume checks, SHA-256 verification and
+full 8 MiB downloads in approximately 13.8 and 11 seconds. Each successful probe
+verified three GetObject bodies totaling 16,777,216 bytes and removed its fixture.
+These provider-client tests do not establish physical-device acceptance.
+
+The first successful probe's 00:14–00:18 UTC export passed with five GETs and
+16,778,005 downloaded bytes. The later 00:36–00:41 UTC confirmation failed the
+same guard: its formal two-metric query reported seven GETs and 16,776,499 bytes,
+below the verified payload. Four independent queries at 00:52 UTC reproduced a
+query-shape discrepancy: three shapes reported five GETs and 16,776,771 bytes;
+the narrow two-metric shape returned the lower byte total and seven GETs.
+Every shape undercounted the repeat probe. The initial passing receipt was
+quarantined with its original archives and the failed reproduction evidence.
+No OTA credential promotion, completed cutover receipt or workload switch was
+accepted. The prepared Singapore OTA bucket also remains unactivated.
+
+Separate environment repairs resolved the fixed Device Root broker mismatch
+and restored the missing historical artifact route to core. Fresh mandatory
+credential and non-issuing Account Manager-to-certissuer mTLS checks passed.
+The broker retained its UID, image digests and persistent volumes; the ingress
+retained its identity, TLS, annotations and existing routes. Tracked Staging
+OTA flags now match its already completed core and general device-edge handoff.
+Storage-only repair preserves that handoff with pinned configuration; actual
+core or edge transitions retain the full legacy drain and 48-hour quiet window.
+At that trial, OTA activation remained blocked by metering qualification.
+
+## Staging OTA activation: 2026-10-04
+
+The operator subsequently accepted the small us-lax measurement difference.
+At 03:51 UTC, an explicit opt-in qualification accepted the observed 717-byte
+shortfall against 16,777,216 verified download bytes (approximately 0.0043%).
+The guarded exception requires both a maximum 1,024-byte difference and a
+maximum 0.01% difference. Default qualification remains strict. The receipt
+retains the provider's original seven GETs and 16,776,499 downloaded bytes,
+the exact accepted difference, and the hashed private probe evidence. This
+qualifies the controlled probe window; it does not waive monthly billing
+reconciliation. The earlier passing receipt remains quarantined.
+
+The selected environment passed all 11 mandatory credential checks,
+non-issuing Account Manager-to-certissuer app mTLS, and the capacity preflight
+(47 current and projected services against a limit of 70). The complete
+planned Deployment passed server dry-run. The actual legacy drain passed
+with no open campaigns, deployments or unexpired grants; its last activity
+was more than 48 hours old. The activation used that full drain gate.
+
+At 03:58:47 UTC, the maintained storage reinitialization command completed
+the Staging OTA switch to `rtk-cloud-staging-ota-firmware-us-lax` at
+`https://us-lax-4.linodeobjects.com`. The existing OTA Deployment retained
+its UID, image digest, desired replica count and environment prefix. Only
+its bucket, endpoint, region and two dedicated credential references changed.
+It became Ready 1/1 and passed private service endpoint verification. The
+completed receipt records that the legacy source was already deleted, source
+data was discarded, and data rollback is unavailable. Staging compute and
+runtime media remain in Singapore. The canonical Singapore OTA candidate is
+still unactivated; Production remains outside this operation.

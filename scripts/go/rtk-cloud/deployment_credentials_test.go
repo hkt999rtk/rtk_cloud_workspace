@@ -96,10 +96,11 @@ func TestDeploymentCredentialProfileErrorAndEnvironmentBranches(t *testing.T) {
 
 }
 
-func TestDeploymentCredentialCheckerCreatesMissingObjectStorageBucketAndRevalidates(t *testing.T) {
+func TestDeploymentCredentialCheckerRejectsRemoteBucketCreationWithoutResolvedStorageProfile(t *testing.T) {
 	clearDeploymentCredentialEnvironment(t)
 	var bucketExists atomic.Bool
-	server := newDeploymentCredentialTestServer(t, deploymentCredentialTestServerOptions{bucketExists: &bucketExists})
+	var bucketCreates atomic.Int32
+	server := newDeploymentCredentialTestServer(t, deploymentCredentialTestServerOptions{bucketExists: &bucketExists, bucketCreates: &bucketCreates})
 	defer server.Close()
 	envFile := writeDeploymentCredentialEnv(t, server.URL, "valid-ghcr-token")
 	var output bytes.Buffer
@@ -111,14 +112,14 @@ func TestDeploymentCredentialCheckerCreatesMissingObjectStorageBucketAndRevalida
 		ghcrRegistryRoot: server.URL,
 		goDaddyAPIRoot:   server.URL,
 	}
-	if err := checker.checkWithOptions(testDeploymentCredentialConfig(), envFile, deploymentCredentialCheckOptions{createMissingObjectStorageBucket: true}); err != nil {
-		t.Fatal(err)
+	if err := checker.checkWithOptions(testDeploymentCredentialConfig(), envFile, deploymentCredentialCheckOptions{createMissingObjectStorageBucket: true}); err == nil {
+		t.Fatal("remote legacy bucket creation unexpectedly passed")
 	}
-	if !bucketExists.Load() {
-		t.Fatal("missing Object Storage bucket was not created")
+	if bucketExists.Load() || bucketCreates.Load() != 0 {
+		t.Fatal("remote legacy bucket creation sent a mutation")
 	}
-	if !strings.Contains(output.String(), "configured bucket created with Object Storage access key; signed read access revalidated") ||
-		!strings.Contains(output.String(), "overall: PASS (10 checks)") {
+	if !strings.Contains(output.String(), "remote bucket creation requires a resolved storage profile") ||
+		!strings.Contains(output.String(), "overall: FAIL") {
 		t.Fatalf("unexpected bootstrap output:\n%s", output.String())
 	}
 }
@@ -508,6 +509,7 @@ type deploymentCredentialTestServerOptions struct {
 	rejectGoDaddyMutation      bool
 	requests                   *atomic.Int32
 	bucketExists               *atomic.Bool
+	bucketCreates              *atomic.Int32
 	rejectOriginalObjectKey    bool
 	rejectReplacementObjectKey bool
 }
@@ -611,6 +613,9 @@ func newDeploymentCredentialTestServer(t *testing.T, options deploymentCredentia
 			}
 			if options.bucketExists != nil {
 				if r.Method == http.MethodPut {
+					if options.bucketCreates != nil {
+						options.bucketCreates.Add(1)
+					}
 					options.bucketExists.Store(true)
 					w.WriteHeader(http.StatusOK)
 					return
