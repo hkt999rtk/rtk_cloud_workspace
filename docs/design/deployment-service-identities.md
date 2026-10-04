@@ -1,0 +1,59 @@
+# Deployment service identities
+
+Status: accepted design (operator decisions of 2026-09-29). The operator-authority
+path is deployed and verified in dev; staging and production remain separate
+cutovers. The identity enrollment steps below remain gated by each environment's
+issuer, bootstrap session and workload evidence.
+
+Owner: rtk_cloud_workspace. Authority: `platform_pki.md` owns CA hierarchy and
+runtime issuance; this document owns deployment credential persistence and reuse.
+
+## Operator authority and implementation boundary
+
+The selected environment's operator is the one human authority for initial PKI
+creation and subsequent Service issuer or identity updates. The operator reads
+the same environment configuration and SecretStore on every deployment, reviews
+the exact issuer request digest and subject/DNS policy, invokes the configured
+signer, and records the result. A separate `pki_admin` account or second human
+signature is not part of this design. A dedicated PKI WebUI may remain for
+inspection and operations, but its location does not change who has authority.
+
+Record `PKI_OPERATOR_USER_ID` and `PKI_OPERATOR_SIGNER_REF` as separate files in
+the selected environment's `operator/env/` SecretStore directory. Set the same
+user ID on Account Manager and both values on the PKI controller. Pin both in
+`pki/services/issuer.json` as `operator_user_id` and `signer_reference` before
+enrolling a Service leaf. Deployment checks their exact match and rejects a
+partial cutover or an identity copied from another environment. Changing the
+operator or signer is an explicit handover, not a routine deployment update.
+
+Dev completed the operator-authority cutover on 2026-09-29. The configured
+Platform Admin explicitly authorized the preserved OTA Service intermediate
+operation, then provisioned, imported and activated it through the authenticated
+Account Manager proxy. The same operator ID and signer reference are pinned in the
+dev SecretStore and live controller; Account Manager enforces that user on mutating
+PKI calls. The append-only database authorization and audit rows, and the
+searchable secret-free Loki event, were verified independently. This confirms the
+operator path in dev, not enrollment of the later OTA workload identities. A
+`requested` operation in another environment stays pending until that environment
+is configured and reviewed; no database edit, fabricated approval or borrowed
+account may substitute for this path. See [PKI operator authority tests](pki-operator-authority-test-plan.md).
+
+## Persistence and release qualification
+
+Use the selected environment SecretStore at
+`~/.config/rtk_cloud/<environment>/`, with private directories 0700 and files
+0600. Reuse the same registered Root, issuer bindings and workload-owned managed
+identity state on subsequent deployments. An operator machine change does not
+create a new environment. Do not copy a workload private key to another owner or
+substitute an ephemeral bootstrap identity for an admitted runtime caller.
+
+Accepted policy, deployed implementation and release source are separate
+checks. A historical Dev authorization receipt does not prove that a newly
+selected release retains the operator route. Qualify the Account Manager proxy
+and PKI controller candidate together, including exact operator/signer bindings,
+append-only authorization/audit, digest and policy checks, and genuine trust
+consumer acknowledgments. Other environments require their own cutover.
+
+The [Dev PKI runbook](../product-services-dev-pki.md) describes the public
+CertIssuer repair and the image-only update boundary for an existing managed
+PKI stack. Initial enrollment and auxiliary PKI upgrades are separate operations.

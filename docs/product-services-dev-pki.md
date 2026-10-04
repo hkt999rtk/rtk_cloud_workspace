@@ -35,10 +35,11 @@ the ExternalName HTTP bridge for this path.
 For an internal-only serving certificate or immutable issuer DNS policy,
 prepare a successor Service intermediate under the current Root. Preserve all
 current server names and Service subjects and add only the required public
-hostname. Use the authenticated registry request, independent `pki_admin`
-approval, provision and consumer-acknowledged activation procedures. The
-request's creator cannot approve it; never edit registry policy or fabricate
-approval records through SQL. Install the successor's signed bundle and CRL
+hostname. In Dev configured-operator mode, the same environment operator may
+request, review, authorize and execute the exact operation through the normal
+`/operations/{id}/authorize` route; a second `pki_admin` is not required. Compare
+the configured operator/signer bindings and server-returned request digest.
+Never edit registry policy or fabricate authorization records through SQL. Install the successor's signed bundle and CRL
 evidence for every affected consumer before identity adoption.
 
 After that policy is approved and usable, reconcile the managed server identity
@@ -216,3 +217,40 @@ valid ConfigMap alone is insufficient. On any failure, leave Product writes
 and registrar flags disabled, keep audit/issuer/Secret history, and restore
 the previously recorded workload images/settings without disabling strict
 grant enforcement.
+
+## Public CertIssuer configuration and rollout boundary
+
+The maintained ingress renderer now places `certissuer-public-mtls` in the
+Video Cloud namespace, targets `certissuer:9443` directly and sets SSL
+passthrough. The Helm controller configuration persists
+`controller.extraArgs.enable-ssl-passthrough=true`. Its Service-domain server
+identity supplies public TLS; the renderer does not attach the edge Web PKI
+Secret to this route. Other public HTTP routes retain their bridges.
+
+For a changed server SAN policy under the same Root, enroll into a distinct
+private state path rather than changing or reseeding existing state. The
+`serviceidentity-bootstrap server-bootstrap` owner mode reads only the selected
+workload's current managed client, verifies registry admission and keeps the
+new server key on that workload's own PVC. Its owner settings are documented in
+the Video Cloud PKI runbook. Retain the fixed request ID and pending state on
+an uncertain result; inspect the public owner helper and registry receipt before
+retrying. Do not run it again after successful installation.
+
+Before adoption, add the successor to every affected Service CRL manifest,
+preserving old issuers and each owner's existing private state parent. Let the
+actual consumers fetch and acknowledge signed CRLs. Check the served leaf and
+normal internal path, then hand off the conflicting legacy ingress with fresh
+UID/resource-version preconditions and a saved restore object. Never disable
+the admission webhook to allow duplicate hostname/path ownership.
+
+Readiness qualification does not authorize rebuilding the existing managed PKI
+workloads with the legacy whole-Deployment renderer. For the six core image
+update, the deployment handoff must preserve the actual managed environment,
+sidecar images, Secret/ConfigMap bindings, identity state and PVCs, applying only
+the selected image changes. Any requested configuration/schema change needs
+its own reviewed migration.
+
+The public CertIssuer listener requires an admitted Service client before HTTP.
+TLS passthrough cannot inject Nginx crawler headers or serve its robots/sitemap
+snippets; anonymous crawlers fail the workload TLS handshake. Other private
+HTTP-terminating ingress keeps its existing noindex/robots policy.

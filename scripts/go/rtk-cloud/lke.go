@@ -768,6 +768,7 @@ func lkeInstallIngressNginx(env map[string]string) error {
 		"--set", "controller.service.targetPorts.https=https",
 		"--set", "controller.service.nodePorts.https=" + strconv.Itoa(lkeIngressHTTPSNodePort(env)),
 		"--set", "controller.service.enableHttp=false",
+		"--set", "controller.extraArgs.enable-ssl-passthrough=true",
 		"--set", "controller.allowSnippetAnnotations=true",
 		"--set", "controller.config.annotations-risk-level=Critical",
 		"--set-json", lkeIngressNoIndexHelmValue(env),
@@ -881,6 +882,9 @@ func lkePublicHTTPSBridgeServiceManifests(env map[string]string, routes []lkePub
 	manifests := []string{}
 	seen := map[string]bool{}
 	for _, route := range routes {
+		if lkeCertIssuerPassthroughRoute(env, route) {
+			continue
+		}
 		name := lkePublicHTTPSBridgeServiceName(env, route)
 		if seen[name] {
 			continue
@@ -1306,7 +1310,12 @@ func lkePublicHTTPSIngressManifests(env map[string]string, routes []lkePublicHTT
 	deviceMTLSRoutes := []lkePublicHTTPSRoute{}
 	factoryMTLSRoutes := []lkePublicHTTPSRoute{}
 	httpsRoutes := []lkePublicHTTPSRoute{}
+	certIssuerRoutes := []lkePublicHTTPSRoute{}
 	for _, route := range routes {
+		if lkeCertIssuerPassthroughRoute(env, route) {
+			certIssuerRoutes = append(certIssuerRoutes, route)
+			continue
+		}
 		if route.Host == env["VIDEO_CLOUD_DOMAIN"] && route.Path == "" && route.Service == "video-cloud-api" && route.Namespace == lkeNamespaceName(env, "video-cloud") {
 			uploadRoute := route
 			uploadRoute.Path = "/v1/device/ota/internal/upload/"
@@ -1343,8 +1352,11 @@ func lkePublicHTTPSIngressManifests(env map[string]string, routes []lkePublicHTT
 	if len(factoryMTLSRoutes) > 0 {
 		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-factory-mtls", factoryMTLSRoutes, "", lkePrivateIngressAnnotations(env, lkeFactoryMTLSIngressAnnotations(env))))
 	}
+	for _, route := range certIssuerRoutes {
+		manifests = append(manifests, lkeCertIssuerPassthroughIngressManifest(env, route))
+	}
 	if len(httpsRoutes) > 0 {
-		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-certissuer", httpsRoutes, "HTTPS", lkePrivateIngressAnnotations(env, "")))
+		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-https", httpsRoutes, "HTTPS", lkePrivateIngressAnnotations(env, "")))
 	}
 	if len(otaUploadRoutes) > 0 {
 		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-ota-upload", otaUploadRoutes, "", lkePrivateIngressAnnotations(env, "")))

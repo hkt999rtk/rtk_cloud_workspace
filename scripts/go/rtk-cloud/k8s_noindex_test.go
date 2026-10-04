@@ -43,6 +43,16 @@ func TestLKECrawlerPolicy(t *testing.T) {
 			}
 			continue
 		}
+		if strings.Contains(manifest, "name: certissuer-public-mtls\n") {
+			// This listener authenticates the original TLS client at CertIssuer.
+			// Nginx cannot inspect HTTP or inject crawler headers into passthrough.
+			if !strings.Contains(manifest, "ssl-passthrough: \"true\"") ||
+				!strings.Contains(manifest, "namespace: "+lkeNamespaceName(env, "video-cloud")) ||
+				strings.Contains(manifest, "secretName:") || strings.Contains(manifest, "snippet:") {
+				t.Fatal("CertIssuer must retain its direct authenticated TLS listener")
+			}
+			continue
+		}
 		for _, want := range []string{
 			"nginx.ingress.kubernetes.io/server-snippet: |",
 			"nginx.ingress.kubernetes.io/configuration-snippet: |",
