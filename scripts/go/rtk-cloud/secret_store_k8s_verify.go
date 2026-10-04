@@ -306,6 +306,9 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 			failures = append(failures, "live Video Cloud deployment metadata is invalid")
 		} else {
 			serviceClientController, serviceClientRegistryConfigured = serviceClientRegistryInputs(deployments)
+			if err := verifyCertIssuerPublicIngress(kubeconfig, stack, deployments, store.checkRuntime); err != nil {
+				failures = append(failures, err.Error())
+			}
 			if err := verifyCertIssuerBootstrapConfiguration(kubeconfig, namespace, deployments, store.checkRuntime); err != nil {
 				failures = append(failures, err.Error())
 			}
