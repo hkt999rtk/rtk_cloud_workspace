@@ -332,4 +332,34 @@ retained its identity, TLS, annotations and existing routes. Tracked Staging
 OTA flags now match its already completed core and general device-edge handoff.
 Storage-only repair preserves that handoff with pinned configuration; actual
 core or edge transitions retain the full legacy drain and 48-hour quiet window.
-The current OTA activation blocker is metering qualification.
+At that trial, OTA activation remained blocked by metering qualification.
+
+## Staging OTA activation: 2026-10-04
+
+The operator subsequently accepted the small us-lax measurement difference.
+At 03:51 UTC, an explicit opt-in qualification accepted the observed 717-byte
+shortfall against 16,777,216 verified download bytes (approximately 0.0043%).
+The guarded exception requires both a maximum 1,024-byte difference and a
+maximum 0.01% difference. Default qualification remains strict. The receipt
+retains the provider's original seven GETs and 16,776,499 downloaded bytes,
+the exact accepted difference, and the hashed private probe evidence. This
+qualifies the controlled probe window; it does not waive monthly billing
+reconciliation. The earlier passing receipt remains quarantined.
+
+The selected environment passed all 11 mandatory credential checks,
+non-issuing Account Manager-to-certissuer app mTLS, and the capacity preflight
+(47 current and projected services against a limit of 70). The complete
+planned Deployment passed server dry-run. The actual legacy drain passed
+with no open campaigns, deployments or unexpired grants; its last activity
+was more than 48 hours old. The activation used that full drain gate.
+
+At 03:58:47 UTC, the maintained storage reinitialization command completed
+the Staging OTA switch to `rtk-cloud-staging-ota-firmware-us-lax` at
+`https://us-lax-4.linodeobjects.com`. The existing OTA Deployment retained
+its UID, image digest, desired replica count and environment prefix. Only
+its bucket, endpoint, region and two dedicated credential references changed.
+It became Ready 1/1 and passed private service endpoint verification. The
+completed receipt records that the legacy source was already deleted, source
+data was discarded, and data rollback is unavailable. Staging compute and
+runtime media remain in Singapore. The canonical Singapore OTA candidate is
+still unactivated; Production remains outside this operation.
