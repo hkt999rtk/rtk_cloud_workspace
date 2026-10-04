@@ -296,3 +296,40 @@ lifecycle, versions, delete markers or incomplete uploads. Exact rule readback
 was confirmed again at 16:11:54–16:11:55 UTC after an interrupted session;
 no write was repeated. No noncurrent-version or multipart expiry was added.
 This records policy installation, not later asynchronous deletion.
+
+## Staging cross-region OTA trial: 2026-10-04
+
+The operator approved an independent trial of
+`rtk-cloud-staging-ota-firmware-us-lax`, while Staging compute and runtime media
+remain in Singapore. The new private bucket uses the provider-assigned
+`us-lax-4.linodeobjects.com` E3 endpoint and a separate Staging-only limited key.
+The empty, unversioned destination passed privacy and write/read/delete canary
+validation. Its one-day lifecycle fallback matches only the registered
+environment validation-canary prefix; firmware has no automatic expiry.
+
+The first download attempt timed out. Two later probes passed unsigned-request
+and expired-URL rejection, exact Range/resume checks, SHA-256 verification and
+full 8 MiB downloads in approximately 13.8 and 11 seconds. Each successful probe
+verified three GetObject bodies totaling 16,777,216 bytes and removed its fixture.
+These provider-client tests do not establish physical-device acceptance.
+
+The first successful probe's 00:14–00:18 UTC export passed with five GETs and
+16,778,005 downloaded bytes. The later 00:36–00:41 UTC confirmation failed the
+same guard: its formal two-metric query reported seven GETs and 16,776,499 bytes,
+below the verified payload. Four independent queries at 00:52 UTC reproduced a
+query-shape discrepancy: three shapes reported five GETs and 16,776,771 bytes;
+the narrow two-metric shape returned the lower byte total and seven GETs.
+Every shape undercounted the repeat probe. The initial passing receipt was
+quarantined with its original archives and the failed reproduction evidence.
+No OTA credential promotion, completed cutover receipt or workload switch was
+accepted. The prepared Singapore OTA bucket also remains unactivated.
+
+Separate environment repairs resolved the fixed Device Root broker mismatch
+and restored the missing historical artifact route to core. Fresh mandatory
+credential and non-issuing Account Manager-to-certissuer mTLS checks passed.
+The broker retained its UID, image digests and persistent volumes; the ingress
+retained its identity, TLS, annotations and existing routes. Tracked Staging
+OTA flags now match its already completed core and general device-edge handoff.
+Storage-only repair preserves that handoff with pinned configuration; actual
+core or edge transitions retain the full legacy drain and 48-hour quiet window.
+The current OTA activation blocker is metering qualification.
