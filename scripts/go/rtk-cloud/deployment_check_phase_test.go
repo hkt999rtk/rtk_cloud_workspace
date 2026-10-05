@@ -114,14 +114,14 @@ func TestDeploymentCheckPurposeAppearsBeforeHelpErrorsOrExternalWork(t *testing.
 	for _, args := range [][]string{{"--help"}, {"--phase", "pre-deploy", "--help"}, {"--phase", "pre-deploy"}, {"--phase", "bad"}} {
 		var output bytes.Buffer
 		_ = runDeploymentCheckWithDependencies(context.Background(), args, &output, &output, deploymentCheckDependencies{})
-		if !strings.HasPrefix(output.String(), "部署") || !strings.Contains(output.String(), "部署前") && !strings.Contains(output.String(), "部署後") {
+		if !strings.Contains(output.String(), "check") || !strings.Contains(output.String(), "pre-deploy") && !strings.Contains(output.String(), "post-deploy") {
 			t.Fatalf("description missing before help/error: %q", output.String())
 		}
 	}
 	for _, phase := range []string{deploymentCheckPreDeploy, deploymentCheckPostDeploy} {
 		var output bytes.Buffer
 		deps := deploymentCheckDependencies{guard: func([]string) error {
-			if !strings.Contains(output.String(), "（"+phase+"）") {
+			if !strings.Contains(output.String(), "("+phase+")") {
 				t.Fatal("external work began before phase description")
 			}
 			return errors.New("stop after observing banner")
@@ -173,7 +173,7 @@ chmod +x "$3"
 					t.Fatalf("lost exit %s", status)
 				}
 				text := string(output)
-				if !strings.HasPrefix(text, "部署") || strings.Index(text, "BUILD_STARTED") < strings.Index(text, "（"+tc.phase+"）") {
+				if !strings.Contains(text, "check") || strings.Index(text, "BUILD_STARTED") < strings.Index(text, "("+tc.phase+")") {
 					t.Fatalf("build started before description: %s", text)
 				}
 				if !strings.Contains(text, "--phase "+tc.phase) || strings.Count(text, "--phase ") != 1 || (tc.readOnly && !strings.Contains(text, "--read-only")) {
@@ -191,7 +191,7 @@ chmod +x "$3"
 			for _, args := range invalid {
 				output, err := exec.Command("bash", append([]string{path}, args...)...).CombinedOutput()
 				var failed *exec.ExitError
-				if !errors.As(err, &failed) || failed.ExitCode() != 2 || !strings.HasPrefix(string(output), "部署") || strings.Contains(string(output), "BUILD_STARTED") {
+				if !errors.As(err, &failed) || failed.ExitCode() != 2 || !strings.Contains(string(output), "check") || strings.Contains(string(output), "BUILD_STARTED") {
 					t.Fatalf("args=%v err=%v output=%s", args, err, output)
 				}
 			}

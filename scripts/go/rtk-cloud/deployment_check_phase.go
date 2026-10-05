@@ -45,13 +45,13 @@ func deploymentCheckBannerPhase(args []string) string {
 func printDeploymentCheckPurpose(out io.Writer, phase string) {
 	switch phase {
 	case deploymentCheckPreDeploy:
-		fmt.Fprintln(out, "部署前可部署性檢查（pre-deploy）：確認完整 create／upgrade 的目標設定、工具與 SecretStore 前置條件；請在整個環境部署前使用。")
-		fmt.Fprintln(out, "此檢查唯讀，未驗證寫入權限；舊部署的健康問題不作為新部署阻擋條件，但不可安全遷移的路由會阻擋。不代表目前服務健康；--fast 只減少驗證深度。")
+		fmt.Fprintln(out, "Pre-deploy deployability check (pre-deploy): Validate desired configuration, tools, and SecretStore prerequisites for a full create or upgrade. Run before deploying the whole environment.")
+		fmt.Fprintln(out, "Read-only; write permissions are unverified. Existing deployment health issues do not block a new deployment, but unsafe route migrations do. A pass does not establish current service health. --fast only reduces validation depth.")
 	case deploymentCheckPostDeploy:
-		fmt.Fprintln(out, "部署後環境健康檢查（post-deploy）：驗證已部署環境的 Secret 綁定、PKI 與公開入口；請在部署後或排查現況時使用。")
-		fmt.Fprintln(out, "不作為部署前可部署性判定，也不取代完整應用驗收。預設 provider 驗證可能使用暫時性 DNS／storage 寫入；唯讀請用 --read-only，--fast 只減少驗證深度。")
+		fmt.Fprintln(out, "Post-deploy environment health check (post-deploy): Verify deployed Secret bindings, PKI, and public ingress. Run after deployment or when diagnosing the current environment.")
+		fmt.Fprintln(out, "This checks current health, not pre-deploy deployability or full application acceptance. Default provider validation may use temporary DNS or storage writes. Use --read-only for read-only checks; --fast only reduces validation depth.")
 	default:
-		fmt.Fprintln(out, "部署環境檢查：--phase pre-deploy 用於部署前可部署性；--phase post-deploy 用於部署後環境健康（預設）。")
+		fmt.Fprintln(out, "Deployment environment check: Use --phase pre-deploy for deployability, or --phase post-deploy for current environment health (default).")
 	}
 }
 
