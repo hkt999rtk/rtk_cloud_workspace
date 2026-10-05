@@ -30,6 +30,19 @@ func TestDeploymentCertIssuerReadinessUsesDerivedEnvironmentAndDoesNotMutate(t *
 	if err := replaceLKECertIssuerMaterial(filepath.Join(store.Root, "pki", "certissuer"), material); err != nil {
 		t.Fatal(err)
 	}
+	// A whole-environment static render repairs this old Service topology.
+	// Pre-deploy must qualify the intended render without treating it as health.
+	var service certIssuerIngressObject
+	if err := json.Unmarshal([]byte(os.Getenv("FAKE_CERTISSUER_SERVICE_JSON")), &service); err != nil {
+		t.Fatal(err)
+	}
+	port := certIssuerObjectMap(certIssuerObjectList(certIssuerObjectMap(service["spec"])["ports"])[0])
+	port["targetPort"] = 4040
+	serviceJSON, err := json.Marshal(service)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAKE_CERTISSUER_SERVICE_JSON", string(serviceJSON))
 	cfg := deploymentConfig{Adapter: "lke", Environment: "staging", RuntimeRoot: t.TempDir(), Workspace: t.TempDir(), Values: map[string]string{"CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM": "ed25519"}}
 	var output bytes.Buffer
 	if err := deploymentCertIssuerIngressReadiness(context.Background(), cfg, &output); err != nil {
@@ -43,6 +56,10 @@ func TestDeploymentCertIssuerReadinessUsesDerivedEnvironmentAndDoesNotMutate(t *
 	}
 	if _, err := os.Stat(certIssuerIngressJournalDir(provisionPaths{EnvRoot: cfg.RuntimeRoot})); !os.IsNotExist(err) {
 		t.Fatalf("read-only planning wrote a journal: %v", err)
+	}
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "VIDEO_CLOUD_CERTISSUER_DOMAIN": "certissuer.video-cloud-staging.realtekconnect.com"}
+	if _, err := lkePlanCertIssuerIngressMigration(provisionPaths{EnvRoot: cfg.RuntimeRoot}, env); err == nil {
+		t.Fatal("route-only planning ignored the currently incorrect Service topology")
 	}
 }
 

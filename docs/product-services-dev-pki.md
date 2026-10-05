@@ -285,6 +285,18 @@ now reject this unsupported replacement before dependency resource mutations,
 including when CertIssuer has no available replica. Reviewed targeted
 `provision --deploy --workloads ...` and route-only `provision --dns` remain
 distinct operations; they do not authorize whole-Deployment PKI reconstruction.
+The compatible static-renderer path can prequalify owned mutable Service/listener
+repairs while preserving the exact persisted identity. That exception does not
+apply to this managed Dev PKI installation: its targeted/DNS route operations
+retain the strict installed-topology and serving-identity gates, as do every
+actual route switch and post-deploy qualification. Selecting an environment
+also retains the deployment's chosen/persisted cluster ID; failed lookup or
+incomplete label inventory must not be treated as permission to bootstrap a
+replacement cluster or identity.
+A surviving `certissuer-runtime` Secret also prevents treating a lost CertIssuer
+Deployment as fresh bootstrap. Its metadata UID is sufficient for this fence;
+restore the identity owner source without exporting private Secret data or
+minting a replacement CA.
 
 The public CertIssuer listener requires an admitted Service client before HTTP.
 TLS passthrough cannot inject Nginx crawler headers or serve its robots/sitemap

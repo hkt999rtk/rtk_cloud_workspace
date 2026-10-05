@@ -7034,6 +7034,14 @@ if [[ "$*" == *"get deployment certissuer --ignore-not-found=true -o json"* ]]; 
   printf '%s\n' "$FAKE_CERTISSUER_DEPLOYMENT_JSON"
   exit 0
 fi
+if [[ "$*" == *"get secret certissuer-runtime --ignore-not-found=true -o jsonpath={.metadata.uid}"* ]]; then
+  if [[ -n "${FAKE_CERTISSUER_RUNTIME_SECRET_UID:-}" ]]; then
+    printf '%s' "$FAKE_CERTISSUER_RUNTIME_SECRET_UID"
+  elif [[ "${FAKE_CERTISSUER_INITIAL_ABSENT:-0}" != 1 || -f "$FAKE_CERTISSUER_INSTALLED_PATH" || -f "$FAKE_CERTISSUER_CRT_PATH" ]]; then
+    printf 'fixture-certissuer-runtime'
+  fi
+  exit 0
+fi
 if [[ "$*" == *"get secret certissuer-runtime -o jsonpath="* ]]; then
   if [[ "$*" == *"client-ca"* ]]; then
     if [[ -f "$FAKE_CERTISSUER_CA_PATH" ]]; then cat "$FAKE_CERTISSUER_CA_PATH"; else printf '%s' "$FAKE_CERTISSUER_PUBLIC_CA"; fi
@@ -7505,6 +7513,9 @@ func fakeKubectlCertIssuerServing(t *testing.T) lkeCertIssuerMaterial {
 		if err := yaml.Unmarshal([]byte(fixture.manifest), &object); err != nil {
 			t.Fatal(err)
 		}
+		metadata := object["metadata"].(map[string]any)
+		metadata["uid"] = "fixture-certissuer-" + fixture.variable
+		metadata["resourceVersion"] = "1"
 		if fixture.variable == "FAKE_CERTISSUER_SERVICE_JSON" {
 			object["spec"].(map[string]any)["clusterIP"] = "10.0.0.5"
 		} else {

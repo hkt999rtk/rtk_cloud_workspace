@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -68,35 +69,110 @@ func validateDeploymentPreflightDNS(ctx context.Context, cfg deploymentConfig) e
 
 // Preflight only discovers the existing cluster. It never creates resources,
 // writes kubeconfig or changes the operator's confirmed provider state.
-func discoverDeploymentPreflightLKECluster(ctx context.Context, token string, _ provisionPaths, env map[string]string, allowCreate bool) (lkeCluster, error) {
+func discoverDeploymentPreflightLKECluster(ctx context.Context, token string, paths provisionPaths, env map[string]string, allowCreate bool) (lkeCluster, error) {
+	if err := ctx.Err(); err != nil {
+		return lkeCluster{}, err
+	}
 	if allowCreate {
 		return lkeCluster{}, errors.New("deployment preflight cannot create an LKE cluster")
+	}
+	if selectedID := strings.TrimSpace(lkeClusterID(paths, env)); selectedID != "" {
+		id, err := strconv.Atoi(selectedID)
+		if err != nil || id <= 0 {
+			return lkeCluster{}, errors.New("selected LKE_CLUSTER_ID must be a positive integer before deployment qualification")
+		}
+		raw, err := deploymentPreflightLKERead(ctx, token, "/lke/clusters/"+strconv.Itoa(id))
+		if err != nil {
+			if ctx.Err() != nil {
+				return lkeCluster{}, ctx.Err()
+			}
+			return lkeCluster{}, fmt.Errorf("selected LKE cluster %d is missing or inaccessible; restore the selected cluster state before qualification; it cannot be treated as a new environment: %w", id, err)
+		}
+		var cluster lkeCluster
+		if err := json.Unmarshal(raw, &cluster); err != nil || cluster.ID != id || strings.TrimSpace(cluster.Label) == "" {
+			return lkeCluster{}, errors.New("selected LKE cluster response does not match its requested ID and live label; refusing absent-environment qualification")
+		}
+		// ID selection takes precedence over the default stack-derived label,
+		// as in ensureLKEKubeAccess. An explicit label is an additional target
+		// constraint, so disagreement must not silently select another cluster.
+		if label := strings.TrimSpace(firstNonEmpty(os.Getenv("LKE_CLUSTER_LABEL"), env["LKE_CLUSTER_LABEL"])); label != "" && label != cluster.Label {
+			return lkeCluster{}, errors.New("selected LKE_CLUSTER_ID conflicts with explicit LKE_CLUSTER_LABEL; reconcile the target configuration before deployment qualification")
+		}
+		return cluster, nil
 	}
 	label := lkeClusterLabel(env)
 	if label == "" {
 		return lkeCluster{}, errors.New("LKE_CLUSTER_LABEL or CLOUD_STACK_NAME is required to discover an LKE cluster")
 	}
-	cmd := exec.CommandContext(ctx, "curl", "--fail-with-body", "-sS", "-X", "GET", "https://api.linode.com/v4/lke/clusters?page_size=500", "-H", "Authorization: Bearer "+token, "-H", "Content-Type: application/json")
+	var matched lkeCluster
+	seen := map[int]bool{}
+	pages, results := 0, 0
+	for page := 1; ; page++ {
+		raw, err := deploymentPreflightLKERead(ctx, token, fmt.Sprintf("/lke/clusters?page_size=500&page=%d", page))
+		if err != nil {
+			return lkeCluster{}, err
+		}
+		var inventory struct {
+			Data    []lkeCluster `json:"data"`
+			Page    int          `json:"page"`
+			Pages   *int         `json:"pages"`
+			Results *int         `json:"results"`
+		}
+		if err := json.Unmarshal(raw, &inventory); err != nil || inventory.Data == nil || inventory.Page != page || inventory.Pages == nil || inventory.Results == nil || *inventory.Results < 0 {
+			return lkeCluster{}, errors.New("LKE cluster inventory pagination or data is incomplete; cluster absence is not confirmed")
+		}
+		// The published pagination schema does not constrain empty inventories
+		// to pages=1. A complete first response with zero results is also usable
+		// with pages=0, but an omitted pages field is never proof of absence.
+		if page == 1 && len(inventory.Data) == 0 && *inventory.Results == 0 && (*inventory.Pages == 0 || *inventory.Pages == 1) {
+			return lkeCluster{}, fmt.Errorf("%w: %s", errLKEMissingCluster, label)
+		}
+		if *inventory.Pages < page {
+			return lkeCluster{}, errors.New("LKE cluster inventory pagination or data is incomplete; cluster absence is not confirmed")
+		}
+		if page == 1 {
+			pages, results = *inventory.Pages, *inventory.Results
+		} else if *inventory.Pages != pages || *inventory.Results != results {
+			return lkeCluster{}, errors.New("LKE cluster inventory changed during pagination; repeat qualification before assuming the environment is absent")
+		}
+		for _, cluster := range inventory.Data {
+			if cluster.ID <= 0 || strings.TrimSpace(cluster.Label) == "" || seen[cluster.ID] {
+				return lkeCluster{}, errors.New("LKE cluster inventory has invalid or repeated identities; cluster absence is not confirmed")
+			}
+			seen[cluster.ID] = true
+			if cluster.Label == label {
+				if matched.ID != 0 {
+					return lkeCluster{}, errors.New("resolved LKE cluster label selects multiple IDs; reconcile the target before deployment qualification")
+				}
+				matched = cluster
+			}
+		}
+		if page == pages {
+			break
+		}
+	}
+	if len(seen) != results {
+		return lkeCluster{}, errors.New("LKE cluster inventory does not contain all reported results; cluster absence is not confirmed")
+	}
+	if matched.ID != 0 {
+		return matched, nil
+	}
+	return lkeCluster{}, fmt.Errorf("%w: %s", errLKEMissingCluster, label)
+}
+
+func deploymentPreflightLKERead(ctx context.Context, token, path string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "curl", "--fail-with-body", "-sS", "-X", "GET", "https://api.linode.com/v4"+path, "-H", "Authorization: Bearer "+token, "-H", "Content-Type: application/json")
 	cmd.WaitDelay = time.Second
 	raw, err := cmd.Output()
 	if ctx.Err() != nil {
-		return lkeCluster{}, ctx.Err()
+		return nil, ctx.Err()
 	}
 	if err != nil {
-		return lkeCluster{}, fmt.Errorf("LKE cluster inventory request failed: %w", err)
+		// Provider response bodies and credential-bearing command arguments must
+		// never appear in qualification errors.
+		return nil, fmt.Errorf("read-only LKE cluster discovery request failed: %w", err)
 	}
-	var inventory struct {
-		Data []lkeCluster `json:"data"`
-	}
-	if err := json.Unmarshal(raw, &inventory); err != nil {
-		return lkeCluster{}, errors.New("LKE cluster inventory response is invalid")
-	}
-	for _, cluster := range inventory.Data {
-		if cluster.Label == label {
-			return cluster, nil
-		}
-	}
-	return lkeCluster{}, fmt.Errorf("%w: %s", errLKEMissingCluster, label)
+	return raw, nil
 }
 
 type deploymentPreflightReporter struct {

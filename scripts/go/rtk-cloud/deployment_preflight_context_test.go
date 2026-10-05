@@ -27,6 +27,8 @@ func TestDeploymentPreflightCanceledContextDoesNotStartChecks(t *testing.T) {
 }
 
 func TestDeploymentPreflightContextKillsStalledProviderDiscovery(t *testing.T) {
+	t.Setenv("LKE_CLUSTER_ID", "")
+	t.Setenv("LKE_CLUSTER_LABEL", "")
 	workspace := writeDeploymentFixture(t, "staging", "lke")
 	cfg, err := resolveDeploymentConfig(workspace, "staging", "")
 	if err != nil {
@@ -58,6 +60,62 @@ func TestDeploymentPreflightContextKillsStalledProviderDiscovery(t *testing.T) {
 	if strings.Contains(out.String(), "Preflight result: PASS") {
 		t.Fatal("timed-out preflight reported success")
 	}
+}
+
+func TestDeploymentPreflightContextKillsStalledSelectedClusterRead(t *testing.T) {
+	t.Setenv("LKE_CLUSTER_ID", "123")
+	t.Setenv("LKE_CLUSTER_LABEL", "")
+	bin := t.TempDir()
+	started := filepath.Join(bin, "selected-cluster-started")
+	t.Setenv("PREFLIGHT_PROVIDER_STARTED", started)
+	writeTestFile(t, filepath.Join(bin, "curl"), "#!/bin/sh\nprintf started > \"$PREFLIGHT_PROVIDER_STARTED\"\nexec sleep 30\n")
+	if err := os.Chmod(filepath.Join(bin, "curl"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	paths := provisionPaths{EnvRoot: t.TempDir()}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		_, err := discoverDeploymentPreflightLKECluster(ctx, "private-token", paths, map[string]string{"CLOUD_STACK_NAME": "video-cloud-dev"}, false)
+		result <- err
+	}()
+	requirePreflightCommandCancellation(t, started, cancel, result)
+}
+
+func TestDeploymentPreflightContextKillsStalledLaterInventoryPage(t *testing.T) {
+	t.Setenv("LKE_CLUSTER_ID", "")
+	t.Setenv("LKE_CLUSTER_LABEL", "")
+	bin := t.TempDir()
+	started := filepath.Join(bin, "later-page-started")
+	t.Setenv("PREFLIGHT_PROVIDER_STARTED", started)
+	script := `#!/bin/sh
+case "$*" in
+  *'lke/clusters?page_size=500&page=1'*)
+    printf '%s\n' '{"data":[{"id":456,"label":"other-stack"}],"page":1,"pages":2,"results":2}'
+    ;;
+  *'lke/clusters?page_size=500&page=2'*)
+    printf started > "$PREFLIGHT_PROVIDER_STARTED"
+    exec sleep 30
+    ;;
+  *) exit 22 ;;
+esac
+`
+	writeTestFile(t, filepath.Join(bin, "curl"), script)
+	if err := os.Chmod(filepath.Join(bin, "curl"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	paths := provisionPaths{EnvRoot: t.TempDir()}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		_, err := discoverDeploymentPreflightLKECluster(ctx, "private-token", paths, map[string]string{"CLOUD_STACK_NAME": "video-cloud-dev"}, false)
+		result <- err
+	}()
+	requirePreflightCommandCancellation(t, started, cancel, result)
 }
 
 func TestDeploymentPreflightContextKillsStalledKubernetesProbe(t *testing.T) {

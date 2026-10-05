@@ -84,13 +84,7 @@ func deploymentCertIssuerIngressReadinessWithClusterState(ctx context.Context, c
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := lkeRequireCertIssuerRendererCompatibilityContext(ctx, env); err != nil {
-		return err
-	}
-	if err := lkeRequireCertIssuerDesiredMaterial(ctx, paths, env); err != nil {
-		return err
-	}
-	if _, err := lkePlanCertIssuerIngressMigrationWithContext(ctx, paths, env); err != nil {
+	if _, err := lkePlanCertIssuerIngressMigrationForStaticRenderWithContext(ctx, paths, env); err != nil {
 		return fmt.Errorf("CertIssuer route migration prerequisites: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
@@ -107,12 +101,8 @@ func lkeCertIssuerRoutingSelected(ctx provisionContext) bool {
 
 func lkeCertIssuerIngressPreflight(ctx provisionContext) error {
 	if ctx.Opts.mode.deploy && len(ctx.Opts.workloads) == 0 {
-		if err := lkeRequireCertIssuerRendererCompatibility(ctx.Env); err != nil {
-			return err
-		}
-		if err := lkeRequireCertIssuerDesiredMaterial(context.Background(), ctx.Paths, ctx.Env); err != nil {
-			return err
-		}
+		_, err := lkePlanCertIssuerIngressMigrationForStaticRenderWithContext(context.Background(), ctx.Paths, ctx.Env)
+		return err
 	}
 	_, err := lkePlanCertIssuerIngressMigration(ctx.Paths, ctx.Env)
 	return err

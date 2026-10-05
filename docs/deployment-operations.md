@@ -266,9 +266,17 @@ approved PKI lifecycle first.
 A missing local kubeconfig is not evidence that the environment is new. The
 pre-deploy check requires provider discovery to confirm that the selected
 cluster is absent before taking the initial-deployment path without Kubernetes
-access. Otherwise restore the matching environment kubeconfig and inspect the
-existing cluster. Initial planning remains read-only and validates any cached
-CertIssuer TLS state without creating identity files or contacting Kubernetes.
+access. Discovery uses the deployment's actual explicitly selected or persisted
+cluster ID and reads that ID freshly; an unavailable, missing or mismatched ID
+does not become an absent-cluster result or fall back to a same-label cluster.
+An explicitly selected label must agree with the selected ID's live label; the
+default stack-derived label does not override ID selection. With no selected
+ID, discovery searches the resolved label across the complete
+provider inventory; incomplete, invalid or changing pagination blocks an
+absence claim. Otherwise restore the matching environment selection and
+kubeconfig and inspect the existing cluster. Initial planning remains read-only
+and validates any cached CertIssuer TLS state without creating identity files
+or contacting Kubernetes.
 
 For a full static deployment, the desired state is the persisted material in
 `~/.config/rtk_cloud/<environment>/pki/certissuer/`: `server.crt`, `server.key`,
@@ -281,6 +289,23 @@ blocks full reconciliation; restore matching protected controller state or use
 the approved identity lifecycle. Do not delete existing material to regenerate
 a CA, change the algorithm to force replacement, or disable health checks to
 make an unrelated controller's state pass.
+
+A compatible full static deployment can repair an owned Service's mutable old
+port/type and the static listener's old settings. A headless Service's immutable
+ClusterIP topology still blocks this path. Its pre-deploy migration planner
+therefore qualifies the unchanged persisted identity and exact current
+Service/Deployment ownership before deferring these mutable topology checks
+until the full renderer installs the desired configuration. This exception
+does not permit unknown owners, replacement identity or managed PKI adoption.
+If the Deployment is absent, initial bootstrap requires the Service, any
+selected-stack/public-host CertIssuer route and `certissuer-runtime` Secret to
+be absent as well. The existing-cluster Secret check reads only its metadata
+UID. A surviving Secret requires restoring the existing identity owner source,
+even when no local TLS state remains; it cannot authorize a newly minted CA.
+DNS-only and targeted rollouts use the strict installed-topology planner because
+they do not reconcile these static dependencies. Every route switch and post-deploy check
+still requires the desired Service/listener and converged serving workload;
+pre-deploy permission to repair old topology is not a live-health PASS.
 
 Deployment-owned public routing runs the migration during both full public
 HTTPS setup and deploy-only Video Cloud routing updates. It rereads the

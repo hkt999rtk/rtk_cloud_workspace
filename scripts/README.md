@@ -164,6 +164,18 @@ workload. Reviewed targeted `provision --deploy --workloads ...` rollouts and
 route-only `provision --dns` use separate deployment prerequisites and preserve
 the existing managed CertIssuer configuration; an image qualification or a safe
 Ingress migration plan does not make a full managed-PKI replacement supported.
+For a compatible full static render, pre-deploy may qualify an owned old
+Service/listener topology for repair, after proving unchanged persisted identity
+and exact Service/Deployment ownership. Route-only and targeted operations keep
+the strict installed-topology checks, and routing mutation/post-deploy always
+require the desired serving state. Provider absence detection likewise uses
+the actual selected/persisted cluster ID, or a complete label inventory when no
+ID is selected; a missing kubeconfig, failed ID lookup or incomplete inventory
+cannot certify a new environment.
+An absent CertIssuer Deployment is not sufficient bootstrap evidence: a
+surviving Service, public/selected-stack route or `certissuer-runtime` Secret
+requires restoration of the existing identity owner. The Secret fence reads
+metadata UID only, preserving the Kubernetes private-material boundary.
 
 Dynamic Root policy checks validate the referenced issuer and its trust scope.
 A ready, active or retiring Root can legitimately have an empty distrust policy;
