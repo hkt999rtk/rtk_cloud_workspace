@@ -16,7 +16,8 @@ Unless stated otherwise, run commands from the workspace root.
 Canonical entry points:
 
 ```sh
-scripts/check-deployment-credentials.sh --environment staging
+scripts/check-deployment-preflight.sh --environment staging
+scripts/check-deployment-health.sh --environment staging
 go run ./scripts/go/rtk-cloud -- deployment plan --environment staging
 scripts/deploy-environment.sh create --environment staging --confirm video-cloud-staging
 scripts/deploy-environment.sh upgrade --environment staging --confirm video-cloud-staging
@@ -99,13 +100,26 @@ the Go checker once, preserving its exit status.
 | Entry | Purpose and timing |
 | --- | --- |
 | `check-deployment-preflight.sh` / `deployment check --phase pre-deploy` | Before default whole-environment create/upgrade: desired configuration, tools, canonical local credentials, selected provider/input checks and safe CertIssuer ingress migration prerequisites. Does not require the old deployment's Secret mirrors or PKI health to pass. |
-| `check-deployment-health.sh` / `deployment check --phase post-deploy` | After deployment: current local credentials, Kubernetes Secret mirrors, live PKI and ingress consistency, plus selected provider/input checks. Use application acceptance separately. |
+| `check-deployment-health.sh` / `deployment check --phase post-deploy` | After deployment: current local credentials, Kubernetes Secret mirrors, all environment workload health, live PKI and required public mTLS/ingress consistency, plus selected provider/input checks. Use application acceptance separately. |
+
+For existing Pod image updates, add `--operation image-upgrade` and supply all
+selected immutable `--image` values and complete candidate `--manifest` JSON.
+Use `--checks ghcr,mounts` for this scoped operation. It verifies exact-source CI
+publication, preserved nonimage configuration, candidate AM/Billing schemas,
+restricted payment-simulator artifact startup, all environment workload health
+and required public CertIssuer mTLS/anonymous denial. Missing evidence is NO-GO;
+`--fast` is rejected. Docker startup fixtures are local/disposable and use no cloud
+data or credentials; they are part of read-only **cloud** qualification. The same
+operation on the health entry verifies that selected images actually reached the
+Pods. See [Pod image-upgrade criteria](../docs/deployment-operations.md#existing-pod-image-upgrade-go--no-go)
+for scope, required access and commands. Feature activation/data acceptance remain
+separate. The default full-deployment path retains its managed-PKI boundary.
 
 Both named shell entries enforce read-only mode. `--fast` reduces check depth
 within the selected phase; it does not select a phase. The JSON report records
 `phase`, `read_only` and scope. Each fixed-purpose wrapper rejects contrary
 `--phase` arguments and any false spelling of `--read-only`; it cannot silently
-become the other checker. A pre-deploy PASS does not certify live health or provider
+become the other checker. A default full-deployment pre-deploy PASS does not certify live health or provider
 write ability, and a post-deploy PASS does not perform complete release
 qualification. Neither entry deploys, bootstraps or repairs the environment.
 
@@ -136,8 +150,8 @@ scripts/check-deployment-health.sh --environment staging --fast \
 
 | Mode | DNS/storage canaries and receipts | With `--image` |
 | --- | --- | --- |
-| Default | Existing write/read/delete probes and storage receipts remain enabled for selected checks | Full `linux/amd64` Docker pull |
-| `--read-only` | No canaries or new validation receipts; write ability remains unverified | Full Docker pull remains enabled |
+| Legacy/direct post-deploy default | Existing write/read/delete probes and storage receipts remain enabled for selected checks | Full `linux/amd64` Docker pull |
+| Named preflight/health wrappers, or `--read-only` | No canaries or new validation receipts; write ability remains unverified | Full Docker pull remains enabled |
 | `--fast` | Implies read-only; no canaries or new validation receipts | Registry manifest/config metadata and `linux/amd64` platform check; full pull is explicitly skipped |
 
 `--checks` accepts `linode,ghcr,dns,storage,tls,mounts`. Without it, configured
@@ -315,7 +329,8 @@ preflight and legacy credential gates before deployment mutation. `create`
 refuses existing owned resources; `upgrade` requires an existing LKE stack and a
 bound PostgreSQL PVC and preserves storage. Use the
 [new-environment procedure](../docs/deployment-operations.md#create-a-new-environment)
-for bootstrap; the facade requires existing-environment live inputs.
+for bootstrap; the post-deploy facade requires existing-environment live inputs.
+Pre-deploy supports provider-confirmed absent-cluster creation prerequisites.
 
 If the only failure is HTTP 404 for the configured Object Storage bucket, explicitly create it and immediately repeat signed-read validation:
 

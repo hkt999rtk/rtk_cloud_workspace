@@ -58,6 +58,13 @@ if ($mode eq 'failure') {
         if $raw =~ /CertIssuer socket returned an invalid response/;
     fail('TRANSPORT_FAILED', "$stage probe could not complete; check Kubernetes connectivity and the selected workload");
 }
+if ($mode eq 'anonymous') {
+    fail('ANONYMOUS_DENIAL_UNVERIFIED', 'anonymous request did not prove client-certificate rejection')
+        unless $raw =~ /(?:tlsv1(?:\.3)?|ssl).*alert certificate required/i
+            && $raw =~ /RTK_ANONYMOUS_EXIT=([1-9][0-9]*)\s*\z/
+            && $raw !~ /HTTP\/1\.[01] [0-9]{3}|verify error:num=|certificate verify failed|hostname mismatch/i;
+    exit 0;
+}
 if ($mode eq 'pod') {
     my $list = eval { decode_json($raw) };
     fail('POD_RESPONSE_INVALID', 'Account Manager Pod list is not valid JSON')

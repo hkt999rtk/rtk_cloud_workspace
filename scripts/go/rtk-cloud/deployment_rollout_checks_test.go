@@ -372,3 +372,27 @@ func TestRolloutTokenExchangeAloneDoesNotProveImageAccess(t *testing.T) {
 		t.Fatalf("unexpected %+v", check)
 	}
 }
+
+func TestRolloutImageUpgradeRetainedTokenProjectionStillChecksReadAccess(t *testing.T) {
+	for _, tc := range []struct {
+		name, security, projection string
+		pass                       bool
+	}{
+		{"default read", `"runAsUser":10001`, `"sources":[{"serviceAccountToken":{"path":"token"}}]`, true},
+		{"unreadable", `"runAsUser":10001`, `"defaultMode":256,"sources":[{"serviceAccountToken":{"path":"token"}}]`, false},
+		{"group read", `"runAsUser":10001,"fsGroup":10001`, `"defaultMode":288,"sources":[{"serviceAccountToken":{"path":"token"}}]`, true},
+		{"secret projection", `"runAsUser":10001`, `"sources":[{"secret":{"name":"identity"}}]`, false},
+		{"empty", `"runAsUser":10001`, `"sources":[]`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := fmt.Sprintf(`{"containers":[{"volumeMounts":[{"name":"token"}]}],"securityContext":{%s},"volumes":[{"name":"token","projected":{%s}}]}`, tc.security, tc.projection)
+			p := rolloutWrite(t, filepath.Join(t.TempDir(), "workload.json"), raw, 0600)
+			if check := checkRolloutMountsWithRequirement(p, false); check.Passed != tc.pass {
+				t.Fatal(check)
+			}
+			if check := checkRolloutMounts(p); check.Passed {
+				t.Fatal("legacy projection restriction changed")
+			}
+		})
+	}
+}

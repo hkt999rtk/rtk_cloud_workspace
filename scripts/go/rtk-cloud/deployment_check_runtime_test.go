@@ -404,3 +404,27 @@ func TestDeploymentCheckRuntimeRejectsUnobservedSelectedSecrets(t *testing.T) {
 		t.Fatalf("unobserved Secrets caused %d repeated reads", got)
 	}
 }
+
+func TestDeploymentCheckRuntimeKeepsAllNamespaceInventoryDistinct(t *testing.T) {
+	calls := deploymentRuntimeTestKubectl(t, `case "$*" in
+ *'get deployments --all-namespaces -o json'*) printf '%s' '{"items":[{"metadata":{"namespace":"video-cloud-staging-billing","name":"worker"}},{"metadata":{"namespace":"video-cloud-staging-video-cloud","name":"api"}}]}' ;;
+ *'-n video-cloud-staging-video-cloud get deployments -o json'*) printf '%s' '{"items":[{"metadata":{"namespace":"video-cloud-staging-video-cloud","name":"api"}}]}' ;;
+ *) exit 99;; esac`)
+	runtime := newDeploymentCheckRuntime(context.Background(), "staging")
+	for _, all := range []bool{false, true, true, false} {
+		args := []string{"--kubeconfig", "fixture", "-n", "video-cloud-staging-video-cloud", "get", "deployments", "-o", "json"}
+		if all {
+			args = []string{"--kubeconfig", "fixture", "get", "deployments", "-A", "-o", "json"}
+		}
+		raw, err := runtime.kubectl(false, args...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(raw), "worker") != all {
+			t.Fatal("namespace inventory cache changed scope")
+		}
+	}
+	if got := deploymentRuntimeCallCount(t, calls); got != 2 {
+		t.Fatalf("calls=%d", got)
+	}
+}

@@ -43,6 +43,15 @@ cat >"$TMP/bin/openssl" <<'SH'
 case " $* " in *' -verify_return_error '*) ;; *) exit 93 ;; esac
 case " $* " in *' -verify_hostname issuer.example '*) ;; *) exit 94 ;; esac
 case " $* " in *' -connect issuer.example:443 '*) ;; *) exit 95 ;; esac
+case " $* " in *' -cert /fake/client.crt '*) ;; *)
+  cat >/dev/null
+  case "${FAKE_ANONYMOUS_FAILURE:-}" in
+    accepted) printf '%s' "$FAKE_CERTISSUER_RESPONSE"; exit 0 ;;
+    transport) printf 'connect:errno=111 do-not-leak-this-secret\n' >&2; exit 1 ;;
+    ca) printf 'verify error:num=20 do-not-leak-this-secret\n' >&2; exit 1 ;;
+    *) printf 'tlsv13 alert certificate required do-not-leak-this-secret\n' >&2; exit 1 ;;
+  esac ;;
+esac
 # The mounted file contains leaf and intermediates; s_client -cert alone sends only the leaf.
 case " $* " in *' -cert_chain /fake/client.crt '*) ;; *) printf 'ssl alert unknown ca\n' >&2; exit 1 ;; esac
 cat >/dev/null
@@ -79,9 +88,10 @@ Content-Type: application/json
 GOOD_RESPONSE="$FAKE_CERTISSUER_RESPONSE"
 CHECK="$TMP/workspace/scripts/check-certissuer-app-mtls.sh"
 checks=0
+PUBLIC_ARGS=()
 expect() {
   local status="$1" pattern="$2" actual
-  if "$CHECK" staging >"$TMP/output" 2>&1; then actual=0; else actual=$?; fi
+  if "$CHECK" staging ${PUBLIC_ARGS[@]+"${PUBLIC_ARGS[@]}"} >"$TMP/output" 2>&1; then actual=0; else actual=$?; fi
   if [[ "$actual" != "$status" ]] || ! grep -Fq "$pattern" "$TMP/output"; then
     printf 'expected status %s with %s; got status %s\n' "$status" "$pattern" "$actual" >&2
     cat "$TMP/output" >&2
@@ -175,6 +185,18 @@ expect 1 'FAIL [PROBE_TIMEOUT]'
 # The sleeping child inherits stdout. Completion within the bound also checks
 # that cancellation closes the child process group's pipe to the caller.
 unset FAKE_KUBE_FAILURE RTK_CERTISSUER_CHECK_TIMEOUT_SECONDS
+PUBLIC_ARGS=(--public-host issuer.example)
+export FAKE_SOCKET=/run/account-pki/private/controller.sock
+export FAKE_CERTISSUER_RESPONSE="$GOOD_RESPONSE"
+expect 0 'PASS: public CertIssuer mTLS validation and anonymous TLS denial verified'
+for failure in accepted transport ca; do
+  export FAKE_ANONYMOUS_FAILURE="$failure"
+  expect 1 'FAIL [ANONYMOUS_DENIAL_UNVERIFIED]'
+done
+unset FAKE_ANONYMOUS_FAILURE
+PUBLIC_ARGS=(--public-host 'issuer.example;bad')
+expect 1 'FAIL [CONFIG_INVALID]'
+PUBLIC_ARGS=()
 printf 'CLOUD_STACK_NAME=video-cloud-wrong\n' >"$TMP/workspace/cloud_env/staging/environment.env"
 expect 1 'FAIL [CONFIG_INVALID]'
 printf 'check-certissuer-app-mtls tests: PASS (%s cases)\n' "$checks"

@@ -40,7 +40,7 @@ workspace; it is not necessarily a pure snapshot of those commits.
 | Source checkout | Base commit |
 | --- | --- |
 | Account Manager | `faf424e57c73` |
-| Billing | `a16e12a8e445` |
+| Billing | `aedaafe4eeae` |
 | Video Cloud | `82fa7d08141f` |
 | Cloud Admin | `4035e920404d` |
 | Cloud Frontend | `475b9fe80d6c` |

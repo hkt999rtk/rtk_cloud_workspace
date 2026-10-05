@@ -20,9 +20,14 @@ type certIssuerIngressList struct {
 				Host string `json:"host"`
 				HTTP struct {
 					Paths []struct {
-						Backend struct {
+						Path     string `json:"path"`
+						PathType string `json:"pathType"`
+						Backend  struct {
 							Service struct {
 								Name string `json:"name"`
+								Port struct {
+									Number int `json:"number"`
+								} `json:"port"`
 							} `json:"service"`
 						} `json:"backend"`
 					} `json:"paths"`
