@@ -16,12 +16,16 @@ failure; giving that upstream the ingress operator's own client identity does
 not authenticate the original caller. Do not enable trusted identity headers
 as a repair for this mode.
 
-The canonical `deployment check` / `secrets verify` live PKI check now inspects
+The post-deploy `deployment check --phase post-deploy` / `secrets verify` live PKI check now inspects
 configured nginx CertIssuer ingress routes for TLS passthrough, a direct
 `certissuer` Service backend in the Video Cloud namespace, and coverage of the
 public host by the managed serving DNS configuration. A terminating route,
 the HTTP ExternalName bridge, or an internal-only managed DNS configuration
-fails this structural check. It does not prove public connectivity, controller
+fails this structural check. The read-only pre-deploy checker instead assesses
+the desired configuration and whether an owned legacy route can safely migrate;
+an old terminating route alone does not block a planned upgrade. An unapproved
+or missing public serving identity still blocks routing migration. Neither
+result by itself proves public connectivity, controller
 passthrough enablement, the loaded certificate, an approved issuer policy, or
 successful authenticated requests. Preserve the release's required endpoint
 list separately, including when an ingress is absent.
@@ -46,9 +50,10 @@ After that policy is approved and usable, reconcile the managed server identity
 through its supported enrollment/renewal path, preserving predecessor state
 and the internal name needed by existing callers. Qualify the actual public
 SAN, Service Root trust and live reload before changing the route. Persist a
-reviewed renderer configuration for the direct passthrough Ingress, remove the
-conflicting legacy route with current API preconditions, and retain rollback
-metadata. Public Service mTLS clients must verify the approved Service trust
+reviewed renderer configuration for the direct passthrough Ingress, then use the
+deployment-owned route migration described below to remove a recognized owned
+legacy route with current API preconditions and retain rollback metadata.
+Unrecognized routes require an explicit reviewed handoff. Public Service mTLS clients must verify the approved Service trust
 domain and public SNI; the edge's Web PKI certificate is not the backend's
 managed identity.
 
@@ -208,7 +213,10 @@ session succeed.
 
 ## Go / No-Go before Product rollout
 
-Run the canonical read-only credential check from the reviewed workspace.
+Run `scripts/check-deployment-health.sh --environment dev --fast` from the
+reviewed workspace for current environment health; use
+`scripts/check-deployment-preflight.sh --environment dev --fast` separately
+before a planned deployment. Neither replaces the required endpoint probes.
 Require PASS for live PKI configuration, signed current Service and OpenBao
 CRLs, Service registry inventory, all seven Secret cross-checks, Account
 Manager private listener mTLS, six workload approvals and lease registration,
@@ -239,9 +247,32 @@ retrying. Do not run it again after successful installation.
 Before adoption, add the successor to every affected Service CRL manifest,
 preserving old issuers and each owner's existing private state parent. Let the
 actual consumers fetch and acknowledge signed CRLs. Check the served leaf and
-normal internal path, then hand off the conflicting legacy ingress with fresh
-UID/resource-version preconditions and a saved restore object. Never disable
+normal internal path before handing off the route. The deployer now automatically
+recognizes the owned historical `video-cloud-staging-certissuer` and shared
+`video-cloud-staging-https` Ingress objects in the selected ingress namespace;
+their names are historical and their stack ownership must match this exact
+environment. It removes only the CertIssuer host/root path with its expected
+backend and preserves unrelated shared routes. Unknown owners, extra paths or
+different backend intent stop automatic migration.
+
+The read-only pre-deploy check reports this migration as a prerequisite rather
+than failing because the old route terminates TLS. Deployment revalidates the
+installed serving identity and current inventory before mutation, uses fresh
+UID/resource-version preconditions and saves a restore journal under
+`runtime/artifacts/certissuer-ingress/` (or the selected artifact directory).
+After migration it verifies canonical routing; a repeated converged deployment
+leaves the Ingress objects intact. Known failures restore only resources still
+matching the recorded migration result. An uncertain outcome or concurrent
+drift preserves the journal and blocks retry for explicit review. Never discard
+that journal to bypass the guard. Never disable
 the admission webhook to allow duplicate hostname/path ownership.
+
+Routing migration does not authorize replacing stored CA state, creating a
+successor issuer or reissuing the existing managed server certificate. A SAN
+or issuer-policy gap must be addressed through the approved owner enrollment
+and issuer lifecycle before route adoption. Public/internal authenticated and
+anonymous-denial probes remain separate acceptance evidence; see
+[the workspace routing procedure](deployment-operations.md#certissuer-route-convergence).
 
 Readiness qualification does not authorize rebuilding the existing managed PKI
 workloads with the legacy whole-Deployment renderer. For the six core image
@@ -249,6 +280,23 @@ update, the deployment handoff must preserve the actual managed environment,
 sidecar images, Secret/ConfigMap bindings, identity state and PVCs, applying only
 the selected image changes. Any requested configuration/schema change needs
 its own reviewed migration.
+The default full create/upgrade pre-deploy checker and legacy full deployment
+now reject this unsupported replacement before dependency resource mutations,
+including when CertIssuer has no available replica. Reviewed targeted
+`provision --deploy --workloads ...` and route-only `provision --dns` remain
+distinct operations; they do not authorize whole-Deployment PKI reconstruction.
+The compatible static-renderer path can prequalify owned mutable Service/listener
+repairs while preserving the exact persisted identity. That exception does not
+apply to this managed Dev PKI installation: its targeted/DNS route operations
+retain the strict installed-topology and serving-identity gates, as do every
+actual route switch and post-deploy qualification. Selecting an environment
+also retains the deployment's chosen/persisted cluster ID; failed lookup or
+incomplete label inventory must not be treated as permission to bootstrap a
+replacement cluster or identity.
+A surviving `certissuer-runtime` Secret also prevents treating a lost CertIssuer
+Deployment as fresh bootstrap. Its metadata UID is sufficient for this fence;
+restore the identity owner source without exporting private Secret data or
+minting a replacement CA.
 
 The public CertIssuer listener requires an admitted Service client before HTTP.
 TLS passthrough cannot inject Nginx crawler headers or serve its robots/sitemap
