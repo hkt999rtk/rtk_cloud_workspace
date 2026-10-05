@@ -303,7 +303,6 @@ the [release gates below](#upgrade-persistent-staging-release-gates).
 See [checker options and PKI gates](../scripts/README.md#existing-environment-deployment-checks)
 for TLS/mount qualification, optional PKI checks and explicit credential repairs.
 
-#
 ## Full managed workload upgrade
 
 For an existing Dev or Staging managed-PKI environment, an operator may authorize
