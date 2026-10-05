@@ -67,7 +67,8 @@ fi
   printf "Content-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}"
 } | timeout 12 openssl s_client -quiet -connect "$address" -servername "$name" \
   -verify_return_error -verify_hostname "$name" \
-  -cert "$APP_CERT_ISSUER_CLIENT_CERT" -key "$APP_CERT_ISSUER_CLIENT_KEY" \
+  -cert "$APP_CERT_ISSUER_CLIENT_CERT" -cert_chain "$APP_CERT_ISSUER_CLIENT_CERT" \
+  -key "$APP_CERT_ISSUER_CLIENT_KEY" \
   -CAfile "$APP_CERT_ISSUER_CA_FILE"
 '
 fi

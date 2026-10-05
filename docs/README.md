@@ -72,7 +72,7 @@ when retrieved alongside an active source.
 | [Billing backup key custody design](design/billing-backup-key-custody.md) | Supporting note: implementation design | Off-cluster age/signing custody, independent escrow, CI exclusions, rotation and owner qualification; not deployed. |
 | [postgres-backup-restore.md](postgres-backup-restore.md) | Source: qualification pending | Native PostgreSQL 16 daily full backups, capture-window WAL, private storage, retention, monitoring and isolated restore drills. |
 | [cloud-monitor.md](cloud-monitor.md) | Implementation guide | Workspace monitor setup, expected inventory, credential/capacity/performance checks, dedicated probes and PDF reports. |
-| [Deployment service identities](design/deployment-service-identities.md) | Accepted Dev operator authority and persistent workload identity boundaries; other environments require their own cutover. |
+| [Deployment service identities](design/deployment-service-identities.md) | Accepted operator authority, portable operator-held Root custody and persistent workload identity boundaries; each environment requires its own qualification. |
 | [PKI operator qualification](design/pki-operator-authority-test-plan.md) | Required operator-mode tests and dated Dev evidence, separate from release qualification. |
 | [Platform PKI contract](../repos/rtk_cloud_contracts_doc/platform_pki.md) | Canonical contract | Platform Root of Trust, Platform Admin bootstrap, CA hierarchy, certificate lifecycle, rollover, revocation, custody, and recovery. |
 | [Registered services target](../repos/rtk_cloud_contracts_doc/service_registration.md) | Draft contract | MQTT foundation, platform-authenticated service registration, and Product/device entitlement flow. |
