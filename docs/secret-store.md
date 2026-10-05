@@ -50,6 +50,13 @@ Short-lived access and admin tokens are never persisted. Their long-lived
 signing secret is stored under `runtime/`; tokens are minted in memory when
 needed.
 
+Operator-held Service/MQTT Root keys use portable encrypted PKCS#8 PEM and a
+metadata-only JSON custody record under `pki/custody/roots/<immutable-issuer-id>/`.
+Their passphrase files remain separate within the same environment SecretStore.
+The accepted [Root custody design](design/deployment-service-identities.md#operator-held-root-key-custody)
+defines ownership, exact paths, signer bindings, verification and storage migration.
+It does not export OpenBao CA keys or workload-owned private keys to this store.
+
 Product OTA uses a separate `runtime/ota-bff-token` service credential, mirrored
 to Video Cloud and Cloud Admin as `VIDEO_CLOUD_OTA_BFF_TOKEN`. It is accepted
 only on operator OTA routes after Cloud Admin has checked the active tenant and
