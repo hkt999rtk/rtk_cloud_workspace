@@ -16,7 +16,7 @@ func TestLKEAccountManagerServiceRegistrationIsOptIn(t *testing.T) {
 		"deployment": lkeDeploymentManifest(env, workload, nil),
 		"service":    lkeServiceManifest(env, workload),
 	} {
-		if strings.Contains(manifest, "service-registry") || strings.Contains(manifest, "account-manager-service-registration-tls") {
+		if strings.Contains(manifest, "service-reg") || strings.Contains(manifest, "account-manager-service-registration-tls") {
 			t.Fatalf("%s enabled service registration without opt-in", name)
 		}
 		var parsed map[string]any
@@ -82,7 +82,7 @@ func TestLKEAccountManagerServiceRegistrationRendersPrivateMTLSBoundary(t *testi
 		}
 	}
 	for _, want := range []string{
-		"name: service-registry\n              containerPort: 8443",
+		"name: service-reg\n              containerPort: 8443",
 		"name: ACCOUNT_MANAGER_SERVICE_REGISTRATION_PORT\n              value: \"8443\"",
 		"name: ACCOUNT_MANAGER_SERVICE_REGISTRATION_SERVER_CERT",
 		"name: ACCOUNT_MANAGER_SERVICE_REGISTRATION_SERVER_KEY",
@@ -96,7 +96,7 @@ func TestLKEAccountManagerServiceRegistrationRendersPrivateMTLSBoundary(t *testi
 			t.Fatalf("deployment lacks %q", want)
 		}
 	}
-	if !strings.Contains(service, "name: service-registry\n      port: 8443\n      targetPort: service-registry") || strings.Contains(service, "type: LoadBalancer") {
+	if !strings.Contains(service, "name: service-reg\n      port: 8443\n      targetPort: service-reg") || strings.Contains(service, "type: LoadBalancer") {
 		t.Fatal("registration Service is not internal on port 8443")
 	}
 	for _, want := range []string{
@@ -107,7 +107,7 @@ func TestLKEAccountManagerServiceRegistrationRendersPrivateMTLSBoundary(t *testi
 		"video-cloud-shadowworker",
 		"video-cloud-webrtcservice",
 		"video-cloud-videostorage",
-		"port: 8443",
+		"port: service-reg\n",
 	} {
 		if !strings.Contains(policy, want) {
 			t.Fatalf("registration policy lacks %q", want)
@@ -119,5 +119,47 @@ func TestLKEAccountManagerServiceRegistrationRendersPrivateMTLSBoundary(t *testi
 	}
 	if !found {
 		t.Fatal("enabled registration NetworkPolicy was not included")
+	}
+}
+
+func TestRegistrationPolicyUsesPodListenerInsteadOfServicePort(t *testing.T) {
+	// The installed staging Service exposes 8443 but resolves service-reg to
+	// Pod port 9444. NetworkPolicy evaluates the destination Pod port.
+	var policy struct {
+		Spec struct {
+			Ingress []struct {
+				Ports []struct {
+					Protocol string `yaml:"protocol"`
+					Port     any    `yaml:"port"`
+				} `yaml:"ports"`
+			} `yaml:"ingress"`
+		} `yaml:"spec"`
+	}
+	if err := yaml.Unmarshal([]byte(lkeAllowServiceRegistrationNetworkPolicyManifest(map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"})), &policy); err != nil {
+		t.Fatal(err)
+	}
+	for _, listener := range []struct {
+		name string
+		port int
+	}{{"service-reg", 9444}, {"service-reg", 8443}} {
+		allowed := false
+		for _, ingress := range policy.Spec.Ingress {
+			for _, port := range ingress.Ports {
+				if port.Protocol != "TCP" {
+					t.Fatalf("unexpected protocol %q", port.Protocol)
+				}
+				name, ok := port.Port.(string)
+				if !ok {
+					t.Fatalf("numeric policy port %v bypasses Pod listener resolution", port.Port)
+				}
+				if name != "service-reg" || len(name) > 15 {
+					t.Fatalf("unrelated listener permitted: %s", name)
+				}
+				allowed = allowed || name == listener.name
+			}
+		}
+		if !allowed {
+			t.Fatalf("Service 8443 -> Pod %s:%d is blocked", listener.name, listener.port)
+		}
 	}
 }

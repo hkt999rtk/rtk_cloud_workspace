@@ -508,7 +508,7 @@ func TestLKELoggerIdentityAndCutoverPrerequisites(t *testing.T) {
 	}
 	t.Setenv("LKE_MQTT_FOUNDATION_REGISTRATION_ENABLED", "true")
 	t.Setenv("LKE_ACCOUNT_MANAGER_SERVICE_REGISTRATION_ENABLED", "true")
-	t.Setenv("FAKE_ACCOUNT_MANAGER_REGISTRATION_SERVICE_JSON", `{"spec":{"type":"ClusterIP","selector":{"app.kubernetes.io/name":"account-manager"},"ports":[{"name":"service-registry","port":8443,"targetPort":"service-registry"}]}}`)
+	t.Setenv("FAKE_ACCOUNT_MANAGER_REGISTRATION_SERVICE_JSON", `{"spec":{"type":"ClusterIP","selector":{"app.kubernetes.io/name":"account-manager"},"ports":[{"name":"service-reg","port":8443,"targetPort":"service-reg"}]}}`)
 	err = lkeDeployWorkloads(provisionPaths{}, env, provisionOptions{workloads: []string{"video-cloud"}})
 	if err == nil || !strings.Contains(err.Error(), "requires verified Loki retention storage") {
 		t.Fatalf("Logger cutover without retention was accepted: %v", err)
