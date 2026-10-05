@@ -590,6 +590,10 @@ func lkeApplyPublicHTTPS(paths provisionPaths, env map[string]string, opts provi
 	if err := lkeValidatePublicEdge(env); err != nil {
 		return err
 	}
+	certIssuerIngress, err := lkePlanCertIssuerIngressMigration(paths, env)
+	if err != nil {
+		return err
+	}
 	if lkeOTAServiceEdgeEnabled(env) {
 		if !lkeOTACoreCutoverEnabled(env) {
 			return fmt.Errorf("OTA device edge requires core OTA cutover to remain enabled")
@@ -680,9 +684,20 @@ func lkeApplyPublicHTTPS(paths provisionPaths, env map[string]string, opts provi
 		}
 	}
 	for _, manifest := range lkePublicHTTPSIngressManifests(env, routes) {
+		// The reconciler hands off the old hostname owner with API preconditions
+		// before creating this route. Generic apply cannot remove a renamed object.
+		if strings.Contains(manifest, "name: certissuer-public-mtls\n") {
+			if err := certIssuerIngress.Apply(); err != nil {
+				return err
+			}
+			continue
+		}
 		if err := kubectlApply(manifest); err != nil {
 			return err
 		}
+	}
+	if err := certIssuerIngress.Verify(); err != nil {
+		return err
 	}
 	if err := lkeApplyPublicMQTTNodePort(env); err != nil {
 		return err
@@ -757,6 +772,10 @@ metadata:
 }
 
 func lkeInstallIngressNginx(env map[string]string) error {
+	tlsConfig := lkeResolveCertIssuerTLSConfig(env)
+	if err := tlsConfig.Validate(); err != nil {
+		return err
+	}
 	ns := lkeIngressNamespace(env)
 	args := []string{
 		"upgrade", "--install", "ingress-nginx", "ingress-nginx",
@@ -768,7 +787,7 @@ func lkeInstallIngressNginx(env map[string]string) error {
 		"--set", "controller.service.targetPorts.https=https",
 		"--set", "controller.service.nodePorts.https=" + strconv.Itoa(lkeIngressHTTPSNodePort(env)),
 		"--set", "controller.service.enableHttp=false",
-		"--set", "controller.extraArgs.enable-ssl-passthrough=true",
+		"--set", tlsConfig.IngressNginxHelmValue(),
 		"--set", "controller.allowSnippetAnnotations=true",
 		"--set", "controller.config.annotations-risk-level=Critical",
 		"--set-json", lkeIngressNoIndexHelmValue(env),
@@ -811,7 +830,7 @@ func lkePublicHTTPSBaseRoutes(env map[string]string) []lkePublicHTTPSRoute {
 	routes := []lkePublicHTTPSRoute{
 		{Host: videoDomain, Namespace: videoNS, Service: "video-cloud-api", ServicePort: 80, TargetPort: envIntDefault("LKE_VIDEO_CLOUD_PORT", 8080)},
 		{Host: deviceDomain, Namespace: videoNS, Service: "video-cloud-api", ServicePort: 80, TargetPort: envIntDefault("LKE_VIDEO_CLOUD_PORT", 8080)},
-		{Host: env["VIDEO_CLOUD_CERTISSUER_DOMAIN"], Namespace: videoNS, Service: "certissuer", ServicePort: 9443, TargetPort: 9443, Protocol: "HTTPS"},
+		lkeResolveCertIssuerTLSConfig(env).PublicRoute(),
 		{Host: lkeTurnRegistryPublicDomain(env), Namespace: videoNS, Service: "video-cloud-turnregistry", ServicePort: 18190, TargetPort: 18190},
 		{Host: env["ACCOUNT_MANAGER_DOMAIN"], Namespace: lkeNamespaceName(env, "account-manager"), Service: "account-manager", ServicePort: 80, TargetPort: envIntDefault("LKE_ACCOUNT_MANAGER_PORT", 8080)},
 		{Host: lkeBillingPublicDomain(env), Namespace: lkeNamespaceName(env, "billing"), Service: "billing", ServicePort: 80, TargetPort: envIntDefault("LKE_BILLING_PORT", 8080)},
@@ -2561,6 +2580,14 @@ func lkeWaitForIngressExternalIP(env map[string]string) (string, error) {
 }
 
 func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provisionOptions) error {
+	if len(opts.workloads) == 0 && lkeWorkloadSelected(env, opts, "video-cloud") {
+		if err := lkeRequireCertIssuerRendererCompatibility(env); err != nil {
+			return err
+		}
+		if err := lkeRequireCertIssuerDesiredMaterial(context.Background(), paths, env); err != nil {
+			return err
+		}
+	}
 	if opts.loggerOnly {
 		if err := ensureLKEDeployImages(env, opts); err != nil {
 			return err
@@ -5484,6 +5511,9 @@ func replaceLKEMQTTMaterial(stateDir string, material lkeMQTTMaterial) error {
 }
 
 func newLKECertIssuerMaterial(env map[string]string) (lkeCertIssuerMaterial, error) {
+	if err := lkeResolveCertIssuerTLSConfig(env).Validate(); err != nil {
+		return lkeCertIssuerMaterial{}, err
+	}
 	algorithm, err := lkeInternalTLSKeyAlgorithm(env)
 	if err != nil {
 		return lkeCertIssuerMaterial{}, err
@@ -5920,13 +5950,7 @@ func newLKESignedCertificate(caCert *x509.Certificate, caKey crypto.Signer, comm
 }
 
 func lkeCertIssuerDNSNames(env map[string]string) []string {
-	namespace := lkeNamespaceName(env, "video-cloud")
-	return []string{
-		"certissuer",
-		"certissuer." + namespace,
-		"certissuer." + namespace + ".svc",
-		"certissuer." + namespace + ".svc.cluster.local",
-	}
+	return lkeResolveCertIssuerTLSConfig(env).ServerDNSNames()
 }
 
 func lkeOpenBaoDNSNames(env map[string]string) []string {
@@ -8588,6 +8612,7 @@ stringData:
 }
 
 func lkeCertIssuerDeploymentManifest(env map[string]string, material lkeCertIssuerMaterial, openBao lkeOpenBaoBootstrapResult) string {
+	tlsConfig := lkeResolveCertIssuerTLSConfig(env)
 	checksum := lkeConfigChecksum(
 		material.ServerCert,
 		material.ServiceCA,
@@ -8633,7 +8658,7 @@ spec:
           command: ["/app/certissuer"]
           ports:
             - name: https
-              containerPort: 9443
+              containerPort: %d
           env:
             - name: POSTGRES_PASSWORD
               valueFrom:
@@ -8641,7 +8666,7 @@ spec:
                   name: certissuer-runtime
                   key: POSTGRES_PASSWORD
             - name: CERT_ISSUER_LISTEN_ADDR
-              value: ":9443"
+              value: ":%d"
             - name: CERT_ISSUER_SERVER_CERT
               value: /etc/video-cloud/certissuer/tls.crt
             - name: CERT_ISSUER_SERVER_KEY
@@ -8697,7 +8722,7 @@ spec:
         - name: certissuer-openbao-auth
           secret:
             secretName: certissuer-openbao-auth
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], checksum, env["CLOUD_STACK_NAME"], lkeImagePullSecretName(env), lkeVideoCloudImage(env), lkeOpenBaoAddr(env), lkeNamespaceName(env, "platform"))
+`, tlsConfig.Namespace, env["CLOUD_STACK_NAME"], checksum, env["CLOUD_STACK_NAME"], lkeImagePullSecretName(env), lkeVideoCloudImage(env), tlsConfig.HTTPSPort, tlsConfig.HTTPSPort, lkeOpenBaoAddr(env), lkeNamespaceName(env, "platform"))
 }
 
 func lkeFactoryEnrollDeploymentManifest(env map[string]string, material lkeCertIssuerMaterial) string {
@@ -8811,6 +8836,7 @@ func lkeFactoryAdmissionBaseURL(env map[string]string) string {
 }
 
 func lkeCertIssuerServiceManifest(env map[string]string) string {
+	tlsConfig := lkeResolveCertIssuerTLSConfig(env)
 	return fmt.Sprintf(`apiVersion: v1
 kind: Service
 metadata:
@@ -8827,9 +8853,9 @@ spec:
     app.kubernetes.io/name: certissuer
   ports:
     - name: https
-      port: 9443
-      targetPort: 9443
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"])
+      port: %d
+      targetPort: %d
+`, tlsConfig.Namespace, env["CLOUD_STACK_NAME"], tlsConfig.HTTPSPort, tlsConfig.HTTPSPort)
 }
 
 func lkeFactoryEnrollServiceManifest(env map[string]string) string {
@@ -8907,7 +8933,7 @@ func lkeImagePullSecretName(env map[string]string) string {
 }
 
 func lkeCertIssuerBaseURL(env map[string]string) string {
-	return "https://certissuer." + lkeNamespaceName(env, "video-cloud") + ".svc.cluster.local:9443"
+	return lkeResolveCertIssuerTLSConfig(env).InternalBaseURL()
 }
 
 func lkeFactoryEnrollAuthKey(env map[string]string) string {

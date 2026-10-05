@@ -21,6 +21,7 @@ import (
 // callers include local-only qualification and provision/bootstrap operations.
 type deploymentCheckOptions struct {
 	environment, environmentRoot, workspace, report string
+	phase                                           string
 	timeout                                         time.Duration
 	requireMigration, requireProduct                bool
 	qualification                                   deploymentCredentialCheckOptions
@@ -30,6 +31,7 @@ type deploymentCheckDependencies struct {
 	guard                               func([]string) error
 	resolve                             func(string, string, string) (deploymentConfig, error)
 	store                               func(string) (secretStore, error)
+	preflight                           func(context.Context, deploymentConfig, io.Writer) error
 	local, bindings, migration, product func(secretStore) error
 	runtime                             func(secretStore, time.Time) error
 	plan                                func(context.Context, deploymentConfig, string, deploymentCredentialCheckOptions, func(deploymentCredentialCheck))
@@ -38,10 +40,11 @@ type deploymentCheckDependencies struct {
 
 func defaultDeploymentCheckDependencies() deploymentCheckDependencies {
 	return deploymentCheckDependencies{
-		guard:   recoveryMutationGuard,
-		resolve: resolveDeploymentConfig,
-		store:   func(environment string) (secretStore, error) { return newSecretStore("", environment) },
-		local:   verifySecretStoreContents, bindings: verifySecretStoreK8SBindings,
+		guard:     recoveryMutationGuard,
+		resolve:   resolveDeploymentConfig,
+		store:     func(environment string) (secretStore, error) { return newSecretStore("", environment) },
+		preflight: defaultDeploymentCheckPreflight,
+		local:     verifySecretStoreContents, bindings: verifySecretStoreK8SBindings,
 		runtime: verifySecretStoreK8SRuntime, migration: verifyPKIMigrationDatabaseSecret,
 		product: verifyProductPKIReadiness,
 		plan: func(ctx context.Context, cfg deploymentConfig, path string, options deploymentCredentialCheckOptions, emit func(deploymentCredentialCheck)) {
@@ -57,7 +60,19 @@ func parseDeploymentCheckOptions(args []string, out io.Writer) (deploymentCheckO
 	var selected, retiredEnv, retiredShared string
 	fs := flag.NewFlagSet("deployment check", flag.ContinueOnError)
 	fs.SetOutput(out)
-	fs.StringVar(&o.environment, "environment", "", "existing environment name")
+	o.phase = deploymentCheckPostDeploy
+	var selectedPhase string
+	fs.Func("phase", "pre-deploy (can deploy) or post-deploy (existing runtime health; default)", func(v string) error {
+		if v != deploymentCheckPreDeploy && v != deploymentCheckPostDeploy {
+			return errors.New("--phase must be pre-deploy or post-deploy")
+		}
+		if selectedPhase != "" && selectedPhase != v {
+			return errors.New("conflicting --phase values are not allowed")
+		}
+		selectedPhase, o.phase = v, v
+		return nil
+	})
+	fs.StringVar(&o.environment, "environment", "", "selected tracked environment name")
 	fs.StringVar(&o.environmentRoot, "environment-root", "", "explicit environment root")
 	fs.StringVar(&o.workspace, "workspace", "", "workspace root")
 	fs.StringVar(&o.report, "report", "", "write a sanitized JSON report (0600)")
@@ -65,9 +80,9 @@ func parseDeploymentCheckOptions(args []string, out io.Writer) (deploymentCheckO
 	fs.BoolVar(&o.requireMigration, "require-pki-migration", false, "require PKI migration-owner binding")
 	fs.BoolVar(&o.requireProduct, "require-product-pki", false, "require active pinned Product Device Root")
 	q := &o.qualification
-	fs.BoolVar(&q.fast, "fast", false, "read-only diagnostics; image metadata only; retains SecretStore/PKI checks")
+	fs.BoolVar(&q.fast, "fast", false, "image metadata only; retains the selected phase checks (does not select a phase)")
 	fs.BoolVar(&q.readOnly, "read-only", false, "suppress DNS/storage writes and receipts; --image still pulls")
-	fs.StringVar(&selected, "checks", "", "linode,ghcr,dns,storage,tls,mounts; SecretStore/PKI checks always apply")
+	fs.StringVar(&selected, "checks", "", "linode,ghcr,dns,storage,tls,mounts; selected phase prerequisites always apply")
 	fs.Func("image", "repeatable GHCR digest-pinned image for linux/amd64", func(v string) error { q.images = append(q.images, v); return nil })
 	fs.Func("manifest", "repeatable complete rendered workload JSON", func(v string) error { q.manifests = append(q.manifests, v); return nil })
 	fs.StringVar(&q.tls.cert, "tls-cert", "", "PEM certificate chain")
@@ -100,7 +115,18 @@ func parseDeploymentCheckOptions(args []string, out io.Writer) (deploymentCheckO
 	if q.fast && visited["read-only"] && !q.readOnly {
 		return o, errors.New("--fast conflicts with --read-only=false")
 	}
-	if q.fast {
+	if o.phase == deploymentCheckPreDeploy {
+		if visited["read-only"] && !q.readOnly {
+			return o, errors.New("pre-deploy checks are read-only; --read-only=false is not allowed")
+		}
+		if q.createMissingObjectStorageBucket || q.grantObjectStorageBucketAccess {
+			return o, errors.New("credential repair flags are not allowed during pre-deploy checks")
+		}
+		if o.requireMigration || o.requireProduct {
+			return o, errors.New("--require-pki-migration and --require-product-pki are post-deploy health checks")
+		}
+	}
+	if q.fast || o.phase == deploymentCheckPreDeploy {
 		q.readOnly = true
 	}
 	if o.timeout == 0 {
@@ -178,7 +204,9 @@ type deploymentCheckResult struct {
 type deploymentCheckReport struct {
 	SchemaVersion int                     `json:"schema_version"`
 	Environment   string                  `json:"environment"`
+	Phase         string                  `json:"phase"`
 	Mode          string                  `json:"mode"`
+	ReadOnly      bool                    `json:"read_only"`
 	Scope         string                  `json:"scope"`
 	Overall       string                  `json:"overall"`
 	StartedAt     string                  `json:"started_at"`
@@ -283,13 +311,15 @@ func (r *deploymentCheckReporter) heartbeat(ctx context.Context, done <-chan str
 	}
 }
 
-func (r *deploymentCheckReporter) snapshot(environment string, fast bool) deploymentCheckReport {
+func (r *deploymentCheckReporter) snapshot(environment, phase string, fast, readOnly bool) deploymentCheckReport {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	report := deploymentCheckReport{SchemaVersion: 1, Environment: environment, Mode: "standard", Scope: "selected credential/SecretStore/PKI checks; not release approval", Overall: "PASS", StartedAt: r.started.UTC().Format(time.RFC3339Nano), DurationMS: time.Since(r.started).Milliseconds(), Coverage: map[string]int{"required": 0, "PASS": 0, "FAIL": 0, "ERROR": 0, "BLOCKED": 0, "SKIPPED": 0}}
+	report := deploymentCheckReport{SchemaVersion: 1, Environment: environment, Phase: phase, Mode: "standard", ReadOnly: readOnly, Scope: deploymentCheckScope(phase), Overall: "PASS", StartedAt: r.started.UTC().Format(time.RFC3339Nano), DurationMS: time.Since(r.started).Milliseconds(), Coverage: map[string]int{"required": 0, "PASS": 0, "FAIL": 0, "ERROR": 0, "BLOCKED": 0, "SKIPPED": 0}}
 	if fast {
 		report.Mode = "fast"
-		report.Scope = "read-only diagnostics; writes and full image pulls unverified"
+		report.Scope += "; fast: writes and full image pulls unverified"
+	} else if readOnly && phase == deploymentCheckPostDeploy {
+		report.Scope += "; read-only: write permissions unverified"
 	}
 	for _, v := range r.results {
 		if v.Status == "PENDING" || v.Status == "RUNNING" {
@@ -363,6 +393,10 @@ func verifyDeploymentCheckLegacyPaths(store secretStore, workspace string) error
 }
 
 func executeDeploymentCheck(ctx context.Context, o deploymentCheckOptions, cfg deploymentConfig, deps deploymentCheckDependencies, reporter *deploymentCheckReporter) {
+	if o.phase == deploymentCheckPreDeploy {
+		executeDeploymentPreDeployCheck(ctx, o, cfg, deps, reporter)
+		return
+	}
 	store, storeErr := deps.store(cfg.Environment)
 	store.checkRuntime = newDeploymentCheckRuntime(ctx, cfg.Environment)
 	type task struct {
@@ -490,6 +524,10 @@ func runDeploymentCheck(args []string) error {
 }
 
 func runDeploymentCheckWithDependencies(parent context.Context, args []string, out, diagnostics io.Writer, deps deploymentCheckDependencies) error {
+	phase := deploymentCheckBannerPhase(args)
+	if os.Getenv("RTK_CLOUD_CHECK_BANNER_PHASE") != phase || phase == "" {
+		printDeploymentCheckPurpose(out, phase)
+	}
 	o, err := parseDeploymentCheckOptions(args, diagnostics)
 	if errors.Is(err, flag.ErrHelp) {
 		return nil
@@ -520,7 +558,7 @@ func runDeploymentCheckWithDependencies(parent context.Context, args []string, o
 	ctx, cancel := context.WithTimeout(parent, o.timeout)
 	defer cancel()
 	reporter := newDeploymentCheckReporter(out)
-	fmt.Fprintf(out, "Deployment check: environment=%s fast=%t read-only=%t timeout=%s; selected checks only, not release approval\n", cfg.Environment, o.qualification.fast, o.qualification.readOnly, o.timeout)
+	fmt.Fprintf(out, "Deployment check: phase=%s environment=%s fast=%t read-only=%t timeout=%s; selected checks only, not release approval\n", o.phase, cfg.Environment, o.qualification.fast, o.qualification.readOnly, o.timeout)
 	done, heartbeatDone := make(chan struct{}), make(chan struct{})
 	go func() { defer close(heartbeatDone); reporter.heartbeat(ctx, done) }()
 	executeDeploymentCheck(ctx, o, cfg, deps, reporter)
@@ -529,7 +567,7 @@ func runDeploymentCheckWithDependencies(parent context.Context, args []string, o
 	}
 	close(done)
 	<-heartbeatDone
-	report := reporter.snapshot(cfg.Environment, o.qualification.fast)
+	report := reporter.snapshot(cfg.Environment, o.phase, o.qualification.fast, o.qualification.readOnly)
 	if o.report != "" {
 		if err := writeDeploymentCheckReport(o.report, report); err != nil {
 			fmt.Fprintln(diagnostics, "error:", err)
