@@ -347,6 +347,11 @@ Run the user's normal whole-environment entry after reviewing that plan:
 ./scripts/check-deployment-preflight.sh --environment staging
 ```
 
+GitHub CI/provenance queries use the existing authenticated GitHub CLI session
+(or the caller's CI token), separately from environment deployment credentials.
+A stale `operator/env/GH_TOKEN` must not override that login. GHCR pull access,
+provider credentials and PKI bindings remain environment-local in SecretStore.
+
 It automatically discovers the plan, requires full exact-image pulls and CI
 publication, schema prerequisites, simulator startup, all environment workload
 health, mounted identity/CRL/Secret evidence and public authenticated mTLS with

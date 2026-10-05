@@ -1274,6 +1274,12 @@ func installAllCredentialEnvironment(values map[string]string) func() {
 	}
 	previous := map[string]*string{}
 	for key := range keys {
+		// GitHub CI/provenance uses the caller's authenticated CLI session (or
+		// Actions token). Environment deployment credentials must not replace it.
+		// GHCR package credentials remain selected from the canonical store.
+		if keySet("GH_TOKEN", "GITHUB_TOKEN", "GH_HOST", "GH_CONFIG_DIR")[key] {
+			continue
+		}
 		if old, ok := os.LookupEnv(key); ok {
 			copy := old
 			previous[key] = &copy

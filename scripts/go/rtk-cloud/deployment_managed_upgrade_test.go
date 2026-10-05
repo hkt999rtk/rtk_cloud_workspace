@@ -400,3 +400,46 @@ func TestManagedUpgradeCannotExpandTargetedOperationScope(t *testing.T) {
 		}
 	}
 }
+
+func TestManagedUpgradeDeploymentCredentialsCannotOverrideGitHubCISession(t *testing.T) {
+	for _, configured := range []bool{false, true} {
+		t.Run(map[bool]string{false: "keyring login", true: "caller CI token"}[configured], func(t *testing.T) {
+			for _, key := range []string{"GH_TOKEN", "GITHUB_TOKEN", "GH_HOST", "GH_CONFIG_DIR"} {
+				t.Setenv(key, "")
+				_ = os.Unsetenv(key)
+			}
+			if configured {
+				t.Setenv("GH_TOKEN", "caller-ci-fixture")
+				t.Setenv("GITHUB_TOKEN", "caller-actions-fixture")
+				t.Setenv("GH_HOST", "github.example")
+				t.Setenv("GH_CONFIG_DIR", "caller-config-fixture")
+			}
+			t.Setenv("LINODE_TOKEN", "unselected-provider-fixture")
+			t.Setenv("GHCR_PULL_TOKEN", "unselected-pull-fixture")
+			values := map[string]string{"GH_TOKEN": "stale-operator-fixture", "GITHUB_TOKEN": "operator-actions-fixture", "GH_HOST": "unselected-host", "GH_CONFIG_DIR": "unselected-config", "LINODE_TOKEN": "selected-provider-fixture", "GHCR_PULL_TOKEN": "selected-pull-fixture"}
+			restore := installAllCredentialEnvironment(values)
+			defer restore()
+			if configured {
+				if os.Getenv("GH_TOKEN") != "caller-ci-fixture" || os.Getenv("GITHUB_TOKEN") != "caller-actions-fixture" || os.Getenv("GH_HOST") != "github.example" || os.Getenv("GH_CONFIG_DIR") != "caller-config-fixture" {
+					t.Fatal("canonical deployment profile replaced the authenticated GitHub CLI session")
+				}
+			} else {
+				for _, key := range []string{"GH_TOKEN", "GITHUB_TOKEN", "GH_HOST", "GH_CONFIG_DIR"} {
+					if _, ok := os.LookupEnv(key); ok {
+						t.Fatal("deployment profile shadowed keyring GitHub login")
+					}
+				}
+			}
+			if os.Getenv("LINODE_TOKEN") != "selected-provider-fixture" || os.Getenv("GHCR_PULL_TOKEN") != "selected-pull-fixture" {
+				t.Fatal("deployment stopped using its canonical provider/package credentials")
+			}
+			restore()
+			if os.Getenv("LINODE_TOKEN") != "unselected-provider-fixture" || os.Getenv("GHCR_PULL_TOKEN") != "unselected-pull-fixture" {
+				t.Fatal("deployment credential scope was not restored")
+			}
+			if values["GH_TOKEN"] != "stale-operator-fixture" {
+				t.Fatal("private operator credential was mutated")
+			}
+		})
+	}
+}
