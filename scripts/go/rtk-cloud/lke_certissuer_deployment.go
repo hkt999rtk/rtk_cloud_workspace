@@ -51,6 +51,13 @@ func deploymentCertIssuerIngressReadinessWithClusterState(ctx context.Context, c
 		return err
 	}
 	if policy.PublicHost == "" {
+		store, plan, err := managedUpgradeStore(env)
+		if err != nil {
+			return err
+		}
+		if plan != nil {
+			return qualifyManagedUpgrade(ctx, provisionPaths{Workspace: cfg.Workspace, EnvRoot: cfg.RuntimeRoot}, env, store, plan)
+		}
 		return nil
 	}
 	store, err := newSecretStore("", cfg.Environment)
@@ -84,6 +91,17 @@ func deploymentCertIssuerIngressReadinessWithClusterState(ctx context.Context, c
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	plan, err := loadManagedUpgradePlan(store, env["CLOUD_STACK_NAME"])
+	if err != nil {
+		return err
+	}
+	if plan != nil {
+		if err := qualifyManagedUpgrade(ctx, paths, env, store, plan); err != nil {
+			return fmt.Errorf("managed full upgrade prerequisites: %w", err)
+		}
+		fmt.Fprintf(out, "PASS managed-full-upgrade     complete desired workload overwrite and retained dependencies qualified; plan_sha256=%s; no cloud resources changed\n", plan.digest)
+		return nil
+	}
 	if _, err := lkePlanCertIssuerIngressMigrationForStaticRenderWithContext(ctx, paths, env); err != nil {
 		return fmt.Errorf("CertIssuer route migration prerequisites: %w", err)
 	}
@@ -101,7 +119,18 @@ func lkeCertIssuerRoutingSelected(ctx provisionContext) bool {
 
 func lkeCertIssuerIngressPreflight(ctx provisionContext) error {
 	if ctx.Opts.mode.deploy && len(ctx.Opts.workloads) == 0 {
-		_, err := lkePlanCertIssuerIngressMigrationForStaticRenderWithContext(context.Background(), ctx.Paths, ctx.Env)
+		store, plan, err := managedUpgradeStore(ctx.Env)
+		if err != nil {
+			return err
+		}
+		if plan != nil && managedUpgradeSelected(ctx.Opts) {
+			if err := qualifyManagedUpgrade(context.Background(), ctx.Paths, ctx.Env, store, plan); err != nil {
+				return err
+			}
+			ctx.Env["RTK_MANAGED_UPGRADE_PLAN_SHA256"] = plan.digest
+			return nil
+		}
+		_, err = lkePlanCertIssuerIngressMigrationForStaticRenderWithContext(context.Background(), ctx.Paths, ctx.Env)
 		return err
 	}
 	_, err := lkePlanCertIssuerIngressMigration(ctx.Paths, ctx.Env)
@@ -114,6 +143,12 @@ func lkeDeployCertIssuerPublicIngress(ctx provisionContext) error {
 	plan, err := lkePlanCertIssuerIngressMigration(ctx.Paths, ctx.Env)
 	if err != nil {
 		return err
+	}
+	if ctx.Env["RTK_MANAGED_UPGRADE_PLAN_SHA256"] != "" {
+		if len(plan.Changes) != 0 {
+			return errors.New("managed workload plan retains public routes; qualify route migration separately before the full workload upgrade")
+		}
+		return plan.Verify()
 	}
 	if err := lkeInstallIngressNginx(ctx.Env); err != nil {
 		return err

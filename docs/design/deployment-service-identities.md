@@ -125,3 +125,26 @@ consumer acknowledgments. Other environments require their own cutover.
 The [Dev PKI runbook](../product-services-dev-pki.md) describes the public
 CertIssuer repair and the image-only update boundary for an existing managed
 PKI stack. Initial enrollment and auxiliary PKI upgrades are separate operations.
+
+## Dev/Staging full workload overwrite policy
+
+An environment operator may authorize complete managed Deployment-spec
+replacement in Dev/Staging through the reviewed schema-1 plan at
+`~/.config/rtk_cloud/<environment>/deployment/managed-upgrade.json`. The
+`replace-managed-workloads` policy is environment-local, excludes production,
+and is consumed by both default full preflight and full deployment. This
+explicit desired-state input supersedes static workload templates for the
+selected complete environment inventory; it does not change CA custody,
+operator authority or the accepted certificate lifecycle.
+
+The plan permits declared nonidentity workload configuration changes while
+retaining and checking issuer/identity PVCs, mounted trust/CRLs, Secret bindings,
+bootstrap/credential plumbing and StatefulSet/DaemonSet provider owners. It
+requires exact-release CI/pulls, schemas/startup and server-side dry-run before
+mutation, fences plan and owner drift, writes private rollback specs, and
+requires actual desired specs plus PKI/public mTLS after rollout. Whole-plan
+replacement must never call the legacy static CertIssuer Secret/material
+reconciler. See [Full managed workload upgrade](../deployment-operations.md#full-managed-workload-upgrade)
+for the normative operational schema, gates and limits. A future root/identity
+replacement is an explicit accepted lifecycle operation, followed by a fresh
+workload plan; a permissive boolean alone is insufficient deployment evidence.

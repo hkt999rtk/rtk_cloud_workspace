@@ -221,7 +221,7 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 		}
 		return err
 	}
-	if (action == "credentials-check" || action == "storage-metrics-export") && fs.NArg() != 0 {
+	if (action == "credentials-check" || action == "storage-metrics-export" || action == "prepare-upgrade") && fs.NArg() != 0 {
 		return errors.New("unexpected positional arguments; use --flag=value for boolean values")
 	}
 	if action != "storage-reinitialize" && (hasFlag(args[1:], "--acknowledge-discarded-source") || hasFlag(args[1:], "--plan")) {
@@ -242,7 +242,7 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 	})
 	if customQualification {
 		preflightReadOnlyOnly := action == "preflight" && qualification.readOnly && selectedChecks == "" && len(qualification.images) == 0 && len(qualification.manifests) == 0 && qualification.tls.cert == "" && qualification.tls.key == "" && qualification.tls.ca == "" && qualification.tls.hostname == "" && !hasFlag(args[1:], "--tls-purpose") && !hasFlag(args[1:], "--min-valid-days")
-		if action != "credentials-check" && !preflightReadOnlyOnly {
+		if action != "credentials-check" && action != "prepare-upgrade" && !preflightReadOnlyOnly {
 			return errors.New("qualification flags are only valid with deployment credentials-check")
 		}
 		if *createMissingObjectStorageBucket || *grantObjectStorageBucketAccess {
@@ -261,7 +261,7 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 		}
 	}
 	storageAction := strings.HasPrefix(action, "storage-")
-	if action != "preflight" && action != "credentials-check" && action != "plan" && action != "create" && action != "upgrade" && action != "provision" && action != "acceptance" && action != "remove" && action != "test" && !keySet("storage-plan", "storage-bootstrap", "storage-migrate", "storage-cutover", "storage-reinitialize", "storage-rollback", "storage-retire", "storage-metrics-export")[action] {
+	if action != "prepare-upgrade" && action != "preflight" && action != "credentials-check" && action != "plan" && action != "create" && action != "upgrade" && action != "provision" && action != "acceptance" && action != "remove" && action != "test" && !keySet("storage-plan", "storage-bootstrap", "storage-migrate", "storage-cutover", "storage-reinitialize", "storage-rollback", "storage-retire", "storage-metrics-export")[action] {
 		return fmt.Errorf("unknown deployment action %q", action)
 	}
 	if *createMissingObjectStorageBucket && action != "credentials-check" {
@@ -297,6 +297,18 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 	stack := cfg.Values["CLOUD_STACK_NAME"]
 	if action != "plan" && action != "credentials-check" && action != "storage-plan" && !(action == "storage-reinitialize" && *reinitializePlan) && *confirm != stack {
 		return fmt.Errorf("--confirm %s is required", stack)
+	}
+	if action == "prepare-upgrade" {
+		invalid := false
+		fs.Visit(func(f *flag.Flag) {
+			if qualificationFlags[f.Name] && f.Name != "image" {
+				invalid = true
+			}
+		})
+		if invalid {
+			return errors.New("prepare-upgrade accepts only --image qualification inputs; use the default preflight after reviewing the private plan")
+		}
+		return prepareManagedUpgrade(cfg, qualification.images, os.Stdout)
 	}
 	if *destinationEnvFile != "" && !storageAction {
 		return errors.New("--destination-env-file requires a storage action")
@@ -448,8 +460,18 @@ func provisionDeploymentEnvironment(cfg deploymentConfig) error {
 		if err := validateLKEEnvironmentStateBeforeMutation(cfg); err != nil {
 			return err
 		}
-		if err := resolveLKEImagesIfNeeded(cfg.Workspace, cfg.RuntimeRoot); err != nil {
+		store, err := newSecretStore("", cfg.Environment)
+		if err != nil {
 			return err
+		}
+		plan, err := loadManagedUpgradePlan(store, cfg.Values["CLOUD_STACK_NAME"])
+		if err != nil {
+			return err
+		}
+		if plan == nil {
+			if err := resolveLKEImagesIfNeeded(cfg.Workspace, cfg.RuntimeRoot); err != nil {
+				return err
+			}
 		}
 	}
 	return runProvision([]string{"--workspace", cfg.Workspace, "--env-root", cfg.RuntimeRoot, "--preflight", "--plan", "--apply", "--deploy", "--dns", "--artifacts", "--confirm", cfg.Values["CLOUD_STACK_NAME"]})
@@ -752,6 +774,7 @@ func printDeploymentUsage() {
   rtk-cloud deployment plan --environment NAME
   rtk-cloud deployment console-check --environment NAME --cloud-id UUID [--product-id UUID]
   rtk-cloud deployment create --environment NAME --confirm STACK
+  rtk-cloud deployment prepare-upgrade --environment NAME --confirm STACK [--image GHCR_DIGEST]...
   rtk-cloud deployment upgrade --environment NAME --confirm STACK
   rtk-cloud deployment provision --environment NAME --confirm STACK
   rtk-cloud deployment acceptance --environment NAME --confirm STACK

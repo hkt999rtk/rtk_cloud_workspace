@@ -281,10 +281,17 @@ sidecar images, Secret/ConfigMap bindings, identity state and PVCs, applying onl
 the selected image changes. Any requested configuration/schema change needs
 its own reviewed migration.
 The default full create/upgrade pre-deploy checker and legacy full deployment
-now reject this unsupported replacement before dependency resource mutations,
+reject legacy reconstruction before dependency resource mutations,
 including when CertIssuer has no available replica. Reviewed targeted
 `provision --deploy --workloads ...` and route-only `provision --dns` remain
 distinct operations; they do not authorize whole-Deployment PKI reconstruction.
+Dev/Staging can authorize a full managed workload replacement through
+[the private full upgrade plan](deployment-operations.md#full-managed-workload-upgrade).
+Default preflight and deployment then use the same complete desired state,
+including nonimage workload settings, without the legacy static identity
+renderer. Issuer/leaf replacement still uses the managed owner lifecycle;
+working custody, identity PVCs, CRLs and dependent Secret bindings remain verified.
+The policy is unavailable in production.
 The compatible static-renderer path can prequalify owned mutable Service/listener
 repairs while preserving the exact persisted identity. That exception does not
 apply to this managed Dev PKI installation: its targeted/DNS route operations

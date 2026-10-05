@@ -8,7 +8,7 @@ CHECK_READ_ONLY="${RTK_CLOUD_CHECK_SCRIPT_READ_ONLY:-false}"
 case "$CHECK_PHASE" in
   pre-deploy)
     printf '%s\n' 'Pre-deploy deployability check (pre-deploy): Validate prerequisites for the selected deployment operation. Use --operation image-upgrade to qualify existing Pod image updates. Run before deployment.'
-    printf '%s\n' 'Read-only cloud checks; write permissions are unverified. Default full-deployment checks desired inputs and safe route migration. Image-upgrade additionally requires live health, exact CI images and local startup fixtures; --fast cannot qualify it.'
+    printf '%s\n' 'No cloud resources are persisted by this check. Default full-deployment checks desired inputs and safe route migration; a private managed upgrade plan additionally validates Kubernetes update admission with server dry-run. Image-upgrade additionally requires live health, exact CI images and local startup fixtures; --fast cannot qualify it.'
     ;;
   post-deploy)
     printf '%s\n' 'Post-deploy environment health check (post-deploy): Verify deployed Secret bindings, PKI, required public mTLS and environment workload readiness. Run after deployment or when diagnosing the current environment.'

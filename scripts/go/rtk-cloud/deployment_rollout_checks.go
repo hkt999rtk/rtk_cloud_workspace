@@ -273,10 +273,17 @@ func checkRolloutMounts(path string) deploymentCredentialCheck {
 }
 
 func checkRolloutMountsWithRequirement(path string, requireDirectSecret bool) deploymentCredentialCheck {
-	check := deploymentCredentialCheck{Name: "rollout Secret mounts " + filepath.Base(path)}
 	raw, err := os.ReadFile(path)
+	if err != nil {
+		return deploymentCredentialCheck{Name: "rollout Secret mounts " + filepath.Base(path), Detail: "provide readable complete rendered workload JSON"}
+	}
+	return checkRolloutMountsJSON(raw, "rollout Secret mounts "+filepath.Base(path), requireDirectSecret)
+}
+
+func checkRolloutMountsJSON(raw []byte, name string, requireDirectSecret bool) deploymentCredentialCheck {
+	check := deploymentCredentialCheck{Name: name}
 	var document any
-	if err != nil || json.Unmarshal(raw, &document) != nil {
+	if json.Unmarshal(raw, &document) != nil {
 		check.Detail = "provide readable complete rendered workload JSON"
 		return check
 	}

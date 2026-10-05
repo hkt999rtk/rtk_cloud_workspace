@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -48,6 +49,18 @@ func runKubernetesProvision(provider cloudProvider, ctx provisionContext) error 
 		activeSecretEnvironmentRoot = ""
 	}()
 	lkeRuntimeSecretStateDir = store.RuntimeDir()
+	if ctx.Opts.mode.deploy && managedUpgradeSelected(ctx.Opts) {
+		plan, err := loadManagedUpgradePlan(store, ctx.Env["CLOUD_STACK_NAME"])
+		if err != nil {
+			return err
+		}
+		if plan != nil {
+			if err := qualifyManagedUpgrade(context.Background(), ctx.Paths, ctx.Env, store, plan); err != nil {
+				return err
+			}
+			ctx.Env["RTK_MANAGED_UPGRADE_PLAN_SHA256"] = plan.digest
+		}
+	}
 	if err := loadLKEImageManifestDefaults(ctx.Paths.EnvRoot, ctx.Env); err != nil {
 		return err
 	}
@@ -184,7 +197,7 @@ func kubernetesProvisionSteps(provider cloudProvider) []provisionStep {
 				return ctx.Opts.mode.apply || ctx.Opts.mode.dns || ctx.Opts.mode.deploy || ctx.Opts.mode.e2e
 			},
 			Run: func(ctx provisionContext) error {
-				if ctx.Opts.mode.deploy {
+				if ctx.Opts.mode.deploy && ctx.Env["RTK_MANAGED_UPGRADE_PLAN_SHA256"] == "" {
 					if err := ensureLKEDeployImages(ctx.Env, ctx.Opts); err != nil {
 						return err
 					}
@@ -214,6 +227,7 @@ func kubernetesProvisionSteps(provider cloudProvider) []provisionStep {
 			Enabled: func(ctx provisionContext) bool {
 				return provider.Name() == "lke" &&
 					(ctx.Opts.mode.apply || ctx.Opts.mode.deploy) &&
+					ctx.Env["RTK_MANAGED_UPGRADE_PLAN_SHA256"] == "" &&
 					(len(ctx.Opts.workloads) == 0 || lkeTargetedFleetDatabasePoolRequired(ctx.Env, ctx.Opts)) &&
 					os.Getenv("RUNTIME_COVERAGE_SHARED_CLUSTER") != "1"
 			},
@@ -251,6 +265,9 @@ func kubernetesProvisionSteps(provider cloudProvider) []provisionStep {
 				if err := lkeDeployWorkloads(ctx.Paths, ctx.Env, ctx.Opts); err != nil {
 					return err
 				}
+				if ctx.Env["RTK_MANAGED_UPGRADE_PLAN_SHA256"] != "" {
+					return nil
+				}
 				if err := applySharedKubernetesNodeClassPlacement(ctx); err != nil {
 					return err
 				}
@@ -285,6 +302,14 @@ func kubernetesProvisionSteps(provider cloudProvider) []provisionStep {
 				fmt.Fprintln(os.Stdout, dir)
 				return nil
 			},
+		},
+		{
+			Name:  "managed-upgrade-health",
+			Phase: "runtime",
+			Enabled: func(ctx provisionContext) bool {
+				return ctx.Opts.mode.deploy && ctx.Env["RTK_MANAGED_UPGRADE_PLAN_SHA256"] != ""
+			},
+			Run: func(ctx provisionContext) error { return verifyManagedUpgradePostDeploy(ctx.Paths, ctx.Env) },
 		},
 		{
 			Name:    "e2e",
