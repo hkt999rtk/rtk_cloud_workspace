@@ -56,7 +56,7 @@ func lkeRequireExistingServiceRegistrationEndpoint(env map[string]string) error 
 	}
 	for _, raw := range ports {
 		port, ok := raw.(map[string]any)
-		if ok && port["name"] == "service-registry" && port["port"] == float64(8443) && port["targetPort"] == "service-registry" {
+		if ok && port["name"] == "service-reg" && port["port"] == float64(8443) && port["targetPort"] == "service-reg" {
 			return nil
 		}
 	}

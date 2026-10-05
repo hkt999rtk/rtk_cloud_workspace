@@ -2040,7 +2040,7 @@ spec:
                   - video-cloud-otaservice
       ports:
         - protocol: TCP
-          port: 8443
+          port: service-reg
 `, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], lkeNamespaceName(env, "video-cloud"))
 }
 
@@ -10098,7 +10098,7 @@ func lkeDeploymentManifestWithVideoSurge(env map[string]string, workload lkeWork
 		}
 		if lkeAccountManagerServiceRegistrationEnabled(env) {
 			checksumValues = append(checksumValues, "service-registration-enabled")
-			extraPorts = `            - name: service-registry
+			extraPorts = `            - name: service-reg
               containerPort: 8443
 `
 			extraEnv += `            - name: ACCOUNT_MANAGER_SERVICE_REGISTRATION_PORT
@@ -10942,9 +10942,9 @@ func lkeGrafanaDashboardPath(env map[string]string) string {
 func lkeServiceManifest(env map[string]string, workload lkeWorkload) string {
 	extraPorts := ""
 	if workload.Key == "account-manager" && lkeAccountManagerServiceRegistrationEnabled(env) {
-		extraPorts = `    - name: service-registry
+		extraPorts = `    - name: service-reg
       port: 8443
-      targetPort: service-registry
+      targetPort: service-reg
 `
 	}
 	return fmt.Sprintf(`apiVersion: v1

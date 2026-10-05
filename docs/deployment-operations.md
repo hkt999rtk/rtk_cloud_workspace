@@ -498,6 +498,10 @@ Service port `8443`, the matching Account Manager mTLS listener settings, and
 an ingress NetworkPolicy limited to the MQTT foundation, Shadow worker,
 WebRTC service, and video-storage service Pod identities in the Video Cloud
 namespace. It does not add a public ingress route or enable Product writes.
+The NetworkPolicy targets the Pod's named registrar listener (`service-reg`),
+which fits Kubernetes' 15-character port-name limit. Its destination port may differ
+from the Service port: an existing `8443 -> service-reg:9444` mapping must allow
+Pod port 9444. Preserve that mapping during routing-only reconciliation.
 
 Before enabling the flag, provision the environment-local Kubernetes Secret
 `account-manager-service-registration-tls` in the Account Manager namespace

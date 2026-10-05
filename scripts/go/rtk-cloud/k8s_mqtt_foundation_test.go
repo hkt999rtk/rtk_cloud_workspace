@@ -153,11 +153,11 @@ func TestLKEMQTTFoundationRequiresExistingPrivatePlatformEndpoint(t *testing.T) 
 	if err := lkeRequireExistingServiceRegistrationEndpoint(env); err == nil {
 		t.Fatal("Account Manager HTTP-only Service was accepted")
 	}
-	t.Setenv("FAKE_ACCOUNT_MANAGER_REGISTRATION_SERVICE_JSON", `{"spec":{"type":"ClusterIP","externalIPs":["198.51.100.5"],"selector":{"app.kubernetes.io/name":"account-manager"},"ports":[{"name":"service-registry","port":8443,"targetPort":"service-registry"}]}}`)
+	t.Setenv("FAKE_ACCOUNT_MANAGER_REGISTRATION_SERVICE_JSON", `{"spec":{"type":"ClusterIP","externalIPs":["198.51.100.5"],"selector":{"app.kubernetes.io/name":"account-manager"},"ports":[{"name":"service-reg","port":8443,"targetPort":"service-reg"}]}}`)
 	if err := lkeRequireExistingServiceRegistrationEndpoint(env); err == nil {
 		t.Fatal("externally addressed Account Manager registration Service was accepted")
 	}
-	t.Setenv("FAKE_ACCOUNT_MANAGER_REGISTRATION_SERVICE_JSON", `{"spec":{"type":"ClusterIP","selector":{"app.kubernetes.io/name":"account-manager"},"ports":[{"name":"http","port":80,"targetPort":"http"},{"name":"service-registry","port":8443,"targetPort":"service-registry"}]}}`)
+	t.Setenv("FAKE_ACCOUNT_MANAGER_REGISTRATION_SERVICE_JSON", `{"spec":{"type":"ClusterIP","selector":{"app.kubernetes.io/name":"account-manager"},"ports":[{"name":"http","port":80,"targetPort":"http"},{"name":"service-reg","port":8443,"targetPort":"service-reg"}]}}`)
 	if err := lkeRequireExistingServiceRegistrationEndpoint(env); err != nil {
 		t.Fatal(err)
 	}
