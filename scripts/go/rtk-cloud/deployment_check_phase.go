@@ -45,10 +45,10 @@ func deploymentCheckBannerPhase(args []string) string {
 func printDeploymentCheckPurpose(out io.Writer, phase string) {
 	switch phase {
 	case deploymentCheckPreDeploy:
-		fmt.Fprintln(out, "Pre-deploy deployability check (pre-deploy): Validate desired configuration, tools, and SecretStore prerequisites for a full create or upgrade. Run before deploying the whole environment.")
-		fmt.Fprintln(out, "Read-only; write permissions are unverified. Existing deployment health issues do not block a new deployment, but unsafe route migrations do. A pass does not establish current service health. --fast only reduces validation depth.")
+		fmt.Fprintln(out, "Pre-deploy deployability check (pre-deploy): Validate prerequisites for the selected deployment operation. Use --operation image-upgrade to qualify existing Pod image updates. Run before deployment.")
+		fmt.Fprintln(out, "Read-only cloud checks; write permissions are unverified. Default full-deployment checks desired inputs and safe route migration. Image-upgrade additionally requires live health, exact CI images and local startup fixtures; --fast cannot qualify it.")
 	case deploymentCheckPostDeploy:
-		fmt.Fprintln(out, "Post-deploy environment health check (post-deploy): Verify deployed Secret bindings, PKI, and public ingress. Run after deployment or when diagnosing the current environment.")
+		fmt.Fprintln(out, "Post-deploy environment health check (post-deploy): Verify deployed Secret bindings, PKI, required public mTLS and environment workload readiness. Run after deployment or when diagnosing the current environment.")
 		fmt.Fprintln(out, "This checks current health, not pre-deploy deployability or full application acceptance. Default provider validation may use temporary DNS or storage writes. Use --read-only for read-only checks; --fast only reduces validation depth.")
 	default:
 		fmt.Fprintln(out, "Deployment environment check: Use --phase pre-deploy for deployability, or --phase post-deploy for current environment health (default).")
@@ -59,7 +59,7 @@ func deploymentCheckScope(phase string) string {
 	if phase == deploymentCheckPreDeploy {
 		return "read-only full create/upgrade deployability: desired configuration, provision prerequisites, local SecretStore, safe route migration and selected provider/input checks; current runtime health and write permissions unverified; not release approval"
 	}
-	return "existing deployment health: live SecretStore bindings, PKI/public ingress and selected provider/input checks; not full application acceptance or release approval"
+	return "existing deployment health: live SecretStore bindings, PKI, required public CertIssuer mTLS, all environment workload readiness and selected provider/input checks; not full application acceptance or release approval"
 }
 
 func executeDeploymentPreDeployCheck(ctx context.Context, o deploymentCheckOptions, cfg deploymentConfig, deps deploymentCheckDependencies, reporter *deploymentCheckReporter) {

@@ -28,6 +28,7 @@ type deploymentCredentialCheck struct {
 }
 
 type deploymentCredentialCheckOptions struct {
+	imageUpgrade                     bool
 	readOnly                         bool
 	fast                             bool
 	planOnly                         bool

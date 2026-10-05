@@ -22,20 +22,23 @@ import (
 type deploymentCheckOptions struct {
 	environment, environmentRoot, workspace, report string
 	phase                                           string
+	operation                                       string
 	timeout                                         time.Duration
 	requireMigration, requireProduct                bool
 	qualification                                   deploymentCredentialCheckOptions
 }
 
 type deploymentCheckDependencies struct {
-	guard                               func([]string) error
-	resolve                             func(string, string, string) (deploymentConfig, error)
-	store                               func(string) (secretStore, error)
-	preflight                           func(context.Context, deploymentConfig, io.Writer) error
-	local, bindings, migration, product func(secretStore) error
-	runtime                             func(secretStore, time.Time) error
-	plan                                func(context.Context, deploymentConfig, string, deploymentCredentialCheckOptions, func(deploymentCredentialCheck))
-	collect                             func(context.Context, deploymentConfig, string, deploymentCredentialCheckOptions, bool, func(deploymentCredentialCheck)) []deploymentCredentialCheck
+	guard                                          func([]string) error
+	resolve                                        func(string, string, string) (deploymentConfig, error)
+	store                                          func(string) (secretStore, error)
+	preflight                                      func(context.Context, deploymentConfig, io.Writer) error
+	local, bindings, migration, product, workloads func(secretStore) error
+	runtime                                        func(secretStore, time.Time) error
+	public                                         func(context.Context, deploymentConfig, secretStore) error
+	upgrade                                        func(context.Context, deploymentConfig, secretStore, deploymentCheckOptions) error
+	plan                                           func(context.Context, deploymentConfig, string, deploymentCredentialCheckOptions, func(deploymentCredentialCheck))
+	collect                                        func(context.Context, deploymentConfig, string, deploymentCredentialCheckOptions, bool, func(deploymentCredentialCheck)) []deploymentCredentialCheck
 }
 
 func defaultDeploymentCheckDependencies() deploymentCheckDependencies {
@@ -46,7 +49,8 @@ func defaultDeploymentCheckDependencies() deploymentCheckDependencies {
 		preflight: defaultDeploymentCheckPreflight,
 		local:     verifySecretStoreContents, bindings: verifySecretStoreK8SBindings,
 		runtime: verifySecretStoreK8SRuntime, migration: verifyPKIMigrationDatabaseSecret,
-		product: verifyProductPKIReadiness,
+		product: verifyProductPKIReadiness, workloads: verifyDeploymentWorkloadHealth,
+		public: verifyDeploymentPublicCertIssuer, upgrade: verifyDeploymentImageUpgrade,
 		plan: func(ctx context.Context, cfg deploymentConfig, path string, options deploymentCredentialCheckOptions, emit func(deploymentCredentialCheck)) {
 			options.planOnly = true
 			defaultDeploymentCredentialChecker().collectDeploymentChecks(ctx, cfg, path, options, false, emit)
@@ -61,6 +65,7 @@ func parseDeploymentCheckOptions(args []string, out io.Writer) (deploymentCheckO
 	fs := flag.NewFlagSet("deployment check", flag.ContinueOnError)
 	fs.SetOutput(out)
 	o.phase = deploymentCheckPostDeploy
+	fs.StringVar(&o.operation, "operation", "full-deployment", "full-deployment or image-upgrade (preserves existing workload configuration)")
 	var selectedPhase string
 	fs.Func("phase", "pre-deploy (can deploy) or post-deploy (existing runtime health; default)", func(v string) error {
 		if v != deploymentCheckPreDeploy && v != deploymentCheckPostDeploy {
@@ -97,6 +102,9 @@ func parseDeploymentCheckOptions(args []string, out io.Writer) (deploymentCheckO
 	fs.StringVar(&retiredShared, "shared-env-file", "", "retired; shared credentials are unsupported")
 	if err := fs.Parse(args); err != nil {
 		return o, err
+	}
+	if o.operation != "full-deployment" && o.operation != "image-upgrade" {
+		return o, errors.New("--operation must be full-deployment or image-upgrade")
 	}
 	if fs.NArg() != 0 {
 		return o, errors.New("unexpected positional arguments; use --flag=value for boolean values")
@@ -151,6 +159,16 @@ func parseDeploymentCheckOptions(args []string, out io.Writer) (deploymentCheckO
 	if err := q.configureChecks(selected); err != nil {
 		return o, err
 	}
+	if o.operation == "image-upgrade" {
+		q.imageUpgrade = true
+		if q.fast || len(q.images) == 0 || len(q.manifests) == 0 {
+			return o, errors.New("image-upgrade requires complete --manifest inputs and every immutable --image; --fast cannot qualify upgrade readiness")
+		}
+		if q.selected != nil && !q.selected["ghcr"] {
+			return o, errors.New("image-upgrade requires ghcr image checks")
+		}
+		q.readOnly = true
+	}
 	// Bad local inputs must not spend time contacting external systems.
 	for _, path := range append(append([]string{}, q.manifests...), q.tls.cert, q.tls.key, q.tls.ca) {
 		if path == "" {
@@ -167,7 +185,7 @@ func parseDeploymentCheckOptions(args []string, out io.Writer) (deploymentCheckO
 		}
 	}
 	for _, path := range q.manifests {
-		if check := checkRolloutMounts(path); !check.Passed {
+		if check := checkRolloutMountsWithRequirement(path, !q.imageUpgrade); !check.Passed {
 			return o, fmt.Errorf("manifest input qualification failed: %s", check.Detail)
 		}
 	}
@@ -393,7 +411,7 @@ func verifyDeploymentCheckLegacyPaths(store secretStore, workspace string) error
 }
 
 func executeDeploymentCheck(ctx context.Context, o deploymentCheckOptions, cfg deploymentConfig, deps deploymentCheckDependencies, reporter *deploymentCheckReporter) {
-	if o.phase == deploymentCheckPreDeploy {
+	if o.phase == deploymentCheckPreDeploy && o.operation != "image-upgrade" {
 		executeDeploymentPreDeployCheck(ctx, o, cfg, deps, reporter)
 		return
 	}
@@ -426,8 +444,23 @@ func executeDeploymentCheck(ctx context.Context, o deploymentCheckOptions, cfg d
 		}},
 		{"secrets.bindings", true, []string{"secrets.local", "k8s.access-input"}, func() error { return deps.bindings(store) }},
 		{"pki.runtime", true, []string{"secrets.local", "k8s.access-input"}, func() error { return deps.runtime(store, time.Now()) }},
+		{"workloads.runtime", true, []string{"secrets.local", "k8s.access-input"}, func() error {
+			if deps.workloads == nil {
+				return errors.New("workload health checker is unavailable")
+			}
+			return deps.workloads(store)
+		}},
+		{"pki.public-certissuer", deploymentCheckCertIssuerPolicy(cfg).PublicHost != "", []string{"secrets.local", "k8s.access-input"}, func() error {
+			if deps.public == nil {
+				return errors.New("public CertIssuer checker is unavailable")
+			}
+			return deps.public(ctx, cfg, store)
+		}},
 		{"pki.migration", o.requireMigration, []string{"secrets.local", "k8s.access-input"}, func() error { return deps.migration(store) }},
 		{"pki.product-root", o.requireProduct, []string{"secrets.local", "k8s.access-input"}, func() error { return deps.product(store) }},
+	}
+	if o.operation == "image-upgrade" {
+		reporter.emit(deploymentCredentialCheck{ID: "release.image-upgrade", Status: "PENDING", Required: true, Resource: cfg.Environment})
 	}
 	for _, t := range tasks {
 		reporter.emit(deploymentCredentialCheck{ID: t.id, Status: "PENDING", Required: t.required, DependsOn: t.dependencies, Resource: cfg.Environment})
@@ -441,7 +474,11 @@ func executeDeploymentCheck(ctx context.Context, o deploymentCheckOptions, cfg d
 	var passedMu sync.Mutex
 	runTask := func(t task) {
 		if !t.required {
-			reporter.emit(deploymentCredentialCheck{ID: t.id, Status: "SKIPPED", Code: "NOT_SELECTED", Detail: "optional qualification was not requested"})
+			detail := "optional qualification was not requested"
+			if t.id == "pki.public-certissuer" {
+				detail = "selected environment does not configure a public CertIssuer endpoint"
+			}
+			reporter.emit(deploymentCredentialCheck{ID: t.id, Status: "SKIPPED", Code: "NOT_SELECTED", Detail: detail})
 			return
 		}
 		blocked := false
@@ -480,9 +517,19 @@ func executeDeploymentCheck(ctx context.Context, o deploymentCheckOptions, cfg d
 		runTask(t)
 	}
 	var live sync.WaitGroup
+	liveLimit := make(chan struct{}, 4)
 	for _, t := range tasks[3:] {
 		live.Add(1)
-		go func(t task) { defer live.Done(); runTask(t) }(t)
+		go func(t task) {
+			defer live.Done()
+			select {
+			case liveLimit <- struct{}{}:
+				defer func() { <-liveLimit }()
+				runTask(t)
+			case <-ctx.Done():
+				reporter.emit(deploymentCheckFailure(t.id, ctx.Err()))
+			}
+		}(t)
 	}
 	live.Wait()
 	allowWrites := true
@@ -491,7 +538,31 @@ func executeDeploymentCheck(ctx context.Context, o deploymentCheckOptions, cfg d
 			allowWrites = false
 		}
 	}
-	deps.collect(ctx, cfg, q.envFile, q, allowWrites, reporter.emit)
+	providers := deps.collect(ctx, cfg, q.envFile, q, allowWrites, reporter.emit)
+	if o.operation == "image-upgrade" {
+		ready := allowWrites
+		for _, provider := range providers {
+			if provider.Required && provider.Status != "PASS" {
+				ready = false
+			}
+		}
+		if !ready {
+			reporter.emit(deploymentCredentialCheck{ID: "release.image-upgrade", Status: "BLOCKED", Code: "DEPENDENCY_FAILED", Required: true, Detail: "resolve live health and exact image-pull prerequisites before candidate qualification"})
+		} else {
+			reporter.emit(deploymentCredentialCheck{ID: "release.image-upgrade", Status: "RUNNING"})
+			var err error
+			if deps.upgrade == nil {
+				err = errors.New("image upgrade verifier is unavailable")
+			} else {
+				err = deps.upgrade(ctx, cfg, store, o)
+			}
+			if err != nil {
+				reporter.emit(deploymentCheckFailure("release.image-upgrade", err))
+			} else {
+				reporter.emit(deploymentCredentialCheck{ID: "release.image-upgrade", Status: "PASS", Required: true, Passed: true, Detail: "selected candidates, CI publication, preserved configuration, schema and simulator startup prerequisites verified", Attempts: 1})
+			}
+		}
+	}
 }
 
 func writeDeploymentCheckReport(path string, report deploymentCheckReport) error {
@@ -558,7 +629,7 @@ func runDeploymentCheckWithDependencies(parent context.Context, args []string, o
 	ctx, cancel := context.WithTimeout(parent, o.timeout)
 	defer cancel()
 	reporter := newDeploymentCheckReporter(out)
-	fmt.Fprintf(out, "Deployment check: phase=%s environment=%s fast=%t read-only=%t timeout=%s; selected checks only, not release approval\n", o.phase, cfg.Environment, o.qualification.fast, o.qualification.readOnly, o.timeout)
+	fmt.Fprintf(out, "Deployment check: phase=%s operation=%s environment=%s fast=%t read-only=%t timeout=%s; selected checks only, not release approval\n", o.phase, o.operation, cfg.Environment, o.qualification.fast, o.qualification.readOnly, o.timeout)
 	done, heartbeatDone := make(chan struct{}), make(chan struct{})
 	go func() { defer close(heartbeatDone); reporter.heartbeat(ctx, done) }()
 	executeDeploymentCheck(ctx, o, cfg, deps, reporter)
@@ -568,6 +639,14 @@ func runDeploymentCheckWithDependencies(parent context.Context, args []string, o
 	close(done)
 	<-heartbeatDone
 	report := reporter.snapshot(cfg.Environment, o.phase, o.qualification.fast, o.qualification.readOnly)
+	if o.operation == "image-upgrade" {
+		report.Scope = "existing-workload image upgrade: exact candidate/CI, preserved effective configuration, AM/Billing schema prerequisites, restricted simulator startup, all environment workload health and required public CertIssuer mTLS; optional feature activation and business/data acceptance excluded"
+		verdict := "NO-GO"
+		if report.Overall == "PASS" {
+			verdict = "GO"
+		}
+		fmt.Fprintf(out, "Image upgrade readiness: %s environment=%s phase=%s\n", verdict, cfg.Environment, o.phase)
+	}
 	if o.report != "" {
 		if err := writeDeploymentCheckReport(o.report, report); err != nil {
 			fmt.Fprintln(diagnostics, "error:", err)

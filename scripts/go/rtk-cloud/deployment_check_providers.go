@@ -176,7 +176,9 @@ func (c deploymentCredentialChecker) collectDeploymentChecks(ctx context.Context
 			add("local.tls", "rollout TLS", options.tls.hostname, "local", false, false, nil, func(_ deploymentCredentialChecker) deploymentCredentialCheck { return checkRolloutTLS(options.tls) })
 		}
 		for _, path := range uniqueNonEmpty(options.manifests...) {
-			add("local.mounts."+path, "rollout Secret mounts "+filepath.Base(path), path, "local", false, false, nil, func(_ deploymentCredentialChecker) deploymentCredentialCheck { return checkRolloutMounts(path) })
+			add("local.mounts."+path, "rollout Secret mounts "+filepath.Base(path), path, "local", false, false, nil, func(_ deploymentCredentialChecker) deploymentCredentialCheck {
+				return checkRolloutMountsWithRequirement(path, !options.imageUpgrade)
+			})
 		}
 	}
 	// Coverage explicitly records optional checks the caller did not request.

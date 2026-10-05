@@ -269,6 +269,10 @@ func includeStatefulSetClaimVolumes(value any) {
 }
 
 func checkRolloutMounts(path string) deploymentCredentialCheck {
+	return checkRolloutMountsWithRequirement(path, true)
+}
+
+func checkRolloutMountsWithRequirement(path string, requireDirectSecret bool) deploymentCredentialCheck {
 	check := deploymentCredentialCheck{Name: "rollout Secret mounts " + filepath.Base(path)}
 	raw, err := os.ReadFile(path)
 	var document any
@@ -304,7 +308,22 @@ func checkRolloutMounts(path string) deploymentCredentialCheck {
 				}
 				for _, volume := range pod.Volumes {
 					if len(volume.Projected) > 0 && string(volume.Projected) != "null" {
-						return errors.New("projected volumes require separate effective-access qualification; this check supports direct Secret volumes")
+						var projection struct {
+							DefaultMode *int                         `json:"defaultMode"`
+							Sources     []map[string]json.RawMessage `json:"sources"`
+						}
+						if requireDirectSecret || json.Unmarshal(volume.Projected, &projection) != nil || len(projection.Sources) == 0 {
+							return errors.New("projected volumes require separate effective-access qualification; image upgrades support retained ServiceAccount token projections only")
+						}
+						for _, source := range projection.Sources {
+							if len(source) != 1 || len(source["serviceAccountToken"]) == 0 || string(source["serviceAccountToken"]) == "null" {
+								return errors.New("projected Secret/configuration sources require separate effective-access qualification")
+							}
+						}
+						// Retained token files obey the same UID/fsGroup/read-mode
+						// proof below; selected candidates also preserve their full spec.
+						mode, _ := json.Marshal(map[string]any{"defaultMode": projection.DefaultMode})
+						_ = json.Unmarshal(mode, &volume.Secret)
 					}
 
 					if volume.Secret == nil {
@@ -366,7 +385,7 @@ func checkRolloutMounts(path string) deploymentCredentialCheck {
 		check.Detail = err.Error()
 		return check
 	}
-	if pods == 0 || secretMounts == 0 {
+	if pods == 0 || (requireDirectSecret && secretMounts == 0) {
 		check.Detail = "no mounted direct Secret volume found; provide the complete affected workload JSON"
 		return check
 	}

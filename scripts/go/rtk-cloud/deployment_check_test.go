@@ -107,7 +107,8 @@ func facadeFixture(t *testing.T, kube bool) (deploymentCheckDependencies, secret
 		},
 		store: func(string) (secretStore, error) { return store, nil },
 		local: func(secretStore) error { return nil }, bindings: func(secretStore) error { return nil },
-		runtime: func(secretStore, time.Time) error { return nil }, migration: func(secretStore) error { return nil }, product: func(secretStore) error { return nil },
+		runtime: func(secretStore, time.Time) error { return nil }, migration: func(secretStore) error { return nil }, product: func(secretStore) error { return nil }, workloads: func(secretStore) error { return nil },
+		public: func(context.Context, deploymentConfig, secretStore) error { return nil },
 		collect: func(ctx context.Context, cfg deploymentConfig, path string, o deploymentCredentialCheckOptions, allow bool, emit func(deploymentCredentialCheck)) []deploymentCredentialCheck {
 			c := deploymentCredentialCheck{ID: "provider.fixture", Name: "fixture", Required: true, Status: "PASS", Passed: true, Detail: "verified"}
 			emit(c)

@@ -178,8 +178,16 @@ func (r *deploymentCheckRuntime) kubectl(combined bool, args ...string) ([]byte,
 		return nil, &deploymentRuntimeError{"KUBE_NOT_FOUND", "required Secret is absent from the selected stack inventory"}
 	}
 	if get >= 0 && get+1 < len(args) && (args[get+1] == "deployments" || args[get+1] == "deployment") {
-		inventory, err := r.cached("deployment-inventory\x00"+kubeconfig+"\x00"+namespace, func() ([]byte, error) {
-			raw, err := r.run(false, "--kubeconfig", kubeconfig, "-n", namespace, "get", "deployments", "-o", "json")
+		inventoryNamespace := namespace
+		inventoryArgs := []string{"--kubeconfig", kubeconfig, "-n", namespace, "get", "deployments", "-o", "json"}
+		for _, arg := range args {
+			if arg == "--all-namespaces" || arg == "-A" {
+				inventoryNamespace = "*"
+				inventoryArgs = []string{"--kubeconfig", kubeconfig, "get", "deployments", "--all-namespaces", "-o", "json"}
+			}
+		}
+		inventory, err := r.cached("deployment-inventory\x00"+kubeconfig+"\x00"+inventoryNamespace, func() ([]byte, error) {
+			raw, err := r.run(false, inventoryArgs...)
 			if err != nil {
 				return nil, err
 			}

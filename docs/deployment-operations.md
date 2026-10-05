@@ -18,6 +18,7 @@ LKE/Kubernetes; the legacy VM runtime is not an active deployment path.
 | Scenario | Correct entry point | Modifies cloud resources? |
 | --- | --- | --- |
 | Check tracked configuration | `deployment preflight --operation plan` | No |
+| Check an existing-workload image upgrade | `scripts/check-deployment-preflight.sh --environment NAME --operation image-upgrade --manifest PLAN.json --image GHCR_DIGEST` | No cloud writes; validates exact candidate, CI, schema, startup and retained identity/configuration |
 | Check whether the desired deployment can proceed | `scripts/check-deployment-preflight.sh --environment NAME` | No; read-only prerequisites and route migration assessment |
 | Check the health of an existing deployment | `scripts/check-deployment-health.sh --environment NAME` | No; read-only live environment checks |
 | Create a new environment | `deployment plan` -> `deployment provision` | Provision does |
@@ -150,6 +151,70 @@ additionally validates provider, DNS, GHCR, SSH key, active-service limit, and
 existing-cluster safety state. Output shows only `PASS/WARN/FAIL`, never credential
 values. Correct every `FAIL` before proceeding to provisioning.
 
+## Existing Pod image upgrade: GO / NO-GO
+
+For an update of existing Pods with current features and configuration retained,
+use the existing checker with `--operation image-upgrade`. This scope is distinct
+from default full-deployment rendering, feature activation and data acceptance.
+The default legacy renderer's managed-PKI refusal does not qualify or prohibit
+this separately checked image-only path.
+
+GO requires all selected immutable images to pass authenticated full amd64 pulls,
+match the selected source checkouts, and have successful exact-source main CI
+and formal `Publish LKE image` jobs. Supply every selected RTK container/sidecar
+image and every existing consumer of each selected package (APIs, workers and
+auxiliary executables), with complete candidate Deployment JSON using repeatable `--image` and
+`--manifest` flags (a Kubernetes List is supported). Each candidate must have an
+existing configuration/rollback owner, and its nonimage spec must match the live
+spec. Changes to identity, mounts, environment, PVCs, ports or feature flags
+require their separately reviewed configuration/migration operation. Retained
+ServiceAccount-token projections are checked for UID/fsGroup file read access;
+projected Secret/configuration sources still require separate effective-access
+qualification.
+
+The check additionally requires applied candidate AM/Billing migration versions,
+all current environment Deployments/StatefulSets/DaemonSets and their application
+Pods to be Ready at their current generation (OnDelete StatefulSets require
+Ready owned Pods at the declared container/init images rather than an automatic
+rollout revision), and the required public CertIssuer
+route plus actual client mTLS and anonymous TLS denial. Pending/failed CI,
+unapplied migrations, incomplete inventories or failed startup/PKI checks mean
+NO-GO. `--fast` cannot qualify this operation. Post-deploy with the same operation
+also requires every selected Pod-template image to equal the candidate.
+
+For a selected payment simulator, the effective configuration must disable
+startup migration. The checker executes its **published artifact** in an isolated
+local Docker fixture with schema CREATE denied, then requires its health endpoint
+to return HTTP 200 from inside the isolated network; no host port is exposed. The fixture uses no environment data or credentials, is private to the
+invocation and is removed after success or failure. Cleanup failure prevents GO.
+These image-upgrade checks read cloud state; Docker pulls and disposable local
+fixtures change local Docker state. Docker and GitHub CLI authentication are
+required. Schema reads use the existing LKE PostgreSQL operator access. Current
+live PKI checks cover installed PKI schema/identity prerequisites; this operation
+does not replace a separately required PKI schema migration qualification.
+
+```sh
+# Use the selected release checkout and reviewed environment-private plan.
+# Repeat both flags for all affected workloads and package digests.
+scripts/check-deployment-preflight.sh --environment staging \
+  --operation image-upgrade --checks ghcr,mounts \
+  --manifest "$HOME/.config/rtk_cloud/staging/deployment-readiness-candidates/current/plan.json" \
+  --image "$RELEASE_IMAGE" --report /tmp/staging-image-upgrade.json
+# After the authorized rollout, require the same exact candidate images:
+scripts/check-deployment-health.sh --environment staging \
+  --operation image-upgrade --checks ghcr,mounts \
+  --manifest "$HOME/.config/rtk_cloud/staging/deployment-readiness-candidates/current/plan.json" \
+  --image "$RELEASE_IMAGE" --report /tmp/staging-image-upgrade-health.json
+```
+
+Keep plans containing runtime configuration private (0700 directories/0600 files)
+in the selected environment's SecretStore. Read each result's scope and selected
+candidate set. GO applies to updating those existing Pod images with retained
+settings. Disabled feature activation and full business/data qualification remain
+separate results; they do not become image-upgrade blockers simply because their
+features have not been enabled. A prerequisite pass cannot predict every future
+application defect; recheck exact images and required service behavior after rollout.
+
 ## Deployment Phase Checks
 
 Choose the check for the deployment phase. Each shell entry prints its purpose
@@ -173,7 +238,7 @@ scripts/check-deployment-preflight.sh --environment staging \
 The shell builds the checker once and executes it once. The two named entries
 are read-only: they never deploy or repair resources. `--fast` controls depth,
 not deployment phase. They reject conflicting `--phase` or `--read-only=false`
-arguments rather than silently changing their purpose. Pre-deploy PASS qualifies the selected deployment inputs;
+arguments rather than silently changing their purpose. Default full-deployment pre-deploy PASS qualifies the selected deployment inputs;
 it does not claim the old deployment is healthy. Existing routes that the
 deployment can safely migrate are reported as planned changes, while foreign
 ownership, identity policy and unavailable prerequisites still block deployment.
@@ -187,7 +252,7 @@ operation are distinct paths: they preserve the managed CertIssuer workload and
 have their own required deployment/route prerequisites. An image change alone
 does not authorize a full renderer replacement.
 Post-deploy requires the selected environment's SecretStore, kubeconfig, live
-Secret mirrors and PKI checks even when `--checks` narrows provider/TLS/mount
+Secret mirrors, workload rollout/Pod health and PKI/public-mTLS checks even when `--checks` narrows provider/TLS/mount
 checks. Missing kubeconfig blocks dependent live checks. Post-deploy PASS does
 not replace application acceptance or the release gates below.
 
@@ -202,8 +267,8 @@ existing provisioning callers.
 
 | Mode | Provider writes and receipts | Explicit `--image` |
 | --- | --- | --- |
-| Default | Selected DNS/storage canaries and validation receipts remain enabled | Full controller-host `linux/amd64` pull |
-| `--read-only` | No canaries or new receipts | Full pull remains enabled |
+| Legacy/direct post-deploy default | Selected DNS/storage canaries and validation receipts remain enabled | Full controller-host `linux/amd64` pull |
+| Named preflight/health wrappers, or `--read-only` | No canaries or new receipts | Full pull remains enabled |
 | `--fast` | Implies read-only | Manifest/config and platform metadata; full pull reported as skipped |
 
 Without `--image`, GHCR checks repository access. Metadata access, a controller

@@ -7,11 +7,11 @@ CHECK_PHASE="${RTK_CLOUD_CHECK_SCRIPT_PHASE:-post-deploy}"
 CHECK_READ_ONLY="${RTK_CLOUD_CHECK_SCRIPT_READ_ONLY:-false}"
 case "$CHECK_PHASE" in
   pre-deploy)
-    printf '%s\n' 'Pre-deploy deployability check (pre-deploy): Validate desired configuration, tools, and SecretStore prerequisites for a full create or upgrade. Run before deploying the whole environment.'
-    printf '%s\n' 'Read-only; write permissions are unverified. Check whether existing routes can be migrated safely; existing deployment health issues do not block an upgrade. A pass does not establish current service health. --fast only reduces validation depth.'
+    printf '%s\n' 'Pre-deploy deployability check (pre-deploy): Validate prerequisites for the selected deployment operation. Use --operation image-upgrade to qualify existing Pod image updates. Run before deployment.'
+    printf '%s\n' 'Read-only cloud checks; write permissions are unverified. Default full-deployment checks desired inputs and safe route migration. Image-upgrade additionally requires live health, exact CI images and local startup fixtures; --fast cannot qualify it.'
     ;;
   post-deploy)
-    printf '%s\n' 'Post-deploy environment health check (post-deploy): Verify deployed Secret bindings, PKI, and public ingress. Run after deployment or when diagnosing the current environment.'
+    printf '%s\n' 'Post-deploy environment health check (post-deploy): Verify deployed Secret bindings, PKI, required public mTLS and environment workload readiness. Run after deployment or when diagnosing the current environment.'
     if [[ "$CHECK_READ_ONLY" == true ]]; then
       printf '%s\n' 'This entry point is read-only. It checks current health, not pre-deploy deployability or full application acceptance. --fast only reduces validation depth.'
     else
