@@ -260,6 +260,31 @@ func validateManagedUpgradeInventory(plan *managedUpgradePlan, live []map[string
 }
 
 func qualifyManagedUpgrade(ctx context.Context, paths provisionPaths, env map[string]string, store secretStore, plan *managedUpgradePlan) error {
+	deps := defaultDeploymentCheckDependencies()
+	deps.preflight = func(ctx context.Context, _ deploymentConfig, _ io.Writer) error {
+		if _, err := lkePlanCertIssuerIngressMigrationWithIO(paths, env, newCertIssuerIngressIO(ctx)); err != nil {
+			return err
+		}
+		live, err := managedUpgradeInventory(ctx, store)
+		if err != nil {
+			return err
+		}
+		if err := validateManagedUpgradeInventory(plan, live); err != nil {
+			return err
+		}
+		return managedUpgradeDryRun(ctx, store, plan, live)
+	}
+	deps.upgrade = func(ctx context.Context, cfg deploymentConfig, store secretStore, o deploymentCheckOptions) error {
+		var targets []deploymentUpgradeTarget
+		for _, w := range plan.Workloads {
+			targets = append(targets, w.Desired)
+		}
+		return verifyDeploymentUpgradeRelease(ctx, cfg.Workspace, store, targets, o.qualification.images)
+	}
+	return qualifyManagedUpgradeWithDependencies(ctx, paths, env, store, plan, deps)
+}
+
+func qualifyManagedUpgradeWithDependencies(ctx context.Context, paths provisionPaths, env map[string]string, store secretStore, plan *managedUpgradePlan, deps deploymentCheckDependencies) error {
 	store.checkRuntime = newDeploymentCheckRuntime(ctx, store.Environment)
 	operator, err := store.readOperator()
 	if err != nil {
@@ -283,55 +308,40 @@ func qualifyManagedUpgrade(ctx context.Context, paths provisionPaths, env map[st
 		}
 	}
 	for _, check := range []func() error{
-		func() error { return verifySecretStoreK8SBindings(store) },
-		func() error { return verifySecretStoreK8SRuntime(store, time.Now()) },
-		func() error { return verifyDeploymentWorkloadHealth(store) },
+		func() error { return deps.bindings(store) },
+		func() error { return deps.runtime(store, time.Now()) },
+		func() error { return deps.workloads(store) },
 	} {
 		if err := check(); err != nil {
 			return err
 		}
 	}
-	cfg := deploymentConfig{Environment: store.Environment, Workspace: paths.Workspace, Values: env}
-	if err := verifyDeploymentPublicCertIssuer(ctx, cfg, store); err != nil {
+	cfg := deploymentConfig{Environment: store.Environment, Workspace: paths.Workspace, Adapter: "lke", Values: env}
+	if err := deps.public(ctx, cfg, store); err != nil {
 		return err
 	}
-	if _, err := lkePlanCertIssuerIngressMigrationWithIO(paths, env, newCertIssuerIngressIO(ctx)); err != nil {
+	if err := deps.preflight(ctx, cfg, io.Discard); err != nil {
 		return err
 	}
-	if err := managedUpgradeDryRun(ctx, store, plan, live); err != nil {
-		return err
+	// Reuse the central provider collector's full authenticated image pulls.
+	// Skipped, pending, incomplete or unrequired evidence cannot authorize writes.
+	q := deploymentCredentialCheckOptions{images: plan.Images, selected: keySet("ghcr"), readOnly: true}
+	expected := keySet("credentials.profile")
+	for _, image := range plan.Images {
+		expected["provider.ghcr.image."+image] = true
 	}
-	checker := defaultDeploymentCredentialChecker()
-	checker.ctx = ctx
-	for _, image := range uniqueNonEmpty(plan.Images...) {
-		if check := checker.checkRolloutImage(operator, image); !check.Passed {
-			return errors.New(check.Detail)
+	checks := deps.collect(ctx, cfg, defaultDeploymentEnvironmentCredentialFile(store.Environment), q, false, nil)
+	for _, check := range checks {
+		required := check.Required || expected[check.ID]
+		if required && (!check.Required || check.Status != "PASS" || !check.Passed) {
+			return fmt.Errorf("managed upgrade release prerequisite %s is incomplete or failed", check.ID)
 		}
-		if err := verifyDeploymentUpgradeImageCI(ctx, paths.Workspace, image); err != nil {
-			return err
-		}
+		delete(expected, check.ID)
 	}
-	if err := verifyDeploymentUpgradeSchemas(store, paths.Workspace, plan.Images); err != nil {
-		return err
+	if len(expected) != 0 {
+		return errors.New("managed upgrade lacks complete credential/image pull evidence")
 	}
-	// Qualify published-image startup and effective restricted migration settings
-	// for the simulator as in the exact-image path, without imposing image-only
-	// equality on the complete managed desired state.
-	for _, w := range plan.Workloads {
-		if w.Desired.Metadata.Name == "payment-simulator" {
-			if err := verifyDeploymentSimulatorMigrationSetting(store, w.Desired); err != nil {
-				return err
-			}
-			container, err := deploymentUpgradeSimulatorContainer(w.Desired)
-			if err != nil {
-				return err
-			}
-			if err := verifyDeploymentSimulatorStartup(ctx, certIssuerObjectString(container["image"])); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	return deps.upgrade(ctx, cfg, store, deploymentCheckOptions{phase: deploymentCheckPreDeploy, operation: "full-deployment", qualification: q})
 }
 
 func prepareManagedUpgrade(cfg deploymentConfig, images []string, out io.Writer) error {
@@ -541,6 +551,10 @@ func deployManagedUpgradeWithQualification(paths provisionPaths, env map[string]
 }
 
 func verifyManagedUpgradePostDeploy(paths provisionPaths, env map[string]string) error {
+	return verifyManagedUpgradePostDeployWithDependencies(paths, env, defaultDeploymentCheckDependencies())
+}
+
+func verifyManagedUpgradePostDeployWithDependencies(paths provisionPaths, env map[string]string, deps deploymentCheckDependencies) error {
 	store, plan, err := managedUpgradeStore(env)
 	if err != nil {
 		return err
@@ -566,10 +580,10 @@ func verifyManagedUpgradePostDeploy(paths provisionPaths, env map[string]string)
 			return errors.New("managed upgrade has not reached every desired workload specification")
 		}
 	}
-	for _, check := range []func() error{func() error { return verifySecretStoreK8SBindings(store) }, func() error { return verifySecretStoreK8SRuntime(store, time.Now()) }, func() error { return verifyDeploymentWorkloadHealth(store) }} {
+	for _, check := range []func() error{func() error { return deps.bindings(store) }, func() error { return deps.runtime(store, time.Now()) }, func() error { return deps.workloads(store) }} {
 		if err := check(); err != nil {
 			return err
 		}
 	}
-	return verifyDeploymentPublicCertIssuer(context.Background(), deploymentConfig{Environment: store.Environment, Workspace: paths.Workspace, Values: env}, store)
+	return deps.public(context.Background(), deploymentConfig{Environment: store.Environment, Workspace: paths.Workspace, Values: env}, store)
 }

@@ -207,12 +207,16 @@ func verifyDeploymentImageUpgrade(ctx context.Context, cfg deploymentConfig, sto
 	if err := validateDeploymentUpgradeTargets(targets, live.Items, o.qualification.images, o.phase, cfg.Environment); err != nil {
 		return err
 	}
-	for _, image := range uniqueNonEmpty(o.qualification.images...) {
-		if err := verifyDeploymentUpgradeImageCI(ctx, cfg.Workspace, image); err != nil {
+	return verifyDeploymentUpgradeRelease(ctx, cfg.Workspace, store, targets, o.qualification.images)
+}
+
+func verifyDeploymentUpgradeRelease(ctx context.Context, workspace string, store secretStore, targets []deploymentUpgradeTarget, images []string) error {
+	for _, image := range uniqueNonEmpty(images...) {
+		if err := verifyDeploymentUpgradeImageCI(ctx, workspace, image); err != nil {
 			return err
 		}
 	}
-	if err := verifyDeploymentUpgradeSchemas(store, cfg.Workspace, o.qualification.images); err != nil {
+	if err := verifyDeploymentUpgradeSchemas(store, workspace, images); err != nil {
 		return err
 	}
 	for _, target := range targets {

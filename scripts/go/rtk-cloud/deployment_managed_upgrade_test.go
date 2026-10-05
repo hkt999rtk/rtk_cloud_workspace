@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func managedUpgradeFixture(t *testing.T) (*managedUpgradePlan, []map[string]any) {
@@ -442,4 +443,207 @@ func TestManagedUpgradeDeploymentCredentialsCannotOverrideGitHubCISession(t *tes
 			}
 		})
 	}
+}
+
+func managedUpgradeReadFixture(t *testing.T, plan *managedUpgradePlan, live []map[string]any) secretStore {
+	t.Helper()
+	root := t.TempDir()
+	_ = os.Chmod(root, 0o700)
+	t.Setenv("RTK_CLOUD_CONFIG_ROOT", root)
+	t.Setenv("RTK_CLOUD_TEST_MODE", "1")
+	store, _ := newSecretStore("", "staging")
+	_ = os.MkdirAll(filepath.Join(store.Root, "operator", "env"), 0o700)
+	_ = os.MkdirAll(filepath.Dir(managedUpgradePath(store)), 0o700)
+	raw, _ := json.Marshal(plan)
+	_ = os.WriteFile(managedUpgradePath(store), raw, 0o600)
+	inventory := filepath.Join(root, "inventory.json")
+	raw, _ = json.Marshal(map[string]any{"items": live})
+	_ = os.WriteFile(inventory, raw, 0o600)
+	kubectl := filepath.Join(root, "kubectl")
+	_ = os.WriteFile(kubectl, []byte("#!/bin/sh\ncat \"$MANAGED_INVENTORY\"\n"), 0o700)
+	t.Setenv("MANAGED_INVENTORY", inventory)
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	return store
+}
+
+func managedUpgradeQualificationFixture(t *testing.T, plan *managedUpgradePlan, failure string, calls *[]string) deploymentCheckDependencies {
+	t.Helper()
+	gate := func(name string) error {
+		*calls = append(*calls, name)
+		if name == failure {
+			return errors.New("required gate failed: " + name)
+		}
+		return nil
+	}
+	return deploymentCheckDependencies{
+		bindings:  func(secretStore) error { return gate("bindings") },
+		runtime:   func(secretStore, time.Time) error { return gate("runtime") },
+		workloads: func(secretStore) error { return gate("workloads") },
+		public:    func(context.Context, deploymentConfig, secretStore) error { return gate("public") },
+		preflight: func(context.Context, deploymentConfig, io.Writer) error { return gate("dryrun") },
+		collect: func(_ context.Context, cfg deploymentConfig, _ string, q deploymentCredentialCheckOptions, repair bool, _ func(deploymentCredentialCheck)) []deploymentCredentialCheck {
+			*calls = append(*calls, "pull")
+			if cfg.Adapter != "lke" || repair || !q.readOnly || q.fast || q.imageUpgrade || !reflect.DeepEqual(q.images, plan.Images) || !q.selected["ghcr"] {
+				t.Fatal("managed qualification changed scope, credentials or image depth")
+			}
+			results := []deploymentCredentialCheck{{ID: "credentials.profile", Required: true, Passed: true, Status: "PASS"}}
+			if failure == "missing-profile" {
+				results = nil
+			}
+			for _, image := range q.images {
+				if failure == "missing-pull" {
+					continue
+				}
+				check := deploymentCredentialCheck{ID: "provider.ghcr.image." + image, Required: true, Passed: true, Status: "PASS"}
+				if failure == "pull" {
+					check.Status = "FAIL"
+					check.Passed = false
+				}
+				if failure == "pending-pull" {
+					check.Status = "PENDING"
+					check.Passed = false
+				}
+				if failure == "skipped-pull" {
+					check.Status = "SKIPPED"
+					check.Required = false
+					check.Passed = false
+				}
+				results = append(results, check)
+			}
+			return results
+		},
+		upgrade: func(_ context.Context, _ deploymentConfig, _ secretStore, o deploymentCheckOptions) error {
+			if o.operation != "full-deployment" || o.phase != deploymentCheckPreDeploy || o.qualification.imageUpgrade {
+				t.Fatal("whole desired-state replacement was qualified as image-only")
+			}
+			return gate("publication-schema-startup")
+		},
+	}
+}
+
+func TestManagedUpgradeRequiresEveryOwnerAdmissionAndReleaseGate(t *testing.T) {
+	for _, failure := range []string{"", "bindings", "runtime", "workloads", "public", "dryrun", "pull", "publication-schema-startup", "pending-pull", "skipped-pull", "missing-pull", "missing-profile"} {
+		t.Run(firstNonEmpty(failure, "all required evidence"), func(t *testing.T) {
+			plan, live := managedUpgradeFixture(t)
+			store := managedUpgradeReadFixture(t, plan, live)
+			var calls []string
+			deps := managedUpgradeQualificationFixture(t, plan, failure, &calls)
+			err := qualifyManagedUpgradeWithDependencies(context.Background(), provisionPaths{Workspace: t.TempDir()}, map[string]string{"CLOUD_STACK_NAME": plan.Stack}, store, plan, deps)
+			if failure == "" {
+				if err != nil || !reflect.DeepEqual(calls, []string{"bindings", "runtime", "workloads", "public", "dryrun", "pull", "publication-schema-startup"}) {
+					t.Fatalf("full qualification skipped a gate: %v %v", err, calls)
+				}
+			} else {
+				if err == nil {
+					t.Fatal("required failure was treated as GO")
+				}
+				if failure != "publication-schema-startup" && strings.Contains(strings.Join(calls, ","), "publication-schema-startup") {
+					t.Fatal("failed prerequisite proceeded to release qualification")
+				}
+			}
+		})
+	}
+	plan, live := managedUpgradeFixture(t)
+	store := managedUpgradeReadFixture(t, plan, live)
+	plan.Workloads[0].UID = "different"
+	var calls []string
+	deps := managedUpgradeQualificationFixture(t, plan, "", &calls)
+	if qualifyManagedUpgradeWithDependencies(context.Background(), provisionPaths{}, nil, store, plan, deps) == nil || len(calls) != 0 {
+		t.Fatal("foreign owner reached prerequisite or release checks")
+	}
+}
+
+func TestManagedUpgradePostDeployRequiresActualDesiredSpecsAndPKIHealth(t *testing.T) {
+	for _, failure := range []string{"", "desired-spec", "bindings", "runtime", "workloads", "public", "missing-plan", "changed-owner"} {
+		t.Run(firstNonEmpty(failure, "complete rollout"), func(t *testing.T) {
+			plan, live := managedUpgradeFixture(t)
+			plan.Workloads[0].Desired.Spec["replicas"] = float64(2)
+			if failure != "desired-spec" {
+				certIssuerObjectMap(live[0]["spec"])["replicas"] = float64(2)
+			}
+			store := managedUpgradeReadFixture(t, plan, live)
+			loaded, err := loadManagedUpgradePlan(store, plan.Stack)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if failure == "missing-plan" {
+				_ = os.Remove(managedUpgradePath(store))
+			}
+			if failure == "changed-owner" {
+				certIssuerObjectMap(live[0]["metadata"])["uid"] = "different"
+				raw, _ := json.Marshal(map[string]any{"items": live})
+				_ = os.WriteFile(os.Getenv("MANAGED_INVENTORY"), raw, 0o600)
+			}
+			var calls []string
+			deps := managedUpgradeQualificationFixture(t, plan, failure, &calls)
+			env := map[string]string{"CLOUD_ENV_NAME": "staging", "CLOUD_STACK_NAME": plan.Stack, "RTK_MANAGED_UPGRADE_PLAN_SHA256": loaded.digest}
+			err = verifyManagedUpgradePostDeployWithDependencies(provisionPaths{}, env, deps)
+			if failure == "" {
+				if err != nil || !reflect.DeepEqual(calls, []string{"bindings", "runtime", "workloads", "public"}) {
+					t.Fatalf("post-rollout checks incomplete: %v %v", err, calls)
+				}
+			} else {
+				if err == nil {
+					t.Fatal("partial rollout or failed health completed deployment")
+				}
+			}
+		})
+	}
+}
+
+func TestManagedUpgradeMainEntrypointsFailClosedAndKeepArtifactsAccurate(t *testing.T) {
+	plan, live := managedUpgradeFixture(t)
+	store := managedUpgradeReadFixture(t, plan, live)
+	loaded, err := loadManagedUpgradePlan(store, plan.Stack)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{"CLOUD_ENV_NAME": "staging", "CLOUD_STACK_NAME": plan.Stack, "RTK_MANAGED_UPGRADE_PLAN_SHA256": loaded.digest}
+	// A reviewed full entry reaches managed qualification, rather than the old
+	// static identity renderer. Its missing actual catalog evidence blocks writes.
+	err = lkeDeployWorkloads(provisionPaths{Workspace: t.TempDir()}, env, provisionOptions{})
+	if err == nil || strings.Contains(err.Error(), "legacy whole-Deployment") {
+		t.Fatalf("full entry used static PKI reconstruction or skipped its prerequisites: %v", err)
+	}
+	if err := lkeApplyBase(env, provisionOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	// Public artifacts describe actual candidate images, never unused templates
+	// or private baseline/desired specifications.
+	dir, err := writeLKEProvisionArtifacts(provisionPaths{ArtifactsDir: t.TempDir()}, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "summary.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var summary struct {
+		Digest string            `json:"managed_upgrade_plan_sha256"`
+		Images map[string]string `json:"workload_images"`
+	}
+	_ = json.Unmarshal(raw, &summary)
+	if summary.Digest != loaded.digest || len(summary.Images) != 1 {
+		t.Fatal("artifacts did not describe the qualified plan")
+	}
+	for _, image := range summary.Images {
+		if image != plan.Images[0] {
+			t.Fatal("artifact used a legacy image")
+		}
+	}
+	if bytes.Contains(raw, []byte("baseline_spec")) || bytes.Contains(raw, []byte("identity.json")) {
+		t.Fatal("public artifacts exported private workload settings")
+	}
+	env["RTK_MANAGED_UPGRADE_PLAN_SHA256"] = "changed"
+	if _, err := writeLKEProvisionArtifacts(provisionPaths{ArtifactsDir: t.TempDir()}, env); err == nil {
+		t.Fatal("changed plan generated successful deployment artifacts")
+	}
+	// Guarding provider retention must also apply in the complete provision graph.
+	env["RTK_MANAGED_UPGRADE_PLAN_SHA256"] = loaded.digest
+	for _, step := range kubernetesProvisionSteps(lkeCloudProvider{}) {
+		if step.Name == "ensure-lke-node-pool" && step.Enabled(provisionContext{Env: env, Opts: provisionOptions{mode: provisionMode{deploy: true}}}) {
+			t.Fatal("managed full upgrade implicitly resized provider pools")
+		}
+	}
+	_ = store
 }
