@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -29,6 +31,74 @@ func defaultDeploymentPreflightChecks() deploymentPreflightChecks {
 	}
 }
 
+// These context-aware probes are used by deployment check's provision phase.
+// Existing injected callbacks and lifecycle callers retain their API.
+func defaultDeploymentPreflightChecksContext(ctx context.Context) deploymentPreflightChecks {
+	checks := defaultDeploymentPreflightChecks()
+	checks.validateDNS = func(cfg deploymentConfig) error {
+		return validateDeploymentPreflightDNS(ctx, cfg)
+	}
+	checks.validateLKEState = func(cfg deploymentConfig) error {
+		return validateLKEEnvironmentStateBeforeMutationWithDiscovery(cfg, func(token string, paths provisionPaths, env map[string]string, allowCreate bool) (lkeCluster, error) {
+			return discoverDeploymentPreflightLKECluster(ctx, token, paths, env, allowCreate)
+		})
+	}
+	checks.validateKube = func(cfg deploymentConfig) error {
+		return validateDeploymentKubeAccessContext(ctx, cfg)
+	}
+	return checks
+}
+
+func validateDeploymentPreflightDNS(ctx context.Context, cfg deploymentConfig) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	env := appendMap(cfg.Values, cfg.DNSValues)
+	adapter, err := newDNSAdapter(firstNonEmpty(env["DNS_ADAPTER"], "godaddy"))
+	if err != nil {
+		return err
+	}
+	adapterCtx := dnsContext(newProvisionPaths(cfg.Workspace, cfg.RuntimeRoot, provisionOptions{}), env)
+	if err := adapter.Validate(ctx, adapterCtx); err != nil {
+		return err
+	}
+	_, err = adapter.DiscoverZone(ctx, adapterCtx)
+	return err
+}
+
+// Preflight only discovers the existing cluster. It never creates resources,
+// writes kubeconfig or changes the operator's confirmed provider state.
+func discoverDeploymentPreflightLKECluster(ctx context.Context, token string, _ provisionPaths, env map[string]string, allowCreate bool) (lkeCluster, error) {
+	if allowCreate {
+		return lkeCluster{}, errors.New("deployment preflight cannot create an LKE cluster")
+	}
+	label := lkeClusterLabel(env)
+	if label == "" {
+		return lkeCluster{}, errors.New("LKE_CLUSTER_LABEL or CLOUD_STACK_NAME is required to discover an LKE cluster")
+	}
+	cmd := exec.CommandContext(ctx, "curl", "--fail-with-body", "-sS", "-X", "GET", "https://api.linode.com/v4/lke/clusters?page_size=500", "-H", "Authorization: Bearer "+token, "-H", "Content-Type: application/json")
+	cmd.WaitDelay = time.Second
+	raw, err := cmd.Output()
+	if ctx.Err() != nil {
+		return lkeCluster{}, ctx.Err()
+	}
+	if err != nil {
+		return lkeCluster{}, fmt.Errorf("LKE cluster inventory request failed: %w", err)
+	}
+	var inventory struct {
+		Data []lkeCluster `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &inventory); err != nil {
+		return lkeCluster{}, errors.New("LKE cluster inventory response is invalid")
+	}
+	for _, cluster := range inventory.Data {
+		if cluster.Label == label {
+			return cluster, nil
+		}
+	}
+	return lkeCluster{}, fmt.Errorf("%w: %s", errLKEMissingCluster, label)
+}
+
 type deploymentPreflightReporter struct {
 	out    io.Writer
 	failed []string
@@ -53,6 +123,13 @@ func runDeploymentPreflight(cfg deploymentConfig, operation string) error {
 }
 
 func runDeploymentPreflightWithChecks(cfg deploymentConfig, operation string, checks deploymentPreflightChecks, out io.Writer) error {
+	return runDeploymentPreflightWithChecksContext(context.Background(), cfg, operation, checks, out)
+}
+
+func runDeploymentPreflightWithChecksContext(ctx context.Context, cfg deploymentConfig, operation string, checks deploymentPreflightChecks, out io.Writer) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	allowed := map[string]bool{"plan": true, "provision": true, "acceptance": true, "ephemeral-test": true}
 	if !allowed[operation] {
 		return errors.New("--operation must be plan, provision, acceptance, or ephemeral-test")
@@ -70,6 +147,9 @@ func runDeploymentPreflightWithChecks(cfg deploymentConfig, operation string, ch
 		tools = append(tools, lkeKubectl())
 	}
 	for _, tool := range uniqueNonEmpty(tools...) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if _, err := checks.lookPath(tool); err != nil {
 			reporter.fail("tool:"+tool, fmt.Errorf("required command is not available"))
 			continue
@@ -87,6 +167,7 @@ func runDeploymentPreflightWithChecks(cfg deploymentConfig, operation string, ch
 	}
 	if !rtkCloudTestMode() {
 		store, err := newSecretStore("", cfg.Environment)
+		store.checkRuntime = newDeploymentCheckRuntime(ctx, cfg.Environment)
 		if err != nil {
 			reporter.fail("secret-store", err)
 		} else if err := verifySecretStoreContents(store); err != nil {
@@ -116,6 +197,9 @@ func runDeploymentPreflightWithChecks(cfg deploymentConfig, operation string, ch
 			reporter.fail("kubernetes-access", err)
 		} else {
 			reporter.pass("kubernetes-access", "API readyz is reachable with the environment kubeconfig")
+		}
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		return reporter.result()
 	}
@@ -147,6 +231,9 @@ func runDeploymentPreflightWithChecks(cfg deploymentConfig, operation string, ch
 	} else {
 		reporter.pass("credential:dns", cfg.DNSAdapter+" credentials are configured (values redacted)")
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	privateKey := defaultStagingSSHKey()
 	for _, path := range []string{privateKey, privateKey + ".pub"} {
@@ -171,12 +258,18 @@ func runDeploymentPreflightWithChecks(cfg deploymentConfig, operation string, ch
 	} else {
 		reporter.pass("environment-safety", "provider state and existing-cluster runtime state are coherent")
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if operation == "ephemeral-test" {
 		if err := checks.validateEphemeral(cfg); err != nil {
 			reporter.fail("ephemeral-ownership", err)
 		} else {
 			reporter.pass("ephemeral-ownership", "stack has no pre-existing owned resources or DNS ownership state")
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	return reporter.result()
 }
@@ -226,13 +319,21 @@ func validateAcceptanceRuntime(cfg deploymentConfig, reporter *deploymentPreflig
 }
 
 func validateDeploymentKubeAccess(cfg deploymentConfig) error {
+	return validateDeploymentKubeAccessContext(context.Background(), cfg)
+}
+
+func validateDeploymentKubeAccessContext(ctx context.Context, cfg deploymentConfig) error {
 	store, err := newSecretStore("", cfg.Environment)
 	if err != nil {
 		return err
 	}
 	kubeconfig := store.KubeconfigPath()
-	cmd := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "--request-timeout=10s", "get", "--raw=/readyz")
+	cmd := exec.CommandContext(ctx, lkeKubectl(), "--kubeconfig", kubeconfig, "--request-timeout=10s", "get", "--raw=/readyz")
+	cmd.WaitDelay = time.Second
 	out, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if err != nil {
 		return fmt.Errorf("Kubernetes API readyz check failed: %s", strings.TrimSpace(string(out)))
 	}

@@ -193,6 +193,22 @@ func kubernetesProvisionSteps(provider cloudProvider) []provisionStep {
 			},
 		},
 		{
+			Name:  "wait-kube-api-ready",
+			Phase: "provider",
+			Enabled: func(ctx provisionContext) bool {
+				return ctx.Opts.mode.apply || ctx.Opts.mode.dns || ctx.Opts.mode.deploy || ctx.Opts.mode.e2e
+			},
+			Run: func(ctx provisionContext) error {
+				return waitForKubernetesAPIReady()
+			},
+		},
+		{
+			Name:    "certissuer-ingress-preflight",
+			Phase:   "runtime",
+			Enabled: lkeCertIssuerRoutingSelected,
+			Run:     lkeCertIssuerIngressPreflight,
+		},
+		{
 			Name:  "ensure-lke-node-pool",
 			Phase: "provider",
 			Enabled: func(ctx provisionContext) bool {
@@ -206,16 +222,6 @@ func kubernetesProvisionSteps(provider cloudProvider) []provisionStep {
 					return ensureLKETargetedFleetDatabaseNodePool(ctx.Paths, ctx.Env)
 				}
 				return ensureLKENodePool(ctx.Paths, ctx.Env)
-			},
-		},
-		{
-			Name:  "wait-kube-api-ready",
-			Phase: "provider",
-			Enabled: func(ctx provisionContext) bool {
-				return ctx.Opts.mode.apply || ctx.Opts.mode.dns || ctx.Opts.mode.deploy || ctx.Opts.mode.e2e
-			},
-			Run: func(ctx provisionContext) error {
-				return waitForKubernetesAPIReady()
 			},
 		},
 		{
@@ -258,6 +264,14 @@ func kubernetesProvisionSteps(provider cloudProvider) []provisionStep {
 			Run: func(ctx provisionContext) error {
 				return lkeApplyPublicHTTPS(ctx.Paths, ctx.Env, ctx.Opts)
 			},
+		},
+		{
+			Name:  "certissuer-public-ingress",
+			Phase: "runtime",
+			Enabled: func(ctx provisionContext) bool {
+				return !ctx.Opts.mode.dns && lkeCertIssuerRoutingSelected(ctx)
+			},
+			Run: lkeDeployCertIssuerPublicIngress,
 		},
 		{
 			Name:    "write-artifacts",

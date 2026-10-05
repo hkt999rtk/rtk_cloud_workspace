@@ -3,12 +3,16 @@ package main
 import "fmt"
 
 func lkeCertIssuerPassthroughRoute(env map[string]string, route lkePublicHTTPSRoute) bool {
-	return route.Host != "" && route.Host == env["VIDEO_CLOUD_CERTISSUER_DOMAIN"] && route.Namespace == lkeNamespaceName(env, "video-cloud") && route.Service == "certissuer"
+	config := lkeResolveCertIssuerTLSConfig(env)
+	return route.Host != "" && route.Host == config.PublicHost && route.Namespace == config.Namespace && route.Service == "certissuer"
 }
 
 // CertIssuer owns both TLS identity and client authentication. A ClusterIP
 // backend in the workload namespace preserves the caller's original handshake.
 func lkeCertIssuerPassthroughIngressManifest(env map[string]string, route lkePublicHTTPSRoute) string {
+	// Only the resolved CertIssuer route determines the TLS backend. General
+	// route inputs must not select a different port or termination mode.
+	route = lkeResolveCertIssuerTLSConfig(env).PublicRoute()
 	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

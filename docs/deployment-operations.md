@@ -4,7 +4,7 @@ Status: active
 
 Owner: `rtk_cloud_workspace`
 
-Last reviewed: 2026-09-07
+Last reviewed: 2026-10-05
 
 Audience: internal deployment operators and new maintainers
 
@@ -18,6 +18,8 @@ LKE/Kubernetes; the legacy VM runtime is not an active deployment path.
 | Scenario | Correct entry point | Modifies cloud resources? |
 | --- | --- | --- |
 | Check tracked configuration | `deployment preflight --operation plan` | No |
+| Check whether the desired deployment can proceed | `scripts/check-deployment-preflight.sh --environment NAME` | No; read-only prerequisites and route migration assessment |
+| Check the health of an existing deployment | `scripts/check-deployment-health.sh --environment NAME` | No; read-only live environment checks |
 | Create a new environment | `deployment plan` -> `deployment provision` | Provision does |
 | Upgrade persistent staging | Reviewed plan and CI image provenance -> `deployment upgrade` (or a scoped existing-workload rollout) | Updates selected resources; never implies reset |
 | Check Console release features | `deployment console-check --environment NAME --cloud-id UUID --product-id UUID --test-account-id UUID` | Uses an existing Test Lab account; creates private login sessions, otherwise GET/HEAD only |
@@ -111,7 +113,7 @@ Billing server before its payment worker so the new migration is applied first.
 | `cloud_env/<env>/environment.env` | Stack, DNS root, logical location, public OAuth settings and explicit Test Lab intent | Yes; never client secrets |
 | `cloud_env/<env>/deployment.env` | Architecture, deployment adapter, DNS adapter | Yes |
 | `cloud_env/<env>/overrides/*.env` | Reviewed environment differences | Yes |
-| `cloud_env/<env>/runtime/` | Kubeconfig, provider state, OpenBao, service secrets, test identities, artifacts | No |
+| `cloud_env/<env>/runtime/` | Non-secret resolved configuration, provider state and sanitized artifacts; credentials, kubeconfig and private PKI state belong in the environment SecretStore | No |
 | `runtime/adapters/lke/account.env` | Operator-confirmed active-service limit | No |
 
 Create active-service-limit state:
@@ -148,25 +150,53 @@ additionally validates provider, DNS, GHCR, SSH key, active-service limit, and
 existing-cluster safety state. Output shows only `PASS/WARN/FAIL`, never credential
 values. Correct every `FAIL` before proceeding to provisioning.
 
-## Check an Existing Environment
+## Deployment Phase Checks
 
-Use the unified checker before changing an existing environment:
+Choose the check for the deployment phase. Each shell entry prints its purpose
+and when to use it before building or contacting external systems:
 
 ```sh
-scripts/check-deployment-credentials.sh --environment staging --fast \
-  --report /tmp/staging-deployment-check.json
-# Direct Go entry point:
-go run ./scripts/go/rtk-cloud -- deployment check --environment staging --fast
+# Before a whole-environment create/upgrade: desired inputs and safe migration prerequisites.
+scripts/check-deployment-preflight.sh --environment staging --fast \
+  --report /tmp/staging-pre-deploy-check.json
+# After deployment: current Kubernetes mirrors, live PKI and deployed routing.
+scripts/check-deployment-health.sh --environment staging --fast \
+  --report /tmp/staging-post-deploy-check.json
+# Direct Go entry points:
+go run ./scripts/go/rtk-cloud -- deployment check --phase pre-deploy --environment staging --fast
+go run ./scripts/go/rtk-cloud -- deployment check --phase post-deploy --environment staging --fast
 # Full pull of an affected, reviewed CI image, without provider writes:
-scripts/check-deployment-credentials.sh --environment staging --read-only \
+scripts/check-deployment-preflight.sh --environment staging \
   --checks ghcr --image "$RELEASE_IMAGE"
 ```
 
-The shell builds the checker once and executes it once. `deployment check`
-requires the selected environment's SecretStore, kubeconfig, live Secret mirrors
-and PKI checks even when `--checks` narrows provider/TLS/mount checks. Missing
-kubeconfig blocks dependent live checks. This entry does not bootstrap a new
-cloud environment or adopt an empty existing cluster. Legacy
+The shell builds the checker once and executes it once. The two named entries
+are read-only: they never deploy or repair resources. `--fast` controls depth,
+not deployment phase. They reject conflicting `--phase` or `--read-only=false`
+arguments rather than silently changing their purpose. Pre-deploy PASS qualifies the selected deployment inputs;
+it does not claim the old deployment is healthy. Existing routes that the
+deployment can safely migrate are reported as planned changes, while foreign
+ownership, identity policy and unavailable prerequisites still block deployment.
+The pre-deploy facade qualifies the default whole-environment create/upgrade
+path. It refuses the legacy whole-Deployment renderer when CertIssuer already
+uses managed host identity, Service PKI or a managed identity sidecar; even a
+down workload keeps this protection. A full managed-PKI upgrade is unsupported
+by that renderer and must not receive a deployability PASS. A reviewed targeted
+`provision --deploy --workloads ...` rollout and a route-only `provision --dns`
+operation are distinct paths: they preserve the managed CertIssuer workload and
+have their own required deployment/route prerequisites. An image change alone
+does not authorize a full renderer replacement.
+Post-deploy requires the selected environment's SecretStore, kubeconfig, live
+Secret mirrors and PKI checks even when `--checks` narrows provider/TLS/mount
+checks. Missing kubeconfig blocks dependent live checks. Post-deploy PASS does
+not replace application acceptance or the release gates below.
+
+`deployment preflight --operation provision` remains the prerequisite-only
+entry. `deployment preflight --operation acceptance` validates current live
+state before acceptance. The legacy `check-deployment-credentials.sh` and
+`deployment check` without `--phase` retain post-deploy behavior and identify it
+in their startup explanation. Their standard mode retains provider write
+canaries; use the named read-only entries for routine pre/post checks. Legacy
 `deployment credentials-check` keeps its provider/local-only behavior and
 existing provisioning callers.
 
@@ -190,7 +220,7 @@ created canaries receive up to 30s of additional cleanup time, with cleanup
 failure reported separately. See the [checker reference](../scripts/README.md#existing-environment-deployment-checks)
 for exact limits and retry conditions.
 `--report PATH` writes sanitized JSON with mode 0600 to an existing parent
-directory. Schema version 1 records scope, coverage and per-check status/code,
+directory. Schema version 1 records `phase`, `read_only`, scope, coverage and per-check status/code,
 resource, required flag, duration, attempts, dependencies, message, next action
 and evidence time/level. Final statuses are `PASS`, `FAIL`, `ERROR`, `BLOCKED`,
 and `SKIPPED`; required incomplete checks prevent success.
@@ -202,6 +232,80 @@ Use the shell for exact exit codes; `go run` may return 1 for a program that exi
 the [release gates below](#upgrade-persistent-staging-release-gates).
 See [checker options and PKI gates](../scripts/README.md#existing-environment-deployment-checks)
 for TLS/mount qualification, optional PKI checks and explicit credential repairs.
+
+### CertIssuer Route Convergence
+
+CertIssuer uses one resolved TLS policy for its internal HTTPS port, required
+server DNS names, public Ingress and the ingress-nginx controller's passthrough
+setting. General HTTP ingress still terminates TLS. The public CertIssuer path
+preserves the original client TLS handshake and targets `certissuer:9443` in
+the Video Cloud namespace through `certissuer-public-mtls`; it does not use the
+HTTP ExternalName bridge or attach the edge Web PKI Secret.
+
+The read-only pre-deploy assessment allows a terminating legacy route when the
+deployer can safely migrate it. Automatic migration recognizes only the prior
+`video-cloud-staging-certissuer` or shared `video-cloud-staging-https` objects
+in the selected ingress namespace, with matching stack/provider/RTK ownership,
+nginx class and the exact public host, root path and historical CertIssuer
+backend. A shared Ingress keeps its unrelated rules and TLS hosts. Foreign or
+unrecognized routes, extra CertIssuer paths, changed ownership and unfinished
+prior migration records require review; do not relabel a resource to bypass
+these checks.
+
+Before switching an existing route, the deployment validates the concrete
+Service, available CertIssuer workload and installed serving identity against
+the resolved public hostname. A managed identity must already have approved
+DNS policy and an installed identity; a static certificate must already cover
+the public host and be within its validity interval. A new environment can be
+planned before these objects exist, but routing mutation waits for installed
+serving material. Route convergence does not silently create a successor
+issuer, change stored CA material, or reissue an existing serving certificate.
+Complete a necessary identity-policy or certificate change through the normal
+approved PKI lifecycle first.
+
+A missing local kubeconfig is not evidence that the environment is new. The
+pre-deploy check requires provider discovery to confirm that the selected
+cluster is absent before taking the initial-deployment path without Kubernetes
+access. Otherwise restore the matching environment kubeconfig and inspect the
+existing cluster. Initial planning remains read-only and validates any cached
+CertIssuer TLS state without creating identity files or contacting Kubernetes.
+
+For a full static deployment, the desired state is the persisted material in
+`~/.config/rtk_cloud/<environment>/pki/certissuer/`: `server.crt`, `server.key`,
+`service-ca.crt`, `client.crt`, `client.key`, `factory.crt` and `factory.key`.
+Before installing it, the deployer checks completeness, configured algorithm,
+key/certificate pairs, TLS purposes, validity, CA signatures and all resolved
+public/internal server SANs. The stored CA and server leaf must also exactly
+match the selected live public certificates. Missing, invalid or stale state
+blocks full reconciliation; restore matching protected controller state or use
+the approved identity lifecycle. Do not delete existing material to regenerate
+a CA, change the algorithm to force replacement, or disable health checks to
+make an unrelated controller's state pass.
+
+Deployment-owned public routing runs the migration during both full public
+HTTPS setup and deploy-only Video Cloud routing updates. It rereads the
+inventory before mutation, uses current UID/resource-version preconditions for
+replacement/deletion, installs the canonical passthrough route and verifies
+that no conflicting route remains. Repeating an already converged deployment
+does not recreate or delete Ingress objects.
+
+Each actual change writes a mode-0600 restore journal under
+`cloud_env/<environment>/runtime/artifacts/certissuer-ingress/`, or the selected
+artifact directory's `certissuer-ingress/` subdirectory. Definite failures roll
+back only objects that still match the migration's own recorded result. An
+uncertain mutation outcome or concurrent drift stops automatic rollback and
+blocks retry until the restore record and current API objects have been
+reviewed. Keep the journal; do not delete it to force a retry or disable the
+admission webhook to permit duplicate host/path ownership.
+
+This convergence validates routing and installed identity prerequisites. Run
+the post-deploy health check and required authenticated public/internal endpoint
+acceptance probes afterward. It does not qualify a whole-Deployment replacement
+of a separately managed PKI installation; follow the preservation boundary in
+the [Dev managed PKI runbook](product-services-dev-pki.md#public-certissuer-configuration-and-rollout-boundary).
+Full legacy reconciliation checks this boundary before resource mutations and
+fails with the supported targeted or route-only alternatives instead of
+overwriting managed identity and discovering the mismatch after deployment.
 
 ## Create a New Environment
 

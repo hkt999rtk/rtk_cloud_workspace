@@ -2034,6 +2034,7 @@ func TestRunProvisionLKEDeployRejectsMultiplePublicMQTTNodePortsForV1(t *testing
 
 func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
+	t.Setenv("FAKE_CERTISSUER_INITIAL_ABSENT", "0")
 	if err := os.MkdirAll(filepath.Join(workspace, "repos", "rtk_video_cloud", "tools", "godaddy-dns"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -2088,7 +2089,6 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 		"externalName: video-cloud-turnregistry.video-cloud-staging-video-cloud.svc.cluster.local",
 		"kind: Ingress\nmetadata:\n  name: video-cloud-staging-public",
 		"kind: Ingress\nmetadata:\n  name: video-cloud-staging-device-mtls",
-		"kind: Ingress\nmetadata:\n  name: certissuer-public-mtls\n  namespace: video-cloud-staging-video-cloud",
 		"nginx.ingress.kubernetes.io/proxy-connect-timeout: \"60\"",
 		"nginx.ingress.kubernetes.io/proxy-read-timeout: \"3600\"",
 		"nginx.ingress.kubernetes.io/proxy-send-timeout: \"3600\"",
@@ -2098,17 +2098,14 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 		"proxy_set_header X-Client-S-DN $ssl_client_s_dn_legacy;",
 		"proxy_set_header X-Client-Cert $ssl_client_escaped_cert;",
 		"ca.crt: \"-----BEGIN CERTIFICATE-----\\ntest-root-ca\\n-----END CERTIFICATE-----\\n-----BEGIN CERTIFICATE-----\\ntest-device-ca\\n-----END CERTIFICATE-----\\n-----BEGIN CERTIFICATE-----\\ntest-app-ca\\n-----END CERTIFICATE-----\\n\"",
-		"nginx.ingress.kubernetes.io/backend-protocol: \"HTTPS\"",
 		"ingressClassName: nginx",
 		"host: video-cloud-staging.realtekconnect.com",
 		"host: device.video-cloud-staging.realtekconnect.com",
-		"host: certissuer.video-cloud-staging.realtekconnect.com",
 		"host: turnregistry.video-cloud-staging.realtekconnect.com",
 		"host: account-manager.video-cloud-staging.realtekconnect.com",
 		"host: admin.video-cloud-staging.realtekconnect.com",
 		"host: frontend.video-cloud-staging.realtekconnect.com",
 		"name: public-video-cloud-api-video-cloud\n                port:\n                  number: 80",
-		"name: certissuer\n                port:\n                  number: 9443",
 		"name: public-video-cloud-turnregistry-video-cloud\n                port:\n                  number: 18190",
 		"name: public-account-manager-account-manager\n                port:\n                  number: 80",
 		"name: public-cloud-admin-admin\n                port:\n                  number: 80",
@@ -2140,6 +2137,17 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 		if !strings.Contains(kubectlCalls, want) {
 			t.Fatalf("expected %q in kubectl calls, got:\n%s", want, kubectlCalls)
 		}
+	}
+	var certIssuerRoute certIssuerIngressObject
+	for _, line := range strings.Split(kubectlCalls, "\n") {
+		var object certIssuerIngressObject
+		if json.Unmarshal([]byte(line), &object) == nil && certIssuerObjectString(certIssuerObjectMap(object["metadata"])["name"]) == "certissuer-public-mtls" {
+			certIssuerRoute = object
+		}
+	}
+	routeEnv := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "VIDEO_CLOUD_CERTISSUER_DOMAIN": "certissuer.video-cloud-staging.realtekconnect.com"}
+	if !certIssuerCanonicalIngressMatches(certIssuerRoute, certIssuerCanonicalIngress(routeEnv, lkeResolveCertIssuerTLSConfig(routeEnv))) {
+		t.Fatalf("expected reconciled direct CertIssuer mTLS route in kubectl calls, got:\n%s", kubectlCalls)
 	}
 	publicIdx := strings.Index(kubectlCalls, "kind: Ingress\nmetadata:\n  name: video-cloud-staging-public")
 	deviceIdx := strings.Index(kubectlCalls, "kind: Ingress\nmetadata:\n  name: video-cloud-staging-device-mtls")
@@ -2422,6 +2430,7 @@ func TestLKEPruneExtraCoturnVMsDeletesOnlyNodesAboveDesiredCount(t *testing.T) {
 
 func TestRunProvisionLKEIngressHelmTimesOut(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
+	t.Setenv("FAKE_CERTISSUER_INITIAL_ABSENT", "0")
 	if err := os.MkdirAll(filepath.Join(workspace, "repos", "rtk_video_cloud", "tools", "godaddy-dns"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -2459,6 +2468,7 @@ func TestLKECreateEdgeHAProxyVMClassifiesActiveServicesLimit(t *testing.T) {
 
 func TestRunProvisionLKEDNSIncludesCloudLoggerWhenServiceExists(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
+	t.Setenv("FAKE_CERTISSUER_INITIAL_ABSENT", "0")
 	if err := os.MkdirAll(filepath.Join(workspace, "repos", "rtk_video_cloud", "tools", "godaddy-dns"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -2499,6 +2509,7 @@ func TestRunProvisionLKEDNSIncludesCloudLoggerWhenServiceExists(t *testing.T) {
 
 func TestRunProvisionLKEPublicHTTPSRestoresCachedCertificateBeforeACME(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
+	t.Setenv("FAKE_CERTISSUER_INITIAL_ABSENT", "0")
 	if err := os.MkdirAll(filepath.Join(workspace, "repos", "rtk_video_cloud", "tools", "godaddy-dns"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -2554,6 +2565,7 @@ func TestRunProvisionLKEPublicHTTPSRestoresCachedCertificateBeforeACME(t *testin
 
 func TestRunProvisionLKEPublicHTTPSStartsDNSUpsertsBeforeWaiting(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
+	t.Setenv("FAKE_CERTISSUER_INITIAL_ABSENT", "0")
 	if err := os.MkdirAll(filepath.Join(workspace, "repos", "rtk_video_cloud", "tools", "godaddy-dns"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -3075,6 +3087,7 @@ func TestLKEEnsureOpenBaoSkipsHelmRepoUpdateWhenTemplateWorks(t *testing.T) {
 
 func TestRunProvisionLKEDNSRequiresGoDaddyCredentialsBeforeDNSMutation(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
+	t.Setenv("FAKE_CERTISSUER_INITIAL_ABSENT", "0")
 	if err := os.MkdirAll(filepath.Join(workspace, "repos", "rtk_video_cloud", "tools", "godaddy-dns"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -3094,6 +3107,7 @@ func TestRunProvisionLKEDNSRequiresGoDaddyCredentialsBeforeDNSMutation(t *testin
 
 func TestRunProvisionLKEDNSStopsBeforeDNSWhenCertificateIssuanceFails(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
+	t.Setenv("FAKE_CERTISSUER_INITIAL_ABSENT", "0")
 	if err := os.MkdirAll(filepath.Join(workspace, "repos", "rtk_video_cloud", "tools", "godaddy-dns"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -6762,6 +6776,7 @@ JSON
 
 func makeLKETestEnv(t *testing.T) (string, string) {
 	t.Helper()
+	t.Setenv("FAKE_CERTISSUER_INITIAL_ABSENT", "1")
 	t.Cleanup(func() {
 		_ = os.Unsetenv("RTK_CLOUD_LKE_KUBECONFIG")
 	})
@@ -6981,6 +6996,11 @@ func fakeKubectl(t *testing.T) string {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "kubectl.log")
 	kubectl := filepath.Join(dir, "kubectl")
+	fakeKubectlCertIssuerServing(t)
+	t.Setenv("FAKE_CERTISSUER_INGRESS_PATH", filepath.Join(dir, "certissuer-ingress.json"))
+	t.Setenv("FAKE_CERTISSUER_INSTALLED_PATH", filepath.Join(dir, "certissuer-installed"))
+	t.Setenv("FAKE_CERTISSUER_CRT_PATH", filepath.Join(dir, "certissuer-crt"))
+	t.Setenv("FAKE_CERTISSUER_CA_PATH", filepath.Join(dir, "certissuer-ca"))
 	t.Setenv("RTK_CLOUD_KUBE_API_READY_POLL", "1ms")
 	t.Setenv("RTK_CLOUD_KUBE_API_READY_STABLE_CHECKS", "1")
 	script := `#!/usr/bin/env bash
@@ -6992,6 +7012,42 @@ for arg in "$@"; do
   fi
 done
 set -- "${args[@]}"
+if [[ "$*" == *"get ingresses --all-namespaces -o json"* ]]; then
+  if [[ -f "$FAKE_CERTISSUER_INGRESS_PATH" ]]; then
+    printf '{"items":['; cat "$FAKE_CERTISSUER_INGRESS_PATH"; printf ']}\n'
+  else
+    printf '{"items":[]}\n'
+  fi
+  exit 0
+fi
+if [[ "$*" == *"get ingress certissuer-public-mtls --ignore-not-found=true -o json"* ]]; then
+  if [[ -f "$FAKE_CERTISSUER_INGRESS_PATH" ]]; then cat "$FAKE_CERTISSUER_INGRESS_PATH"; fi
+  exit 0
+fi
+if [[ "$*" == *"get service certissuer --ignore-not-found=true -o json"* ]]; then
+  if [[ "${FAKE_CERTISSUER_INITIAL_ABSENT:-0}" == 1 && ! -f "$FAKE_CERTISSUER_INSTALLED_PATH" ]]; then exit 0; fi
+  printf '%s\n' "$FAKE_CERTISSUER_SERVICE_JSON"
+  exit 0
+fi
+if [[ "$*" == *"get deployment certissuer --ignore-not-found=true -o json"* ]]; then
+  if [[ "${FAKE_CERTISSUER_INITIAL_ABSENT:-0}" == 1 && ! -f "$FAKE_CERTISSUER_INSTALLED_PATH" ]]; then exit 0; fi
+  printf '%s\n' "$FAKE_CERTISSUER_DEPLOYMENT_JSON"
+  exit 0
+fi
+if [[ "$*" == *"get secret certissuer-runtime -o jsonpath="* ]]; then
+  if [[ "$*" == *"client-ca"* ]]; then
+    if [[ -f "$FAKE_CERTISSUER_CA_PATH" ]]; then cat "$FAKE_CERTISSUER_CA_PATH"; else printf '%s' "$FAKE_CERTISSUER_PUBLIC_CA"; fi
+  else
+    if [[ -f "$FAKE_CERTISSUER_CRT_PATH" ]]; then cat "$FAKE_CERTISSUER_CRT_PATH"; else printf '%s' "$FAKE_CERTISSUER_PUBLIC_CRT"; fi
+  fi
+  exit 0
+fi
+if [[ "$*" == *"create -f - -o json"* || "$*" == *"replace -f - -o json"* ]]; then
+  body="$(cat)"
+  printf 'ARGS %s\n%s\n' "$*" "$body" >> "` + logPath + `"
+  printf '%s' "$body" | python3 -c 'import json,os,sys; obj=json.load(sys.stdin); obj["metadata"].update(uid="fixture-certissuer", resourceVersion="1"); raw=json.dumps(obj); open(os.environ["FAKE_CERTISSUER_INGRESS_PATH"],"w").write(raw); print(raw)'
+  exit 0
+fi
 if [[ "${1:-}" == "config" && "${2:-}" == "current-context" ]]; then
   printf 'test-context\n'
   exit 0
@@ -7412,7 +7468,12 @@ fi
   done
   printf '\n'
   if [[ "$*" == *"apply -f"* ]]; then
-    cat
+    body="$(cat)"
+    printf '%s\n' "$body"
+    if [[ "$body" == *$'kind: Deployment\nmetadata:\n  name: certissuer\n'* ]]; then touch "$FAKE_CERTISSUER_INSTALLED_PATH"; fi
+    if [[ "$body" == *$'kind: Secret\nmetadata:\n  name: certissuer-runtime\n'* ]]; then
+      printf '%s' "$body" | python3 -c 'import base64,json,os,re,sys; body=sys.stdin.read(); [(open(os.environ[var],"w").write(base64.b64encode(json.loads(re.search("(?m)^  "+re.escape(key)+": (.*)$",body)[1]).encode()).decode())) for key,var in [("tls.crt","FAKE_CERTISSUER_CRT_PATH"),("client-ca.crt","FAKE_CERTISSUER_CA_PATH")]]'
+    fi
     printf '\n---\n'
   elif [[ "$*" == *"--patch-file=/dev/stdin"* ]]; then
     cat
@@ -7425,6 +7486,40 @@ fi
 	}
 	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
 	return logPath
+}
+
+// DNS-only provisioning needs an existing serving identity. Exercise the real
+// certificate policy and the real ingress reconciler rather than bypassing them.
+func fakeKubectlCertIssuerServing(t *testing.T) lkeCertIssuerMaterial {
+	t.Helper()
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "VIDEO_CLOUD_CERTISSUER_DOMAIN": "certissuer.video-cloud-staging.realtekconnect.com", "CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM": "ed25519", "LKE_RUNTIME_SECRET_SEED": "fixture-seed"}
+	material, err := newLKECertIssuerMaterial(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fixture := range []struct{ variable, manifest string }{
+		{"FAKE_CERTISSUER_SERVICE_JSON", lkeCertIssuerServiceManifest(env)},
+		{"FAKE_CERTISSUER_DEPLOYMENT_JSON", lkeCertIssuerDeploymentManifest(env, material, lkeOpenBaoBootstrapResult{})},
+	} {
+		var object map[string]any
+		if err := yaml.Unmarshal([]byte(fixture.manifest), &object); err != nil {
+			t.Fatal(err)
+		}
+		if fixture.variable == "FAKE_CERTISSUER_SERVICE_JSON" {
+			object["spec"].(map[string]any)["clusterIP"] = "10.0.0.5"
+		} else {
+			object["metadata"].(map[string]any)["generation"] = 1
+			object["status"] = map[string]any{"availableReplicas": 1, "updatedReplicas": 1, "replicas": 1, "observedGeneration": 1}
+		}
+		raw, err := json.Marshal(object)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv(fixture.variable, string(raw))
+	}
+	t.Setenv("FAKE_CERTISSUER_PUBLIC_CRT", base64.StdEncoding.EncodeToString([]byte(material.ServerCert)))
+	t.Setenv("FAKE_CERTISSUER_PUBLIC_CA", base64.StdEncoding.EncodeToString([]byte(material.ServiceCA)))
+	return material
 }
 
 func fakeKubectlWithoutCurrentContext(t *testing.T) string {

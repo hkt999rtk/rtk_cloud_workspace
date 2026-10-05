@@ -92,24 +92,45 @@ LINODE_OBJ_BUCKET=artifact bucket name
 
 ## Existing Environment Deployment Checks
 
-`deployment check` combines SecretStore/PKI and selected credential checks for an
-**existing environment**. Its shell entry builds the Go checker once and executes
-it once, preserving the checker's exit status. It does not bootstrap an empty
-environment or perform complete release qualification.
+Deployment checks have two explicit phases. Every shell entry first prints a
+short explanation of its purpose and when to use it, then builds and executes
+the Go checker once, preserving its exit status.
+
+| Entry | Purpose and timing |
+| --- | --- |
+| `check-deployment-preflight.sh` / `deployment check --phase pre-deploy` | Before default whole-environment create/upgrade: desired configuration, tools, canonical local credentials, selected provider/input checks and safe CertIssuer ingress migration prerequisites. Does not require the old deployment's Secret mirrors or PKI health to pass. |
+| `check-deployment-health.sh` / `deployment check --phase post-deploy` | After deployment: current local credentials, Kubernetes Secret mirrors, live PKI and ingress consistency, plus selected provider/input checks. Use application acceptance separately. |
+
+Both named shell entries enforce read-only mode. `--fast` reduces check depth
+within the selected phase; it does not select a phase. The JSON report records
+`phase`, `read_only` and scope. Each fixed-purpose wrapper rejects contrary
+`--phase` arguments and any false spelling of `--read-only`; it cannot silently
+become the other checker. A pre-deploy PASS does not certify live health or provider
+write ability, and a post-deploy PASS does not perform complete release
+qualification. Neither entry deploys, bootstraps or repairs the environment.
+
+For compatibility, `check-deployment-credentials.sh` and `deployment check`
+without `--phase` remain **post-deploy** checks. Their standard mode retains the
+provider write canaries described below, with this distinction in the banner.
+The pre-deploy phase itself always enforces read-only mode and rejects legacy
+credential-repair flags. `--require-pki-migration` and `--require-product-pki`
+select post-deploy live health gates and are rejected in the pre-deploy phase.
 
 ```sh
-scripts/check-deployment-credentials.sh --environment staging --fast \
-  --report /tmp/staging-deployment-check.json
-# The same checker can be invoked directly:
-go run ./scripts/go/rtk-cloud -- deployment check --environment staging --fast
+scripts/check-deployment-preflight.sh --environment staging --fast \
+  --report /tmp/staging-pre-deploy-check.json
+scripts/check-deployment-health.sh --environment staging --fast \
+  --report /tmp/staging-post-deploy-check.json
+# Select the phase explicitly when invoking Go directly:
+go run ./scripts/go/rtk-cloud -- deployment check --phase pre-deploy --environment staging --fast
 # Registry checks for an affected image; use an actual reviewed CI digest:
 scripts/check-deployment-credentials.sh --environment staging --fast \
   --checks ghcr --image "$RELEASE_IMAGE"
 # Require a full controller-host pull of that image:
 scripts/check-deployment-credentials.sh --environment staging --read-only \
   --checks ghcr --image "$RELEASE_IMAGE"
-# Optional gates before a PKI migration or Product PKI lifecycle acceptance:
-scripts/check-deployment-credentials.sh --environment staging --fast \
+# Optional live gates for PKI migration or Product PKI lifecycle acceptance:
+scripts/check-deployment-health.sh --environment staging --fast \
   --require-pki-migration --require-product-pki
 ```
 
@@ -121,11 +142,28 @@ scripts/check-deployment-credentials.sh --environment staging --fast \
 
 `--checks` accepts `linode,ghcr,dns,storage,tls,mounts`. Without it, configured
 providers and supplied local checks run. **SecretStore, Kubernetes mirror and
-live PKI checks remain required in every mode**, including `--checks tls,mounts`.
+live PKI checks remain required in every post-deploy mode**, including `--checks tls,mounts`.
 Missing kubeconfig blocks dependent live checks. An explicitly requested but
 unconfigured provider fails. GoDaddy reads authenticate against the selected
 zone. Route53 credential qualification reports `UNSUPPORTED`; it cannot pass.
 Read-only checks still verify advertised required Linode/key scopes.
+
+Pre-deploy uses the tracked configuration and the existing provision
+prerequisites, then assesses the desired CertIssuer route without changing live
+objects. A recognized, owned terminating legacy route can pass when it has a
+safe migration plan. Installed serving identity requirements, foreign routes,
+unrecognized ownership and unfinished migration records still block. It never
+requires old Kubernetes Secret mirrors or live PKI health to pass. See
+[CertIssuer route convergence](../docs/deployment-operations.md#certissuer-route-convergence)
+for the narrow legacy-route allowlist, serving identity prerequisites,
+conditional mutation/rollback journal and separate endpoint acceptance gates.
+The default full-deployment renderer cannot reconstruct separately managed
+CertIssuer PKI state. Pre-deploy therefore refuses a full reconciliation over
+managed host identity, Service PKI or an identity sidecar, including an unhealthy
+workload. Reviewed targeted `provision --deploy --workloads ...` rollouts and
+route-only `provision --dns` use separate deployment prerequisites and preserve
+the existing managed CertIssuer configuration; an image qualification or a safe
+Ingress migration plan does not make a full managed-PKI replacement supported.
 
 Dynamic Root policy checks validate the referenced issuer and its trust scope.
 A ready, active or retiring Root can legitimately have an empty distrust policy;
@@ -172,7 +210,7 @@ start and completion, progress every 10s during long steps, and a final summary
 with root causes and the three slowest checks.
 
 `--report PATH` writes a sanitized, mode-0600 JSON report; its parent directory
-must exist. Schema version 1 includes environment, mode, scope, overall result,
+must exist. Schema version 1 includes environment, phase, mode, read-only flag, scope, overall result,
 start time, duration, coverage counts and results in stable `check_id` order.
 Each result records status/code, resource, required flag, duration, attempts,
 dependencies, message, next action, evidence time/level and reuse when applicable.
