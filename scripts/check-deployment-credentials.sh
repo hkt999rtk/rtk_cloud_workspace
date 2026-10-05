@@ -7,19 +7,19 @@ CHECK_PHASE="${RTK_CLOUD_CHECK_SCRIPT_PHASE:-post-deploy}"
 CHECK_READ_ONLY="${RTK_CLOUD_CHECK_SCRIPT_READ_ONLY:-false}"
 case "$CHECK_PHASE" in
   pre-deploy)
-    printf '%s\n' '部署前可部署性檢查（pre-deploy）：確認完整 create／upgrade 的目標設定、工具與 SecretStore 前置條件；請在整個環境部署前使用。'
-    printf '%s\n' '唯讀檢查，未驗證寫入權限；評估舊路由能否安全遷移，不以舊部署健康問題阻擋升級。通過不代表目前服務健康；--fast 只減少驗證深度。'
+    printf '%s\n' 'Pre-deploy deployability check (pre-deploy): Validate desired configuration, tools, and SecretStore prerequisites for a full create or upgrade. Run before deploying the whole environment.'
+    printf '%s\n' 'Read-only; write permissions are unverified. Check whether existing routes can be migrated safely; existing deployment health issues do not block an upgrade. A pass does not establish current service health. --fast only reduces validation depth.'
     ;;
   post-deploy)
-    printf '%s\n' '部署後環境健康檢查（post-deploy）：驗證已部署環境的 Secret 綁定、PKI 與公開入口；請在部署後或排查現況時使用。'
+    printf '%s\n' 'Post-deploy environment health check (post-deploy): Verify deployed Secret bindings, PKI, and public ingress. Run after deployment or when diagnosing the current environment.'
     if [[ "$CHECK_READ_ONLY" == true ]]; then
-      printf '%s\n' '此入口唯讀；不作為部署前可部署性判定，也不取代完整應用驗收。--fast 只減少驗證深度。'
+      printf '%s\n' 'This entry point is read-only. It checks current health, not pre-deploy deployability or full application acceptance. --fast only reduces validation depth.'
     else
-      printf '%s\n' 'check-deployment-credentials.sh 是 post-deploy 相容入口；標準模式 provider 驗證可能使用暫時性 DNS／storage 寫入。唯讀請用 check-deployment-health.sh；--fast 只減少驗證深度。'
+      printf '%s\n' 'check-deployment-credentials.sh is the post-deploy compatibility entry point. Standard provider validation may use temporary DNS or storage writes. Use check-deployment-health.sh for read-only checks; --fast only reduces validation depth.'
     fi
     ;;
   *)
-    printf '%s\n' '部署環境檢查：部署前使用 check-deployment-preflight.sh；部署後使用 check-deployment-health.sh。'
+    printf '%s\n' 'Deployment environment check: Use check-deployment-preflight.sh before deployment, and check-deployment-health.sh after deployment.'
     printf '%s\n' 'error: unsupported wrapper phase' >&2
     exit 2
     ;;
