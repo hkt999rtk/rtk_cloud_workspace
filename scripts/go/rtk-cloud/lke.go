@@ -450,6 +450,18 @@ func lkePreflight(paths provisionPaths, env map[string]string) error {
 }
 
 func lkePlan(env map[string]string, opts provisionOptions) {
+	if env["RTK_MANAGED_UPGRADE_PLAN_SHA256"] != "" {
+		_, plan, err := managedUpgradeStore(env)
+		if err != nil || plan == nil {
+			fmt.Fprintln(os.Stdout, "Managed upgrade plan is unavailable; deployment will fail closed")
+			return
+		}
+		fmt.Fprintf(os.Stdout, "Managed full workload upgrade: stack=%s plan_sha256=%s replacements=%d retained_controllers=%d\n", plan.Stack, plan.digest, len(plan.Workloads), len(plan.Retained))
+		for _, w := range plan.Workloads {
+			fmt.Fprintf(os.Stdout, "- replace Deployment %s/%s\n", w.Desired.Metadata.Namespace, w.Desired.Metadata.Name)
+		}
+		return
+	}
 	fmt.Fprintln(os.Stdout, "LKE target:")
 	fmt.Fprintf(os.Stdout, "- stack: %s\n", env["CLOUD_STACK_NAME"])
 	fmt.Fprintf(os.Stdout, "- region: %s\n", env["CLOUD_REGION"])
@@ -489,6 +501,11 @@ func lkePlan(env map[string]string, opts provisionOptions) {
 }
 
 func lkeApplyBase(env map[string]string, opts provisionOptions) error {
+	if env["RTK_MANAGED_UPGRADE_PLAN_SHA256"] != "" {
+		// Namespaces, runtime mirrors and system controllers are retained by the
+		// reviewed full workload plan; avoid implicit infrastructure reconciliation.
+		return nil
+	}
 	namespaces := lkeNamespaces(env)
 	if len(opts.workloads) > 0 {
 		wanted := map[string]bool{}
@@ -587,6 +604,9 @@ type lkePublicHTTPSRoute struct {
 }
 
 func lkeApplyPublicHTTPS(paths provisionPaths, env map[string]string, opts provisionOptions) error {
+	if env["RTK_MANAGED_UPGRADE_PLAN_SHA256"] != "" {
+		return lkeDeployCertIssuerPublicIngress(provisionContext{Paths: paths, Env: env, Opts: opts})
+	}
 	if err := lkeValidatePublicEdge(env); err != nil {
 		return err
 	}
@@ -667,7 +687,7 @@ func lkeApplyPublicHTTPS(paths provisionPaths, env map[string]string, opts provi
 	if err := lkeCopyExistingDeviceMTLSAppCASecret(env); err != nil {
 		return err
 	}
-	if env["FACTORY_ENROLL_PUBLIC_ENABLED"] == "true" {
+	if env["FACTORY_ENROLL_PUBLIC_ENABLED"] == "true" && env["RTK_MANAGED_UPGRADE_PLAN_SHA256"] == "" {
 		if err := lkeApplyFactoryMTLSCASecret(paths, env); err != nil {
 			return err
 		}
@@ -2580,6 +2600,16 @@ func lkeWaitForIngressExternalIP(env map[string]string) (string, error) {
 }
 
 func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provisionOptions) error {
+	if managedUpgradeSelected(opts) {
+		store, plan, err := managedUpgradeStore(env)
+		if err != nil {
+			return err
+		}
+		if plan != nil {
+			return deployManagedUpgrade(paths, env, store, plan)
+		}
+	}
+
 	if len(opts.workloads) == 0 && lkeWorkloadSelected(env, opts, "video-cloud") {
 		if err := lkeRequireCertIssuerRendererCompatibility(env); err != nil {
 			return err
@@ -3438,11 +3468,30 @@ func writeLKEProvisionArtifacts(paths provisionPaths, env map[string]string) (st
 	for _, workload := range lkeWorkloads(env) {
 		workloads[workload.Name] = workload.Image
 	}
+	managedDigest := ""
+	if env["RTK_MANAGED_UPGRADE_PLAN_SHA256"] != "" {
+		_, plan, err := managedUpgradeStore(env)
+		if err != nil || plan == nil {
+			return "", errors.New("managed upgrade plan changed before artifact generation")
+		}
+		managedDigest = plan.digest
+		workloads = map[string]string{}
+		for _, w := range plan.Workloads {
+			_, images, err := deploymentUpgradeSpec(w.Desired.Spec)
+			if err != nil {
+				return "", err
+			}
+			for name, image := range images {
+				workloads[w.Desired.Metadata.Namespace+"/"+w.Desired.Metadata.Name+"/"+name] = image
+			}
+		}
+	}
 	body, err := json.MarshalIndent(map[string]any{
-		"provider":   "lke",
-		"stack":      env["CLOUD_STACK_NAME"],
-		"region":     env["CLOUD_REGION"],
-		"namespaces": namespaces,
+		"managed_upgrade_plan_sha256": managedDigest,
+		"provider":                    "lke",
+		"stack":                       env["CLOUD_STACK_NAME"],
+		"region":                      env["CLOUD_REGION"],
+		"namespaces":                  namespaces,
 		"domains": map[string]string{
 			"video_cloud":     env["VIDEO_CLOUD_DOMAIN"],
 			"certissuer":      env["VIDEO_CLOUD_CERTISSUER_DOMAIN"],

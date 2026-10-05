@@ -239,6 +239,7 @@ type deploymentCheckReporter struct {
 	results map[string]deploymentCheckResult
 	running map[string]time.Time
 	started time.Time
+	scope   string
 }
 
 func newDeploymentCheckReporter(out io.Writer) *deploymentCheckReporter {
@@ -639,6 +640,16 @@ func runDeploymentCheckWithDependencies(parent context.Context, args []string, o
 	close(done)
 	<-heartbeatDone
 	report := reporter.snapshot(cfg.Environment, o.phase, o.qualification.fast, o.qualification.readOnly)
+	if reporter.scope != "" {
+		report.Scope = reporter.scope
+	}
+	if o.operation == "full-deployment" && o.phase == deploymentCheckPreDeploy {
+		verdict := "NO-GO"
+		if report.Overall == "PASS" {
+			verdict = "GO"
+		}
+		fmt.Fprintf(out, "Full deployment preflight: %s environment=%s phase=%s; scope=%s\n", verdict, cfg.Environment, o.phase, report.Scope)
+	}
 	if o.operation == "image-upgrade" {
 		report.Scope = "existing-workload image upgrade: exact candidate/CI, preserved effective configuration, AM/Billing schema prerequisites, restricted simulator startup, all environment workload health and required public CertIssuer mTLS; optional feature activation and business/data acceptance excluded"
 		verdict := "NO-GO"

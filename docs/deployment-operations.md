@@ -238,15 +238,20 @@ scripts/check-deployment-preflight.sh --environment staging \
 The shell builds the checker once and executes it once. The two named entries
 are read-only: they never deploy or repair resources. `--fast` controls depth,
 not deployment phase. They reject conflicting `--phase` or `--read-only=false`
-arguments rather than silently changing their purpose. Default full-deployment pre-deploy PASS qualifies the selected deployment inputs;
-it does not claim the old deployment is healthy. Existing routes that the
+arguments rather than silently changing their purpose. Default full-deployment pre-deploy PASS qualifies the selected deployment inputs.
+The legacy static path does not claim the old deployment is healthy; the managed
+replacement plan below additionally requires the health of retained dependencies. Existing routes that the
 deployment can safely migrate are reported as planned changes, while foreign
 ownership, identity policy and unavailable prerequisites still block deployment.
 The pre-deploy facade qualifies the default whole-environment create/upgrade
 path. It refuses the legacy whole-Deployment renderer when CertIssuer already
 uses managed host identity, Service PKI or a managed identity sidecar; even a
 down workload keeps this protection. A full managed-PKI upgrade is unsupported
-by that renderer and must not receive a deployability PASS. A reviewed targeted
+by that legacy renderer and must not receive a deployability PASS. Dev/Staging
+may instead select the private complete replacement plan described in
+[Full managed workload upgrade](#full-managed-workload-upgrade). The default
+preflight and `deployment upgrade` both discover that same environment-local
+plan; this is not the `image-upgrade` operation. A reviewed targeted
 `provision --deploy --workloads ...` rollout and a route-only `provision --dns`
 operation are distinct paths: they preserve the managed CertIssuer workload and
 have their own required deployment/route prerequisites. An image change alone
@@ -298,7 +303,88 @@ the [release gates below](#upgrade-persistent-staging-release-gates).
 See [checker options and PKI gates](../scripts/README.md#existing-environment-deployment-checks)
 for TLS/mount qualification, optional PKI checks and explicit credential repairs.
 
-### CertIssuer Route Convergence
+#
+## Full managed workload upgrade
+
+For an existing Dev or Staging managed-PKI environment, an operator may authorize
+complete Deployment-spec replacement. Prepare the private desired-state plan:
+
+```sh
+go run ./scripts/go/rtk-cloud -- deployment prepare-upgrade \
+  --environment staging --confirm video-cloud-staging \
+  --image "$VIDEO_CLOUD_IMAGE" --image "$ACCOUNT_MANAGER_IMAGE"
+```
+
+Supply each changed package as an official immutable GHCR `@sha256` image.
+The planner replaces that package on **all** existing Deployment consumers,
+including APIs, workers, sidecars and bootstrap containers. Unspecified packages
+retain their current immutable images; preparation does not select latest main
+or claim release qualification. It reads Kubernetes and writes only
+`~/.config/rtk_cloud/<environment>/deployment/managed-upgrade.json`, in a real
+private `0700` directory with a `0600` regular file. It refuses to overwrite an
+existing reviewed plan; archive that plan within the same environment's private
+store before preparing the next release. Do not commit this file or print its
+specifications: existing inline credentials can be present in baseline specs.
+
+The schema-1 file records the exact environment, stack,
+`policy: replace-managed-workloads`, qualified `images`, every Deployment under
+`workloads`, and every environment StatefulSet/DaemonSet under `retained`.
+Each entry includes the live owner UID, `baseline_spec`, and the complete
+`desired` workload (`kind`, `metadata.name`, `metadata.namespace`, `spec`).
+Review/edit only desired specs and the matching image inventory. Replicas,
+resources, probes, Pod annotations, placement and ordinary literal environment
+settings can change. Identity/credential volumes and mounts, security contexts,
+ServiceAccounts, commands/arguments, ports, indirect environment bindings,
+feature activation, migration switches and PKI/credential literal settings must
+continue to match the baseline. CA rotation, reissuance or new identity bindings
+use the accepted managed PKI lifecycle first, followed by a new plan. The
+operator's permission to overwrite workload settings is not a requirement to
+replace working issuers or private keys.
+
+Run the user's normal whole-environment entry after reviewing that plan:
+
+```sh
+./scripts/check-deployment-preflight.sh --environment staging
+```
+
+It automatically discovers the plan, requires full exact-image pulls and CI
+publication, schema prerequisites, simulator startup, all environment workload
+health, mounted identity/CRL/Secret evidence and public authenticated mTLS with
+anonymous denial. Kubernetes `replace --dry-run=server` checks the **same**
+complete desired specs with current UID/resourceVersion, update permission,
+immutable fields, admission and quota; no resources are persisted. `--fast`
+or excluding GHCR cannot qualify this operation. A missing/invalid plan,
+missing consumer/provider controller, changed owner/configuration, incompatible
+identity plumbing, failed certificate trust or failed dry-run remains NO-GO.
+Preparation itself is never GO.
+
+The full operation replaces every environment Deployment spec, rather than
+merely editing image fields. It retains StatefulSets, DaemonSets, database/broker
+volumes, provider sizing, Services, Secrets, ConfigMaps, public routes and CA
+custody. Those retained dependencies must already pass their required checks;
+changes to them require their own reviewed lifecycle/route/provider plan. Tracked
+legacy templates do not override private desired specs in this mode. This
+scope is printed with the private plan SHA-256 in the readiness report. It does
+not activate disabled features or claim full business/data acceptance.
+
+After a separately authorized rollout, `deployment upgrade --environment staging
+--confirm video-cloud-staging` discovers the same file, requalifies before
+provider/runtime mutation, freezes its digest, saves private complete rollback
+specs under `deployment/rollback/<plan-sha256>/workloads.json`, and replaces
+Deployments with UID/configuration and resourceVersion fences. It bypasses old
+static runtime dependency rendering, including deletion of `certissuer-runtime`,
+old CertIssuer material creation and legacy ingress-controller reconciliation.
+A changed/deleted plan fails closed, including mid-rollout. Partial failure does
+not blindly restore over concurrent updates: inspect private rollback specs,
+read current ownership and qualify the recovery before retrying.
+
+After rollout and route verification, the operation requires every desired
+Deployment spec and retained controller to match, complete workload readiness,
+Secret/PKI/CRL checks and required public mTLS. A successful update request or
+Ready Pods alone cannot complete the operation. Production rejects this policy;
+its existing release and managed lifecycle boundaries continue to apply.
+
+## CertIssuer Route Convergence
 
 CertIssuer uses one resolved TLS policy for its internal HTTPS port, required
 server DNS names, public Ingress and the ingress-nginx controller's passthrough
