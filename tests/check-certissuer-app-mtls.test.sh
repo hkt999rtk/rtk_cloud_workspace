@@ -43,6 +43,8 @@ cat >"$TMP/bin/openssl" <<'SH'
 case " $* " in *' -verify_return_error '*) ;; *) exit 93 ;; esac
 case " $* " in *' -verify_hostname issuer.example '*) ;; *) exit 94 ;; esac
 case " $* " in *' -connect issuer.example:443 '*) ;; *) exit 95 ;; esac
+# The mounted file contains leaf and intermediates; s_client -cert alone sends only the leaf.
+case " $* " in *' -cert_chain /fake/client.crt '*) ;; *) printf 'ssl alert unknown ca\n' >&2; exit 1 ;; esac
 cat >/dev/null
 case "${FAKE_TLS_FAILURE:-}" in
   ca) printf 'verify error:num=20:unable to get local issuer certificate do-not-leak-this-secret\n' >&2; exit 1 ;;
