@@ -690,6 +690,10 @@ func validateDNSBeforeMutation(cfg deploymentConfig) error {
 }
 
 func validateLKEEnvironmentStateBeforeMutation(cfg deploymentConfig) error {
+	return validateLKEEnvironmentStateBeforeMutationWithDiscovery(cfg, discoverLKECluster)
+}
+
+func validateLKEEnvironmentStateBeforeMutationWithDiscovery(cfg deploymentConfig, discover func(string, provisionPaths, map[string]string, bool) (lkeCluster, error)) error {
 	account, err := readLKEAccountState(cfg.RuntimeRoot, true)
 	if err != nil {
 		return err
@@ -709,7 +713,7 @@ func validateLKEEnvironmentStateBeforeMutation(cfg deploymentConfig) error {
 	if token == "" {
 		return errors.New("LKE credentials reference is required before mutation: configure LINODE_TOKEN in the environment runtime secret")
 	}
-	_, err = discoverLKECluster(token, provisionPaths{EnvRoot: cfg.RuntimeRoot}, compat, false)
+	_, err = discover(token, provisionPaths{EnvRoot: cfg.RuntimeRoot}, compat, false)
 	if errors.Is(err, errLKEMissingCluster) {
 		return nil
 	}
@@ -739,7 +743,7 @@ func validateLKEEnvironmentStateBeforeMutation(cfg deploymentConfig) error {
 
 func printDeploymentUsage() {
 	fmt.Fprint(os.Stdout, `Usage:
-  rtk-cloud deployment check --environment NAME [--fast] [--timeout 2m] [--report PATH]
+  rtk-cloud deployment check --environment NAME [--phase pre-deploy|post-deploy] [--fast] [--timeout 2m] [--report PATH]
   rtk-cloud deployment credentials-check --environment NAME
   rtk-cloud deployment credentials-check --environment NAME --read-only [--checks ghcr,tls,mounts] [--image GHCR_DIGEST] [--manifest WORKLOAD_JSON]
   rtk-cloud deployment credentials-check --environment NAME --create-missing-object-storage-bucket

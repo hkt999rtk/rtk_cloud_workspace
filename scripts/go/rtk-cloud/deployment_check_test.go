@@ -262,7 +262,7 @@ func TestDeploymentCheckSecretFailurePreventsWrites(t *testing.T) {
 func TestDeploymentCheckReporterNeverPassesIncompleteRequiredChecks(t *testing.T) {
 	r := newDeploymentCheckReporter(io.Discard)
 	r.emit(deploymentCredentialCheck{ID: "waiting", Status: "PENDING", Required: true})
-	report := r.snapshot("staging", true)
+	report := r.snapshot("staging", deploymentCheckPostDeploy, true, true)
 	if report.Overall != "FAIL" || reportCheck(t, report, "waiting").Status != "BLOCKED" {
 		t.Fatalf("%+v", report)
 	}
