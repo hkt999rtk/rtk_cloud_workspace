@@ -259,8 +259,16 @@ func TestManagedUpgradePreparationIsPrivateCompleteAndNonMutating(t *testing.T) 
 }
 
 func TestDefaultPreflightAutomaticallyQualifiesManagedPlan(t *testing.T) {
-	for _, fast := range []bool{false, true} {
-		t.Run(map[bool]string{false: "standard", true: "fast cannot GO"}[fast], func(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		fast     bool
+		selected map[string]bool
+	}{
+		{name: "standard"},
+		{name: "fast cannot GO", fast: true},
+		{name: "omitted GHCR cannot GO", selected: keySet("dns")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
 			store := secretStore{Root: filepath.Join(root, "staging"), Environment: "staging"}
 			path := managedUpgradePath(store)
@@ -281,12 +289,12 @@ func TestDefaultPreflightAutomaticallyQualifiesManagedPlan(t *testing.T) {
 				},
 			}
 			reporter := newDeploymentCheckReporter(io.Discard)
-			executeDeploymentCheck(context.Background(), deploymentCheckOptions{phase: deploymentCheckPreDeploy, operation: "full-deployment", qualification: deploymentCredentialCheckOptions{fast: fast}}, cfg, deps, reporter)
-			report := reporter.snapshot("staging", deploymentCheckPreDeploy, fast, true)
+			executeDeploymentCheck(context.Background(), deploymentCheckOptions{phase: deploymentCheckPreDeploy, operation: "full-deployment", qualification: deploymentCredentialCheckOptions{fast: tc.fast, selected: tc.selected}}, cfg, deps, reporter)
+			report := reporter.snapshot("staging", deploymentCheckPreDeploy, tc.fast, true)
 			if !imagesCollected {
 				t.Fatal("default full preflight omitted exact plan images or became image-only")
 			}
-			if fast {
+			if tc.fast || tc.selected != nil {
 				if preflightCalled || report.Overall == "PASS" {
 					t.Fatal("reduced qualification permitted managed overwrite")
 				}
@@ -646,4 +654,93 @@ func TestManagedUpgradeMainEntrypointsFailClosedAndKeepArtifactsAccurate(t *test
 		}
 	}
 	_ = store
+}
+
+func TestManagedUpgradePreparationCLIRequiresConfirmationAndPlanningOnlyInputs(t *testing.T) {
+	plan, live := managedUpgradeFixture(t)
+	store := managedUpgradeReadFixture(t, plan, live)
+	if err := os.Remove(managedUpgradePath(store)); err != nil {
+		t.Fatal(err)
+	}
+	workspace := writeDeploymentFixture(t, "staging", "lke")
+	base := []string{"prepare-upgrade", "--workspace", workspace, "--environment", "staging"}
+	for _, extra := range [][]string{
+		nil,
+		{"--confirm", "wrong-stack"},
+		{"--confirm", plan.Stack, "--checks", "ghcr"},
+		{"--confirm", plan.Stack, "--read-only=false"},
+		{"--confirm", plan.Stack, "--manifest", "unreviewed.json"},
+		{"--confirm", plan.Stack, "unexpected"},
+	} {
+		if err := runDeploymentWithOperations(append(append([]string{}, base...), extra...), deploymentOperations{}); err == nil {
+			t.Fatalf("unsafe preparation inputs accepted: %v", extra)
+		}
+		if _, err := os.Stat(managedUpgradePath(store)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("rejected CLI inputs wrote an overwrite plan")
+		}
+	}
+	image := strings.Split(plan.Images[0], "@")[0] + "@sha256:" + strings.Repeat("b", 64)
+	args := append(base, "--confirm", plan.Stack, "--image", image)
+	if err := runDeploymentWithOperations(args, deploymentOperations{}); err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := loadManagedUpgradePlan(store, plan.Stack)
+	if err != nil || prepared == nil || !reflect.DeepEqual(prepared.Images, []string{image}) || prepared.Workloads[0].UID != plan.Workloads[0].UID {
+		t.Fatal("CLI did not produce the exact private full upgrade plan")
+	}
+}
+
+func TestManagedUpgradePreparationRejectsUnusableReleaseAndUnsafeCustody(t *testing.T) {
+	for _, failure := range []string{"mutable-candidate", "conflicting-package", "unused-package", "mutable-installed", "invalid-owner", "symlink-config-root", "symlink-environment-root", "symlink-plan-directory"} {
+		t.Run(failure, func(t *testing.T) {
+			plan, live := managedUpgradeFixture(t)
+			store := managedUpgradeReadFixture(t, plan, live)
+			if err := os.Remove(managedUpgradePath(store)); err != nil {
+				t.Fatal(err)
+			}
+			cfg := deploymentConfig{Environment: "staging", Adapter: "lke", Values: map[string]string{"CLOUD_STACK_NAME": plan.Stack}}
+			var images []string
+			switch failure {
+			case "mutable-candidate":
+				images = []string{"ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud:latest"}
+			case "conflicting-package":
+				images = []string{plan.Images[0], strings.Split(plan.Images[0], "@")[0] + "@sha256:" + strings.Repeat("b", 64)}
+			case "unused-package":
+				images = []string{"ghcr.io/hkt999rtk/unused/package@sha256:" + strings.Repeat("b", 64)}
+			case "mutable-installed":
+				pod := certIssuerObjectMap(certIssuerObjectMap(certIssuerObjectMap(live[0]["spec"])["template"])["spec"])
+				certIssuerObjectMap(certIssuerObjectList(pod["containers"])[0])["image"] = "ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud:latest"
+			case "invalid-owner":
+				delete(certIssuerObjectMap(live[0]["metadata"]), "uid")
+			case "symlink-config-root":
+				target := t.TempDir()
+				_ = os.Remove(target)
+				if err := os.Rename(store.ConfigRoot, target); err != nil {
+					t.Fatal(err)
+				}
+				_ = os.Symlink(target, store.ConfigRoot)
+			case "symlink-environment-root":
+				target := filepath.Join(store.ConfigRoot, "custody-copy")
+				if err := os.Rename(store.Root, target); err != nil {
+					t.Fatal(err)
+				}
+				_ = os.Symlink(target, store.Root)
+			case "symlink-plan-directory":
+				_ = os.Remove(filepath.Dir(managedUpgradePath(store)))
+				target := filepath.Join(store.Root, "elsewhere")
+				_ = os.Mkdir(target, 0o700)
+				_ = os.Symlink(target, filepath.Dir(managedUpgradePath(store)))
+			}
+			raw, _ := json.Marshal(map[string]any{"items": live})
+			if err := os.WriteFile(os.Getenv("MANAGED_INVENTORY"), raw, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := prepareManagedUpgrade(cfg, images, io.Discard); err == nil {
+				t.Fatal("unusable release or unsafe custody was accepted")
+			}
+			if _, err := os.Stat(managedUpgradePath(store)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("failed preparation left an overwrite plan")
+			}
+		})
+	}
 }
