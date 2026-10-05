@@ -25,6 +25,7 @@ in the owning service repository; shared wire and payload contracts belong in
 | Select a DNS provider, manage records, or review DNS-01 ownership | [DNS Adapter Architecture](dns-adapter-architecture.md) |
 | Find shared API, payload, authentication, or device transport contracts | [Canonical contracts index](../repos/rtk_cloud_contracts_doc/README.md) |
 | Find service implementation, configuration, or package documentation | [Repository Documentation](#repository-documentation) |
+| Review Video Cloud threats, trust boundaries, assumptions, and security validation gaps | [Cyber Security Analysis](../cyber_security/README.md) |
 | Confirm what is deployed in a named environment | [Deployment Operations Guide](deployment-operations.md), using that environment's resolved runtime and dated deployment evidence |
 | Build a fresh staging environment and run canonical 1K validation | [Staging from scratch](staging-from-scratch.md) |
 | Find authoritative documentation with semantic retrieval | [RTK Knowledge Search skill](../.agents/skills/rtk-knowledge-search/SKILL.md) |
@@ -50,6 +51,7 @@ when retrieved alongside an active source.
 | Document | Classification | Purpose |
 | --- | --- | --- |
 | [architecture.md](architecture.md) | Source | Cross-repo boundaries and source-of-truth model. |
+| [Video Cloud STRIDE threat model](../cyber_security/threat_models/rtk_video_cloud-stride-threat-model.md) | Supporting note: draft static assessment | Current code and adjoining trust boundaries, conditional risks, and validation responsibilities; no live environment security sign-off. |
 | [environment-dns-naming.md](environment-dns-naming.md) | Source | Environment identity, stack/root mapping, public endpoint hostname rules, and explicit exceptions. |
 | [Database ER model](design/database-er-diagrams.md) | Generated design reference | Tables, columns, declared foreign keys, and evidenced logical references across services. |
 | [Database schema to ER process](design/database-er-process.md) | Source | How schema metadata becomes the ER atlas, checked snapshots, and environment diff reports. |
@@ -150,6 +152,7 @@ evidence, not current operator instructions.
 | Document | Purpose |
 | --- | --- |
 | [architecture.md](architecture.md) | Repository boundaries and source-of-truth model. |
+| [Cyber Security Analysis](../cyber_security/README.md) | Video Cloud STRIDE model, risk matrix, assumptions and source evidence; static review and environment qualification remain distinct. |
 | [documentation-governance.md](documentation-governance.md) | Ownership, classification, review, and drift prevention. |
 | [contracts-submodule-governance.md](contracts-submodule-governance.md) | Canonical contracts submodule path, URL, and commit alignment. |
 | [object-storage-policy.md](object-storage-policy.md) | Canonical bucket naming, namespaces, retention and lifecycle; separates policy from deployed state. |
