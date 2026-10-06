@@ -293,6 +293,7 @@ func TestDeploymentProviderLocalChecksNeedNoCredentialProfile(t *testing.T) {
 }
 
 func TestDeploymentProviderPullContextCancellation(t *testing.T) {
+	makeIsolatedTestSecretStore(t, "dev")
 	dir := t.TempDir()
 	t.Setenv("PATH", dir)
 	path := filepath.Join(dir, "docker")
@@ -302,7 +303,7 @@ func TestDeploymentProviderPullContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	err := pullRolloutImageContext(ctx, "user", "secret-token", "ghcr.io/owner/repo@sha256:"+strings.Repeat("a", 64))
+	err := pullRolloutImageContext(ctx, "dev", "user", "secret-token", "ghcr.io/owner/repo@sha256:"+strings.Repeat("a", 64))
 	if err == nil || !strings.Contains(err.Error(), "TIMEOUT") || strings.Contains(err.Error(), "secret-token") || time.Since(start) > time.Second {
 		t.Fatalf("err=%v elapsed=%s", err, time.Since(start))
 	}
@@ -601,6 +602,7 @@ func TestDeploymentProviderParallelFixtureHalvesSerialTime(t *testing.T) {
 }
 
 func TestDeploymentProviderPullCancellationKillsDescendants(t *testing.T) {
+	makeIsolatedTestSecretStore(t, "dev")
 	dir := t.TempDir()
 	ready := filepath.Join(dir, "ready")
 	orphan := filepath.Join(dir, "orphan")
@@ -618,7 +620,7 @@ wait
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		done <- pullRolloutImageContext(ctx, "user", "token", "ghcr.io/owner/repo@sha256:"+strings.Repeat("a", 64))
+		done <- pullRolloutImageContext(ctx, "dev", "user", "token", "ghcr.io/owner/repo@sha256:"+strings.Repeat("a", 64))
 	}()
 	deadline := time.Now().Add(time.Second)
 	for {

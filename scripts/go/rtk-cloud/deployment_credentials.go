@@ -182,7 +182,7 @@ func (c deploymentCredentialChecker) checkWithOptions(cfg deploymentConfig, envF
 				checks = append(checks, c.checkGHCR(values)...)
 			} else {
 				for _, image := range uniqueNonEmpty(options.images...) {
-					checks = append(checks, c.checkRolloutImage(values, image))
+					checks = append(checks, c.checkRolloutImage(cfg.Environment, values, image))
 				}
 			}
 		}

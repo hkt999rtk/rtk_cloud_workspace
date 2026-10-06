@@ -41,7 +41,7 @@ func (c deploymentCredentialChecker) checkStorageReadOnly(store provisionObjectS
 
 var rolloutImagePattern = regexp.MustCompile(`^ghcr\.io/([a-z0-9_.-]+(?:/[a-z0-9_.-]+)+)@sha256:[a-f0-9]{64}$`)
 
-func (c deploymentCredentialChecker) checkRolloutImage(values map[string]string, image string) deploymentCredentialCheck {
+func (c deploymentCredentialChecker) checkRolloutImage(environment string, values map[string]string, image string) deploymentCredentialCheck {
 	check := deploymentCredentialCheck{Name: "GHCR release image"}
 	match := rolloutImagePattern.FindStringSubmatch(image)
 	if match == nil {
@@ -49,6 +49,10 @@ func (c deploymentCredentialChecker) checkRolloutImage(values map[string]string,
 		return check
 	}
 	check.Name += " " + image
+	if !secretEnvironmentPattern.MatchString(environment) {
+		check.Detail = "explicit environment is required for private image qualification"
+		return check
+	}
 	username, token := values["GHCR_PULL_USERNAME"], values["GHCR_PULL_TOKEN"]
 	if username == "" || token == "" {
 		check.Detail = "GHCR_PULL_USERNAME and GHCR_PULL_TOKEN are required"
@@ -85,7 +89,7 @@ func (c deploymentCredentialChecker) checkRolloutImage(values map[string]string,
 			return check
 		}
 	}
-	if err := pullRolloutImageContext(c.checkContext(), username, token, image); err != nil {
+	if err := pullRolloutImageContext(c.checkContext(), environment, username, token, image); err != nil {
 		check.Detail = err.Error()
 		var pullErr *deploymentImagePullError
 		if errors.As(err, &pullErr) {
@@ -102,12 +106,23 @@ type deploymentImagePullError struct{ code, detail string }
 
 func (e *deploymentImagePullError) Error() string { return e.detail }
 
-func pullRolloutImage(username, token, image string) error {
-	return pullRolloutImageContext(context.Background(), username, token, image)
-}
-
-func pullRolloutImageContext(parent context.Context, username, token, image string) error {
-	dir, err := os.MkdirTemp("", "rtk-rollout-pull-")
+func pullRolloutImageContext(parent context.Context, environment, username, token, image string) error {
+	// Credentials belong to the explicitly selected environment even during a
+	// read-only pull check. Do not use the system temp directory or CWD.
+	path, err := privateDeploymentStatePath(environment, "deployment/tmp/.image-pull-path-check")
+	if err != nil {
+		return errors.New("selected private environment directory unavailable for image qualification")
+	}
+	store, err := newSecretStore("", environment)
+	if err != nil {
+		return errors.New("explicit environment is required for private image qualification")
+	}
+	for _, directory := range []string{store.ConfigRoot, store.Root, filepath.Join(store.Root, "deployment"), filepath.Dir(path)} {
+		if err := ensurePrivateDirectory(directory); err != nil {
+			return errors.New("cannot prepare selected environment's private image qualification directory")
+		}
+	}
+	dir, err := os.MkdirTemp(filepath.Dir(path), "image-pull-")
 	if err != nil {
 		return errors.New("cannot create private Docker credential directory")
 	}

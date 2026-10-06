@@ -97,7 +97,7 @@ func (c deploymentCredentialChecker) collectDeploymentChecks(ctx context.Context
 						if options.fast {
 							return checker.checkRolloutImageMetadata(values, image)
 						}
-						return checker.checkRolloutImage(values, image)
+						return checker.checkRolloutImage(cfg.Environment, values, image)
 					})
 					if options.fast {
 						add("provider.ghcr.pull."+image, "Full image pull "+image, image, "full-pull", false, false, nil, nil)

@@ -61,7 +61,7 @@ not invent another workspace, worktree, external-disk or OS-specific location.
 | Original provider migration sources | `migration-backup/provider-state/<source-sha256>/` |
 | Controlled teardown state/credential archive | `migration-backup/destroy-lke-<operation-id>/` |
 | Normalized provider region/quota metadata (not completion evidence) | `deployment/provider-preflight.env` |
-| Temporary native Kubernetes / Docker / Buildx client identity and state | `deployment/tmp/` (operation-owned directories removed on success/failure) |
+| Temporary native Kubernetes / Docker image-pull / Buildx client identity and state | `deployment/tmp/` (operation-owned directories removed on success/failure) |
 | Deployment reports | `deployment/reports/` |
 | CertIssuer route migration restore journal | `deployment/journals/certissuer-ingress/certissuer-<operation-id>.json` |
 | LKE provision operational summary | `deployment/artifacts/lke-provision/<operation-timestamp>/summary.json` |
