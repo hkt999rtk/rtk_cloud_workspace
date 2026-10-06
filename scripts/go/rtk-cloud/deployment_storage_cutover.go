@@ -17,6 +17,9 @@ import (
 )
 
 func (c deploymentCredentialChecker) cutoverRuntimeStorage(cfg deploymentConfig, values map[string]string, sourceFile, environmentFile string) error {
+	if _, err := deploymentStorageStatePath(cfg.Environment, storageCutoverReceiptName("media")); err != nil {
+		return err
+	}
 	if sourceFile == "" {
 		return errors.New("--source-env-file is required for media storage-cutover")
 	}
@@ -88,6 +91,9 @@ func (c deploymentCredentialChecker) cutoverRuntimeStorage(cfg deploymentConfig,
 }
 
 func (c deploymentCredentialChecker) cutoverOTAStorage(cfg deploymentConfig, values map[string]string, sourceFile, environmentFile string) error {
+	if _, err := deploymentStorageStatePath(cfg.Environment, storageCutoverReceiptName("ota")); err != nil {
+		return err
+	}
 	if err := lkeValidateOTACDNBaseURL(cfg.Values); err != nil {
 		return err
 	}

@@ -32,7 +32,18 @@ func deploymentStorageStatePath(environment, name string) (string, error) {
 			return "", errors.New("environment storage state requires real private 0700 directories")
 		}
 	}
-	return store.safePath(filepath.Join("deployment", "storage", name))
+	path, err := store.safePath(filepath.Join("deployment", "storage", name))
+	if err != nil {
+		return "", err
+	}
+	if info, err := os.Lstat(path); err == nil {
+		if !info.Mode().IsRegular() || info.Mode().Perm() != 0600 {
+			return "", errors.New("environment storage evidence destination must be a private regular 0600 file")
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	return path, nil
 }
 
 func readDeploymentStorageState(environment, name string) ([]byte, error) {

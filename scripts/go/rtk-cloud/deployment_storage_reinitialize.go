@@ -205,6 +205,9 @@ func (c deploymentCredentialChecker) reinitializeStorage(cfg deploymentConfig, p
 	if err != nil {
 		return err
 	}
+	if _, err := deploymentStorageStatePath(cfg.Environment, storageCutoverReceiptName(purpose)); err != nil {
+		return err
+	}
 	source, sourceHash, err := readStorageReinitializationSource(sourceFile, cfg.Environment)
 	if err != nil {
 		return err
