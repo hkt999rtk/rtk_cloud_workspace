@@ -178,3 +178,71 @@ func TestFrozenReleaseDestinationNeverOverwritesExistingSelection(t *testing.T) 
 		t.Fatal("followed destination symlink")
 	}
 }
+
+func TestFrozenReleaseUsesOnlySelectedEnvironmentPrivateDirectory(t *testing.T) {
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		t.Run(environment, func(t *testing.T) {
+			store := makeIsolatedTestSecretStore(t, environment)
+			workspace := writeDeploymentFixture(t, environment, "lke")
+			for _, path := range []string{
+				filepath.Join(t.TempDir(), "release.json"),
+				filepath.Join(workspace, "cloud_env", environment, "runtime", "release.json"),
+				filepath.Join(store.ConfigRoot, "other", "deployment", "releases", "release.json"),
+				filepath.Join(store.Root, "pki", "release.json"),
+				filepath.Join(store.Root, "deployment", "reports", "release.json"),
+				filepath.Join(store.Root, "deployment", "releases", "release.txt"),
+			} {
+				if err := publishEnvironmentReleaseSelection(environment, path, []byte("fixture")); err == nil {
+					t.Fatal("release escaped selected authority", path)
+				}
+				// Reject the destination before loading provider evidence or querying
+				// GitHub; an invalid output is a usage error, not a publication failure.
+				if err := runEnvironmentReleaseFreeze([]string{"--workspace", workspace, "--environment", environment, "--provider-release", "/missing-provider-evidence.json", "--output", path}); err != exitCode(2) {
+					t.Fatal("invalid output reached publication verification", err)
+				}
+				if _, err := os.Lstat(path); !os.IsNotExist(err) {
+					t.Fatal("rejected destination was written")
+				}
+			}
+			path := filepath.Join(store.Root, "deployment", "releases", "candidate.json")
+			if err := publishEnvironmentReleaseSelection(environment, path, []byte("original selection")); err != nil {
+				t.Fatal(err)
+			}
+			for _, directory := range []string{store.Root, filepath.Join(store.Root, "deployment"), filepath.Dir(path)} {
+				if info, err := os.Lstat(directory); err != nil || !info.IsDir() || info.Mode().Perm() != 0700 {
+					t.Fatal("release directory was not private")
+				}
+			}
+			if info, err := os.Lstat(path); err != nil || info.Mode().Perm() != 0600 {
+				t.Fatal("release was not private")
+			}
+			if err := publishEnvironmentReleaseSelection(environment, path, []byte("replacement")); err == nil {
+				t.Fatal("release selection overwritten")
+			}
+			if raw, err := os.ReadFile(path); err != nil || string(raw) != "original selection" {
+				t.Fatal("existing release changed")
+			}
+			if err := os.Chmod(filepath.Dir(path), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := publishEnvironmentReleaseSelection(environment, filepath.Join(filepath.Dir(path), "public.json"), []byte("fixture")); err == nil {
+				t.Fatal("public output directory accepted")
+			}
+			if err := os.Chmod(filepath.Dir(path), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(filepath.Dir(path)); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(t.TempDir(), filepath.Dir(path)); err != nil {
+				t.Fatal(err)
+			}
+			if err := publishEnvironmentReleaseSelection(environment, path, []byte("redirect")); err == nil {
+				t.Fatal("followed output directory symlink")
+			}
+		})
+	}
+}

@@ -176,7 +176,7 @@ func runEnvironmentReleaseFreeze(args []string) error {
 	workspace := fs.String("workspace", "", "workspace root")
 	environmentRoot := fs.String("environment-root", "", "explicit maintained environment root")
 	providerRelease := fs.String("provider-release", "", "reviewed immutable provider release manifest")
-	output := fs.String("output", "", "new release manifest path; existing files are never overwritten")
+	output := fs.String("output", "", "new absolute JSON manifest under ~/.config/rtk_cloud/<environment>/deployment/releases/; existing files are never overwritten")
 	timeout := fs.Duration("timeout", 10*time.Minute, "source and publication deadline")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -193,6 +193,10 @@ func runEnvironmentReleaseFreeze(args []string) error {
 		fmt.Fprintln(os.Stderr, "error: maintained configuration unavailable")
 		return exitCode(2)
 	}
+	if err := validateEnvironmentDeploymentJSONPath(cfg.Environment, *output, "releases"); err != nil {
+		fmt.Fprintln(os.Stderr, "error: --output must be a new JSON file in the selected environment deployment/releases directory with private real parent directories")
+		return exitCode(2)
+	}
 	providers, err := loadEnvironmentRelease(cfg, *providerRelease)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "NO-GO deployment.release: reviewed immutable provider selection unavailable")
@@ -205,21 +209,34 @@ func runEnvironmentReleaseFreeze(args []string) error {
 		fmt.Fprintln(os.Stderr, "NO-GO deployment.release: frozen source, exact CI publication or provider compatibility could not be verified; synchronize main and republish the exact source before retrying")
 		return exitCode(1)
 	}
-	path, err := filepath.Abs(*output)
-	if err != nil {
-		return exitCode(2)
-	}
 	raw, err := json.MarshalIndent(release, "", "  ")
 	if err != nil {
 		return exitCode(1)
 	}
-	if err = writeExclusiveEnvironmentRelease(path, append(raw, '\n')); err != nil {
+	if err = publishEnvironmentReleaseSelection(cfg.Environment, *output, append(raw, '\n')); err != nil {
 		fmt.Fprintln(os.Stderr, "error: cannot save a new private release manifest; existing selection was preserved")
 		return exitCode(1)
 	}
 	fmt.Fprintf(os.Stdout, "FROZEN environment=%s workspace-revision=%s\nnext: review the manifest and run full preflight with --release; freezing publication is not deployment GO\n", release.Environment, release.WorkspaceRevision)
 	return nil
 }
+
+func publishEnvironmentReleaseSelection(environment, path string, raw []byte) error {
+	if err := validateEnvironmentDeploymentJSONPath(environment, path, "releases"); err != nil {
+		return err
+	}
+	store, err := newSecretStore("", environment)
+	if err != nil {
+		return err
+	}
+	for _, directory := range []string{store.ConfigRoot, store.Root, filepath.Join(store.Root, "deployment"), filepath.Dir(path)} {
+		if err := ensurePrivateDirectory(directory); err != nil {
+			return err
+		}
+	}
+	return writeExclusiveEnvironmentRelease(path, raw)
+}
+
 func writeExclusiveEnvironmentRelease(path string, raw []byte) error {
 	if !filepath.IsAbs(path) || len(raw) == 0 || len(raw) > 4<<20 {
 		return errors.New("bounded absolute release destination required")

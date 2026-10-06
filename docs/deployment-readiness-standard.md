@@ -257,3 +257,12 @@ digest and run attempt. Complete provider/create/bootstrap adapters, complete
 candidate/recovery coverage and
 actual production qualification are not yet complete. Existing environments
 have not been deployed or declared GO by this implementation work.
+
+Redis and Prometheus now have common persistent targets and an existing-data
+migration fence. Three-environment native Redis process-loss drills verify the
+renderer's AOF data survives replacement; they do not prove remote backup or
+environment RPO/RTO. Remaining storage migrations, durable component recovery
+coverage and the required qualification adapters are still incomplete. Frozen
+release output is restricted to the selected environment's private
+`deployment/releases/`; reports and temporary API identity files use its
+`deployment/reports/` and `deployment/tmp/` directories respectively.

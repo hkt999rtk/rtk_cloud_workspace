@@ -285,12 +285,19 @@ func writeUnifiedDeploymentReport(path string, report unifiedDeploymentReport) e
 }
 
 func validateEnvironmentDeploymentReportPath(environment, path string) error {
+	return validateEnvironmentDeploymentJSONPath(environment, path, "reports")
+}
+
+func validateEnvironmentDeploymentJSONPath(environment, path, category string) error {
+	if category != "reports" && category != "releases" {
+		return errors.New("unknown environment deployment output category")
+	}
 	store, err := newSecretStore("", environment)
 	if err != nil {
 		return err
 	}
-	if !filepath.IsAbs(path) || filepath.Ext(path) != ".json" || filepath.Dir(path) != filepath.Join(store.Root, "deployment", "reports") {
-		return errors.New("deployment report destination is outside canonical environment reports")
+	if !filepath.IsAbs(path) || filepath.Ext(path) != ".json" || filepath.Dir(path) != filepath.Join(store.Root, "deployment", category) {
+		return errors.New("deployment JSON output destination is outside its canonical environment directory")
 	}
 	for _, directory := range []string{store.ConfigRoot, store.Root, filepath.Join(store.Root, "deployment"), filepath.Dir(path)} {
 		info, err := os.Lstat(directory)
@@ -298,7 +305,7 @@ func validateEnvironmentDeploymentReportPath(environment, path string) error {
 			continue
 		}
 		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0700 {
-			return errors.New("deployment report directories must be real private 0700 directories")
+			return errors.New("deployment output directories must be real private 0700 directories")
 		}
 	}
 	return nil

@@ -52,6 +52,7 @@ not invent another workspace, worktree, external-disk or OS-specific location.
 | PKI identities/certificates | `pki/` |
 | OpenBao controller material | `openbao/` |
 | Plans, releases, reviewed identity bindings and execution evidence | `deployment/` |
+| Newly frozen release candidates (exclusive JSON output) | `deployment/releases/` |
 | Storage preparation/completion receipts and migration proofs | `deployment/storage/` |
 | Provider operational state | `deployment/adapters/<adapter>/` |
 | Deployment reports | `deployment/reports/` |
