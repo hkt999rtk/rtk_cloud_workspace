@@ -20,31 +20,7 @@ func deploymentStorageStatePath(environment, name string) (string, error) {
 	if !keySet("storage-cutover.json", "storage-cutover-ota.json", "storage-migration.json", "storage-migration-ota.json", "storage-migration-artifacts.json", "storage-preflight.json", "storage-preflight-ota.json", "storage-preflight-release-artifacts.json", "storage-consumers.json")[name] {
 		return "", errors.New("unknown environment storage state file")
 	}
-	store, err := newSecretStore("", environment)
-	if err != nil {
-		return "", err
-	}
-	for _, directory := range []string{store.ConfigRoot, store.Root, filepath.Join(store.Root, "deployment"), filepath.Join(store.Root, "deployment", "storage")} {
-		info, err := os.Lstat(directory)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0700 {
-			return "", errors.New("environment storage state requires real private 0700 directories")
-		}
-	}
-	path, err := store.safePath(filepath.Join("deployment", "storage", name))
-	if err != nil {
-		return "", err
-	}
-	if info, err := os.Lstat(path); err == nil {
-		if !info.Mode().IsRegular() || info.Mode().Perm() != 0600 {
-			return "", errors.New("environment storage evidence destination must be a private regular 0600 file")
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return "", err
-	}
-	return path, nil
+	return privateDeploymentStatePath(environment, filepath.Join("deployment", "storage", name))
 }
 
 func readDeploymentStorageState(environment, name string) ([]byte, error) {

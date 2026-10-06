@@ -112,49 +112,27 @@ NODE_CLASS_BROKER_MIN_MEMORY_GIB=8
 
 An environment does not specify an LKE region, Linode type, or provider account quota. The adapter selects provider resources from the logical location and node-class resource minima. Resolved results are written only to ignored runtime evidence.
 
-`overrides/adapter.env` is reserved for reviewed provider escape hatches; it is not standard environment configuration. Keep it empty for normal dev, staging, and prod environments. The operator stores the provider account limit in ignored runtime:
+`overrides/adapter.env` is reserved for reviewed provider escape hatches; it is not standard environment configuration. Keep it empty for normal dev, staging, and prod environments. The operator-confirmed provider quota lives in the private environment store:
 
 ```env
-# cloud_env/qa/runtime/adapters/lke/account.env
+# ~/.config/rtk_cloud/qa/deployment/adapters/lke/account.env
 LKE_ACTIVE_SERVICE_LIMIT=20
 ```
 
-The actual staging file path is:
+The actual staging path is `~/.config/rtk_cloud/staging/deployment/adapters/lke/account.env`, with `0700` directories and a `0600` file. `20` is an example, not a discovered allowance. Set the active-service safety cap only from Linode account confirmation or a directly observed supported count; never guess or exceed that allowance. `unlimited` requires explicit account-owner confirmation. Live inventory and projected resource usage still have to be checked.
 
-```text
-cloud_env/staging/runtime/adapters/lke/account.env
-```
-
-`LKE_ACTIVE_SERVICE_LIMIT` is the operator's active-service safety cap for the Linode account. It is neither another API secret nor architecture/default configuration. The Linode API does not currently expose an endpoint that can query the exact account ceiling with `LINODE_TOKEN`. Set the cap from Linode's account confirmation, or use a lower conservative cap supported by a directly observed successful concurrent service count and record that evidence in the ignored operator file. Never set it above a confirmed or observed allowance. Before creating any billable resource, deployment compares `current active services + planned resources` with this cap. Stop if no verified cap is available; do not guess.
-
-Cloud Admin batch-job recovery additionally requires a dedicated Account Manager
-job-authorization service credential in the environment SecretStore. It must not
-reuse login, Billing, Video Cloud, factory, or ownership-handoff credentials and
-must never be written to tracked environment files. Persistent `video-cloud-dev`
-qualification uses in-place `provision` followed by `acceptance`; `test` remains a
-destructive ephemeral flow that cleans up its owned stack.
-
-Create the staging account state:
+For an existing legacy environment, preserve its original state through the explicit migration operation:
 
 ```sh
-mkdir -p cloud_env/staging/runtime/adapters/lke
-cp cloud_env/staging/runtime/adapters/lke/account.env.example \
-  cloud_env/staging/runtime/adapters/lke/account.env
-
-chmod 600 cloud_env/staging/runtime/adapters/lke/account.env
+./scripts/deploy-environment.sh provider-import-state \
+  --environment staging \
+  --source-runtime /absolute/original/cloud_env/staging/runtime \
+  --confirm video-cloud-staging
 ```
 
-You may also edit `account.env` directly and replace the example value `20` with the actual limit confirmed by Linode.
+The default original Kubernetes identity is the canonical environment kubeconfig. If it has not been recovered there, specify its exact original private path with `--source-kubeconfig`; no other worktree is searched. The operation verifies cluster/API/CA and recorded node-pool ownership, privately archives original provider bytes, preserves allocated IDs and the confirmed quota, and refuses conflicting destinations. It does not change cloud resources or create GO/completion evidence. Regenerate configuration after import to remove operational IDs and quota from resolved config. Retain the original source until the maintained code cutover is complete, then archive/retire the old operational files through the reviewed migration.
 
-If another workspace with a completed staging setup already has this file, you may safely copy its operator state. Do not commit it:
-
-```sh
-cp /path/to/known-good-workspace/cloud_env/staging/runtime/adapters/lke/account.env \
-  cloud_env/staging/runtime/adapters/lke/account.env
-chmod 600 cloud_env/staging/runtime/adapters/lke/account.env
-```
-
-`20` is only an example of a confirmed account limit. Replace it with the actual limit for your Linode account. The file is under the Git-ignored `runtime/` directory and is not obtained through `git clone`.
+Cloud Admin batch-job recovery additionally requires its dedicated Account Manager job-authorization service credential in the environment SecretStore. It must not reuse login, Billing, Video Cloud, factory, or ownership-handoff credentials. Complete create/upgrade uses the shared deployment engine and exact release; retired full `provision`/`test` flows are not a fallback.
 
 Architecture overrides must not contain provider keys, and adapter overrides must not contain workload, capacity, or topology keys. Unknown keys, invalid types, and cross-layer keys fail during planning.
 

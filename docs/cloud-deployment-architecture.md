@@ -16,9 +16,10 @@ See the [canonical path table and migration boundary](deployment-secrets-governa
 Only deterministic secret-free resolved configuration may remain under
 `cloud_env/<environment>/runtime/`. Legacy operational files there require an
 explicit validated migration. Missing evidence never authorizes identity/data
-reinitialization or an automatic fallback. Existing provider-state examples
-in this document describe the older implementation; moving those writers and
-readers is an unfinished part of the unified replacement, not a policy exception.
+reinitialization or an automatic fallback. LKE cluster/node-pool state and quota now use the private environment store, including
+preflight, execution input hashing and controlled teardown archives. Remaining
+legacy edge/TURN, DNS, service and artifact state writers still require migration; their old
+locations are implementation gaps, not policy exceptions.
 
 RTK Cloud uses one reusable architecture description, many environment instances, and replaceable deployment adapters. Environments such as `dev`, `staging`, and `prod` select an architecture and adapter; they do not own copies of the architecture or adapter implementation.
 
@@ -60,7 +61,7 @@ resolve -> immutable release -> complete versioned plan -> qualification
 
 The normalized runtime contract is `cloud_env/<environment>/runtime`. Shared commands never inspect adapter-private state. A resolved plan is sanitized and contains no credentials, kubeconfig content, private keys, tokens, or generated service secrets.
 
-Provider account quota is mutable operator/account state, not architecture, environment, or adapter default. If the provider API cannot return the active-service limit, LKE requires `runtime/adapters/lke/account.env` with `LKE_ACTIVE_SERVICE_LIMIT` before mutation. Missing account state fails before infrastructure changes.
+Provider account quota is mutable operator/account state, not architecture, environment, or adapter default. If the provider API cannot return the active-service limit, LKE requires `~/.config/rtk_cloud/<environment>/deployment/adapters/lke/account.env` with `LKE_ACTIVE_SERVICE_LIMIT` before mutation. Missing account state fails before infrastructure changes.
 
 ## Logical topology
 
@@ -101,7 +102,7 @@ Every Pod must fit one planning node. Persistent volumes are storage intent and 
 
 | Legacy input | New owner |
 | --- | --- |
-| `cloud_env/staging/lke` | `cloud_env/staging/runtime` generated state |
+| `cloud_env/staging/lke` | Configuration in `cloud_env/staging/runtime`; operational state in the private environment store |
 | `LKE_TARGET_CONNECTS` | `CAPACITY_TARGET_CONNECTIONS` |
 | `LKE_MQTT_CONNECTIONS_PER_POD` | `CAPACITY_CONNECTIONS_PER_MQTT_POD` |
 | `LKE_MQTT_REPLICAS` | generated `MQTT_EFFECTIVE_REPLICAS` from `MQTT_MIN_REPLICAS` |
@@ -109,10 +110,10 @@ Every Pod must fit one planning node. Persistent volumes are storage intent and 
 | `LKE_*_REQUEST_CPU/MEMORY` | matching provider-neutral workload resource key |
 | `LKE_EDGE_HAPROXY_COUNT/MAXCONN` | `EDGE_REPLICAS` / `EDGE_MAX_CONNECTIONS` |
 | `LKE_COTURN_VM_COUNT` and relay ports | `TURN_REPLICAS` and `TURN_*_PORT` |
-| LKE pool IDs, Linode types, quota | LKE adapter config or `runtime/adapters/lke` state |
+| LKE pool IDs and quota | Private `deployment/adapters/lke/{state,account}.env`; resolved instance types remain configuration |
 | `LKE_REGION` | `DEPLOYMENT_LOCATION` plus LKE location mapping |
 | `LKE_*_NODE_TYPE` | `NODE_CLASS_*_MIN_VCPU/MIN_MEMORY_GIB` plus LKE instance catalog |
-| `LINODE_ACTIVE_SERVICE_LIMIT` | ignored `runtime/adapters/lke/account.env:LKE_ACTIVE_SERVICE_LIMIT` |
+| `LINODE_ACTIVE_SERVICE_LIMIT` | Private `deployment/adapters/lke/account.env:LKE_ACTIVE_SERVICE_LIMIT` |
 
 The LKE adapter may translate resolved settings into compatibility inputs inside
 the bounded common catalog compiler while helpers are decomposed. Those keys

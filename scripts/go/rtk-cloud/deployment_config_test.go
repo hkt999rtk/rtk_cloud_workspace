@@ -678,7 +678,7 @@ func TestDeploymentPreflightEphemeralRejectsExistingStack(t *testing.T) {
 	t.Setenv("GHCR_PULL_TOKEN", "redacted-ghcr")
 	writeTestFile(t, filepath.Join(home, ".ssh", "id_ed25519_rtkcloud"), "private-placeholder")
 	writeTestFile(t, filepath.Join(home, ".ssh", "id_ed25519_rtkcloud.pub"), "public-placeholder")
-	writeTestFile(t, filepath.Join(cfg.RuntimeRoot, "adapters", "lke", "account.env"), "LKE_ACTIVE_SERVICE_LIMIT=20\n")
+	writeTestLKEAccount(t, cfg.Environment, "LKE_ACTIVE_SERVICE_LIMIT=20\n")
 
 	var out bytes.Buffer
 	checks := defaultDeploymentPreflightChecks()
@@ -1315,7 +1315,7 @@ func TestLKEAccountStateRequiredOnlyForMutation(t *testing.T) {
 	if err := validateLKEEnvironmentStateBeforeMutation(cfg); err == nil || !strings.Contains(err.Error(), "provider account state is required") {
 		t.Fatalf("missing account state got %v", err)
 	}
-	writeTestFile(t, filepath.Join(cfg.RuntimeRoot, "adapters", "lke", "account.env"), "LKE_ACTIVE_SERVICE_LIMIT=20\n")
+	writeTestLKEAccount(t, cfg.Environment, "LKE_ACTIVE_SERVICE_LIMIT=20\n")
 	if err := materializeDeploymentRuntime(cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -1330,8 +1330,8 @@ func TestLKEAccountStateRequiredOnlyForMutation(t *testing.T) {
 		}
 	}
 	adapterConfig := readTestFile(t, filepath.Join(cfg.RuntimeRoot, "adapters", "lke", "config.env"))
-	if !strings.Contains(adapterConfig, "LKE_LINODE_ACTIVE_SERVICE_LIMIT=20") {
-		t.Fatalf("adapter config missing quota compatibility key:\n%s", adapterConfig)
+	if strings.Contains(adapterConfig, "LKE_LINODE_ACTIVE_SERVICE_LIMIT=") {
+		t.Fatalf("adapter config leaked mutable operator quota:\n%s", adapterConfig)
 	}
 }
 

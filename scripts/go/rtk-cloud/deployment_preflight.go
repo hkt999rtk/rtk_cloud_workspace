@@ -76,7 +76,11 @@ func discoverDeploymentPreflightLKECluster(ctx context.Context, token string, pa
 	if allowCreate {
 		return lkeCluster{}, errors.New("deployment preflight cannot create an LKE cluster")
 	}
-	if selectedID := strings.TrimSpace(lkeClusterID(paths, env)); selectedID != "" {
+	selected, err := lkeClusterID(paths, env)
+	if err != nil {
+		return lkeCluster{}, err
+	}
+	if selectedID := strings.TrimSpace(selected); selectedID != "" {
 		id, err := strconv.Atoi(selectedID)
 		if err != nil || id <= 0 {
 			return lkeCluster{}, errors.New("selected LKE_CLUSTER_ID must be a positive integer before deployment qualification")
@@ -326,7 +330,7 @@ func runDeploymentPreflightWithChecksContext(ctx context.Context, cfg deployment
 		}
 	}
 
-	account, err := readLKEAccountState(cfg.RuntimeRoot, true)
+	account, err := readLKEAccountState(cfg.Environment, true)
 	if err != nil {
 		reporter.fail("active-service-limit", err)
 	} else if err := validateActiveServiceLimit(account["LKE_ACTIVE_SERVICE_LIMIT"]); err != nil {

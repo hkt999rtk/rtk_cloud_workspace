@@ -11004,7 +11004,10 @@ func ensureLKEKubeAccess(paths provisionPaths, env map[string]string, allowCreat
 		fmt.Fprintf(os.Stderr, "[lke] kubectl context: %s\n", context)
 		return nil
 	}
-	clusterID := lkeClusterID(paths, env)
+	clusterID, stateErr := lkeClusterID(paths, env)
+	if stateErr != nil {
+		return stateErr
+	}
 	token := resolveLinodeToken(paths.EnvRoot)
 	if clusterID == "" {
 		if token == "" {
@@ -11015,7 +11018,7 @@ func ensureLKEKubeAccess(paths provisionPaths, env map[string]string, allowCreat
 			return err
 		}
 		clusterID = strconv.Itoa(discovered.ID)
-		if err := writeLKEState(paths, discovered); err != nil {
+		if err := writeLKEState(paths, env, discovered); err != nil {
 			return err
 		}
 	}
@@ -11027,19 +11030,7 @@ func ensureLKEKubeAccess(paths provisionPaths, env map[string]string, allowCreat
 		if !isLinodeNotFoundError(err) {
 			return err
 		}
-		fmt.Fprintf(os.Stderr, "[lke] cluster %s is missing; rediscovering LKE cluster\n", clusterID)
-		discovered, discoverErr := discoverLKECluster(token, paths, env, allowCreate)
-		if discoverErr != nil {
-			return discoverErr
-		}
-		clusterID = strconv.Itoa(discovered.ID)
-		if err := writeLKEState(paths, discovered); err != nil {
-			return err
-		}
-		kubeconfig, err = fetchLKEKubeconfig(token, clusterID)
-		if err != nil {
-			return err
-		}
+		return lkeProviderStateBlocker("selected provider cluster is missing; restoring its identity requires explicit recovery, not label rediscovery or creation")
 	}
 	if err := os.MkdirAll(filepath.Dir(stateKubeconfig), 0o755); err != nil {
 		return err
@@ -11052,13 +11043,16 @@ func ensureLKEKubeAccess(paths provisionPaths, env map[string]string, allowCreat
 	return nil
 }
 
-func lkeClusterID(paths provisionPaths, env map[string]string) string {
-	return firstNonEmpty(
-		os.Getenv("LKE_CLUSTER_ID"),
-		env["LKE_CLUSTER_ID"],
-		envFileValue(filepath.Join(paths.EnvRoot, "adapters", "lke", "state.env"), "LKE_CLUSTER_ID"),
-		envFileValue(filepath.Join(paths.EnvRoot, "env", "stack.env"), "LKE_CLUSTER_ID"),
-	)
+func lkeClusterID(paths provisionPaths, env map[string]string) (string, error) {
+	_, _, state, err := readLKEStateForTarget(paths, env)
+	if err != nil {
+		return "", err
+	}
+	selected := firstNonEmpty(os.Getenv("LKE_CLUSTER_ID"), env["LKE_CLUSTER_ID"], state["LKE_CLUSTER_ID"])
+	if state["LKE_CLUSTER_ID"] != "" && selected != state["LKE_CLUSTER_ID"] {
+		return "", lkeProviderStateBlocker("explicit cluster selection conflicts with the selected environment's recorded provider owner")
+	}
+	return selected, nil
 }
 
 type lkeCluster struct {
@@ -11211,7 +11205,10 @@ func ensureLKENodePool(paths provisionPaths, env map[string]string) error {
 		fmt.Fprintln(os.Stderr, "[lke] skipping node pool reconcile: LINODE_TOKEN is not available")
 		return nil
 	}
-	clusterID := lkeClusterID(paths, env)
+	clusterID, stateErr := lkeClusterID(paths, env)
+	if stateErr != nil {
+		return stateErr
+	}
 	if clusterID == "" {
 		cluster, err := discoverLKECluster(token, paths, env, false)
 		if err != nil {
@@ -11330,7 +11327,10 @@ func ensureLKETargetedFleetDatabaseNodePool(paths provisionPaths, env map[string
 		fmt.Fprintln(os.Stderr, "[lke] skipping targeted database node pool ensure: LINODE_TOKEN is not available")
 		return nil
 	}
-	clusterID := lkeClusterID(paths, env)
+	clusterID, stateErr := lkeClusterID(paths, env)
+	if stateErr != nil {
+		return stateErr
+	}
 	if clusterID == "" {
 		cluster, err := discoverLKECluster(token, paths, env, false)
 		if err != nil {
@@ -11370,7 +11370,8 @@ func ensureLKEDatabaseNodePoolExists(paths provisionPaths, env map[string]string
 	desiredCount := lkePostgresNodePoolCount(env)
 	fmt.Fprintf(os.Stderr, "[lke] created missing database node pool %d type=%s count=%d for targeted Fleet deployment\n", created.ID, desiredType, desiredCount)
 	lkeSetPostgresNodePoolEnv(env, created.ID, desiredType, desiredCount)
-	return lkePersistStackEnvValues(paths.EnvRoot, map[string]string{
+	return lkePersistStackEnvValues(paths, env, map[string]string{
+		"LKE_CLUSTER_ID":            clusterID,
 		"LKE_POSTGRES_NODE_POOL_ID": strconv.Itoa(created.ID),
 		"LKE_POSTGRES_NODE_TYPE":    desiredType,
 		"LKE_POSTGRES_NODE_COUNT":   strconv.Itoa(desiredCount),
@@ -11477,7 +11478,8 @@ func ensureLKEPostgresNodePool(paths provisionPaths, env map[string]string, toke
 		}
 		fmt.Fprintf(os.Stderr, "[lke] created postgres node pool %d type=%s count=%d\n", created.ID, desiredType, desiredCount)
 		lkeSetPostgresNodePoolEnv(env, created.ID, desiredType, desiredCount)
-		return lkePersistStackEnvValues(paths.EnvRoot, map[string]string{
+		return lkePersistStackEnvValues(paths, env, map[string]string{
+			"LKE_CLUSTER_ID":            clusterID,
 			"LKE_POSTGRES_NODE_POOL_ID": strconv.Itoa(created.ID),
 			"LKE_POSTGRES_NODE_TYPE":    desiredType,
 			"LKE_POSTGRES_NODE_COUNT":   strconv.Itoa(desiredCount),
@@ -11490,7 +11492,8 @@ func ensureLKEPostgresNodePool(paths provisionPaths, env map[string]string, toke
 		}
 		fmt.Fprintf(os.Stderr, "[lke] created replacement postgres node pool %d type=%s count=%d for immutable type change from pool %d type=%s\n", created.ID, desiredType, desiredCount, pool.ID, pool.Type)
 		lkeSetPostgresNodePoolEnv(env, created.ID, desiredType, desiredCount)
-		return lkePersistStackEnvValues(paths.EnvRoot, map[string]string{
+		return lkePersistStackEnvValues(paths, env, map[string]string{
+			"LKE_CLUSTER_ID":            clusterID,
 			"LKE_POSTGRES_NODE_POOL_ID": strconv.Itoa(created.ID),
 			"LKE_POSTGRES_NODE_TYPE":    desiredType,
 			"LKE_POSTGRES_NODE_COUNT":   strconv.Itoa(desiredCount),
@@ -11510,7 +11513,8 @@ func ensureLKEPostgresNodePool(paths provisionPaths, env map[string]string, toke
 		return err
 	}
 	lkeSetPostgresNodePoolEnv(env, pool.ID, desiredType, desiredCount)
-	return lkePersistStackEnvValues(paths.EnvRoot, map[string]string{
+	return lkePersistStackEnvValues(paths, env, map[string]string{
+		"LKE_CLUSTER_ID":            clusterID,
 		"LKE_POSTGRES_NODE_POOL_ID": strconv.Itoa(pool.ID),
 		"LKE_POSTGRES_NODE_TYPE":    desiredType,
 		"LKE_POSTGRES_NODE_COUNT":   strconv.Itoa(desiredCount),
@@ -11519,7 +11523,10 @@ func ensureLKEPostgresNodePool(paths provisionPaths, env map[string]string, toke
 
 func pruneLKEUnusedNodePools(paths provisionPaths, env map[string]string) error {
 	token := resolveLinodeToken(paths.EnvRoot)
-	clusterID := lkeClusterID(paths, env)
+	clusterID, stateErr := lkeClusterID(paths, env)
+	if stateErr != nil {
+		return stateErr
+	}
 	if token == "" || clusterID == "" {
 		return nil
 	}
@@ -11706,22 +11713,12 @@ func lkeNodePoolHasPostgresPlacement(pool lkeNodePool) bool {
 	return false
 }
 
-func lkePersistStackEnvValues(envRoot string, updates map[string]string) error {
-	statePath := filepath.Join(envRoot, "adapters", "lke", "state.env")
-	raw, err := readEnvFile(statePath)
-	if err != nil && !os.IsNotExist(err) {
+func lkePersistStackEnvValues(paths provisionPaths, env, updates map[string]string) error {
+	environment, stack, state, err := readLKEStateForTarget(paths, env)
+	if err != nil {
 		return err
 	}
-	if raw == nil {
-		raw = map[string]string{}
-	}
-	for key, value := range updates {
-		raw[key] = value
-	}
-	if err := os.MkdirAll(filepath.Dir(statePath), 0o700); err != nil {
-		return err
-	}
-	return writeSortedEnv(statePath, raw, 0o600)
+	return writeLKEProviderState(environment, stack, appendMap(state, updates))
 }
 
 func listLKENodePools(token string, clusterID string) ([]lkeNodePool, error) {
@@ -11738,28 +11735,8 @@ func listLKENodePools(token string, clusterID string) ([]lkeNodePool, error) {
 	return listed.Data, nil
 }
 
-func recoverStaleLKECluster(token string, paths provisionPaths, env map[string]string) (lkeCluster, error) {
-	cluster, err := discoverLKECluster(token, paths, env, true)
-	if err != nil {
-		return lkeCluster{}, err
-	}
-	if err := writeLKEState(paths, cluster); err != nil {
-		return lkeCluster{}, err
-	}
-	kubeconfig, err := fetchLKEKubeconfig(token, strconv.Itoa(cluster.ID))
-	if err != nil {
-		return lkeCluster{}, err
-	}
-	stateKubeconfig := sensitiveEnvironmentPath(paths, "kube", "kubeconfig.yaml")
-	if err := os.MkdirAll(filepath.Dir(stateKubeconfig), 0o755); err != nil {
-		return lkeCluster{}, err
-	}
-	if err := os.WriteFile(stateKubeconfig, kubeconfig, 0o600); err != nil {
-		return lkeCluster{}, err
-	}
-	_ = os.Setenv("RTK_CLOUD_LKE_KUBECONFIG", stateKubeconfig)
-	fmt.Fprintf(os.Stderr, "[lke] wrote kubeconfig: %s\n", stateKubeconfig)
-	return cluster, nil
+func recoverStaleLKECluster(string, provisionPaths, map[string]string) (lkeCluster, error) {
+	return lkeCluster{}, lkeProviderStateBlocker("recorded provider cluster is missing; automatic rediscovery/recreation is retired")
 }
 
 func lkeNodeCount(env map[string]string) (int, error) {
@@ -11800,21 +11777,26 @@ func latestLKEVersion(token string) (string, error) {
 	return listed.Data[0].ID, nil
 }
 
-func writeLKEState(paths provisionPaths, cluster lkeCluster) error {
-	statePath := filepath.Join(paths.EnvRoot, "adapters", "lke", "state.env")
-	if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
+func writeLKEState(paths provisionPaths, env map[string]string, cluster lkeCluster) error {
+	environment, stack, state, err := readLKEStateForTarget(paths, env)
+	if err != nil {
 		return err
 	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "LKE_CLUSTER_ID=%d\n", cluster.ID)
-	fmt.Fprintf(&b, "LKE_CLUSTER_LABEL=%s\n", cluster.Label)
+	if cluster.ID <= 0 || strings.TrimSpace(cluster.Label) == "" {
+		return lkeProviderStateBlocker("observed provider cluster identity is incomplete")
+	}
+	if state["LKE_CLUSTER_ID"] != "" && state["LKE_CLUSTER_ID"] != strconv.Itoa(cluster.ID) {
+		return lkeProviderStateBlocker("observed cluster differs from the recorded provider owner; replacement requires a separate verified migration")
+	}
+	updates := map[string]string{"LKE_CLUSTER_ID": strconv.Itoa(cluster.ID), "LKE_CLUSTER_LABEL": cluster.Label}
 	if cluster.Region != "" {
-		fmt.Fprintf(&b, "LKE_CLUSTER_REGION=%s\n", cluster.Region)
+		updates["LKE_CLUSTER_REGION"] = cluster.Region
 	}
 	if cluster.K8sVersion != "" {
-		fmt.Fprintf(&b, "LKE_CLUSTER_VERSION=%s\n", cluster.K8sVersion)
+		updates["LKE_CLUSTER_VERSION"] = cluster.K8sVersion
 	}
-	return os.WriteFile(statePath, []byte(b.String()), 0o600)
+	// Refreshing cluster metadata must retain recorded node-pool allocations.
+	return writeLKEProviderState(environment, stack, appendMap(state, updates))
 }
 
 func fetchLKEKubeconfig(token, clusterID string) ([]byte, error) {

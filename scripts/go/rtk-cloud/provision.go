@@ -100,6 +100,15 @@ func runProvision(args []string) error {
 	if err := mergeObjectStorageCredentialDefaults(envRoot, env.Values); err != nil {
 		return err
 	}
+	if env.Values["CLOUD_PROVIDER"] == "lke" {
+		account, err := readLKEAccountState(env.Values["CLOUD_ENV_NAME"], false)
+		if err != nil {
+			return err
+		}
+		if limit := account["LKE_ACTIVE_SERVICE_LIMIT"]; limit != "" {
+			env.Values["LKE_LINODE_ACTIVE_SERVICE_LIMIT"] = limit
+		}
+	}
 	if err := validateK8SWorkloadSelection(env.Values, opts); err != nil {
 		return err
 	}

@@ -125,20 +125,22 @@ Billing server before its payment worker so the new migration is applied first.
 | `cloud_env/<env>/environment.env` | Stack, DNS root, logical location, public OAuth settings and explicit Test Lab intent | Yes; never client secrets |
 | `cloud_env/<env>/deployment.env` | Architecture, deployment adapter, DNS adapter | Yes |
 | `cloud_env/<env>/overrides/*.env` | Reviewed environment differences | Yes |
-| `cloud_env/<env>/runtime/` | Non-secret resolved configuration, provider state and sanitized artifacts; credentials, kubeconfig and private PKI state belong in the environment SecretStore | No |
-| `runtime/adapters/lke/account.env` | Operator-confirmed active-service limit | No |
+| `cloud_env/<env>/runtime/` | Deterministic secret-free resolved configuration only | No |
+| `~/.config/rtk_cloud/<env>/deployment/adapters/lke/account.env` | Operator-confirmed active-service limit | No |
+| `~/.config/rtk_cloud/<env>/deployment/adapters/lke/state.env` | Environment/stack-bound original cluster and node-pool IDs | No |
 
-Create active-service-limit state:
+Maintain the confirmed quota in the selected private environment store. Use
+`0700` directories and a `0600` `account.env`; the only allowed assignment is
+`LKE_ACTIVE_SERVICE_LIMIT`. Existing legacy provider state is migrated explicitly:
 
 ```sh
-mkdir -p cloud_env/staging/runtime/adapters/lke
-cp cloud_env/staging/runtime/adapters/lke/account.env.example \
-  cloud_env/staging/runtime/adapters/lke/account.env
-chmod 600 cloud_env/staging/runtime/adapters/lke/account.env
+./scripts/deploy-environment.sh provider-import-state \
+  --environment staging \
+  --source-runtime /absolute/original/cloud_env/staging/runtime \
+  --confirm video-cloud-staging
 ```
 
-Replace the example value with the actual limit confirmed by the Linode account
-owner. Use the literal `unlimited` only when the account owner confirms there
+Use the actual limit confirmed by the Linode account owner. Use the literal `unlimited` only when the account owner confirms there
 is no active-service cap. The live inventory and projected resource count are
 still queried and reported.
 
@@ -812,8 +814,15 @@ databases or OpenBao.
 
 `restore-staging-runtime.sh` is retired and returns an English migration error
 without reading/copying source state. Explicitly import original storage receipts
-with `deployment storage-import-state`; other legacy provider-state migration
-must be reviewed and completed before full qualification. The normalized provider
+with `deployment storage-import-state`, and original LKE provider state with
+`deployment provider-import-state`. The provider operation compares the original
+selected Kubernetes API/CA with the native cluster identity, verifies recorded
+node-pool IDs, archives source bytes in private `migration-backup/provider-state/`,
+and exclusively publishes the environment/stack-bound IDs and original quota.
+It preserves Kubernetes credentials and never creates completion evidence.
+Regenerate configuration after import and retire old operational files only
+after the maintained-code cutover. Other legacy-state migration must also finish
+before full qualification. The normalized provider
 metadata producer and acceptance reader both use
 `~/.config/rtk_cloud/<env>/deployment/provider-preflight.env`. It contains region
 and quota metadata only and cannot substitute for any readiness gate.

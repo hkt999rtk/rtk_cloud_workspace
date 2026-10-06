@@ -1,18 +1,20 @@
 # Build Staging From Scratch and Run the 1K Test
 
+Status: historical bootstrap/qualification sequence; not a supported deployment path.
 
 Complete create/upgrade now uses the shared v2 engine and the selected formal release.
 Required capability adapters are still being completed; missing gates remain NO-GO.
 The older bootstrap/provision sequence below is historical context, not a supported
 fallback. See [deployment operations](deployment-operations.md) and
 [the readiness standard](deployment-readiness-standard.md).
-This runbook creates a new LKE staging environment from a fresh clone, proves
+The historical sequence below created a new LKE staging environment from a fresh clone, proved
 the service and billing paths, prepares 1,000 Home IoT identities, and runs the
 canonical MQTT/Device Shadow 1K workflow.
 
 Do not use this procedure to take control of an existing cluster. Restore that
-cluster's complete ignored `cloud_env/staging/runtime/` instead; provisioning an
-existing data plane from an empty runtime can pair new secrets with old storage.
+cluster's original `~/.config/rtk_cloud/staging/` store instead; `cloud_env` is
+configuration only. Use the maintained explicit provider/storage state migration,
+never a whole-runtime copy or provisioning from empty identity state.
 
 ## 1. Prepare the Controller
 
@@ -58,16 +60,12 @@ chmod 600 ~/.ssh/id_ed25519_rtkcloud
 ```
 
 Confirm the Linode active-service limit with the account owner. Do not guess
-it. Then create the ignored operator state:
-
-```sh
-mkdir -p cloud_env/staging/runtime/adapters/lke
-cp cloud_env/staging/runtime/adapters/lke/account.env.example \
-  cloud_env/staging/runtime/adapters/lke/account.env
-chmod 600 cloud_env/staging/runtime/adapters/lke/account.env
-```
-
-Edit `account.env` if the confirmed limit is not the example value.
+it. Maintain `LKE_ACTIVE_SERVICE_LIMIT` in the private
+`~/.config/rtk_cloud/staging/deployment/adapters/lke/account.env` with `0700`
+directories and a `0600` file. Existing legacy values use the explicit
+`deployment provider-import-state` operation described in
+[deployment operations](deployment-operations.md). Neither a quota file nor
+the historical steps below complete the shared fresh-create qualification.
 
 ## 2. Plan and Provision
 

@@ -158,6 +158,8 @@ func runDeployment(args []string) error {
 			return runEnvironmentExecutionReconcile(args[1:])
 		case "storage-import-state":
 			return runDeploymentStorageImport(args[1:])
+		case "provider-import-state":
+			return runDeploymentProviderImport(args[1:])
 		case "prepare-upgrade":
 			return errors.New("prepare-upgrade and schema-1 workload plans are retired; select the formal --release, maintain identity bindings, then use deployment plan and full preflight")
 		case "provision", "test":
@@ -718,7 +720,7 @@ func validateLKEEnvironmentStateBeforeMutation(cfg deploymentConfig) error {
 }
 
 func validateLKEEnvironmentStateBeforeMutationWithDiscovery(cfg deploymentConfig, discover func(string, provisionPaths, map[string]string, bool) (lkeCluster, error)) error {
-	account, err := readLKEAccountState(cfg.RuntimeRoot, true)
+	account, err := readLKEAccountState(cfg.Environment, true)
 	if err != nil {
 		return err
 	}
@@ -781,6 +783,7 @@ func printDeploymentUsage() {
   rtk-cloud deployment upgrade --environment NAME --confirm STACK --plan-sha256 SHA256 [--release PATH]
   rtk-cloud deployment reconcile-execution --environment NAME --confirm STACK --plan-sha256 ORIGINAL_SHA256
   rtk-cloud deployment storage-import-state --environment NAME --purpose media|ota|artifacts --source-runtime ORIGINAL_RUNTIME --confirm STACK
+  rtk-cloud deployment provider-import-state --environment NAME --source-runtime ORIGINAL_RUNTIME --confirm STACK [--source-kubeconfig ORIGINAL_KUBECONFIG]
   rtk-cloud deployment acceptance --environment NAME --confirm STACK
   rtk-cloud deployment remove --environment NAME --confirm STACK
   rtk-cloud deployment storage-plan --environment NAME
@@ -1278,6 +1281,10 @@ func readStrictEnv(path string) (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parseStrictEnv(body, path)
+}
+
+func parseStrictEnv(body []byte, path string) (map[string]string, error) {
 	out := map[string]string{}
 	for n, raw := range strings.Split(string(body), "\n") {
 		line := strings.TrimSpace(raw)
@@ -1304,9 +1311,12 @@ func readOptionalStrictEnv(path string) (map[string]string, error) {
 	return out, err
 }
 
-func readLKEAccountState(runtimeRoot string, required bool) (map[string]string, error) {
-	path := filepath.Join(runtimeRoot, "adapters", "lke", "account.env")
-	account, err := readStrictEnv(path)
+func readLKEAccountState(environment string, required bool) (map[string]string, error) {
+	path, err := deploymentLKEStatePath(environment, "account.env")
+	if err != nil {
+		return nil, err
+	}
+	body, err := readStorageEvidenceFile(path)
 	if os.IsNotExist(err) && !required {
 		return map[string]string{}, nil
 	}
@@ -1316,10 +1326,20 @@ func readLKEAccountState(runtimeRoot string, required bool) (map[string]string, 
 		}
 		return nil, err
 	}
+	if len(body) > 16<<10 {
+		return nil, errors.New("LKE account profile exceeds its metadata bound")
+	}
+	account, err := parseStrictEnv(body, "LKE account profile")
+	if err != nil {
+		return nil, err
+	}
 	for key := range account {
 		if key != "LKE_ACTIVE_SERVICE_LIMIT" {
 			return nil, fmt.Errorf("unknown LKE provider account key %s", key)
 		}
+	}
+	if err := validateActiveServiceLimit(account["LKE_ACTIVE_SERVICE_LIMIT"]); err != nil {
+		return nil, err
 	}
 	return account, nil
 }
@@ -1392,7 +1412,7 @@ func materializeDeploymentRuntime(cfg deploymentConfig) error {
 	adapterRuntime := appendMap(cfg.AdapterValues, cfg.AdapterResolved)
 	compatInput := appendMap(resolved, cfg.AdapterResolved)
 	adapterRuntime = appendMap(adapterRuntime, deploymentLegacyLKEValues(compatInput, cfg.Environment))
-	account, err := readLKEAccountState(cfg.RuntimeRoot, false)
+	account, err := readLKEAccountState(cfg.Environment, false)
 	if err != nil {
 		return err
 	}
@@ -1404,7 +1424,6 @@ func materializeDeploymentRuntime(cfg deploymentConfig) error {
 		if err := validateActiveServiceLimit(limit); err != nil {
 			return err
 		}
-		adapterRuntime["LKE_LINODE_ACTIVE_SERVICE_LIMIT"] = limit
 		providerPreflight["PROVIDER_ACTIVE_SERVICE_LIMIT"] = limit
 	}
 	if err := writeSortedEnv(filepath.Join(cfg.RuntimeRoot, "adapters", cfg.Adapter, "config.env"), adapterRuntime, 0o600); err != nil {
@@ -1566,8 +1585,11 @@ func sortedEnvContents(values map[string]string) string {
 }
 
 func normalizeDeploymentRuntime(cfg deploymentConfig) error {
-	normalized := filepath.Join(cfg.RuntimeRoot, "state", "kubeconfig.yaml")
-	body, err := os.ReadFile(normalized)
+	path, err := privateDeploymentStatePath(cfg.Environment, "kube/kubeconfig.yaml")
+	if err != nil {
+		return err
+	}
+	body, err := readStorageEvidenceFile(path)
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -1577,19 +1599,8 @@ func normalizeDeploymentRuntime(cfg deploymentConfig) error {
 	if cfg.Adapter != "lke" {
 		return nil
 	}
-	adapterState, err := readOptionalStrictEnv(filepath.Join(cfg.RuntimeRoot, "adapters", "lke", "state.env"))
-	if err != nil {
-		return err
-	}
-	clusterID := strings.TrimSpace(adapterState["LKE_CLUSTER_ID"])
-	if clusterID == "" {
-		return nil
-	}
-	replacements := []string{
-		"lke" + clusterID + "-admin", "rtk-cloud-" + cfg.Environment + "-admin",
-		"lke" + clusterID + "-ctx", "rtk-cloud-" + cfg.Environment + "-context",
-		"lke" + clusterID, "rtk-cloud-" + cfg.Environment + "-cluster",
-	}
-	sanitized := strings.NewReplacer(replacements...).Replace(string(body))
-	return os.WriteFile(normalized, []byte(sanitized), 0o600)
+	// Context/user aliases are not environment identity. Preserve every byte of
+	// the original authentication configuration rather than replacing substrings.
+	_, err = newEnvironmentKubernetesBackend(string(body), cfg.Environment)
+	return err
 }

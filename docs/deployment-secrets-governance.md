@@ -55,7 +55,9 @@ not invent another workspace, worktree, external-disk or OS-specific location.
 | Newly frozen release candidates (exclusive JSON output) | `deployment/releases/` |
 | Account Manager bootstrap retirement guard | `deployment/account-bootstrap-retired.json` |
 | Storage preparation/completion receipts and migration proofs | `deployment/storage/` |
-| Provider operational state | `deployment/adapters/<adapter>/` |
+| Provider operational state | `deployment/adapters/<adapter>/` (LKE uses `state.env` and `account.env`) |
+| Original provider migration sources | `migration-backup/provider-state/<source-sha256>/` |
+| Controlled teardown state/credential archive | `migration-backup/destroy-lke-<operation-id>/` |
 | Normalized provider region/quota metadata (not completion evidence) | `deployment/provider-preflight.env` |
 | Deployment reports | `deployment/reports/` |
 | Temporary deployment material | `deployment/tmp/` |

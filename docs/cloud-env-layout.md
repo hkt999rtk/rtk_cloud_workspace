@@ -85,9 +85,13 @@ Adapter resolution writes `runtime/adapters/lke/resolved-resources.env`.
 The normalized provider region and confirmed active-service limit are produced
 and consumed at `~/.config/rtk_cloud/<environment>/deployment/provider-preflight.env`
 with `0700` directories and a `0600` file. This metadata is not a successful
-preflight or deployment receipt. Other legacy provider-ID, account-profile and
-DNS-state readers/writers still need explicit migration in the unified replacement;
-their old locations are implementation gaps, not exceptions to the location rule.
+preflight or deployment receipt. LKE cluster/node-pool IDs and operator-confirmed quota use private
+`deployment/adapters/lke/{state,account}.env`. Public migration uses
+`deployment provider-import-state`, verifies original API/CA ownership and keeps
+source bytes in `migration-backup/provider-state/`. Normal operations never read
+legacy operational files as a fallback. Remaining edge/TURN, DNS, service and artifact-state
+readers/writers still require migration; old locations are implementation gaps,
+not exceptions to the location rule.
 
 ## Configuration Resolution Order
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -92,6 +93,13 @@ func runDestroyEnvironmentResources(args []string) error {
 	}
 	envValues := envroot.Derive(stackValues)
 	stack := firstNonEmpty(envValues["CLOUD_STACK_NAME"], "video-cloud-staging")
+	_, _, providerState, err := readLKEStateForTarget(provisionPaths{EnvRoot: envRoot}, stackValues)
+	if err != nil {
+		return err
+	}
+	if id := providerState["LKE_CLUSTER_ID"]; id != "" {
+		envValues["LKE_CLUSTER_ID"] = id
+	}
 	if *includeObjectStorage && !*onlyLKECluster {
 		if err := validateDestroyBackupConfigurations(workspace, envRoot, envValues); err != nil {
 			return err
@@ -609,6 +617,15 @@ func printDestroyExactIDGroup(w *os.File, title string, resources []linodeDestro
 }
 
 func executeLinodeDestroyPlan(token, envRoot string, plan linodeDestroyPlan, includeObjectStorage bool, includeOrphanVolumes bool, orphanVolumeIDs map[string]bool, includeOrphanNodeBalancers bool, orphanNodeBalancerIDs map[string]bool, onlyOrphanVolumes bool, onlyOrphanNodeBalancers bool, onlyLKECluster bool) error {
+	var localState []destroyedLKEFile
+	var store secretStore
+	if !onlyOrphanVolumes && !onlyOrphanNodeBalancers && len(plan.LKEClusters) > 0 {
+		var err error
+		store, localState, err = snapshotDestroyedLKEState(envRoot, plan)
+		if err != nil {
+			return err
+		}
+	}
 	if !onlyOrphanVolumes && !onlyOrphanNodeBalancers {
 		groups := [][]linodeDestroyResource{plan.LKEClusters}
 		if !onlyLKECluster {
@@ -625,8 +642,10 @@ func executeLinodeDestroyPlan(token, envRoot string, plan linodeDestroyPlan, inc
 				}
 			}
 		}
-		if err := removeDestroyedLKEState(envRoot); err != nil {
-			return err
+		if len(localState) > 0 {
+			if err := removeDestroyedLKEState(store, localState); err != nil {
+				return err
+			}
 		}
 	}
 	if includeObjectStorage && !onlyLKECluster {
@@ -677,30 +696,86 @@ func executeLinodeDestroyPlan(token, envRoot string, plan linodeDestroyPlan, inc
 	return nil
 }
 
-func removeDestroyedLKEState(envRoot string) error {
-	stateDir := envRoot
-	backupDir := filepath.Join(envRoot, "backups", "destroy-lke-"+time.Now().UTC().Format("20060102T150405Z"))
-	files := []string{filepath.Join("adapters", "lke", "state.env"), filepath.Join("state", "kubeconfig.yaml")}
-	backedUp := false
-	for _, name := range files {
-		src := filepath.Join(stateDir, name)
-		if _, err := os.Stat(src); err != nil {
+type destroyedLKEFile struct {
+	Relative string
+	Path     string
+	Raw      []byte
+	Info     os.FileInfo
+}
+
+func snapshotDestroyedLKEState(envRoot string, plan linodeDestroyPlan) (secretStore, []destroyedLKEFile, error) {
+	environment, stack, err := lkeProviderTarget(provisionPaths{EnvRoot: envRoot}, nil)
+	if err != nil || stack != plan.Stack {
+		return secretStore{}, nil, errors.New("selected private environment state does not match the destruction plan")
+	}
+	state, err := readLKEProviderState(environment, stack)
+	if err != nil {
+		return secretStore{}, nil, err
+	}
+	if state["LKE_CLUSTER_ID"] != "" {
+		matched := false
+		for _, cluster := range plan.LKEClusters {
+			matched = matched || cluster.ID == state["LKE_CLUSTER_ID"]
+		}
+		if !matched {
+			return secretStore{}, nil, errors.New("destruction plan does not include the original recorded cluster; its private state must remain")
+		}
+	}
+	store, err := newSecretStore("", environment)
+	if err != nil {
+		return store, nil, err
+	}
+	var files []destroyedLKEFile
+	for _, relative := range []string{"deployment/adapters/lke/state.env", "kube/kubeconfig.yaml"} {
+		path, err := privateDeploymentStatePath(environment, relative)
+		if err != nil {
+			return store, nil, err
+		}
+		before, err := os.Lstat(path)
+		if os.IsNotExist(err) {
 			continue
 		}
-		if err := os.MkdirAll(backupDir, 0o755); err != nil {
-			return err
+		if err != nil {
+			return store, nil, err
 		}
-		if err := copyFile(src, filepath.Join(backupDir, name)); err != nil {
-			return err
+		raw, err := readStorageEvidenceFile(path)
+		after, statErr := os.Lstat(path)
+		if err != nil || statErr != nil || !os.SameFile(before, after) || !before.ModTime().Equal(after.ModTime()) {
+			return store, nil, errors.New("private provider state changed while preparing destruction")
 		}
-		if err := os.Remove(src); err != nil {
-			return err
-		}
-		backedUp = true
-		fmt.Fprintf(os.Stdout, "removed local LKE state: %s\n", src)
+		files = append(files, destroyedLKEFile{relative, path, raw, after})
 	}
-	if backedUp {
-		fmt.Fprintf(os.Stdout, "local LKE state backup: %s\n", filepath.Dir(backupDir))
+	return store, files, nil
+}
+
+func removeDestroyedLKEState(store secretStore, files []destroyedLKEFile) error {
+	archive := "migration-backup/destroy-lke-" + postgresBackupRandomID()
+	// A concurrent writer must retain all of its files, even after cloud deletion.
+	for _, file := range files {
+		current, err := os.Lstat(file.Path)
+		raw, readErr := readStorageEvidenceFile(file.Path)
+		if err != nil || readErr != nil || !os.SameFile(file.Info, current) || !file.Info.ModTime().Equal(current.ModTime()) || !bytes.Equal(raw, file.Raw) {
+			return errors.New("private provider state changed after the approved destruction baseline; retain it and reconcile the actual outcome")
+		}
 	}
+	for _, file := range files {
+		path, err := privateDeploymentStatePath(store.Environment, filepath.Join(archive, file.Relative))
+		if err != nil || path != filepath.Join(store.Root, archive, file.Relative) {
+			return errors.New("private archive location or permissions changed")
+		}
+		if err := store.write(filepath.Join(archive, file.Relative), file.Raw, false); err != nil {
+			return err
+		}
+	}
+	for _, file := range files {
+		current, err := os.Lstat(file.Path)
+		if err != nil || !os.SameFile(file.Info, current) || !file.Info.ModTime().Equal(current.ModTime()) {
+			return errors.New("private provider state changed during archival; concurrent data remains")
+		}
+		if err := os.Remove(file.Path); err != nil {
+			return err
+		}
+	}
+	fmt.Fprintf(os.Stdout, "archived removed private LKE state: environment=%s files=%d\n", store.Environment, len(files))
 	return nil
 }

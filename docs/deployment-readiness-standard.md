@@ -319,5 +319,12 @@ Normalized provider region/quota metadata now uses private
 it is not completion or GO evidence. Changing checkouts cannot change this path,
 and missing canonical metadata cannot fall back to `runtime/state`. The old
 staging controller-state copier is retired rather than writing operational state
-back into configuration. Remaining provider-ID/account-profile/DNS-state writers
-still require migration before the configuration/state separation is complete.
+back into configuration. LKE provider IDs and quota now use private `deployment/adapters/lke/`, and
+both are part of the frozen deployment input digest. Native owner migration
+compares the original selected API/CA and recorded pools, archives original
+provider bytes and refuses conflicting or concurrent destinations. Missing
+recorded clusters cannot be recreated through automatic label discovery.
+Teardown captures original local owners before cloud mutation, privately archives
+the destroyed identity and refuses to erase a concurrent file replacement.
+Remaining edge/TURN, DNS, service and artifact-state writers still require migration before the
+configuration/state separation is complete.
