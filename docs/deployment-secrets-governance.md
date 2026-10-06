@@ -53,6 +53,7 @@ not invent another workspace, worktree, external-disk or OS-specific location.
 | OpenBao controller material | `openbao/` |
 | Plans, releases, reviewed identity bindings and execution evidence | `deployment/` |
 | Newly frozen release candidates (exclusive JSON output) | `deployment/releases/` |
+| Account Manager bootstrap retirement guard | `deployment/account-bootstrap-retired.json` |
 | Storage preparation/completion receipts and migration proofs | `deployment/storage/` |
 | Provider operational state | `deployment/adapters/<adapter>/` |
 | Deployment reports | `deployment/reports/` |

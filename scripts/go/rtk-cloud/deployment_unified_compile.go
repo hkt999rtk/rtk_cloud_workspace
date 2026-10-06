@@ -17,13 +17,14 @@ var environmentRenderMutex sync.Mutex
 var activeRuntimeSecretSnapshot map[string]string
 
 type compiledEnvironmentDeployment struct {
-	Plan          *deploymentplan.Plan
-	Release       environmentRelease
-	Bindings      environmentIdentityBindings
-	Store         secretStore
-	Backend       environmentKubernetesBackend
-	Configuration deploymentConfig
-	ReleasePath   string
+	Plan                *deploymentplan.Plan
+	Release             environmentRelease
+	Bindings            environmentIdentityBindings
+	Store               secretStore
+	Backend             environmentKubernetesBackend
+	Configuration       deploymentConfig
+	ReleasePath         string
+	BootstrapSeedSHA256 string
 }
 
 type environmentDeploymentSnapshot struct {
@@ -222,6 +223,10 @@ func compileEnvironmentDeployment(ctx context.Context, cfg deploymentConfig, ope
 	if err := validateEnvironmentDurableStorageTransition(definitions, live); err != nil {
 		return nil, err
 	}
+	definitions, err = bindAccountManagerBootstrapRetirement(ctx, backend, definitions, live, bindings, protection.Configuration, operation)
+	if err != nil {
+		return nil, err
+	}
 	definitions, err = bindRetainedEnvironmentDependencies(definitions, live, bindings)
 	if err != nil {
 		return nil, err
@@ -236,6 +241,9 @@ func compileEnvironmentDeployment(ctx context.Context, cfg deploymentConfig, ope
 		return nil, err
 	}
 	compiled := &compiledEnvironmentDeployment{Plan: plan, Release: release, Bindings: bindings, Store: store, Backend: backend, Configuration: cfg, ReleasePath: releasePath}
+	if seed := snapshot.Secrets["platform-admin"]; seed != "" {
+		compiled.BootstrapSeedSHA256 = deploymentplan.Digest(strings.TrimSpace(seed))
+	}
 	if err := compiled.Fence(ctx, plan); err != nil {
 		return nil, err
 	}
@@ -250,6 +258,9 @@ func (c *compiledEnvironmentDeployment) Fence(ctx context.Context, plan *deploym
 	}
 	if c == nil || c.Plan == nil || plan == nil || plan.SHA256() != c.Plan.SHA256() {
 		return errors.New("deployment.inputs: selected execution plan changed")
+	}
+	if err := c.verifyAccountManagerBootstrapSeal(ctx); err != nil {
+		return err
 	}
 	fresh, err := resolveDeploymentConfig(c.Configuration.Workspace, c.Configuration.Environment, c.Configuration.EnvironmentRoot)
 	if err != nil {

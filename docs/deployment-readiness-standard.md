@@ -266,6 +266,25 @@ credential files. Same-receipt partial retries preserve the original lineage;
 the completed PVC cannot generate another key. Complete-engine invocation and
 state-owner installation are still pending; local filesystem tests alone do not
 prove the environment has completed this lifecycle.
+
+Account Manager bootstrap retirement is now included in complete upgrade plans.
+Planning reads the original PostgreSQL system identifier and the actual permanent
+`platform_bootstrap` seal, verifies the runtime Secret points to that database,
+and removes only its two initial administrator fields through an explicit Secret
+lifecycle body. The same body is admitted and executed with original UID/full
+baseline/resource-version checks; other credentials are preserved. Fences recheck
+the durable seal. The maintained Deployment target removes direct bootstrap
+environment settings and records a deterministic credential-retirement annotation
+to roll out fresh Pods. After accepted deployment, its original Deployment owner
+must report the observed generation and all updated/available replicas before
+the local `runtime/platform-admin`
+seed is removed only if the accepted Secret owner and approved seed still match.
+A private `deployment/account-bootstrap-retired.json` negative marker prevents
+regeneration, while credential verification skips the retired binding only when
+current original-database/Secret evidence passes. A marker alone is never GO.
+Native isolated PostgreSQL tests cover permanent sealing and disabled-admin
+restart behavior; environment qualification and fresh-create stage orchestration
+still remain unfinished.
 The public complete entries use this
 engine and no longer select schema-1 files. Exact publication artifacts bind source,
 digest and run attempt. Complete provider/create/bootstrap adapters, complete

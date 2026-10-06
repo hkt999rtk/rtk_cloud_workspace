@@ -357,6 +357,9 @@ func rtkSecretCatalog() []secretCatalogEntry {
 }
 
 func supportSecretRequired(store secretStore, id string) bool {
+	if id == "platform-admin" {
+		return !accountBootstrapCredentialsRetired(store)
+	}
 	if billingLifecycleSecretID(id) {
 		return billingLifecycleSecretRequired(store, id)
 	}
@@ -552,6 +555,9 @@ func ensureMissingRuntimeSecrets(out io.Writer, store secretStore) error {
 	created := []string{}
 	manualMissing := []string{}
 	for _, entry := range rtkSecretCatalog() {
+		if entry.ID == "platform-admin" && !supportSecretRequired(store, entry.ID) {
+			continue
+		}
 		if entry.ExplicitProvision {
 			if supportSecretRequired(store, entry.ID) {
 				if value, err := store.readRuntime(entry.ID); err != nil || value == "" {
@@ -564,6 +570,11 @@ func ensureMissingRuntimeSecrets(out io.Writer, store secretStore) error {
 			continue
 		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
+		}
+		if entry.ID == "platform-admin" {
+			if _, err := store.read("deployment/account-bootstrap-retired.json"); !errors.Is(err, os.ErrNotExist) {
+				return errors.New("Account Manager bootstrap credentials are retired or their lifecycle marker is unavailable; ensure cannot regenerate the seed")
+			}
 		}
 		if err := store.write(filepath.Join("runtime", entry.ID), []byte(randomSecret()+"\n"), false); err != nil {
 			return err

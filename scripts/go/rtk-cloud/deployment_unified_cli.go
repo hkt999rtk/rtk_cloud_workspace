@@ -64,7 +64,10 @@ func defaultUnifiedDeploymentDependencies() unifiedDeploymentDependencies {
 			}
 		},
 		Execute: func(ctx context.Context, c *compiledEnvironmentDeployment, sha string, qualify func(context.Context, *deploymentplan.Plan) error, accept func(context.Context, *compiledEnvironmentDeployment) error) error {
-			return c.Plan.Execute(ctx, c.Backend, sha, c.Store.Root, qualify, c.Fence, func(ctx context.Context, _ *deploymentplan.Plan) error { return accept(ctx, c) })
+			if err := c.Plan.Execute(ctx, c.Backend, sha, c.Store.Root, qualify, c.Fence, func(ctx context.Context, _ *deploymentplan.Plan) error { return accept(ctx, c) }); err != nil {
+				return err
+			}
+			return retireLocalAccountBootstrapSeed(ctx, c)
 		},
 	}
 }
