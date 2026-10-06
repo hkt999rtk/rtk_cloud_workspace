@@ -100,6 +100,7 @@ func environmentPlanAccessRequirements(plan *deploymentplan.Plan) ([]environment
 	}
 	// Inventory rechecks observe new/unplanned owners at every phase.
 	seen[environmentAccessRequirement{Resource: "namespaces", Verb: "list"}] = true
+	seen[environmentAccessRequirement{Resource: "nodes", Verb: "list"}] = true
 	for namespace := range namespaces {
 		for _, kind := range strings.Split(environmentNamespacedInventoryKinds, ",") {
 			permission := environmentAPIResources[kind]

@@ -89,6 +89,18 @@ still requires complete live inventory. This read-only guard is necessary quota
 evidence, not complete node/VM/provider-migration capacity, CSI provisioning or
 scheduling qualification; those capabilities remain required before execution GO.
 
+Native node capacity now checks the maintained class plan against a complete
+selected-cluster node inventory. Nodes must have distinct names/UIDs, the
+configured class label, unambiguous Ready state, no termination/cordon, the
+release's supported linux/amd64 platform, and sufficient actual allocatable
+CPU/memory. Class count/spread and aggregate request lower bounds must match the
+maintained intent. Missing/incomplete inventory or insufficient actual capacity
+blocks `deployment.execution.node-capacity`; the observer requires cluster-level
+`nodes` list access and writes no resources. This is a physical capacity lower
+bound, not free capacity after existing Pods, taint/affinity/volume scheduling,
+rolling-surge qualification or a provider migration. Those necessary capabilities
+remain required and incomplete; this guard cannot produce full execution GO.
+
 An old fault that blocks a necessary dependency blocks the plan. When the plan
 repairs that fault, qualify the repaired candidate's behavior before passing;
 neither unconditional old-health requirements nor ignoring dependency failures
