@@ -27,8 +27,9 @@ type certIssuerStaticPlanFixture struct {
 
 func newCertIssuerStaticPlanFixture(t *testing.T) *certIssuerStaticPlanFixture {
 	t.Helper()
+	makeIsolatedTestSecretStore(t, "staging")
 	f := &certIssuerStaticPlanFixture{
-		env:   map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "VIDEO_CLOUD_CERTISSUER_DOMAIN": "certissuer.video-cloud-staging.realtekconnect.com", "CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM": "ed25519", "LKE_RUNTIME_SECRET_SEED": "fixture-seed"},
+		env:   map[string]string{"CLOUD_ENV_NAME": "staging", "CLOUD_STACK_NAME": "video-cloud-staging", "VIDEO_CLOUD_CERTISSUER_DOMAIN": "certissuer.video-cloud-staging.realtekconnect.com", "CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM": "ed25519", "LKE_RUNTIME_SECRET_SEED": "fixture-seed"},
 		paths: certIssuerDesiredMaterialTestPaths(t),
 	}
 	// Use the real renderer's public Service/Deployment fixture, including API
@@ -209,7 +210,11 @@ func TestCertIssuerStaticRenderPlanRetainsIdentityAndOwnershipFences(t *testing.
 			if len(f.ingresses.ops) != 0 || !reflect.DeepEqual(before, certIssuerDesiredMaterialSnapshot(t, f.paths)) {
 				t.Fatal("failed qualification changed resources or identity material")
 			}
-			if _, err := os.Stat(certIssuerIngressJournalDir(f.paths)); !errors.Is(err, os.ErrNotExist) {
+			dir, err := certIssuerIngressJournalDir(f.paths, f.env)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
 				t.Fatal("read-only failed qualification wrote a migration journal")
 			}
 		})

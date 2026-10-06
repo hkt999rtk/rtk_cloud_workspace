@@ -73,7 +73,7 @@ func lkePlanCertIssuerIngressMigrationIgnoringRecord(paths provisionPaths, env m
 	if p.config.PublicHost == "" {
 		return p, nil
 	}
-	if err := certIssuerCheckPendingIngressMigration(paths, ignoreID); err != nil {
+	if err := certIssuerCheckPendingIngressMigration(paths, env, ignoreID); err != nil {
 		return nil, err
 	}
 	ingresses, err := access.list()
@@ -369,43 +369,78 @@ func (p *lkeCertIssuerIngressMigration) failAndRollback(cause error) error {
 	return fmt.Errorf("%w; prior ingress routes restored; restore record %s", cause, p.RestorePath)
 }
 
+const certIssuerIngressJournalRelativeDir = "deployment/journals/certissuer-ingress"
+
 func (p *lkeCertIssuerIngressMigration) save() error {
-	if p.RestorePath == "" {
-		dir := certIssuerIngressJournalDir(p.paths)
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return err
-		}
-		p.RestorePath = filepath.Join(dir, p.ID+".json")
+	if !strings.HasPrefix(p.ID, "certissuer-") || filepath.Base(p.ID) != p.ID || strings.ContainsAny(p.ID, "\\\x00") {
+		return errors.New("invalid CertIssuer ingress journal identity")
+	}
+	environment, _, err := lkeProviderTarget(p.paths, p.env)
+	if err != nil {
+		return err
+	}
+	relative := filepath.Join(certIssuerIngressJournalRelativeDir, p.ID+".json")
+	path, err := privateDeploymentStatePath(environment, relative)
+	if err != nil {
+		return err
+	}
+	if p.RestorePath != "" && p.RestorePath != path {
+		return errors.New("CertIssuer ingress restore path must remain in the selected private environment store")
 	}
 	raw, err := json.MarshalIndent(p, "", "  ")
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(p.RestorePath), ".ingress-restore-")
+	if err := writePrivateDeploymentState(environment, relative, raw); err != nil {
+		return err
+	}
+	p.RestorePath = path
+	return nil
+}
+
+func certIssuerIngressJournalDir(paths provisionPaths, values map[string]string) (string, error) {
+	environment, _, err := lkeProviderTarget(paths, values)
+	if err != nil {
+		return "", err
+	}
+	// Validate the directory using the shared private-file resolver, without
+	// creating it during read-only planning.
+	path, err := privateDeploymentStatePath(environment, filepath.Join(certIssuerIngressJournalRelativeDir, ".path-check"))
+	return filepath.Dir(path), err
+}
+
+func certIssuerCheckPendingIngressMigration(paths provisionPaths, values map[string]string, ignoreID string) error {
+	dir, err := certIssuerIngressJournalDir(paths, values)
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmp.Name())
-	if _, err = tmp.Write(raw); err == nil {
-		err = tmp.Sync()
+	// Legacy locations are import sources only. Never ignore an old restore
+	// journal simply because the canonical directory is absent.
+	legacy := []string{filepath.Join(paths.EnvRoot, "artifacts", "certissuer-ingress")}
+	if paths.ArtifactsDir != "" {
+		legacy = append(legacy, filepath.Join(paths.ArtifactsDir, "certissuer-ingress"))
 	}
-	closeErr := tmp.Close()
-	if err = errors.Join(err, closeErr); err != nil {
-		return err
+	for _, old := range legacy {
+		if filepath.Clean(old) == dir {
+			continue
+		}
+		info, err := os.Lstat(old)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return errors.New("cannot safely inspect legacy CertIssuer ingress journal directory")
+		}
+		entries, err := os.ReadDir(old)
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			if strings.HasPrefix(entry.Name(), "certissuer-") && strings.HasSuffix(entry.Name(), ".json") {
+				return fmt.Errorf("legacy CertIssuer ingress restore journal requires explicit migration: %s; preserve original bytes and filename, import without overwriting into %s with 0700 directories and 0600 files, then archive the verified legacy source outside the active journal directory before retrying", filepath.Join(old, entry.Name()), dir)
+			}
+		}
 	}
-	return os.Rename(tmp.Name(), p.RestorePath)
-}
-
-func certIssuerIngressJournalDir(paths provisionPaths) string {
-	dir := paths.ArtifactsDir
-	if dir == "" {
-		dir = filepath.Join(paths.EnvRoot, "artifacts")
-	}
-	return filepath.Join(dir, "certissuer-ingress")
-}
-
-func certIssuerCheckPendingIngressMigration(paths provisionPaths, ignoreID string) error {
-	dir := certIssuerIngressJournalDir(paths)
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -414,14 +449,14 @@ func certIssuerCheckPendingIngressMigration(paths provisionPaths, ignoreID strin
 		return err
 	}
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasPrefix(entry.Name(), "certissuer-") || !strings.HasSuffix(entry.Name(), ".json") {
+		if !strings.HasPrefix(entry.Name(), "certissuer-") || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
 		path := filepath.Join(dir, entry.Name())
-		raw, err := os.ReadFile(path)
+		raw, err := readStorageEvidenceFile(path)
 		var record struct{ ID, Status string }
 		if err != nil || json.Unmarshal(raw, &record) != nil {
-			return fmt.Errorf("cannot inspect prior CertIssuer ingress restore record %s", path)
+			return fmt.Errorf("cannot inspect prior private CertIssuer ingress restore record %s", path)
 		}
 		if record.ID == "" || entry.Name() != record.ID+".json" {
 			return fmt.Errorf("invalid prior CertIssuer ingress restore record %s", path)

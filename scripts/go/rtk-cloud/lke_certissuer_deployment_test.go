@@ -11,11 +11,7 @@ import (
 )
 
 func TestDeploymentCertIssuerReadinessUsesDerivedEnvironmentAndDoesNotMutate(t *testing.T) {
-	t.Setenv("RTK_CLOUD_CONFIG_ROOT", t.TempDir())
-	store, err := newSecretStore("", "staging")
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := makeIsolatedTestSecretStore(t, "staging")
 	if err := os.MkdirAll(filepath.Join(store.Root, "operator", "env"), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -54,10 +50,14 @@ func TestDeploymentCertIssuerReadinessUsesDerivedEnvironmentAndDoesNotMutate(t *
 	if raw, _ := os.ReadFile(logPath); len(raw) != 0 {
 		t.Fatalf("read-only planning changed resources: %s", raw)
 	}
-	if _, err := os.Stat(certIssuerIngressJournalDir(provisionPaths{EnvRoot: cfg.RuntimeRoot})); !os.IsNotExist(err) {
+	dir, err := certIssuerIngressJournalDir(provisionPaths{EnvRoot: cfg.RuntimeRoot}, map[string]string{"CLOUD_ENV_NAME": cfg.Environment})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
 		t.Fatalf("read-only planning wrote a journal: %v", err)
 	}
-	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "VIDEO_CLOUD_CERTISSUER_DOMAIN": "certissuer.video-cloud-staging.realtekconnect.com"}
+	env := map[string]string{"CLOUD_ENV_NAME": "staging", "CLOUD_STACK_NAME": "video-cloud-staging", "VIDEO_CLOUD_CERTISSUER_DOMAIN": "certissuer.video-cloud-staging.realtekconnect.com"}
 	if _, err := lkePlanCertIssuerIngressMigration(provisionPaths{EnvRoot: cfg.RuntimeRoot}, env); err == nil {
 		t.Fatal("route-only planning ignored the currently incorrect Service topology")
 	}
@@ -80,9 +80,10 @@ func TestDeploymentCertIssuerReadinessNewEnvironmentAndInvalidPolicy(t *testing.
 }
 
 func TestLKEDeployOnlyConvergesCertIssuerRoutingAndRepeatPreservesIngress(t *testing.T) {
+	makeIsolatedTestSecretStore(t, "staging")
 	logPath := fakeKubectl(t)
 	fakeHelm(t)
-	ctx := provisionContext{Env: map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "VIDEO_CLOUD_CERTISSUER_DOMAIN": "certissuer.video-cloud-staging.realtekconnect.com"}, Paths: provisionPaths{EnvRoot: t.TempDir()}, Opts: provisionOptions{mode: provisionMode{deploy: true}}}
+	ctx := provisionContext{Env: map[string]string{"CLOUD_ENV_NAME": "staging", "CLOUD_STACK_NAME": "video-cloud-staging", "VIDEO_CLOUD_CERTISSUER_DOMAIN": "certissuer.video-cloud-staging.realtekconnect.com"}, Paths: provisionPaths{EnvRoot: t.TempDir()}, Opts: provisionOptions{mode: provisionMode{deploy: true}}}
 	if !lkeCertIssuerRoutingSelected(ctx) {
 		t.Fatal("deploy-only update omitted routing")
 	}
@@ -117,7 +118,7 @@ func TestLKEFullDeploymentRefusesManagedPKIBeforeResourceMutation(t *testing.T) 
 		t.Fatal(err)
 	}
 	t.Setenv("FAKE_CERTISSUER_DEPLOYMENT_JSON", string(raw))
-	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "VIDEO_CLOUD_CERTISSUER_DOMAIN": "certissuer.video-cloud-staging.realtekconnect.com"}
+	env := map[string]string{"CLOUD_ENV_NAME": "staging", "CLOUD_STACK_NAME": "video-cloud-staging", "VIDEO_CLOUD_CERTISSUER_DOMAIN": "certissuer.video-cloud-staging.realtekconnect.com"}
 	if err := lkeDeployWorkloads(provisionPaths{}, env, provisionOptions{}); err == nil || !strings.Contains(err.Error(), "reconciliation is retired for managed PKI") || !strings.Contains(err.Error(), "--plan-sha256") {
 		t.Fatalf("unexpected error: %v", err)
 	}

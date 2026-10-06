@@ -63,6 +63,7 @@ not invent another workspace, worktree, external-disk or OS-specific location.
 | Normalized provider region/quota metadata (not completion evidence) | `deployment/provider-preflight.env` |
 | Temporary native Kubernetes / Docker / Buildx client identity and state | `deployment/tmp/` (operation-owned directories removed on success/failure) |
 | Deployment reports | `deployment/reports/` |
+| CertIssuer route migration restore journal | `deployment/journals/certissuer-ingress/certissuer-<operation-id>.json` |
 | LKE provision operational summary | `deployment/artifacts/lke-provision/<operation-timestamp>/summary.json` |
 | Temporary deployment material | `deployment/tmp/` |
 | Protected original migration/rollback snapshots | `migration-backup/` |

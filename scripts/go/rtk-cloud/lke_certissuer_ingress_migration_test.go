@@ -25,7 +25,13 @@ type certIssuerMigrationFixture struct {
 }
 
 func certIssuerIngressTestEnv() map[string]string {
-	return map[string]string{"CLOUD_STACK_NAME": "video-cloud-dev", "VIDEO_CLOUD_CERTISSUER_DOMAIN": "certissuer.video-cloud-dev.example.test", "CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM": "p256"}
+	return map[string]string{"CLOUD_ENV_NAME": "dev", "CLOUD_STACK_NAME": "video-cloud-dev", "VIDEO_CLOUD_CERTISSUER_DOMAIN": "certissuer.video-cloud-dev.example.test", "CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM": "p256"}
+}
+
+func certIssuerIngressTestPaths(t *testing.T) provisionPaths {
+	t.Helper()
+	makeIsolatedTestSecretStore(t, "dev")
+	return provisionPaths{EnvRoot: t.TempDir()}
 }
 
 func certIssuerMigrationFixtureKey(obj certIssuerIngressObject) string {
@@ -149,7 +155,7 @@ func TestCertIssuerIngressMigrationLegacyUpgradeAndRepeat(t *testing.T) {
 			path := certIssuerObjectMap(certIssuerObjectList(certIssuerObjectMap(rule["http"])["paths"])[0])
 			certIssuerObjectMap(certIssuerObjectMap(path["backend"])["service"])["name"] = "unrelated-service"
 			f := newCertIssuerIngressFixture(legacy, unrelated)
-			paths := provisionPaths{EnvRoot: t.TempDir()}
+			paths := certIssuerIngressTestPaths(t)
 			p, err := lkePlanCertIssuerIngressMigrationWithIO(paths, env, f.access())
 			if err != nil {
 				t.Fatal(err)
@@ -157,7 +163,11 @@ func TestCertIssuerIngressMigrationLegacyUpgradeAndRepeat(t *testing.T) {
 			if len(f.ops) != 0 {
 				t.Fatal("read-only plan mutated Kubernetes")
 			}
-			if _, err := os.Stat(certIssuerIngressJournalDir(paths)); !errors.Is(err, os.ErrNotExist) {
+			dir, err := certIssuerIngressJournalDir(paths, env)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
 				t.Fatal("read-only plan wrote a journal")
 			}
 			if err := p.Apply(); err != nil {
@@ -237,7 +247,7 @@ func TestCertIssuerIngressMigrationRejectsForeignOrMismatchedRoute(t *testing.T)
 				delete(rule, "http")
 			}
 			f := newCertIssuerIngressFixture(obj)
-			if _, err := lkePlanCertIssuerIngressMigrationWithIO(provisionPaths{EnvRoot: t.TempDir()}, env, f.access()); err == nil {
+			if _, err := lkePlanCertIssuerIngressMigrationWithIO(certIssuerIngressTestPaths(t), env, f.access()); err == nil {
 				t.Fatal("unsafe ingress accepted")
 			}
 			if len(f.ops) != 0 {
@@ -250,7 +260,7 @@ func TestCertIssuerIngressMigrationRejectsForeignOrMismatchedRoute(t *testing.T)
 func TestCertIssuerIngressMigrationBlocksUnreadyServingIdentity(t *testing.T) {
 	f := newCertIssuerIngressFixture(certIssuerLegacyIngress(t, false))
 	f.servingError = errors.New("public hostname absent from installed certificate")
-	if _, err := lkePlanCertIssuerIngressMigrationWithIO(provisionPaths{EnvRoot: t.TempDir()}, certIssuerIngressTestEnv(), f.access()); err == nil {
+	if _, err := lkePlanCertIssuerIngressMigrationWithIO(certIssuerIngressTestPaths(t), certIssuerIngressTestEnv(), f.access()); err == nil {
 		t.Fatal("unready serving identity accepted")
 	}
 	if len(f.ops) != 0 {
@@ -263,7 +273,7 @@ func TestCertIssuerIngressMigrationResourceVersionRace(t *testing.T) {
 		t.Run(fmt.Sprint(duringMutation), func(t *testing.T) {
 			legacy := certIssuerLegacyIngress(t, false)
 			f := newCertIssuerIngressFixture(legacy)
-			paths := provisionPaths{EnvRoot: t.TempDir()}
+			paths := certIssuerIngressTestPaths(t)
 			p, err := lkePlanCertIssuerIngressMigrationWithIO(paths, certIssuerIngressTestEnv(), f.access())
 			if err != nil {
 				t.Fatal(err)
@@ -309,7 +319,7 @@ func TestCertIssuerIngressMigrationRollsBackCreateOrPostcheckFailure(t *testing.
 				}
 				return nil
 			}
-			p, err := lkePlanCertIssuerIngressMigrationWithIO(provisionPaths{EnvRoot: t.TempDir()}, certIssuerIngressTestEnv(), f.access())
+			p, err := lkePlanCertIssuerIngressMigrationWithIO(certIssuerIngressTestPaths(t), certIssuerIngressTestEnv(), f.access())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -338,7 +348,7 @@ func TestCertIssuerIngressMigrationFencesUnknownCreateOutcome(t *testing.T) {
 		}
 		return nil
 	}
-	paths := provisionPaths{EnvRoot: t.TempDir()}
+	paths := certIssuerIngressTestPaths(t)
 	p, err := lkePlanCertIssuerIngressMigrationWithIO(paths, certIssuerIngressTestEnv(), f.access())
 	if err != nil {
 		t.Fatal(err)
@@ -363,7 +373,7 @@ func TestCertIssuerIngressMigrationRollsBackPureLegacyDeletion(t *testing.T) {
 		}
 		return nil
 	}
-	p, err := lkePlanCertIssuerIngressMigrationWithIO(provisionPaths{EnvRoot: t.TempDir()}, certIssuerIngressTestEnv(), f.access())
+	p, err := lkePlanCertIssuerIngressMigrationWithIO(certIssuerIngressTestPaths(t), certIssuerIngressTestEnv(), f.access())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -400,7 +410,7 @@ func TestCertIssuerIngressMigrationRollbackRefusesConcurrentDrift(t *testing.T) 
 		}
 		return read(namespace, name)
 	}
-	paths := provisionPaths{EnvRoot: t.TempDir()}
+	paths := certIssuerIngressTestPaths(t)
 	p, err := lkePlanCertIssuerIngressMigrationWithIO(paths, certIssuerIngressTestEnv(), access)
 	if err != nil {
 		t.Fatal(err)
@@ -425,7 +435,7 @@ func TestCertIssuerIngressMigrationCanonicalRepairPreservesAnnotations(t *testin
 	annotations["nginx.ingress.kubernetes.io/ssl-passthrough"] = "false"
 	annotations["example.test/keep"] = "kept"
 	f := newCertIssuerIngressFixture(current)
-	p, err := lkePlanCertIssuerIngressMigrationWithIO(provisionPaths{EnvRoot: t.TempDir()}, env, f.access())
+	p, err := lkePlanCertIssuerIngressMigrationWithIO(certIssuerIngressTestPaths(t), env, f.access())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -584,7 +594,7 @@ func TestCertIssuerIngressMigrationRejectsMalformedInventory(t *testing.T) {
 func TestCertIssuerIngressMigrationContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := lkePlanCertIssuerIngressMigrationWithContext(ctx, provisionPaths{EnvRoot: t.TempDir()}, certIssuerIngressTestEnv())
+	_, err := lkePlanCertIssuerIngressMigrationWithContext(ctx, certIssuerIngressTestPaths(t), certIssuerIngressTestEnv())
 	var classified interface{ CheckCode() string }
 	if !errors.As(err, &classified) || classified.CheckCode() != "CHECK_CANCELLED" {
 		t.Fatal("pre-deploy metadata check ignored cancellation:", err)

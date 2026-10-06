@@ -4,7 +4,7 @@ Status: active
 
 Owner: `rtk_cloud_workspace`
 
-Last reviewed: 2026-10-06
+Last reviewed: 2026-10-07
 
 Audience: internal deployment operators and new maintainers
 
@@ -457,12 +457,22 @@ that no conflicting route remains. Repeating an already converged deployment
 does not recreate or delete Ingress objects.
 
 Each actual change writes a mode-0600 restore journal under
-`cloud_env/<environment>/runtime/artifacts/certissuer-ingress/`, or the selected
-artifact directory's `certissuer-ingress/` subdirectory. Definite failures roll
+`~/.config/rtk_cloud/<environment>/deployment/journals/certissuer-ingress/`
+with real mode-0700 parent directories. Both planning and execution resolve the
+same explicit environment; checkout paths and artifact-directory overrides do
+not select the journal location. Definite failures roll
 back only objects that still match the migration's own recorded result. An
 uncertain mutation outcome or concurrent drift stops automatic rollback and
 blocks retry until the restore record and current API objects have been
-reviewed. Keep the journal; do not delete it to force a retry or disable the
+reviewed. A legacy restore journal in a checkout or former artifact directory
+blocks retry until explicitly migrated. Preserve its exact bytes and filename;
+import it into the selected canonical directory without replacing an existing
+record, verify the copy, and archive the original under the same environment's
+private `migration-backup/certissuer-ingress/` area. Conflicting copies require
+review.
+Do not rewrite an unfinished status to bypass the fence. These are recovery
+records, not GO or deployment-completion receipts.
+Keep the journal; do not delete it to force a retry or disable the
 admission webhook to permit duplicate host/path ownership.
 
 This convergence validates routing and installed identity prerequisites. Run
