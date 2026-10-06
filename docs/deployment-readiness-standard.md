@@ -259,6 +259,13 @@ separate projected API token. Missing/malformed bindings and uncertain deletes
 stay closed. Initial binding capture, bootstrap PVC credential cleanup, Account
 Manager sealed-credential removal and complete-environment acceptance are still
 unfinished; this adapter does not independently prove fresh-create qualification.
+The dedicated bootstrap owner now supports registry-backed credential removal:
+it persists an immutable public completion marker, locks the original private
+state directory, verifies key/CSR/chain ownership and removes only the recorded
+credential files. Same-receipt partial retries preserve the original lineage;
+the completed PVC cannot generate another key. Complete-engine invocation and
+state-owner installation are still pending; local filesystem tests alone do not
+prove the environment has completed this lifecycle.
 The public complete entries use this
 engine and no longer select schema-1 files. Exact publication artifacts bind source,
 digest and run attempt. Complete provider/create/bootstrap adapters, complete
