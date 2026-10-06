@@ -386,11 +386,7 @@ func lkeEdgeHAProxySSHAccessFor(opts provisionOptions) lkeEdgeHAProxySSHAccess {
 }
 
 func writeLKEEdgeHAProxyArtifacts(paths provisionPaths, plan lkeEdgeHAProxyPlan, cfg, install string, validation map[string]any, sshAccess lkeEdgeHAProxySSHAccess) error {
-	dir := filepath.Join(paths.EnvRoot, "artifacts", "edge-haproxy")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	if err := writeJSON(filepath.Join(dir, "edge-vms.json"), map[string]any{
+	if err := writeDeploymentLKEArtifactJSON(paths, filepath.Join("edge-haproxy", "edge-vms.json"), map[string]any{
 		"schema":         "rtk-cloud-workspace.edge-haproxy-vms/v1",
 		"generated_at":   time.Now().UTC().Format(time.RFC3339),
 		"mode":           plan.Mode,
@@ -400,7 +396,7 @@ func writeLKEEdgeHAProxyArtifacts(paths provisionPaths, plan lkeEdgeHAProxyPlan,
 	}); err != nil {
 		return err
 	}
-	if err := writeJSON(filepath.Join(dir, "upstreams.json"), map[string]any{
+	if err := writeDeploymentLKEArtifactJSON(paths, filepath.Join("edge-haproxy", "upstreams.json"), map[string]any{
 		"schema":          "rtk-cloud-workspace.edge-haproxy-upstreams/v1",
 		"generated_at":    time.Now().UTC().Format(time.RFC3339),
 		"https_node_port": plan.HTTPSNodePort,
@@ -409,13 +405,13 @@ func writeLKEEdgeHAProxyArtifacts(paths provisionPaths, plan lkeEdgeHAProxyPlan,
 	}); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "haproxy.cfg"), []byte(cfg), 0o644); err != nil {
+	if err := writeDeploymentLKEArtifact(paths, "edge-haproxy/haproxy.cfg", []byte(cfg)); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "install.sh"), []byte(install), 0o700); err != nil {
+	if err := writeDeploymentLKEArtifact(paths, "edge-haproxy/install.sh", []byte(install)); err != nil {
 		return err
 	}
-	return writeJSON(filepath.Join(dir, "validation.json"), validation)
+	return writeDeploymentLKEArtifactJSON(paths, filepath.Join("edge-haproxy", "validation.json"), validation)
 }
 
 func lkeInstallExternalHAProxyEdge(paths provisionPaths, opts provisionOptions, edge lkeEdgeHAProxyVM, install string) error {

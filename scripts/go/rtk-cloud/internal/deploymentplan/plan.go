@@ -172,7 +172,7 @@ func Compile(in Inputs, definitions []Definition, live []Object, adoptions ...ma
 			r.UID = String(m["uid"])
 			r.Baseline = Projection(current)
 			r.Action = "update"
-			if !definition.Retire {
+			if !definition.Retire && !definition.Retain {
 				if err := retainAllocatedFields(desired, current); err != nil {
 					return nil, err
 				}

@@ -370,11 +370,8 @@ func renderLKECoturnInstallScript(env map[string]string) string {
 }
 
 func writeLKECoturnVMArtifacts(paths provisionPaths, vm lkeCoturnVM, config, install string, validation map[string]any) error {
-	dir := filepath.Join(paths.EnvRoot, "artifacts", "coturn-vm", vm.Name)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	if err := writeJSON(filepath.Join(dir, "coturn-vm.json"), map[string]any{
+	dir := filepath.Join("coturn-vm", vm.Name)
+	if err := writeDeploymentLKEArtifactJSON(paths, filepath.Join(dir, "coturn-vm.json"), map[string]any{
 		"schema":    "rtk-cloud-workspace.coturn-vm/v1",
 		"generated": time.Now().UTC().Format(time.RFC3339),
 		"coturn_vm": vm,
@@ -385,47 +382,21 @@ func writeLKECoturnVMArtifacts(paths provisionPaths, vm lkeCoturnVM, config, ins
 	}); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "turnserver.conf.redacted"), []byte(config), 0o644); err != nil {
+	if err := writeDeploymentLKEArtifact(paths, filepath.Join(dir, "turnserver.conf.redacted"), []byte(config)); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "install.sh"), []byte(install), 0o700); err != nil {
+	if err := writeDeploymentLKEArtifact(paths, filepath.Join(dir, "install.sh"), []byte(install)); err != nil {
 		return err
 	}
-	if err := writeJSON(filepath.Join(dir, "validation.json"), validation); err != nil {
+	if err := writeDeploymentLKEArtifactJSON(paths, filepath.Join(dir, "validation.json"), validation); err != nil {
 		return err
 	}
-	if vm.Name == "turn01" {
-		legacyDir := filepath.Join(paths.EnvRoot, "artifacts", "coturn-vm")
-		if err := writeJSON(filepath.Join(legacyDir, "coturn-vm.json"), map[string]any{
-			"schema":    "rtk-cloud-workspace.coturn-vm/v1",
-			"generated": time.Now().UTC().Format(time.RFC3339),
-			"coturn_vm": vm,
-			"name":      vm.Name,
-			"public_ip": vm.PublicIP,
-			"domain":    vm.Domain,
-			"role":      vm.Role,
-		}); err != nil {
-			return err
-		}
-		if err := os.WriteFile(filepath.Join(legacyDir, "turnserver.conf.redacted"), []byte(config), 0o644); err != nil {
-			return err
-		}
-		if err := os.WriteFile(filepath.Join(legacyDir, "install.sh"), []byte(install), 0o700); err != nil {
-			return err
-		}
-		if err := writeJSON(filepath.Join(legacyDir, "validation.json"), validation); err != nil {
-			return err
-		}
-	}
+
 	return nil
 }
 
 func writeLKECoturnVMsSummary(paths provisionPaths, vms []lkeCoturnVM) error {
-	dir := filepath.Join(paths.EnvRoot, "artifacts", "coturn-vm")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	return writeJSON(filepath.Join(dir, "coturn-vms.json"), map[string]any{
+	return writeDeploymentLKEArtifactJSON(paths, "coturn-vm/coturn-vms.json", map[string]any{
 		"schema":     "rtk-cloud-workspace.coturn-vms/v1",
 		"generated":  time.Now().UTC().Format(time.RFC3339),
 		"coturn_vms": vms,
@@ -535,11 +506,13 @@ func lkeCurrentK8SSecretValue(namespace, secretName, key string) (string, error)
 
 func buildLKECoturnRegistrarBinary(paths provisionPaths) (string, error) {
 	repo := filepath.Join(paths.Workspace, "repos", "rtk_video_cloud")
-	outDir := filepath.Join(paths.EnvRoot, "artifacts", "coturn-vm")
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
+	out, err := deploymentLKEArtifactPath(paths, "coturn-vm/turnregistrar")
+	if err != nil {
 		return "", err
 	}
-	out := filepath.Join(outDir, "turnregistrar")
+	if err := ensurePrivateDirectory(filepath.Dir(out)); err != nil {
+		return "", err
+	}
 	goBin := firstNonEmpty(os.Getenv("RTK_CLOUD_GO"), "go")
 	cmd := exec.Command(goBin, "build", "-trimpath", "-o", out, "./cmd/turnregistrar")
 	cmd.Dir = repo
@@ -548,6 +521,10 @@ func buildLKECoturnRegistrarBinary(paths provisionPaths) (string, error) {
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("build turnregistrar: %w", err)
+	}
+	// This Linux binary is transferred to the VM, never executed on the operator host.
+	if err := os.Chmod(out, 0600); err != nil {
+		return "", err
 	}
 	return out, nil
 }

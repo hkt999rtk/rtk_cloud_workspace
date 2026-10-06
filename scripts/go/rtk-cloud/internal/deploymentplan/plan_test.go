@@ -68,6 +68,39 @@ func TestUnknownOwnerAndImmutableMigrationFailClosed(t *testing.T) {
 	}
 }
 
+func TestRetainedAllocatedDependenciesKeepOriginalStateWithoutRenderingSpecs(t *testing.T) {
+	for _, env := range []string{"dev", "staging", "prod"} {
+		for _, kind := range []string{"Service", "PersistentVolumeClaim"} {
+			t.Run(env+"/"+kind, func(t *testing.T) {
+				in, definition, live := fixture(t, env, kind)
+				definition.Retain = true
+				definition.Object["apiVersion"], live["apiVersion"] = "v1", "v1"
+				delete(definition.Object, "spec")
+				allocation := "volumeName"
+				if kind == "Service" {
+					allocation = "clusterIP"
+				}
+				Map(live["spec"])[allocation] = "original-allocation"
+				before := Digest(live)
+				plan, err := Compile(in, []Definition{definition}, []Object{live})
+				if err != nil || len(plan.Resources) != 1 {
+					t.Fatal("retained lifecycle dependency could not be planned", err)
+				}
+				r := plan.Resources[0]
+				body, err := r.Body(live)
+				if err != nil || body != nil || r.Action != "retain" || r.Desired["spec"] != nil || Digest(live) != before {
+					t.Fatal("retained dependency was rendered or changed", err)
+				}
+				changed := Clone(live)
+				Map(changed["spec"])[allocation] = "replaced-allocation"
+				if _, err := r.Body(changed); err == nil {
+					t.Fatal("retained original allocation drift was accepted")
+				}
+			})
+		}
+	}
+}
+
 func TestUnknownJobsAndPodsRequireExactDeclaredControllerLineage(t *testing.T) {
 	for _, env := range []string{"dev", "staging", "prod"} {
 		for _, mode := range []string{"valid", "no-owner", "wrong-uid", "foreign-stack", "wrong-parent-kind", "duplicate-controller", "parent-not-declared", "new-unknown-job"} {

@@ -17,7 +17,12 @@ deployment implementation. Missing state is NO-GO until explicitly recovered.
 
 This is the operational entry point for adding `dev`, `staging`, `prod`, `qa`, or another deployment environment. See [`docs/environment-dns-naming.md`](../docs/environment-dns-naming.md) for environment-to-DNS mappings and endpoint naming rules, [`docs/cloud-deployment-architecture.md`](../docs/cloud-deployment-architecture.md) for architecture responsibilities and resolution rules, [`cloud_deploy/README.md`](../cloud_deploy/README.md) for shared defaults and adapter keys, [`docs/storage-credential-lifecycle.md`](../docs/storage-credential-lifecycle.md) for storage operations and credentials, and [`docs/object-storage-policy.md`](../docs/object-storage-policy.md) for canonical naming, namespaces and retention.
 
-To build LKE staging from a fresh clone, complete service acceptance, and run the 1K MQTT/Device Shadow test, follow [`staging-from-scratch.md`](../docs/staging-from-scratch.md). Do not use that procedure for an existing cluster; safely restore the existing environment's ignored `runtime/` first.
+The existing [`staging-from-scratch.md`](../docs/staging-from-scratch.md) describes
+the legacy fresh-create and acceptance procedure. Complete create/bootstrap
+replacement is still in progress; that runbook is not qualification evidence
+for the unified engine. For an existing cluster, restore its original private
+`~/.config/rtk_cloud/<environment>/` store and use the explicit owner/state
+migrations. Restoring checkout `runtime/` cannot restore deployment authority.
 
 ## Create the Minimal Configuration
 
@@ -195,9 +200,23 @@ scripts/deploy-environment.sh test --environment staging --confirm video-cloud-s
 scripts/deploy-environment.sh test --environment prod --confirm video-cloud-prod
 ```
 
-`test` always runs `provision -> acceptance -> cleanup`. Cleanup still runs if provisioning or acceptance fails. Based only on that environment's stack ownership, cleanup removes DNS, LKE, VMs, firewalls, VPCs, and empty environment-owned Object Storage buckets. Sanitized test evidence remains in ignored `runtime/artifacts/`. If any provider resource cannot be removed, the entire test must report failure and the environment must not be considered clean. Before running public HTTPS DNS-01, the operator host must have `certbot` installed and the GoDaddy credential must be able to read and write DNS records for `CLOUD_DNS_ROOT_DOMAIN`.
+The intended isolated `test` lifecycle is `provision -> acceptance -> cleanup`.
+Cleanup must still run after an attempted provision or failed acceptance, using
+verified original resource ownership. Any resource that cannot be removed makes
+the test fail. Complete create/bootstrap adapters and legacy test-output writers
+are still being replaced; this entry currently cannot establish complete
+environment qualification. New evidence must use private environment
+`deployment/reports/` or `deployment/artifacts/`. Earlier `runtime/artifacts/`
+paths are historical migration context only. Before public HTTPS DNS-01, the
+operator host needs `certbot` and DNS credentials for the configured DNS root.
 
-LKE mutation requires the operator to provide `LINODE_TOKEN`. Tokens, kubeconfigs, certificates, service secrets, device credentials, SQLite databases, state, and artifacts may exist only in `cloud_env/qa/runtime/` or an operator secret source. They must not be written to the tracked `.env` files above or committed.
+LKE mutation requires the selected environment operator's `LINODE_TOKEN`.
+All local deployment-generated tokens, kubeconfigs, certificates, keys, service
+and device credentials, captured databases, state and artifacts must live under
+`~/.config/rtk_cloud/<environment>/`, including QA, with real `0700` directories
+and regular `0600` files. Online runtime databases remain in their managed
+persistent storage. `cloud_env/` contains configuration only; neither ignored
+files nor an arbitrary operator directory are exceptions to this rule.
 
 ## Review checklist
 
@@ -207,7 +226,7 @@ LKE mutation requires the operator to provide `LINODE_TOKEN`. Tokens, kubeconfig
 - Only values that genuinely differ for this environment are overridden.
 - Architecture overrides contain no `LKE_*`, `EKS_*`, or `GKE_*` keys.
 - Adapter overrides for dev, staging, and prod contain no normal region, product, or quota settings.
-- The provider account limit exists only in ignored adapter runtime and is not version-controlled.
+- The verified provider account limit uses private `deployment/adapters/lke/account.env` and is not version-controlled.
 - A DNS adapter is selected, and the environment contains no provider zone ID or DNS credentials.
 - `deployment plan` succeeds and the resolved plan contains no secrets.
-- `runtime/` remains ignored and contains no state copied from another environment.
+- `runtime/` contains only deterministic secret-free resolved configuration; deployment state uses the selected private environment store.

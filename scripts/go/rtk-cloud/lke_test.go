@@ -2195,7 +2195,11 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 	if !strings.Contains(readTestFile(t, digLog), "turnregistry.video-cloud-staging.realtekconnect.com") {
 		t.Fatalf("expected TURN registry DNS convergence checks, got:\n%s", readTestFile(t, digLog))
 	}
-	edgeDir := filepath.Join(envRoot, "artifacts", "edge-haproxy")
+	edgeArtifact, err := deploymentLKEArtifactPath(provisionPaths{EnvRoot: envRoot}, "edge-haproxy/edge-vms.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	edgeDir := filepath.Dir(edgeArtifact)
 	for _, name := range []string{"edge-vms.json", "upstreams.json", "haproxy.cfg", "install.sh", "validation.json"} {
 		if _, err := os.Stat(filepath.Join(edgeDir, name)); err != nil {
 			t.Fatalf("expected edge HAProxy artifact %s: %v", name, err)
@@ -2235,7 +2239,11 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 		t.Fatalf("MQTT HAProxy backend must only include nodes with MQTT pods, got:\n%s", cfg)
 	}
 
-	coturnDir := filepath.Join(envRoot, "artifacts", "coturn-vm")
+	coturnArtifact, err := deploymentLKEArtifactPath(provisionPaths{EnvRoot: envRoot}, "coturn-vm/turn01/coturn-vm.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	coturnDir := filepath.Dir(coturnArtifact)
 	for _, name := range []string{"coturn-vm.json", "turnserver.conf.redacted", "install.sh", "validation.json"} {
 		if _, err := os.Stat(filepath.Join(coturnDir, name)); err != nil {
 			t.Fatalf("expected coturn VM artifact %s: %v", name, err)
@@ -2378,13 +2386,20 @@ func TestLKECoturnMultiVMProvidedIPsWritesArtifacts(t *testing.T) {
 		"coturn-vm/turn01/coturn-vm.json",
 		"coturn-vm/turn02/coturn-vm.json",
 		"coturn-vm/coturn-vms.json",
-		"coturn-vm/coturn-vm.json",
 	} {
-		if _, err := os.Stat(filepath.Join(envRoot, "artifacts", name)); err != nil {
+		artifact, err := deploymentLKEArtifactPath(provisionPaths{EnvRoot: envRoot}, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(artifact); err != nil {
 			t.Fatalf("missing artifact %s: %v", name, err)
 		}
 	}
-	summary := readTestFile(t, filepath.Join(envRoot, "artifacts", "coturn-vm", "coturn-vms.json"))
+	summaryPath, err := deploymentLKEArtifactPath(provisionPaths{EnvRoot: envRoot}, "coturn-vm/coturn-vms.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary := readTestFile(t, summaryPath)
 	for _, want := range []string{`"count": 2`, `"name": "turn01"`, `"name": "turn02"`, `"public_ip": "198.51.100.21"`} {
 		if !strings.Contains(summary, want) {
 			t.Fatalf("expected %q in coturn-vms summary:\n%s", want, summary)

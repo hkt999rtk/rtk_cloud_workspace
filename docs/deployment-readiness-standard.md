@@ -354,7 +354,11 @@ ACME cleanup and provider evidence; the unified input digest fences changes.
 Use the explicitly verified `deployment dns-import-state` migration described in
 [DNS architecture](dns-adapter-architecture.md#migration), never an implicit
 checkout fallback. Import is not deployment GO.
-Remaining edge/TURN, service and artifact-state writers still require migration before the
+Edge/TURN artifact producers and the relay reader now use private environment
+`deployment/artifacts/` with `0700` directories and `0600` files. Switching
+checkouts preserves their state authority; legacy checkout files are neither
+updated nor selected as fallback evidence. Remaining service and artifact-state
+writers still require migration before the
 configuration/state separation is complete.
 
 

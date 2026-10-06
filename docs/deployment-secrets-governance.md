@@ -81,7 +81,10 @@ files and does not export online CA keys.
 
 Legacy deployment writers that still use workspace runtime are migration work
 and do not conform to this boundary. Storage evidence placement is implemented
-by this change; remaining edge/TURN/service/temporary/report writers are part of the
+by this change. Edge/TURN deployment artifacts and their relay reader now use
+private `deployment/artifacts/edge-haproxy/` and `deployment/artifacts/coturn-vm/`
+with no checkout fallback or duplicate TURN summary. Remaining service,
+temporary and report writers are part of the
 unified deployment replacement and must be corrected before claiming completion.
 
 The canonical local secret root is defined by [SecretStore](secret-store.md):
