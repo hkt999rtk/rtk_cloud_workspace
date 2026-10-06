@@ -521,3 +521,13 @@ services or shared E2E fixtures.
 
 E2E fixtures are documented under `e2e_test/fixtures/`. Generated local fixture
 artifacts should use `.artifacts/e2e_test/fixtures/<fixture_type>/<run_id>/`.
+
+
+Selected Account Manager and Billing modules now run their governed `pr`
+coverage profile locally with a fresh PostgreSQL 16 fixture. The pre-PR runner
+never accepts an ambient `TEST_DATABASE_URL` or silently downgrades these checks
+to `unit`. Each fixture uses a unique container, a dynamic loopback port and tmpfs
+data, waits with `pg_isready`, restores the prior process setting and removes its
+own container after either coverage success or failure. The same integration
+checks still repeat in CI. Public/provider payment tests retain their fixture
+boundaries; this does not authorize live payments or shared-environment tests.

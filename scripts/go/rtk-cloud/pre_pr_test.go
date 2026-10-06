@@ -97,7 +97,7 @@ func TestPrintPrePRPlanMakesLocalBoundaryExplicit(t *testing.T) {
 	for _, want := range []string{
 		"Workspace policy matrix: true",
 		"Cloud Admin desktop/mobile E2E: true",
-		"CI-only integration checks: Billing PostgreSQL/virtual payment",
+		"Integration checks also repeated by CI: Billing PostgreSQL/virtual payment",
 		"Shared staging: never",
 	} {
 		if !strings.Contains(output.String(), want) {

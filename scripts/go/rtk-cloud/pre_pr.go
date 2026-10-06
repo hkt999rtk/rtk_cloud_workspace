@@ -33,6 +33,7 @@ var (
 	prePRRunUI                     = runTestUI
 	prePRStartVideoCloudPRFixtures = startVideoCloudPRFixtures
 	prePRRunFixtureCommand         = runPrePRFixtureCommand
+	prePRStartPostgresPRFixture    = startPostgresPRFixture
 )
 
 func runPrePR(args []string) error {
@@ -108,6 +109,22 @@ func runPrePR(args []string) error {
 		}); err != nil {
 			return err
 		}
+	}
+	for _, module := range []string{"account-manager", "billing-service"} {
+		if !slices.Contains(goModules, module) {
+			continue
+		}
+		fmt.Fprintf(os.Stdout, "\n== local %s PostgreSQL PR coverage ==\n", module)
+		cleanup, err := prePRStartPostgresPRFixture(module)
+		if err != nil {
+			return err
+		}
+		err = prePRRunCoverage([]string{"--profile", "pr", "--module", module, "--base-ref", strings.TrimSpace(*baseRef), "--head-ref", strings.TrimSpace(*headRef), "--run-id", *runID + "-" + module + "-pr"})
+		cleanup()
+		if err != nil {
+			return err
+		}
+		goModules = removePrePRModule(goModules, module)
 	}
 	if len(goModules) > 0 {
 		fmt.Fprintln(os.Stdout, "\n== affected Go coverage ==")
@@ -225,7 +242,7 @@ func printPrePRPlan(out io.Writer, baseRef, headRef string, selection prePRSelec
 	fmt.Fprintf(out, "- Go coverage: %s\n", prePRList(selection.GoModules))
 	fmt.Fprintf(out, "- JavaScript coverage: %s\n", prePRList(selection.NodeModules))
 	fmt.Fprintf(out, "- Cloud Admin desktop/mobile E2E: %t\n", runUI && slices.Contains(selection.NodeModules, "cloud-admin-web"))
-	fmt.Fprintf(out, "- CI-only integration checks: %s\n", strings.Join(prePRIntegrationChecks(selection), ", "))
+	fmt.Fprintf(out, "- Integration checks also repeated by CI: %s\n", strings.Join(prePRIntegrationChecks(selection), ", "))
 	fmt.Fprintln(out, "- Shared staging: never")
 }
 
