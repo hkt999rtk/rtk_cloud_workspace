@@ -128,6 +128,17 @@ revocation/CRL acknowledgments and rollout validity margin still require their
 own checks. These remaining gaps keep the complete PKI gate NO-GO even when
 server-state inspection succeeds.
 
+Managed Service client states now use the same original-owner/PVC/Pod observer
+with the shipped read-only `inspect` command. Subject mappings follow maintained
+consumer contracts; a different workload cannot borrow a Service subject. API
+and log-ingester root aliases follow their real config loaders. The client
+inspector checks the three-certificate pinned chain, key pair, Service CN,
+client-only purpose, absent SAN and current validity. Missing/unresolved policy,
+pending state or failed inspection is `deployment.pki.client-identity`; it does
+not enroll, renew or replace state. Registry/issuer admission, Secret-backed
+identities, CRLs/acknowledgments and rollout validity margin remain required gaps,
+so these observations do not pass the complete PKI gate.
+
 An old fault that blocks a necessary dependency blocks the plan. When the plan
 repairs that fault, qualify the repaired candidate's behavior before passing;
 neither unconditional old-health requirements nor ignoring dependency failures

@@ -17,15 +17,27 @@ type environmentServerIdentityPolicy struct{ State, Domain, Subject, Root, Names
 // exporting a private key or creating identity/lock files. Registry admission,
 // CRLs, client identities and candidate startup remain separate qualifications.
 func (b environmentKubernetesBackend) CheckManagedServerIdentities(ctx context.Context, plan *deploymentplan.Plan) error {
+	return b.checkManagedIdentityStates(ctx, plan, false)
+}
+func (b environmentKubernetesBackend) CheckManagedClientIdentities(ctx context.Context, plan *deploymentplan.Plan) error {
+	return b.checkManagedIdentityStates(ctx, plan, true)
+}
+
+func (b environmentKubernetesBackend) checkManagedIdentityStates(ctx context.Context, plan *deploymentplan.Plan, clients bool) error {
+	block := serverIdentityBlocker
+	if clients {
+		block = clientIdentityBlocker
+	}
+
 	if plan == nil || plan.Environment != b.Store.Environment || plan.Stack != "video-cloud-"+b.Store.Environment || plan.Operation != "upgrade" {
-		return serverIdentityBlocker("", "original managed server state requires a complete selected upgrade plan; fresh bootstrap must qualify its own original session")
+		return block("", "original managed server state requires a complete selected upgrade plan; fresh bootstrap must qualify its own original session")
 	}
 	if err := b.CheckStorageBindings(ctx, plan); err != nil {
 		return err
 	}
 	objects, err := b.Inventory(ctx, plan.Stack)
 	if err != nil {
-		return serverIdentityBlocker("", "selected original workload inventory is unavailable")
+		return block("", "selected original workload inventory is unavailable")
 	}
 	if err := plan.CheckWorkloadInventory(objects); err != nil {
 		return err
@@ -34,7 +46,7 @@ func (b environmentKubernetesBackend) CheckManagedServerIdentities(ctx context.C
 	for _, object := range objects {
 		id := deploymentplan.ID(object)
 		if live[id] != nil {
-			return serverIdentityBlocker("", "selected workload inventory contains duplicate resource identities")
+			return block("", "selected workload inventory contains duplicate resource identities")
 		}
 		live[id] = object
 	}
@@ -47,22 +59,25 @@ func (b environmentKubernetesBackend) CheckManagedServerIdentities(ctx context.C
 		for _, value := range certIssuerObjectList(pod["containers"]) {
 			container := deploymentplan.Map(value)
 			policies, err := environmentServerIdentityPolicies(container)
+			if clients {
+				policies, err = environmentClientIdentityPolicies(resource.Desired, container)
+			}
 			if err != nil {
-				return serverIdentityBlocker(resource.ID, "target managed host policy is unresolved, incomplete or ambiguous")
+				return block(resource.ID, "target managed host policy is unresolved, incomplete or ambiguous")
 			}
 			if len(policies) == 0 {
 				continue
 			}
 			current := live[resource.ID]
 			if resource.Action == "create" || current == nil || resource.UID == "" {
-				return serverIdentityBlocker(resource.ID, "original server identity owner is absent; bootstrap or candidate original-state qualification is required")
+				return block(resource.ID, "original server identity owner is absent; bootstrap or candidate original-state qualification is required")
 			}
 			if _, err := resource.Body(current); err != nil {
-				return serverIdentityBlocker(resource.ID, "original workload ownership or configuration drifted after planning")
+				return block(resource.ID, "original workload ownership or configuration drifted after planning")
 			}
 			for _, policy := range policies {
 				if !environmentServerStateOnPVC(resource.Desired, container, policy.State) {
-					return serverIdentityBlocker(resource.ID, "managed server identity state is not backed by an explicit durable claim")
+					return block(resource.ID, "managed server identity state is not backed by an explicit durable claim")
 				}
 			}
 			found := 0
@@ -77,7 +92,7 @@ func (b environmentKubernetesBackend) CheckManagedServerIdentities(ctx context.C
 				}
 				name, namespace, uid := deploymentplan.String(meta["name"]), deploymentplan.String(meta["namespace"]), deploymentplan.String(meta["uid"])
 				if name == "" || uid == "" || deploymentplan.Map(object["status"])["phase"] != "Running" {
-					return serverIdentityBlocker(resource.ID, "original owned Pod cannot inspect its server state; qualify the repaired candidate before proceeding")
+					return block(resource.ID, "original owned Pod cannot inspect its server state; qualify the repaired candidate before proceeding")
 				}
 				if err := b.checkEnvironmentAccess(ctx, environmentAccessRequirement{Resource: "pods", Namespace: namespace, Name: name, Verb: "get"}, ""); err != nil {
 					return err
@@ -87,9 +102,15 @@ func (b environmentKubernetesBackend) CheckManagedServerIdentities(ctx context.C
 				}
 				for _, policy := range policies {
 					if !environmentServerPodStateClaim(plan, resource.Desired, container, object, policy.State) {
-						return serverIdentityBlocker(resource.ID, "owned Pod does not mount the original planned state claim")
+						return block(resource.ID, "owned Pod does not mount the original planned state claim")
 					}
-					raw, err := b.command(ctx, nil, "exec", "--namespace", namespace, name, "--container", deploymentplan.String(container["name"]), "--", "/app/serviceidentity-bootstrap", "inspect-server", policy.State, policy.Domain, policy.Subject, policy.Root, policy.Names)
+					args := []string{"exec", "--namespace", namespace, name, "--container", deploymentplan.String(container["name"]), "--", "/app/serviceidentity-bootstrap"}
+					if clients {
+						args = append(args, "inspect", policy.State, policy.Subject, policy.Root)
+					} else {
+						args = append(args, "inspect-server", policy.State, policy.Domain, policy.Subject, policy.Root, policy.Names)
+					}
+					raw, err := b.command(ctx, nil, args...)
 					var state struct {
 						Subject     string `json:"subject"`
 						Fingerprint string `json:"fingerprint"`
@@ -99,13 +120,13 @@ func (b environmentKubernetesBackend) CheckManagedServerIdentities(ctx context.C
 						Pending     *bool  `json:"pending"`
 					}
 					if err != nil || decodeEnvironmentJSON(raw, &state) != nil || state.Subject != policy.Subject || state.Root != policy.Root || !deploymentImageDigestPattern.MatchString("sha256:"+state.Fingerprint) || !deploymentImageDigestPattern.MatchString("sha256:"+state.PublicKey) || !deploymentImageDigestPattern.MatchString("sha256:"+state.State) || state.Pending == nil || *state.Pending {
-						return serverIdentityBlocker(resource.ID, "original server identity inspection failed or reports incomplete/currently pending state")
+						return block(resource.ID, "original server identity inspection failed or reports incomplete/currently pending state")
 					}
 					checked++
 				}
 				fresh, err := b.Read(ctx, deploymentplan.ID(object))
 				if err != nil || fresh == nil || deploymentplan.Map(fresh["metadata"])["uid"] != uid || deploymentplan.Map(fresh["metadata"])["deletionTimestamp"] != nil || !deploymentplan.Matches(deploymentplan.Projection(object), fresh) {
-					return serverIdentityBlocker(resource.ID, "owned Pod changed during identity inspection")
+					return block(resource.ID, "owned Pod changed during identity inspection")
 				}
 				found++
 			}
@@ -114,30 +135,30 @@ func (b environmentKubernetesBackend) CheckManagedServerIdentities(ctx context.C
 				var ok bool
 				expected, ok = value.(float64)
 				if !ok {
-					return serverIdentityBlocker(resource.ID, "original replica count is invalid")
+					return block(resource.ID, "original replica count is invalid")
 				}
 			}
 			if current["kind"] == "DaemonSet" {
 				var ok bool
 				expected, ok = deploymentplan.Map(current["status"])["desiredNumberScheduled"].(float64)
 				if !ok {
-					return serverIdentityBlocker(resource.ID, "original daemon placement count is unavailable")
+					return block(resource.ID, "original daemon placement count is unavailable")
 				}
 			}
 			if expected <= 0 || expected > 10000 || expected != float64(int(expected)) || found != int(expected) {
-				return serverIdentityBlocker(resource.ID, "original owned Pod count does not cover every server identity replica")
+				return block(resource.ID, "original owned Pod count does not cover every server identity replica")
 			}
 			fresh, err := b.Read(ctx, resource.ID)
 			if err != nil {
-				return serverIdentityBlocker(resource.ID, "original controller cannot be rechecked after inspection")
+				return block(resource.ID, "original controller cannot be rechecked after inspection")
 			}
 			if _, err := resource.Body(fresh); err != nil {
-				return serverIdentityBlocker(resource.ID, "original controller changed during identity inspection")
+				return block(resource.ID, "original controller changed during identity inspection")
 			}
 		}
 	}
 	if checked == 0 {
-		return serverIdentityBlocker("", "no complete managed server identity policy was inspected")
+		return block("", "no complete managed server identity policy was inspected")
 	}
 	return nil
 }
@@ -226,4 +247,67 @@ func environmentServerPodStateClaim(plan *deploymentplan.Plan, target, container
 		}
 	}
 	return false
+}
+
+func clientIdentityBlocker(resource, cause string) error {
+	return &deploymentplan.Blocker{ID: "deployment.pki.client-identity", Resource: resource, Cause: strings.ReplaceAll(cause, "server", "client"), Next: "restore the exact maintained Service client state/subject/root bindings and original durable claims; reconcile pending lifecycle requests or qualify the original state using a candidate; repeat full preflight without replacing a private key or bootstrap session"}
+}
+
+// Subject mappings are the maintained consumer contracts, not a subject supplied
+// by the inspection response or inferred from an arbitrary workload name.
+func environmentClientIdentityPolicies(object, container deploymentplan.Object) ([]environmentServerIdentityPolicy, error) {
+	settings, err := environmentPKINamedFields(container["env"])
+	if err != nil {
+		return nil, err
+	}
+	name := deploymentplan.String(deploymentplan.Map(object["metadata"])["name"])
+	var policies []environmentServerIdentityPolicy
+	for settingName, setting := range settings {
+		if !strings.HasSuffix(settingName, "_IDENTITY_STATE") || strings.HasSuffix(settingName, "_HOST_IDENTITY_STATE") {
+			continue
+		}
+		prefix := strings.TrimSuffix(settingName, "_IDENTITY_STATE")
+		subject := ""
+		switch prefix {
+		case "CERT_ISSUER_SERVICE_CLIENT":
+			if name == "certissuer" || name == "certissuer-service-pki" {
+				subject = "service:certissuer"
+			}
+		case "PKI_SERVICE_CLIENT":
+			if name == "pki-controller" {
+				subject = "service:pki-controller"
+			}
+		case "EMQX_PKI_SERVICE_CLIENT":
+			if name == "mqtt-pki" {
+				subject = "service:emqx-pki"
+			}
+		case "OPENBAO_PKI_SERVICE_CLIENT":
+			if name == "openbao" {
+				subject = "service:openbao"
+			}
+		case "PKI_BROKER":
+			if name == "mqtt-pki" {
+				subject = "service:pkibroker"
+			}
+		case "VIDEO_CLOUD_CONTROLLER", "VIDEO_CLOUD_ACCOUNT_MANAGER":
+			if name == "video-cloud-api-pki" {
+				subject = "service:video-cloud-api"
+			}
+		case "VIDEO_CLOUD_LOG_INGESTER_MQTT":
+			if name == "video-cloud-logingester" {
+				subject = "service:video-cloud-logingester"
+			}
+		}
+		rootSetting := settings[prefix+"_ROOT_SHA256"]
+		if prefix == "VIDEO_CLOUD_CONTROLLER" || prefix == "VIDEO_CLOUD_ACCOUNT_MANAGER" || prefix == "VIDEO_CLOUD_LOG_INGESTER_MQTT" {
+			rootSetting = settings[prefix+"_IDENTITY_ROOT_SHA256"]
+		}
+		policy := environmentServerIdentityPolicy{State: deploymentplan.String(setting["value"]), Subject: subject, Root: deploymentplan.String(rootSetting["value"])}
+		if setting["valueFrom"] != nil || rootSetting["valueFrom"] != nil || subject == "" || !filepath.IsAbs(policy.State) || filepath.Clean(policy.State) != policy.State || !deploymentImageDigestPattern.MatchString("sha256:"+policy.Root) {
+			return nil, errors.New("explicit maintained Service client policy required")
+		}
+		policies = append(policies, policy)
+	}
+	sort.Slice(policies, func(i, j int) bool { return policies[i].State < policies[j].State })
+	return policies, nil
 }

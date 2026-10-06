@@ -71,7 +71,10 @@ func defaultUnifiedDeploymentDependencies() unifiedDeploymentDependencies {
 					if err := c.Backend.CheckManagedServerIdentities(ctx, p); err != nil {
 						return deploymentplan.GateEvidence{}, err
 					}
-					return deploymentplan.GateEvidence{}, &deploymentplan.Blocker{ID: "deployment.pki", Cause: "original managed server key/chain/DNS/purpose/current-validity inspection passed; registry/issuer admission, all client and Secret identities, CRLs and consumer acknowledgments remain incomplete", Next: "complete native registry, remaining identity, revocation and consumer qualification for the same target before authorizing deployment"}
+					if err := c.Backend.CheckManagedClientIdentities(ctx, p); err != nil {
+						return deploymentplan.GateEvidence{}, err
+					}
+					return deploymentplan.GateEvidence{}, &deploymentplan.Blocker{ID: "deployment.pki", Cause: "original managed server and Service client key/chain/subject/purpose/current-validity inspection passed; registry/issuer admission, Secret identities, CRLs, consumer acknowledgments and rollout validity margin remain incomplete", Next: "complete native registry, remaining identity, revocation and consumer qualification for the same target before authorizing deployment"}
 				},
 				"deployment.release": func(ctx context.Context, p *deploymentplan.Plan) (deploymentplan.GateEvidence, error) {
 					if err := c.Fence(ctx, p); err != nil {

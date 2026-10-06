@@ -56,8 +56,16 @@ func nativeServerStateFixture(t *testing.T, domain, subject, mode string) ([]byt
 	if mode == "wrong-san" {
 		leafTemplate.DNSNames = []string{"other.example.test"}
 	}
-	if mode == "wrong-purpose" {
+	if domain == "" {
+		leafTemplate.DNSNames = nil
 		leafTemplate.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
+	}
+	if mode == "wrong-purpose" {
+		usage := x509.ExtKeyUsageClientAuth
+		if domain == "" {
+			usage = x509.ExtKeyUsageServerAuth
+		}
+		leafTemplate.ExtKeyUsage = []x509.ExtKeyUsage{usage}
 	}
 	_, leafPEM := create(leafTemplate, issuer, leafKey, issuerKey)
 	if mode == "wrong-key" {
@@ -67,7 +75,11 @@ func nativeServerStateFixture(t *testing.T, domain, subject, mode string) ([]byt
 	if e != nil {
 		t.Fatal(e)
 	}
-	state := map[string]any{"version": 1, "subject": subject, "domain": domain, "dns_names": []string{subject}, "current": map[string]any{"private_key_pem": string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})), "certificate_chain_pem": string(leafPEM) + string(issuerPEM) + string(rootPEM), "installed_at": now}, "private-canary": "do-not-report-private-state"}
+	names := []string{subject}
+	if domain == "" {
+		names = nil
+	}
+	state := map[string]any{"version": 1, "subject": subject, "domain": domain, "dns_names": names, "current": map[string]any{"private_key_pem": string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})), "certificate_chain_pem": string(leafPEM) + string(issuerPEM) + string(rootPEM), "installed_at": now}, "private-canary": "do-not-report-private-state"}
 	if mode == "pending" {
 		state["pending"] = map[string]any{"request_id": "original-pending", "private_key_pem": "private-canary", "csr_pem": "pending-csr"}
 	}
@@ -92,7 +104,7 @@ func TestNativeManagedServerInspectionUsesRealCryptoAndOriginalOwners(t *testing
 		t.Fatalf("build maintained native inspector: %v\n%s", e, output)
 	}
 	for _, environment := range []string{"dev", "staging", "prod"} {
-		for _, mode := range []string{"valid", "expired", "wrong-san", "wrong-key", "wrong-root", "wrong-purpose", "pending", "partial-report", "bad-fingerprint", "private-report", "owner-replaced", "pod-drift", "controller-drift", "missing-pod", "foreign-parent", "wrong-claim", "missing-replica", "denied-exec", "inspector-unavailable", "ephemeral-state", "incomplete-policy", "stateful", "daemon", "mqtt", "openbao", "cancelled"} {
+		for _, mode := range []string{"valid", "expired", "wrong-san", "wrong-key", "wrong-root", "wrong-purpose", "pending", "partial-report", "bad-fingerprint", "private-report", "owner-replaced", "pod-drift", "controller-drift", "missing-pod", "foreign-parent", "wrong-claim", "missing-replica", "denied-exec", "inspector-unavailable", "ephemeral-state", "incomplete-policy", "stateful", "daemon", "mqtt", "openbao", "client", "client-expired", "client-wrong-key", "client-wrong-purpose", "client-pending", "cancelled"} {
 			t.Run(environment+"/"+mode, func(t *testing.T) {
 				store := makeIsolatedTestSecretStore(t, environment)
 				raw, e := json.Marshal(frozenKubernetesFixture(t))
@@ -111,7 +123,15 @@ func TestNativeManagedServerInspectionUsesRealCryptoAndOriginalOwners(t *testing
 					domain, prefix = "openbao_tls", "OPENBAO_PKI"
 				}
 				subject := "certissuer.video-cloud-" + environment + ".example.test"
-				state, pin := nativeServerStateFixture(t, domain, subject, mode)
+				clients := mode == "client" || strings.HasPrefix(mode, "client-")
+				workloadName, containerName := "certissuer", "certissuer"
+				cryptoMode := mode
+				if clients {
+					domain, prefix, subject = "", "PKI_SERVICE_CLIENT", "service:pki-controller"
+					workloadName, containerName = "pki-controller", "pki-controller"
+					cryptoMode = strings.TrimPrefix(mode, "client-")
+				}
+				state, pin := nativeServerStateFixture(t, domain, subject, cryptoMode)
 				directory := t.TempDir()
 				statePath := filepath.Join(directory, "identity.json")
 				if e := os.WriteFile(statePath, state, 0600); e != nil {
@@ -136,12 +156,15 @@ func TestNativeManagedServerInspectionUsesRealCryptoAndOriginalOwners(t *testing
 				for key, value := range map[string]string{"_HOST_IDENTITY_STATE": statePath, "_HOST_NAME": subject, "_HOST_ROOT_SHA256": pin, "_HOST_DNS_NAMES": subject} {
 					env = append(env, deploymentplan.Object{"name": prefix + key, "value": value})
 				}
+				if clients {
+					env = []any{deploymentplan.Object{"name": prefix + "_IDENTITY_STATE", "value": statePath}, deploymentplan.Object{"name": prefix + "_ROOT_SHA256", "value": pin}}
+				}
 				if mode == "incomplete-policy" {
 					deploymentplan.Map(env[0])["name"] = "UNKNOWN_HOST_IDENTITY_STATE"
 				}
-				container := deploymentplan.Object{"name": "certissuer", "image": "fixture@sha256:" + strings.Repeat("a", 64), "env": env, "volumeMounts": []any{deploymentplan.Object{"name": "state", "mountPath": directory}}}
+				container := deploymentplan.Object{"name": containerName, "image": "fixture@sha256:" + strings.Repeat("a", 64), "env": env, "volumeMounts": []any{deploymentplan.Object{"name": "state", "mountPath": directory}}}
 				podSpec := deploymentplan.Object{"containers": []any{container}, "volumes": []any{deploymentplan.Object{"name": "state", "persistentVolumeClaim": deploymentplan.Object{"claimName": claimName}}}}
-				controller := deploymentplan.Object{"apiVersion": "apps/v1", "kind": kind, "metadata": deploymentplan.Object{"name": "certissuer", "namespace": namespace, "uid": "controller-original", "resourceVersion": "1", "labels": deploymentplan.Object{"rtk.realtek.com/stack": "video-cloud-" + environment}}, "spec": deploymentplan.Object{"replicas": float64(1), "template": deploymentplan.Object{"spec": deploymentplan.Clone(podSpec)}}, "status": deploymentplan.Object{"desiredNumberScheduled": float64(1)}}
+				controller := deploymentplan.Object{"apiVersion": "apps/v1", "kind": kind, "metadata": deploymentplan.Object{"name": workloadName, "namespace": namespace, "uid": "controller-original", "resourceVersion": "1", "labels": deploymentplan.Object{"rtk.realtek.com/stack": "video-cloud-" + environment}}, "spec": deploymentplan.Object{"replicas": float64(1), "template": deploymentplan.Object{"spec": deploymentplan.Clone(podSpec)}}, "status": deploymentplan.Object{"desiredNumberScheduled": float64(1)}}
 				if mode == "stateful" {
 					environmentPKIPod(controller)["volumes"] = []any{}
 					deploymentplan.Map(controller["spec"])["volumeClaimTemplates"] = []any{deploymentplan.Object{"metadata": deploymentplan.Object{"name": "state"}, "spec": deploymentplan.Object{"accessModes": []any{"ReadWriteOnce"}}}}
@@ -149,7 +172,7 @@ func TestNativeManagedServerInspectionUsesRealCryptoAndOriginalOwners(t *testing
 				if mode == "ephemeral-state" {
 					environmentPKIPod(controller)["volumes"] = []any{deploymentplan.Object{"name": "state", "emptyDir": deploymentplan.Object{}}}
 				}
-				pod := deploymentplan.Object{"apiVersion": "v1", "kind": "Pod", "metadata": deploymentplan.Object{"name": "certissuer-0", "namespace": namespace, "uid": "pod-original", "ownerReferences": []any{deploymentplan.Object{"apiVersion": "apps/v1", "kind": kind, "name": "certissuer", "uid": "controller-original", "controller": true}}}, "spec": podSpec, "status": deploymentplan.Object{"phase": "Running"}}
+				pod := deploymentplan.Object{"apiVersion": "v1", "kind": "Pod", "metadata": deploymentplan.Object{"name": "certissuer-0", "namespace": namespace, "uid": "pod-original", "ownerReferences": []any{deploymentplan.Object{"apiVersion": "apps/v1", "kind": kind, "name": workloadName, "uid": "controller-original", "controller": true}}}, "spec": podSpec, "status": deploymentplan.Object{"phase": "Running"}}
 				claim := deploymentplan.Object{"apiVersion": "v1", "kind": "PersistentVolumeClaim", "metadata": deploymentplan.Object{"name": claimName, "namespace": namespace, "uid": "claim-original", "resourceVersion": "1", "labels": deploymentplan.Object{"rtk.realtek.com/stack": "video-cloud-" + environment}}, "spec": deploymentplan.Object{"volumeName": "pv-original", "accessModes": []any{"ReadWriteOnce"}}, "status": deploymentplan.Object{"phase": "Bound"}}
 				volume := deploymentplan.Object{"apiVersion": "v1", "kind": "PersistentVolume", "metadata": deploymentplan.Object{"name": "pv-original", "uid": "volume-original"}, "spec": deploymentplan.Object{"claimRef": deploymentplan.Object{"name": claimName, "namespace": namespace, "uid": "claim-original"}}, "status": deploymentplan.Object{"phase": "Bound"}}
 				objects := map[string]deploymentplan.Object{deploymentplan.ID(controller): controller, deploymentplan.ID(pod): pod, deploymentplan.ID(claim): claim, deploymentplan.ID(volume): volume}
@@ -227,8 +250,12 @@ else:
 				if mode == "cancelled" {
 					cancel()
 				}
-				e = backend.CheckManagedServerIdentities(ctx, plan)
-				allowed := keySet("valid", "stateful", "daemon", "mqtt", "openbao")[mode]
+				if clients {
+					e = backend.CheckManagedClientIdentities(ctx, plan)
+				} else {
+					e = backend.CheckManagedServerIdentities(ctx, plan)
+				}
+				allowed := keySet("valid", "stateful", "daemon", "mqtt", "openbao", "client")[mode]
 				if (e == nil) != allowed {
 					t.Fatal("incorrect native server qualification", mode, e)
 				}
@@ -238,7 +265,7 @@ else:
 						t.Fatal("unsanitized or unactionable failure", e)
 					}
 				}
-				if keySet("expired", "wrong-san", "wrong-key", "wrong-root", "wrong-purpose", "pending", "partial-report", "bad-fingerprint", "private-report")[mode] {
+				if keySet("expired", "wrong-san", "wrong-key", "wrong-root", "wrong-purpose", "pending", "partial-report", "bad-fingerprint", "private-report", "client-expired", "client-wrong-key", "client-wrong-purpose", "client-pending")[mode] {
 					if _, err := os.Stat(filepath.Join(directory, "executed")); err != nil {
 						t.Fatal("failure did not exercise the native inspector", err)
 					}
@@ -248,6 +275,48 @@ else:
 				}
 				if _, e := os.Lstat(statePath + ".lock"); !os.IsNotExist(e) {
 					t.Fatal("inspection created a state lock")
+				}
+			})
+		}
+	}
+}
+
+func TestClientPolicyMatchesMaintainedConsumerSubjectsAndRootAliases(t *testing.T) {
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		for _, consumer := range []struct {
+			prefix, workload, subject string
+			alias                     bool
+		}{
+			{"CERT_ISSUER_SERVICE_CLIENT", "certissuer", "service:certissuer", false},
+			{"PKI_SERVICE_CLIENT", "pki-controller", "service:pki-controller", false},
+			{"EMQX_PKI_SERVICE_CLIENT", "mqtt-pki", "service:emqx-pki", false},
+			{"OPENBAO_PKI_SERVICE_CLIENT", "openbao", "service:openbao", false},
+			{"PKI_BROKER", "mqtt-pki", "service:pkibroker", false},
+			{"VIDEO_CLOUD_CONTROLLER", "video-cloud-api-pki", "service:video-cloud-api", true},
+			{"VIDEO_CLOUD_ACCOUNT_MANAGER", "video-cloud-api-pki", "service:video-cloud-api", true},
+			{"VIDEO_CLOUD_LOG_INGESTER_MQTT", "video-cloud-logingester", "service:video-cloud-logingester", true},
+		} {
+			t.Run(environment+"/"+consumer.prefix, func(t *testing.T) {
+				rootKey := consumer.prefix + "_ROOT_SHA256"
+				if consumer.alias {
+					rootKey = consumer.prefix + "_IDENTITY_ROOT_SHA256"
+				}
+				root := strings.Repeat("a", 64)
+				object := deploymentplan.Object{"metadata": deploymentplan.Object{"name": consumer.workload, "namespace": "video-cloud-" + environment + "-video-cloud"}}
+				settings := []any{deploymentplan.Object{"name": consumer.prefix + "_IDENTITY_STATE", "value": "/identity/client.json"}, deploymentplan.Object{"name": rootKey, "value": root}}
+				container := deploymentplan.Object{"env": settings}
+				policies, err := environmentClientIdentityPolicies(object, container)
+				if err != nil || len(policies) != 1 || policies[0].Subject != consumer.subject || policies[0].Root != root || policies[0].State != "/identity/client.json" {
+					t.Fatal("maintained client policy changed", err)
+				}
+				deploymentplan.Map(object["metadata"])["name"] = "unregistered-consumer"
+				if _, err := environmentClientIdentityPolicies(object, container); err == nil {
+					t.Fatal("a different consumer borrowed the Service subject")
+				}
+				deploymentplan.Map(object["metadata"])["name"] = consumer.workload
+				deploymentplan.Map(settings[1])["valueFrom"] = deploymentplan.Object{"secretKeyRef": deploymentplan.Object{"name": "unresolved", "key": "root"}}
+				if _, err := environmentClientIdentityPolicies(object, container); err == nil {
+					t.Fatal("unresolved root policy accepted")
 				}
 			})
 		}
