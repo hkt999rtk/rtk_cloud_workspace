@@ -64,6 +64,15 @@ func defaultUnifiedDeploymentDependencies() unifiedDeploymentDependencies {
 					}
 					return deploymentplan.GateEvidence{}, &deploymentplan.Blocker{ID: "deployment.execution", Cause: "complete provider inventory/quota, native node-class capacity lower bounds, original durable-volume identity, execution lease and exact server admission passed; provider migration, candidate scheduling/rollout capacity and new-volume provisioning qualification are incomplete", Next: "complete actual execution capability checks for the selected plan; node capacity lower bounds, quota, existing-volume identity and server dry-run alone cannot authorize a full update"}
 				},
+				"deployment.pki": func(ctx context.Context, p *deploymentplan.Plan) (deploymentplan.GateEvidence, error) {
+					if err := c.Fence(ctx, p); err != nil {
+						return deploymentplan.GateEvidence{}, err
+					}
+					if err := c.Backend.CheckManagedServerIdentities(ctx, p); err != nil {
+						return deploymentplan.GateEvidence{}, err
+					}
+					return deploymentplan.GateEvidence{}, &deploymentplan.Blocker{ID: "deployment.pki", Cause: "original managed server key/chain/DNS/purpose/current-validity inspection passed; registry/issuer admission, all client and Secret identities, CRLs and consumer acknowledgments remain incomplete", Next: "complete native registry, remaining identity, revocation and consumer qualification for the same target before authorizing deployment"}
+				},
 				"deployment.release": func(ctx context.Context, p *deploymentplan.Plan) (deploymentplan.GateEvidence, error) {
 					if err := c.Fence(ctx, p); err != nil {
 						return deploymentplan.GateEvidence{}, err

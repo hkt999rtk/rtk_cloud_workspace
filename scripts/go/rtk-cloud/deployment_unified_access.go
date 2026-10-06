@@ -130,22 +130,33 @@ func (b environmentKubernetesBackend) CheckPlanAccess(ctx context.Context, plan 
 		return err
 	}
 	for _, permission := range requests {
-		attributes := map[string]string{"group": permission.Group, "resource": permission.Resource, "namespace": permission.Namespace, "name": permission.Name, "verb": permission.Verb}
-		body, _ := json.Marshal(map[string]any{"apiVersion": "authorization.k8s.io/v1", "kind": "SelfSubjectAccessReview", "spec": map[string]any{"resourceAttributes": attributes}})
-		raw, err := b.command(ctx, body, "create", "--raw=/apis/authorization.k8s.io/v1/selfsubjectaccessreviews", "-f", "-")
-		var response struct {
-			Status struct {
-				Allowed, Denied bool
-				EvaluationError string `json:"evaluationError"`
-			} `json:"status"`
+		if err := b.checkEnvironmentAccess(ctx, permission, ""); err != nil {
+			return err
 		}
-		if err != nil || json.Unmarshal(raw, &response) != nil || !response.Status.Allowed || response.Status.Denied || response.Status.EvaluationError != "" {
-			name := permission.Name
-			if name == "" {
-				name = "collection"
-			}
-			return &deploymentplan.Blocker{ID: "deployment.execution.permissions", Resource: permission.Resource + "/" + permission.Namespace + "/" + name, Cause: "selected deployment identity lacks verified " + permission.Verb + " permission for the planned resource", Next: "grant only the selected environment operation's resource/name-scoped RBAC permissions, including rollout watch access, and repeat full preflight; access reviews persist no workload resources"}
+	}
+	return nil
+}
+
+func (b environmentKubernetesBackend) checkEnvironmentAccess(ctx context.Context, permission environmentAccessRequirement, subresource string) error {
+	attributes := map[string]string{"group": permission.Group, "resource": permission.Resource, "namespace": permission.Namespace, "name": permission.Name, "verb": permission.Verb, "subresource": subresource}
+	body, _ := json.Marshal(map[string]any{"apiVersion": "authorization.k8s.io/v1", "kind": "SelfSubjectAccessReview", "spec": map[string]any{"resourceAttributes": attributes}})
+	raw, err := b.command(ctx, body, "create", "--raw=/apis/authorization.k8s.io/v1/selfsubjectaccessreviews", "-f", "-")
+	var response struct {
+		Status struct {
+			Allowed, Denied bool
+			EvaluationError string `json:"evaluationError"`
+		} `json:"status"`
+	}
+	if err != nil || json.Unmarshal(raw, &response) != nil || !response.Status.Allowed || response.Status.Denied || response.Status.EvaluationError != "" {
+		name := permission.Name
+		if name == "" {
+			name = "collection"
 		}
+		resource := permission.Resource
+		if subresource != "" {
+			resource += "/" + subresource
+		}
+		return &deploymentplan.Blocker{ID: "deployment.execution.permissions", Resource: resource + "/" + permission.Namespace + "/" + name, Cause: "selected deployment identity lacks verified " + permission.Verb + " permission for the planned resource", Next: "grant only the selected environment operation's resource/name-scoped RBAC permissions, including rollout watch access, and repeat full preflight; access reviews persist no workload resources"}
 	}
 	return nil
 }

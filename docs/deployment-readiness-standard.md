@@ -113,6 +113,21 @@ configuration. It does not validate certificate chains, SANs, expiry, live CRLs
 or acknowledgments, and cannot independently pass the complete PKI gate. Fresh
 create still requires the separate one-time bootstrap lifecycle and qualification.
 
+The PKI adapter now uses the shipped read-only `serviceidentity-bootstrap
+inspect-server` command for explicitly configured managed host states. It checks
+every original owned replica using the frozen Kubernetes identity, verifies
+name-scoped Pod get/exec authorization, original PVC/PV bindings and actual Pod
+mounts, and rechecks Pod/controller ownership after inspection. The inspector
+checks key matching, pinned three-certificate chain, exact SANs, purpose and
+current validity without exporting private keys or creating state/lock files.
+Pending state, missing/invalid public summary or owner drift is
+`deployment.pki.server-identity`. A new state, unavailable original inspector or
+unresolved policy needs bootstrap/candidate qualification; no state is initialized
+by preflight. Client identities, Secret-backed leaves, registry admission,
+revocation/CRL acknowledgments and rollout validity margin still require their
+own checks. These remaining gaps keep the complete PKI gate NO-GO even when
+server-state inspection succeeds.
+
 An old fault that blocks a necessary dependency blocks the plan. When the plan
 repairs that fault, qualify the repaired candidate's behavior before passing;
 neither unconditional old-health requirements nor ignoring dependency failures
