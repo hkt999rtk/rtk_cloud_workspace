@@ -180,3 +180,37 @@ func TestStorageStateIsEnvironmentOwnedAndPreflightCannotCreateCompletion(t *tes
 		})
 	}
 }
+
+func TestStorageImportCLIUsesExplicitSourceAndExitCodes(t *testing.T) {
+	store := makeIsolatedTestSecretStore(t, "staging")
+	workspace := writeDeploymentFixture(t, "staging", "lke")
+	cfg, err := resolveDeploymentConfig(workspace, "staging", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := t.TempDir()
+	if err := writeStorageState(filepath.Join(source, "state", "storage-preflight.json"), deploymentStorageReceipt{Environment: cfg.Environment, Purpose: cfg.Storage.RuntimeMedia.Purpose, Bucket: cfg.Storage.RuntimeMedia.Bucket, Region: cfg.Storage.RuntimeMedia.Region}); err != nil {
+		t.Fatal(err)
+	}
+	base := []string{"--workspace", workspace, "--environment", "staging", "--source-runtime", source, "--confirm", cfg.Values["CLOUD_STACK_NAME"]}
+	if err := runDeploymentStorageImport(base); err != nil {
+		t.Fatal("valid explicit evidence import failed", err)
+	}
+	if _, err := os.Stat(filepath.Join(store.Root, "deployment", "storage", "storage-preflight.json")); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"--environment", "../dev", "--source-runtime", source}, {"--environment", "staging", "--source-runtime", "relative"}, append(append([]string{}, base...), "--purpose", "unknown"), append(append([]string{}, base...), "--confirm", "other"), {"--unknown"}} {
+		if err := runDeploymentStorageImport(args); err != exitCode(2) {
+			t.Fatal("invalid import flags were not exit 2", err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(source, "state", "storage-preflight.json"), []byte(`{"environment":"staging","bucket":"private-payload-never-print"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := runDeploymentStorageImport(base); err != exitCode(1) {
+		t.Fatal("unverified evidence was not exit 1", err)
+	}
+	if err := runDeploymentStorageImport([]string{"--help"}); err != nil {
+		t.Fatal(err)
+	}
+}

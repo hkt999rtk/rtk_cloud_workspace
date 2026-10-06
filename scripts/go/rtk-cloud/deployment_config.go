@@ -780,7 +780,7 @@ func printDeploymentUsage() {
   rtk-cloud deployment create --environment NAME --confirm STACK --plan-sha256 SHA256 [--release PATH]
   rtk-cloud deployment upgrade --environment NAME --confirm STACK --plan-sha256 SHA256 [--release PATH]
   rtk-cloud deployment reconcile-execution --environment NAME --confirm STACK --plan-sha256 ORIGINAL_SHA256
-  rtk-cloud deployment storage-import-state --environment NAME --source-runtime ORIGINAL_RUNTIME --confirm STACK
+  rtk-cloud deployment storage-import-state --environment NAME --purpose media|ota|artifacts --source-runtime ORIGINAL_RUNTIME --confirm STACK
   rtk-cloud deployment acceptance --environment NAME --confirm STACK
   rtk-cloud deployment remove --environment NAME --confirm STACK
   rtk-cloud deployment storage-plan --environment NAME

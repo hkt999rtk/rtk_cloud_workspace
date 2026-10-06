@@ -280,6 +280,26 @@ func TestReinitializePlanAndActivation(t *testing.T) {
 	}
 }
 
+func TestReinitializeRejectsPublicReceiptAuthorityBeforeMutation(t *testing.T) {
+	f := newReinitializeFixture(t)
+	path := mustStorageStatePath(t, f.cfg, "storage-cutover.json")
+	if err := os.Chmod(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.checker.reinitializeStorage(f.cfg, "media", f.source, f.candidate, "old", false); err == nil {
+		t.Fatal("unprivate receipt authority accepted")
+	}
+	if _, err := os.Stat(filepath.Join(f.mockRoot, "commands")); !os.IsNotExist(err) {
+		t.Fatal("Kubernetes was touched before authority validation")
+	}
+	if f.providerWrites != 0 || len(f.canary) != 0 {
+		t.Fatal("provider or storage canary changed before authority validation")
+	}
+	if _, err := f.store.read(storageCutoverJournalName("media")); !os.IsNotExist(err) {
+		t.Fatal("failed authority check created a journal")
+	}
+}
+
 func TestReinitializeFailsBeforeWorkloadMutation(t *testing.T) {
 	for _, kind := range []string{"source exists", "canary fails", "ack differs"} {
 		t.Run(kind, func(t *testing.T) {

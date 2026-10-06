@@ -914,3 +914,6 @@ GO. Review the output and pass it as `--release` to full preflight. A dirty or
 out-of-date checkout, pending/failed latest exact-source run, wrong rerun artifact,
 missing consumer digest or mismatched backup base requires repair and a new freeze.
 No environment resources are installed by release freezing.
+## Environment-owned storage evidence
+
+Storage receipts and migration proofs live under `~/.config/rtk_cloud/<environment>/deployment/storage/` (0700 directories, 0600 files); completed private journals remain in `migration-backup/`. Preflight and deployment validate the same state. Preflight never performs cutover or creates completion evidence. Workspace runtime files are explicit legacy import sources only. See [storage evidence location and import](storage-credential-lifecycle.md#environment-owned-receipts-and-proof-location).
