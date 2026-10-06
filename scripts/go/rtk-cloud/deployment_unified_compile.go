@@ -242,6 +242,9 @@ func compileEnvironmentDeployment(ctx context.Context, cfg deploymentConfig, ope
 			seen[id] = true
 		}
 	}
+	if err := validateEnvironmentPKITransition(definitions, live); err != nil {
+		return nil, err
+	}
 	if err := validateEnvironmentDurableStorageTransition(definitions, live); err != nil {
 		return nil, err
 	}

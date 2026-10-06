@@ -318,6 +318,10 @@ func applyEnvironmentPodBindings(object deploymentplan.Object, b environmentIden
 }
 
 func environmentIdentitySetting(name string) bool {
+	switch name {
+	case "CERT_ISSUER_SERVER_CERT", "CERT_ISSUER_SERVER_KEY", "CERT_ISSUER_CLIENT_CA", "CERT_ISSUER_CA_PROVIDER":
+		return true
+	}
 	if environmentControllerPolicySetting(name) {
 		return false
 	}

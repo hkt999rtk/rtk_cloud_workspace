@@ -105,6 +105,24 @@ func TestCompleteCompilerUsesMaintainedCatalogAndFencesNativeSnapshot(t *testing
 					}
 				}
 			}
+			// Give managed controllers actual native owners, so a successful full
+			// compiler test also exercises lifecycle preservation during upgrade.
+			for _, d := range definitions {
+				name := deploymentplan.String(deploymentplan.Map(d.Object["metadata"])["name"])
+				if environmentManagedComponents[name] == "" || d.Object["kind"] != "Deployment" && d.Object["kind"] != "StatefulSet" {
+					continue
+				}
+				object := deploymentplan.Clone(d.Object)
+				id := deploymentplan.ID(object)
+				metadata := deploymentplan.Map(object["metadata"])
+				metadata["uid"], metadata["resourceVersion"] = "original-managed-"+name, "1"
+				bindings.Owners[id] = deploymentplan.String(metadata["uid"])
+				dependencies[id] = object
+			}
+			raw, _ = json.Marshal(bindings)
+			if err := store.write("deployment/identity-bindings.json", raw, true); err != nil {
+				t.Fatal(err)
+			}
 			// External durable claims must have their original native volume binding.
 			// An empty Secret-like placeholder would correctly fail storage qualification.
 			volumes := map[string]deploymentplan.Object{}
@@ -210,6 +228,22 @@ esac
 			}
 			if compiled.Plan.SHA256() != approved {
 				t.Fatal("fence mutated plan")
+			}
+			// A target that drops an existing trust pin is rejected by the public
+			// compiler before admission or execution, even with the same owner UID.
+			originalID := "Deployment/" + bindings.Stack + "-video-cloud/certissuer"
+			original := dependencies[originalID]
+			pod := environmentPKIPod(original)
+			consumer := deploymentplan.Map(pod["containers"].([]any)[0])
+			consumer["env"] = append(certIssuerObjectList(consumer["env"]), deploymentplan.Object{"name": "CERT_ISSUER_SERVICE_PKI_ROOT_FINGERPRINT", "value": "private-pin-canary"})
+			raw, _ = json.Marshal(dependencies)
+			writeTestFile(t, filepath.Join(directory, "dependencies.json"), string(raw))
+			admittedBefore := readTestFile(t, admissionPath)
+			if _, err := compileEnvironmentDeployment(context.Background(), cfg, "upgrade", ""); !errors.As(err, &blocker) || blocker.ID != "deployment.pki.bindings" || strings.Contains(err.Error(), "private-pin-canary") {
+				t.Fatal("complete compiler ignored original PKI bindings", err)
+			}
+			if readTestFile(t, admissionPath) != admittedBefore {
+				t.Fatal("PKI transition blocker ran after resource admission")
 			}
 			if err := store.write("runtime/postgres", []byte("concurrent-change"), true); err != nil {
 				t.Fatal(err)

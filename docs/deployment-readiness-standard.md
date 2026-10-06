@@ -4,7 +4,7 @@ Status: accepted deployment policy; unified implementation and environment quali
 
 Owner: `rtk_cloud_workspace`; service owners supply candidate and recovery checks.
 
-Last reviewed: 2026-10-06.
+Last reviewed: 2026-10-07.
 
 Authority: deployment scope and readiness policy. The [deployment architecture](cloud-deployment-architecture.md)
 owns configuration/provider boundaries, and [Platform PKI](../repos/rtk_cloud_contracts_doc/platform_pki.md)
@@ -100,6 +100,18 @@ blocks `deployment.execution.node-capacity`; the observer requires cluster-level
 bound, not free capacity after existing Pods, taint/affinity/volume scheduling,
 rolling-surge qualification or a provider migration. Those necessary capabilities
 remain required and incomplete; this guard cannot produce full execution GO.
+
+The shared compiler rejects ordinary updates that remove an existing PKI
+container/init container, alter its identity or trust settings, switch inherited
+configuration sources, or remap its original private-key, CRL or state mounts.
+This produces `deployment.pki.bindings` before admission. Image changes, ordinary
+application settings and maintained controller consumer policies can still change.
+Kubernetes default permissions/reference flags do not change source identity;
+actual key readability remains a startup qualification requirement. This check
+compares lifecycle references only; it never imports a live workload as desired
+configuration. It does not validate certificate chains, SANs, expiry, live CRLs
+or acknowledgments, and cannot independently pass the complete PKI gate. Fresh
+create still requires the separate one-time bootstrap lifecycle and qualification.
 
 An old fault that blocks a necessary dependency blocks the plan. When the plan
 repairs that fault, qualify the repaired candidate's behavior before passing;
