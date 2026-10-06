@@ -803,28 +803,25 @@ options for a release.
 
 ## Take Over an Existing Environment
 
-A Git clone does not include runtime or secrets. To take over the same cluster,
-transfer the allowlisted non-secret controller state from
-`cloud_env/<env>/runtime/` and separately recover the matching environment
-SecretStore under `~/.config/rtk_cloud/<env>/`. Do not copy only kubeconfig or
-reprovision from empty controller state. This handoff does not restore cloud
+A Git clone includes configuration, not deployment state. Recover the matching
+environment store under `~/.config/rtk_cloud/<env>/`, preserving original identity,
+keys, provider bindings and completion proofs, with `0700` directories and `0600`
+files. Do not transfer operational state into `cloud_env`, copy only kubeconfig,
+or reprovision from empty controller state. This handoff does not restore cloud
 databases or OpenBao.
 
-```sh
-scripts/restore-staging-runtime.sh \
-  --source-runtime /secure/path/cloud_env/staging/runtime \
-  --target-runtime "$PWD/cloud_env/staging/runtime"
+`restore-staging-runtime.sh` is retired and returns an English migration error
+without reading/copying source state. Explicitly import original storage receipts
+with `deployment storage-import-state`; other legacy provider-state migration
+must be reviewed and completed before full qualification. The normalized provider
+metadata producer and acceptance reader both use
+`~/.config/rtk_cloud/<env>/deployment/provider-preflight.env`. It contains region
+and quota metadata only and cannot substitute for any readiness gate.
 
-scripts/restore-staging-runtime.sh \
-  --check-only \
-  --target-runtime "$PWD/cloud_env/staging/runtime"
-```
-
-Then run acceptance preflight. It checks runtime identity, provider metadata,
-kubeconfig, OpenBao/PostgreSQL state, and Kubernetes API access. Any missing state
-means the handoff is incomplete. See
-[`staging-runtime-bootstrap.md`](staging-runtime-bootstrap.md) for detailed
-transfer and permission requirements.
+Then run the shared exact-release preflight and post-deploy acceptance checks.
+Missing state or unfinished migration/capability is NO-GO. The older
+[`staging-runtime-bootstrap.md`](staging-runtime-bootstrap.md) steps are historical
+context and must not be used as a fallback.
 
 ## Core Data Backup and Restore After Deployment
 

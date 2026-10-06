@@ -635,16 +635,16 @@ func TestDeploymentPreflightAcceptancePassesWithMatchingRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	for path, contents := range map[string]string{
-		"state/provider-preflight.env": "LKE_CLUSTER_ID=123\n",
-		"env/stack.env":                "CLOUD_STACK_NAME=" + cfg.Values["CLOUD_STACK_NAME"] + "\n",
+		"env/stack.env": "CLOUD_STACK_NAME=" + cfg.Values["CLOUD_STACK_NAME"] + "\n",
 	} {
 		writeTestFile(t, filepath.Join(cfg.RuntimeRoot, path), contents)
 	}
 	for path, contents := range map[string]string{
-		"kube/kubeconfig.yaml": "apiVersion: v1\n",
-		"openbao/unseal-key":   "test-unseal-key\n",
-		"openbao/root-token":   "test-root-token\n",
-		"runtime/postgres":     "test-postgres-password\n",
+		"deployment/provider-preflight.env": "PROVIDER_REGION=us-sea\n",
+		"kube/kubeconfig.yaml":              "apiVersion: v1\n",
+		"openbao/unseal-key":                "test-unseal-key\n",
+		"openbao/root-token":                "test-root-token\n",
+		"runtime/postgres":                  "test-postgres-password\n",
 	} {
 		if err := store.write(path, []byte(contents), true); err != nil {
 			t.Fatal(err)
@@ -1128,6 +1128,7 @@ func TestResolveDeploymentConfigAllowsTrackedNonSecretServiceSettings(t *testing
 }
 
 func TestMaterializeStagingE2EDeploymentConfigRequiresStorageReceiptBeforeReset(t *testing.T) {
+	makeIsolatedTestSecretStore(t, "staging")
 	workspace := writeDeploymentFixture(t, "staging", "lke")
 	appendFile(t, filepath.Join(workspace, "cloud_deploy", "architectures", "kubernetes", "workloads.env"), "VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED=true\n")
 	envRoot := filepath.Join(workspace, "cloud_env", "staging", "runtime")
@@ -1318,7 +1319,11 @@ func TestLKEAccountStateRequiredOnlyForMutation(t *testing.T) {
 	if err := materializeDeploymentRuntime(cfg); err != nil {
 		t.Fatal(err)
 	}
-	preflight := readTestFile(t, filepath.Join(cfg.RuntimeRoot, "state", "provider-preflight.env"))
+	profilePath, err := deploymentProviderProfilePath(cfg.Environment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preflight := readTestFile(t, profilePath)
 	for _, want := range []string{"PROVIDER_ACTIVE_SERVICE_LIMIT=20", "PROVIDER_REGION=us-sea"} {
 		if !strings.Contains(preflight, want+"\n") {
 			t.Fatalf("provider preflight missing %s: %q", want, preflight)

@@ -198,7 +198,7 @@ go run ./scripts/go/rtk-cloud -- deployment preflight \
 go run ./scripts/go/rtk-cloud -- deployment plan --environment qa
 ```
 
-Review the environment, logical location, minimum/effective replicas, aggregate requests for each node class, and effective count in the generic plan. Then review the resolved region and product in adapter-private `runtime/adapters/lke/resolved-resources.env`. Load tests use only normalized `runtime/state/provider-preflight.env`; they do not read adapter-private state. Perform mutation only after the plan is correct:
+Review the environment, logical location, minimum/effective replicas, aggregate requests for each node class, and effective count in the generic plan. Then review the resolved region and product in `runtime/adapters/lke/resolved-resources.env`. Normalized provider region/quota metadata lives in `~/.config/rtk_cloud/<environment>/deployment/provider-preflight.env`; it is not GO evidence, and consumers never fall back to `runtime/state/provider-preflight.env`. Perform mutation only after the plan is correct:
 
 ```sh
 go run ./scripts/go/rtk-cloud -- deployment provision \

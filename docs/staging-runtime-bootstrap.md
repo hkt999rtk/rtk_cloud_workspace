@@ -1,11 +1,16 @@
 # Staging Runtime Bootstrap and Restore
 
+Status: historical bootstrap/restore procedure; not a supported operation path.
 
 Complete create/upgrade now uses the shared v2 engine and the selected formal release.
 Required capability adapters are still being completed; missing gates remain NO-GO.
 The older bootstrap/provision sequence below is historical context, not a supported
 fallback. See [deployment operations](deployment-operations.md) and
 [the readiness standard](deployment-readiness-standard.md).
+The runtime copy tool shown below is retired and returns a migration error.
+All operational state, including redacted provider metadata, belongs in
+`~/.config/rtk_cloud/<environment>/`; descriptions below of runtime state or a
+standard copy flow reflect the older implementation and cannot override this rule.
 This document explains how to prepare the staging runtime required for MQTT/
 shadow load tests after cloning the workspace onto another macOS controller.
 

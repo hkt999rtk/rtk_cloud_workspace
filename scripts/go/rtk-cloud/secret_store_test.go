@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -43,8 +44,25 @@ func TestMain(m *testing.M) {
 	// Package tests use isolated fixture paths. Production execution never sets
 	// this test-only marker and therefore uses the canonical SecretStore.
 	_ = os.Setenv("RTK_CLOUD_TEST_MODE", "1")
+	// Preserve the existing module cache for native Go subprocesses, while
+	// indirect lifecycle calls and individual HOME fixtures use isolated stores.
+	moduleCache, err := exec.Command("go", "env", "GOMODCACHE").Output()
+	if err != nil || strings.TrimSpace(string(moduleCache)) == "" {
+		fmt.Fprintln(os.Stderr, "cannot resolve native Go module cache for isolated tests")
+		os.Exit(1)
+	}
+	testHome, err := os.MkdirTemp("", "rtk-cloud-package-home-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cannot create isolated package environment store")
+		os.Exit(1)
+	}
+	_ = os.Setenv("GOMODCACHE", strings.TrimSpace(string(moduleCache)))
+	_ = os.Setenv("HOME", testHome)
+	_ = os.Unsetenv("RTK_CLOUD_CONFIG_ROOT")
 	_ = os.Setenv("LKE_RUNTIME_SECRET_SEED", "rtk-cloud-go-test")
-	os.Exit(m.Run())
+	code := m.Run()
+	_ = os.RemoveAll(testHome)
+	os.Exit(code)
 }
 
 func TestSecretStoreInitializesEnvironmentIsolatedSecureLayout(t *testing.T) {

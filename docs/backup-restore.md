@@ -382,6 +382,7 @@ storage readback, interrupted operations and safety-backup rollback. Record
 measured downtime/RPO/RTO and all exclusions. Unit tests and local database
 drills are not evidence that LKE/OpenBao or a remote bucket has been qualified.
 
-The old [restore-staging-runtime.sh](../scripts/restore-staging-runtime.sh) copies
-only an allowlisted **non-secret controller runtime**. It is not database,
-OpenBao, certificate, SecretStore or cloud disaster recovery.
+The old [restore-staging-runtime.sh](../scripts/restore-staging-runtime.sh) is
+retired and copies no state. Follow the environment-store handoff in
+[deployment operations](deployment-operations.md#take-over-an-existing-environment).
+Operational state must not be restored into `cloud_env`.

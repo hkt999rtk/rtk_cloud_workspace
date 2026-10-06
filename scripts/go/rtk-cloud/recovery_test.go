@@ -21,7 +21,7 @@ func TestRecoveryCommandRouting(t *testing.T) {
 	}
 }
 
-func TestRecoveryLegacyRuntimeCopyExcludesSecrets(t *testing.T) {
+func TestRecoveryLegacyRuntimeCopyIsRetiredWithoutReadingOrWritingState(t *testing.T) {
 	workspace, err := workspaceRoot()
 	if err != nil {
 		t.Fatal(err)
@@ -45,20 +45,18 @@ func TestRecoveryLegacyRuntimeCopyExcludesSecrets(t *testing.T) {
 	command := func() ([]byte, error) {
 		return exec.Command("bash", filepath.Join(workspace, "scripts/restore-staging-runtime.sh"), "--source-runtime", source, "--target-runtime", target).CombinedOutput()
 	}
-	if b, err := command(); err != nil {
-		t.Fatalf("runtime copy failed: %s", b)
+	if b, err := command(); err == nil || !strings.Contains(string(b), "retired") || strings.Contains(string(b), "fixture-secret") {
+		t.Fatal("legacy operational-state copying accepted or exposed source material")
+	} else if status, ok := err.(*exec.ExitError); !ok || status.ExitCode() != 2 {
+		t.Fatal("retired copier did not return migration/input exit code")
 	}
-	if _, err = os.Stat(filepath.Join(target, "state/openbao/unseal-key")); !os.IsNotExist(err) {
-		t.Fatal("copied unseal material")
+	if _, err = os.Lstat(target); !os.IsNotExist(err) {
+		t.Fatal("retired copier created a target")
 	}
-	if _, err = os.Stat(filepath.Join(target, "services/video-cloud/video-cloud.env")); !os.IsNotExist(err) {
-		t.Fatal("copied service credentials")
-	}
-	if err = os.WriteFile(filepath.Join(source, "env/stack.env"), []byte("PASSWORD=fixture-secret\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if b, err := command(); err == nil || strings.Contains(string(b), "fixture-secret") {
-		t.Fatal("secret-bearing source accepted or exposed")
+	for path, value := range files {
+		if got, err := os.ReadFile(filepath.Join(source, path)); err != nil || string(got) != value {
+			t.Fatal("retired copier changed its source")
+		}
 	}
 }
 

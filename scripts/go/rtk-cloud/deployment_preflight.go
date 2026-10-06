@@ -366,8 +366,13 @@ func (r *deploymentPreflightReporter) result() error {
 }
 
 func validateAcceptanceRuntime(cfg deploymentConfig, reporter *deploymentPreflightReporter) {
+	providerProfile, err := deploymentProviderProfilePath(cfg.Environment)
+	if err != nil {
+		reporter.fail("runtime-state", err)
+		return
+	}
 	required := []string{
-		filepath.Join(cfg.RuntimeRoot, "state", "provider-preflight.env"),
+		providerProfile,
 		filepath.Join(cfg.RuntimeRoot, "env", "stack.env"),
 	}
 	store, err := newSecretStore("", cfg.Environment)

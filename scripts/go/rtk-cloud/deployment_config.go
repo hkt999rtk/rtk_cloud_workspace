@@ -1354,7 +1354,7 @@ func materializeDeploymentRuntime(cfg deploymentConfig) error {
 	if err := validateDeploymentDNSPlan(cfg); err != nil {
 		return err
 	}
-	for _, dir := range []string{"resolved", "env", "state", filepath.Join("adapters", cfg.Adapter), filepath.Join("dns", cfg.DNSAdapter), "services", "secrets", "devices", "artifacts", "backups"} {
+	for _, dir := range []string{"resolved", "env", "state", filepath.Join("adapters", cfg.Adapter), filepath.Join("dns", cfg.DNSAdapter), "services"} {
 		if err := os.MkdirAll(filepath.Join(cfg.RuntimeRoot, dir), 0o700); err != nil {
 			return err
 		}
@@ -1413,7 +1413,7 @@ func materializeDeploymentRuntime(cfg deploymentConfig) error {
 	if err := writeSortedEnv(filepath.Join(cfg.RuntimeRoot, "adapters", cfg.Adapter, "resolved-resources.env"), cfg.AdapterResolved, 0o600); err != nil {
 		return err
 	}
-	if err := writeSortedEnv(filepath.Join(cfg.RuntimeRoot, "state", "provider-preflight.env"), providerPreflight, 0o600); err != nil {
+	if err := writeDeploymentProviderProfile(cfg.Environment, providerPreflight); err != nil {
 		return err
 	}
 	if err := writeSortedEnv(filepath.Join(cfg.RuntimeRoot, "dns", cfg.DNSAdapter, "config.env"), cfg.DNSValues, 0o600); err != nil {
@@ -1547,6 +1547,10 @@ func deploymentLegacyLKEValues(v map[string]string, environment string) map[stri
 }
 
 func writeSortedEnv(path string, values map[string]string, mode os.FileMode) error {
+	return os.WriteFile(path, []byte(sortedEnvContents(values)), mode)
+}
+
+func sortedEnvContents(values map[string]string) string {
 	keys := make([]string, 0, len(values))
 	for k := range values {
 		keys = append(keys, k)
@@ -1558,7 +1562,7 @@ func writeSortedEnv(path string, values map[string]string, mode os.FileMode) err
 			fmt.Fprintf(&b, "%s=%s\n", k, values[k])
 		}
 	}
-	return os.WriteFile(path, []byte(b.String()), mode)
+	return b.String()
 }
 
 func normalizeDeploymentRuntime(cfg deploymentConfig) error {

@@ -56,6 +56,7 @@ not invent another workspace, worktree, external-disk or OS-specific location.
 | Account Manager bootstrap retirement guard | `deployment/account-bootstrap-retired.json` |
 | Storage preparation/completion receipts and migration proofs | `deployment/storage/` |
 | Provider operational state | `deployment/adapters/<adapter>/` |
+| Normalized provider region/quota metadata (not completion evidence) | `deployment/provider-preflight.env` |
 | Deployment reports | `deployment/reports/` |
 | Temporary deployment material | `deployment/tmp/` |
 | Protected original migration/rollback snapshots | `migration-backup/` |

@@ -314,3 +314,10 @@ coverage and the required qualification adapters are still incomplete. Frozen
 release output is restricted to the selected environment's private
 `deployment/releases/`; reports and temporary API identity files use its
 `deployment/reports/` and `deployment/tmp/` directories respectively.
+Normalized provider region/quota metadata now uses private
+`deployment/provider-preflight.env` for both production and acceptance reading;
+it is not completion or GO evidence. Changing checkouts cannot change this path,
+and missing canonical metadata cannot fall back to `runtime/state`. The old
+staging controller-state copier is retired rather than writing operational state
+back into configuration. Remaining provider-ID/account-profile/DNS-state writers
+still require migration before the configuration/state separation is complete.

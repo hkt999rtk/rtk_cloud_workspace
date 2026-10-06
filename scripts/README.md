@@ -62,8 +62,10 @@ backup, separate escrow and production qualification limits. The v1 archive is
 `scope=core`: Redis durable shadow data is included, cache is not; media/firmware
 payloads and external audit recovery are separate.
 
-`restore-staging-runtime.sh` is a narrow non-secret controller-state copy tool,
-not a database/OpenBao/SecretStore restore command.
+`restore-staging-runtime.sh` is retired: it returns an English migration error
+without copying state. Recover the selected environment store and follow
+[deployment handoff](../docs/deployment-operations.md#take-over-an-existing-environment);
+`cloud_env` is configuration only.
 
 ## Kubernetes Deployment Details
 
