@@ -78,6 +78,17 @@ not independently qualify new-volume provisioning, scheduling or data recovery;
 those remain required capability gaps. A PV-spec change during an intended resize
 also needs its independently verified migration before an ordinary update.
 
+Provider quota qualification now reads complete native account inventories for
+instances, volumes and NodeBalancers. Every page must report a consistent total;
+missing metadata/pages, duplicate IDs, denied reads or a changing inventory block
+`deployment.execution.provider-quota`. The lower-bound allocation count includes
+new unbound claims, absent StatefulSet-template claims and new LoadBalancer
+Services from the exact plan. Existing allocations are retained, and unexecuted
+deletion/shrinkage earns no quota credit. An operator-confirmed `unlimited` cap
+still requires complete live inventory. This read-only guard is necessary quota
+evidence, not complete node/VM/provider-migration capacity, CSI provisioning or
+scheduling qualification; those capabilities remain required before execution GO.
+
 An old fault that blocks a necessary dependency blocks the plan. When the plan
 repairs that fault, qualify the repaired candidate's behavior before passing;
 neither unconditional old-health requirements nor ignoring dependency failures

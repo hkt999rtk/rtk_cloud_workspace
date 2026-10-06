@@ -44,6 +44,9 @@ func defaultUnifiedDeploymentDependencies() unifiedDeploymentDependencies {
 					return deploymentplan.GateEvidence{SHA256: p.SHA256()}, nil
 				},
 				"deployment.execution": func(ctx context.Context, p *deploymentplan.Plan) (deploymentplan.GateEvidence, error) {
+					if err := c.CheckProviderQuota(ctx, p); err != nil {
+						return deploymentplan.GateEvidence{}, err
+					}
 					if err := c.Backend.CheckStorageBindings(ctx, p); err != nil {
 						return deploymentplan.GateEvidence{}, err
 					}
@@ -56,7 +59,7 @@ func defaultUnifiedDeploymentDependencies() unifiedDeploymentDependencies {
 					if err := p.Admit(ctx, c.Backend); err != nil {
 						return deploymentplan.GateEvidence{}, err
 					}
-					return deploymentplan.GateEvidence{}, &deploymentplan.Blocker{ID: "deployment.execution", Cause: "original durable-volume identity, execution lease prerequisites and exact server admission passed; provider quota/capacity, candidate scheduling and new-volume provisioning qualification are incomplete", Next: "complete actual execution capability checks for the selected plan; existing-volume identity and server dry-run alone cannot authorize a full update"}
+					return deploymentplan.GateEvidence{}, &deploymentplan.Blocker{ID: "deployment.execution", Cause: "complete provider inventory/quota, original durable-volume identity, execution lease and exact server admission passed; node capacity/provider migration, candidate scheduling and new-volume provisioning qualification are incomplete", Next: "complete actual execution capability checks for the selected plan; quota, existing-volume identity and server dry-run alone cannot authorize a full update"}
 				},
 				"deployment.release": func(ctx context.Context, p *deploymentplan.Plan) (deploymentplan.GateEvidence, error) {
 					if err := c.Fence(ctx, p); err != nil {
