@@ -230,6 +230,13 @@ func renderEnvironmentResources(env map[string]string, bindings environmentIdent
 			if err := applyEnvironmentControllerPolicy(env, object); err != nil {
 				return nil, err
 			}
+			if bindings.BootstrapCleanup != nil {
+				dependencies, err := applyEnvironmentBootstrapCleanup(env, object, *bindings.BootstrapCleanup)
+				if err != nil {
+					return nil, err
+				}
+				definitions = append(definitions, dependencies...)
+			}
 		}
 		definitions = append(definitions, deploymentplan.Definition{Object: object, Phase: "workload"})
 	}

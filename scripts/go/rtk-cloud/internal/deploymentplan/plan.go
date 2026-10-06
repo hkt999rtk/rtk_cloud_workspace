@@ -422,9 +422,9 @@ func validateLifecycle(id string, desired, current Object) error {
 		fields = []string{"selector", "serviceName", "volumeClaimTemplates", "podManagementPolicy"}
 	case "PersistentVolumeClaim":
 		fields = []string{"storageClassName", "accessModes", "volumeMode", "volumeName"}
-	case "Secret":
+	case "Secret", "ConfigMap":
 		if current["immutable"] == true && !reflect.DeepEqual(desired["data"], current["data"]) {
-			return blocked("deployment.immutable", id, "immutable Secret content differs", "use the managed secret rotation lifecycle")
+			return blocked("deployment.immutable", id, "immutable lifecycle content differs", "use the managed Secret or configuration lifecycle")
 		}
 	case "Job":
 		if !Matches(desired, current) {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -9,6 +10,63 @@ import (
 
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 )
+
+func TestBootstrapCleanupAdoptionPreservesImmutableOriginalOwners(t *testing.T) {
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		for _, mode := range []string{"valid", "mutable", "namespace-drift", "secret-drift", "foreign-environment", "invalid-record", "invalid-ca"} {
+			t.Run(environment+"/"+mode, func(t *testing.T) {
+				env, _, release := completeEnvironmentRenderFixture(environment)
+				binding := environmentBootstrapCleanupBinding{Version: 1, Environment: environment, SessionID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", NamespaceUID: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", SecretUID: "cccccccc-cccc-cccc-cccc-cccccccccccc", PolicySHA256: strings.Repeat("d", 64)}
+				if mode == "foreign-environment" {
+					binding.Environment = "other"
+				}
+				raw, _ := json.Marshal(map[string]any{"schema_version": binding.Version, "environment": binding.Environment, "session_id": binding.SessionID, "namespace_uid": binding.NamespaceUID, "secret_uid": binding.SecretUID, "policy_sha256": binding.PolicySHA256})
+				if mode == "invalid-record" {
+					raw = []byte(`{"caller_proof":true}`)
+				}
+				ca := string(testOpenBaoCAPEM(t))
+				if mode == "invalid-ca" {
+					ca = "not-a-certificate"
+				}
+				namespace := env["CLOUD_STACK_NAME"] + "-video-cloud"
+				config := deploymentplan.Object{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "pki-bootstrap-cleanup-binding", "namespace": namespace, "uid": "public-record-owner"}, "immutable": true, "data": map[string]any{"binding.json": string(raw), "ca.crt": ca}}
+				if mode == "mutable" {
+					config["immutable"] = false
+				}
+				nsUID, secretUID := binding.NamespaceUID, binding.SecretUID
+				if mode == "namespace-drift" {
+					nsUID = "11111111-1111-1111-1111-111111111111"
+				}
+				if mode == "secret-drift" {
+					secretUID = "22222222-2222-2222-2222-222222222222"
+				}
+				live := []deploymentplan.Object{
+					{"apiVersion": "v1", "kind": "Namespace", "metadata": map[string]any{"name": namespace, "uid": nsUID}},
+					config,
+					{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": "service-bootstrap-" + binding.SessionID, "namespace": namespace, "uid": secretUID}, "data": map[string]any{"private": "never-import"}},
+					{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": map[string]any{"name": "video-cloud-api-pki", "namespace": namespace, "uid": "api-owner"}, "spec": map[string]any{"template": map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"name": "app", "image": release.Images["LKE_VIDEO_CLOUD_IMAGE"].Reference}}}}}},
+				}
+				before := deploymentplan.Digest(live)
+				adopted, err := adoptEnvironmentBindings(environment, release, live)
+				if (err == nil) != (mode == "valid") {
+					t.Fatal("bootstrap owner adoption result incorrect", err)
+				}
+				if deploymentplan.Digest(live) != before {
+					t.Fatal("adoption mutated runtime")
+				}
+				if mode == "valid" {
+					if adopted.BootstrapCleanup == nil || adopted.BootstrapCleanup.SecretUID != binding.SecretUID || adopted.BootstrapCleanup.NamespaceUID != binding.NamespaceUID || adopted.BootstrapCleanup.KubernetesCA != base64.StdEncoding.EncodeToString([]byte(ca)) {
+						t.Fatal("original lifecycle owners were lost")
+					}
+					raw, _ := json.Marshal(adopted)
+					if strings.Contains(string(raw), "never-import") {
+						t.Fatal("Secret data became adoption input")
+					}
+				}
+			})
+		}
+	}
+}
 
 func TestEnvironmentAdoptionPreservesReferencesWithoutImportingWorkloadBehavior(t *testing.T) {
 	for _, environment := range []string{"dev", "staging", "prod"} {

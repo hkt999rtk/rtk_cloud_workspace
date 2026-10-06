@@ -97,12 +97,13 @@ func readBoundedEnvironmentFile(path string, private bool) ([]byte, error) {
 // Identity bindings are lifecycle-owned mounts, references and public settings.
 // They cannot carry image, replicas, resources, probes or a desired Deployment.
 type environmentIdentityBindings struct {
-	Version          int                          `json:"schema_version"`
-	Environment      string                       `json:"environment"`
-	Stack            string                       `json:"stack"`
-	Owners           map[string]string            `json:"owners"`
-	Pods             []environmentPodBindings     `json:"pods"`
-	IngressAdmission *environmentAdmissionBinding `json:"ingress_admission,omitempty"`
+	Version          int                                 `json:"schema_version"`
+	Environment      string                              `json:"environment"`
+	Stack            string                              `json:"stack"`
+	Owners           map[string]string                   `json:"owners"`
+	Pods             []environmentPodBindings            `json:"pods"`
+	IngressAdmission *environmentAdmissionBinding        `json:"ingress_admission,omitempty"`
+	BootstrapCleanup *environmentBootstrapCleanupBinding `json:"bootstrap_cleanup,omitempty"`
 }
 type environmentAdmissionBinding struct {
 	SecretName string `json:"secret_name"`
@@ -151,6 +152,9 @@ func loadEnvironmentIdentityBindings(store secretStore) (environmentIdentityBind
 func validateEnvironmentIdentityBindings(b environmentIdentityBindings, environment string) error {
 	if b.Version != 1 || b.Environment != environment || b.Stack != "video-cloud-"+environment {
 		return errors.New("deployment.bindings: exact environment and stack bindings required")
+	}
+	if err := validateEnvironmentBootstrapCleanupBinding(b.BootstrapCleanup, environment); err != nil {
+		return err
 	}
 	seen := map[string]bool{}
 	for id, uid := range b.Owners {

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -39,6 +40,21 @@ func adoptEnvironmentBindings(environment string, release environmentRelease, li
 			return b, errors.New("adoption requires unique, active, exact environment owners")
 		}
 		b.Owners[id] = uid
+		if kind == "ConfigMap" && name == "pki-bootstrap-cleanup-binding" {
+			if ns != b.Stack+"-video-cloud" || object["immutable"] != true || b.BootstrapCleanup != nil {
+				return b, errors.New("bootstrap cleanup adoption requires one immutable environment owner record")
+			}
+			data := deploymentplan.Map(object["data"])
+			var recorded environmentBootstrapCleanupBinding
+			if decodeEnvironmentJSON([]byte(deploymentplan.String(data["binding.json"])), &recorded) != nil {
+				return b, errors.New("bootstrap cleanup ownership record is invalid")
+			}
+			recorded.KubernetesCA = base64.StdEncoding.EncodeToString([]byte(deploymentplan.String(data["ca.crt"])))
+			if validateEnvironmentBootstrapCleanupBinding(&recorded, environment) != nil {
+				return b, errors.New("bootstrap cleanup adoption has foreign or invalid lifecycle references")
+			}
+			b.BootstrapCleanup = &recorded
+		}
 		if kind != "Deployment" && kind != "StatefulSet" && kind != "DaemonSet" {
 			continue
 		}
@@ -116,6 +132,14 @@ func adoptEnvironmentBindings(environment string, release environmentRelease, li
 	})
 	if len(b.Pods) == 0 {
 		return b, errors.New("no existing environment workloads available for adoption")
+	}
+	if b.BootstrapCleanup != nil {
+		if b.Owners["Namespace//"+b.Stack+"-video-cloud"] != b.BootstrapCleanup.NamespaceUID {
+			return b, errors.New("bootstrap cleanup adoption namespace UID changed")
+		}
+		if uid := b.Owners["Secret/"+b.Stack+"-video-cloud/service-bootstrap-"+b.BootstrapCleanup.SessionID]; uid != "" && uid != b.BootstrapCleanup.SecretUID {
+			return b, errors.New("bootstrap cleanup adoption Secret was replaced")
+		}
 	}
 	return b, validateEnvironmentIdentityBindings(b, environment)
 }

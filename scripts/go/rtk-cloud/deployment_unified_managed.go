@@ -12,7 +12,7 @@ import (
 var managedPKIDomains = []string{"device", "app", "service", "mqtt", "openbao_tls"}
 
 func environmentControllerPolicySetting(name string) bool {
-	return name == "PKI_REQUIRED_CONSUMERS" || strings.HasPrefix(name, "PKI_REQUIRED_CONSUMERS_") || strings.HasPrefix(name, "PKI_REQUIRED_BUNDLE_CONSUMERS_") || name == "PKI_APP_CRL_WORKER_ENABLED" || name == "PKI_SERVER_CRL_DOMAIN" || name == "PKI_REQUIRE_USER_MFA"
+	return name == "PKI_REQUIRED_CONSUMERS" || strings.HasPrefix(name, "PKI_REQUIRED_CONSUMERS_") || strings.HasPrefix(name, "PKI_REQUIRED_BUNDLE_CONSUMERS_") || name == "PKI_APP_CRL_WORKER_ENABLED" || name == "PKI_SERVER_CRL_DOMAIN" || name == "PKI_REQUIRE_USER_MFA" || strings.HasPrefix(name, "PKI_BOOTSTRAP_CLEANUP") || strings.HasPrefix(name, "PKI_BOOTSTRAP_KUBERNETES")
 }
 
 // Process policies belong to maintained settings, not live workload adoption.

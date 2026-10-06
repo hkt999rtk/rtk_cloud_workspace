@@ -251,6 +251,14 @@ only a proven no-write baseline or an already accepted unchanged target, without
 resource rollback. In-flight/partial writes, interrupted acceptance and concurrent
 owners remain fenced. The old direct-database bootstrap ACK/seal commands are
 retired; runtime acknowledgments and operator finalization use their managed paths.
+The controller now composes native bootstrap Secret/ACL cleanup from an immutable
+session owner record, checks current registered workload leaves, fences namespace
+and Secret UIDs, and confirms authenticated absence before finalization. The common
+renderer grants only exact-Secret get/delete and exact-namespace read through a
+separate projected API token. Missing/malformed bindings and uncertain deletes
+stay closed. Initial binding capture, bootstrap PVC credential cleanup, Account
+Manager sealed-credential removal and complete-environment acceptance are still
+unfinished; this adapter does not independently prove fresh-create qualification.
 The public complete entries use this
 engine and no longer select schema-1 files. Exact publication artifacts bind source,
 digest and run attempt. Complete provider/create/bootstrap adapters, complete
