@@ -257,6 +257,11 @@ func compileEnvironmentDeployment(ctx context.Context, cfg deploymentConfig, ope
 	if err != nil {
 		return nil, err
 	}
+	storage, err := backend.storageBindings(ctx, plan)
+	if err != nil {
+		return nil, err
+	}
+	plan.StorageSHA256 = deploymentplan.Digest(storage)
 	compiled := &compiledEnvironmentDeployment{Plan: plan, Release: release, Bindings: bindings, Store: store, Backend: backend, Configuration: cfg, ReleasePath: releasePath}
 	if seed := snapshot.Secrets["platform-admin"]; seed != "" {
 		compiled.BootstrapSeedSHA256 = deploymentplan.Digest(strings.TrimSpace(seed))
@@ -275,6 +280,9 @@ func (c *compiledEnvironmentDeployment) Fence(ctx context.Context, plan *deploym
 	}
 	if c == nil || c.Plan == nil || plan == nil || plan.SHA256() != c.Plan.SHA256() {
 		return errors.New("deployment.inputs: selected execution plan changed")
+	}
+	if err := c.Backend.CheckStorageBindings(ctx, plan); err != nil {
+		return err
 	}
 	if err := c.verifyAccountManagerBootstrapSeal(ctx); err != nil {
 		return err

@@ -25,6 +25,7 @@ type Inputs struct {
 	ConfigurationSHA256 string `json:"configuration_sha256"`
 	ReleaseSHA256       string `json:"release_sha256"`
 	BindingsSHA256      string `json:"bindings_sha256"`
+	StorageSHA256       string `json:"storage_sha256,omitempty"`
 }
 
 type Resource struct {

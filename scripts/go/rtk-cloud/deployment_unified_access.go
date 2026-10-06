@@ -83,6 +83,12 @@ func environmentPlanAccessRequirements(plan *deploymentplan.Plan) ([]environment
 		if resource.Action != "retain" {
 			seen[write] = true
 		}
+		if parts[0] == "PersistentVolumeClaim" && resource.Action != "create" {
+			volume := deploymentplan.String(deploymentplan.Map(resource.Baseline["spec"])["volumeName"])
+			if volume != "" {
+				seen[environmentAccessRequirement{Resource: "persistentvolumes", Name: volume, Verb: "get"}] = true
+			}
+		}
 		if resource.Action == "retire" || parts[0] == "Deployment" || parts[0] == "StatefulSet" || parts[0] == "DaemonSet" || parts[0] == "Job" || parts[0] == "PersistentVolumeClaim" {
 			watch := base
 			watch.Verb = "watch"

@@ -19,7 +19,7 @@ func TestCommonPlanPermissionsMatchCollectionCreateNamedUpdatesAndWaiting(t *tes
 			plan := &deploymentplan.Plan{Inputs: deploymentplan.Inputs{Environment: environment, Stack: stack}, Resources: []deploymentplan.Resource{
 				{ID: "Deployment/" + stack + "-platform/app", Action: "update", Desired: deploymentplan.Object{"apiVersion": "apps/v1"}},
 				{ID: "Secret/" + stack + "-platform/new", Action: "create", Desired: deploymentplan.Object{"apiVersion": "v1"}},
-				{ID: "PersistentVolumeClaim/" + stack + "-platform/state", Action: "retain", Desired: deploymentplan.Object{"apiVersion": "v1"}},
+				{ID: "PersistentVolumeClaim/" + stack + "-platform/state", Action: "retain", Desired: deploymentplan.Object{"apiVersion": "v1"}, Baseline: deploymentplan.Object{"spec": deploymentplan.Object{"volumeName": "original-volume"}}},
 				{ID: "Service/" + stack + "-platform/old", Action: "retire", Desired: deploymentplan.Object{"apiVersion": "v1"}},
 				{ID: "Namespace//" + stack + "-platform", Action: "retain", Desired: deploymentplan.Object{"apiVersion": "v1"}},
 			}}
@@ -44,6 +44,7 @@ func TestCommonPlanPermissionsMatchCollectionCreateNamedUpdatesAndWaiting(t *tes
 				{Group: "rbac.authorization.k8s.io", Resource: "clusterroles", Verb: "list"},
 				{Resource: "secrets", Namespace: stack + "-platform", Verb: "create"},
 				{Resource: "persistentvolumeclaims", Namespace: stack + "-platform", Name: "state", Verb: "watch"},
+				{Resource: "persistentvolumes", Name: "original-volume", Verb: "get"},
 				{Resource: "services", Namespace: stack + "-platform", Name: "old", Verb: "delete"},
 				{Resource: "namespaces", Verb: "list"},
 			} {

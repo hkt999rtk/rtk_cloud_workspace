@@ -19,7 +19,7 @@ func fixture(t *testing.T, environment, kind string) (Inputs, Definition, Object
 	Map(live["metadata"])["uid"] = "owner"
 	Map(live["metadata"])["resourceVersion"] = "4"
 	live["status"] = Object{"readyReplicas": float64(1)}
-	return Inputs{environment, stack, "upgrade", Digest("configuration"), Digest("release"), Digest("bindings")}, Definition{Object: wanted, Phase: "workload"}, live
+	return Inputs{Environment: environment, Stack: stack, Operation: "upgrade", ConfigurationSHA256: Digest("configuration"), ReleaseSHA256: Digest("release"), BindingsSHA256: Digest("bindings")}, Definition{Object: wanted, Phase: "workload"}, live
 }
 
 func TestAllEnvironmentsUseSameCompleteResourcePlan(t *testing.T) {

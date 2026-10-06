@@ -66,6 +66,18 @@ workloads. These access reviews, execution-lease checks and server dry-run are
 partial execution evidence: capacity, quota, placement and storage qualification
 must also pass before the complete execution gate can be GO.
 
+Existing durable claims now bind the plan to a separate `storage_sha256` input:
+the original PVC UID/allocation, native PV UID, and complete PV specification.
+Planning reads the native bound owner and requires its `claimRef` to match the
+original claim UID, namespace and name. Execution qualification and every phase
+fence repeat that proof. A replaced/lost claim or PV, changed volume handle or
+cross-environment binding is `deployment.execution.storage`; pure status and
+resource-version updates do not change storage identity. The observer requests
+only exact-volume `get` permission and persists no volume resources. This does
+not independently qualify new-volume provisioning, scheduling or data recovery;
+those remain required capability gaps. A PV-spec change during an intended resize
+also needs its independently verified migration before an ordinary update.
+
 An old fault that blocks a necessary dependency blocks the plan. When the plan
 repairs that fault, qualify the repaired candidate's behavior before passing;
 neither unconditional old-health requirements nor ignoring dependency failures
