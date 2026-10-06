@@ -490,7 +490,7 @@ func (r Resource) Body(current Object) (Object, error) {
 }
 
 func retirable(kind string) bool {
-	return controller(kind) || kind == "Job" || kind == "Service" || kind == "NetworkPolicy" || kind == "Ingress" || kind == "IngressClass" || kind == "ValidatingWebhookConfiguration" || kind == "Role" || kind == "RoleBinding" || kind == "ClusterRole" || kind == "ClusterRoleBinding" || kind == "ServiceAccount" || kind == "PodDisruptionBudget" || kind == "HorizontalPodAutoscaler"
+	return controller(kind) || kind == "Job" || kind == "CronJob" || kind == "Service" || kind == "NetworkPolicy" || kind == "Ingress" || kind == "IngressClass" || kind == "ValidatingWebhookConfiguration" || kind == "Role" || kind == "RoleBinding" || kind == "ClusterRole" || kind == "ClusterRoleBinding" || kind == "ServiceAccount" || kind == "PodDisruptionBudget" || kind == "HorizontalPodAutoscaler"
 }
 
 type Summary struct {

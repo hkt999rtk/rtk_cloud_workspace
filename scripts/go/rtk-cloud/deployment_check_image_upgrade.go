@@ -361,6 +361,10 @@ func verifyDeploymentUpgradeImageCI(ctx context.Context, workspace, image string
 // Unified release qualification passes the manifest's exact source revision;
 // it never resolves a mutable tag or silently substitutes the current checkout.
 func verifyDeploymentUpgradeImageCIAt(ctx context.Context, image, sha string) error {
+	return verifyDeploymentUpgradeImageCIAtWithCommand(ctx, image, sha, deploymentUpgradeCommand)
+}
+
+func verifyDeploymentUpgradeImageCIAtWithCommand(ctx context.Context, image, sha string, run func(context.Context, string, ...string) ([]byte, error)) error {
 	source, err := deploymentUpgradeImageSource(image)
 	if err != nil {
 		return err
@@ -368,7 +372,7 @@ func verifyDeploymentUpgradeImageCIAt(ctx context.Context, image, sha string) er
 	if !deploymentUpgradeSHA.MatchString(sha) {
 		return errors.New("candidate source revision is invalid")
 	}
-	raw, err := deploymentUpgradeCommand(ctx, "docker", "image", "inspect", image, "--format", "{{json .Config.Labels}}")
+	raw, err := run(ctx, "docker", "image", "inspect", image, "--format", "{{json .Config.Labels}}")
 	if err != nil {
 		return err
 	}
@@ -378,7 +382,7 @@ func verifyDeploymentUpgradeImageCIAt(ctx context.Context, image, sha string) er
 	}
 	repo := "hkt999rtk/" + source.RepoName
 	for _, workflow := range []string{"ci.yml", "release.yml"} {
-		raw, err := deploymentUpgradeCommand(ctx, "gh", "api", "repos/"+repo+"/actions/workflows/"+workflow+"/runs?head_sha="+sha+"&per_page=100")
+		raw, err := run(ctx, "gh", "api", "repos/"+repo+"/actions/workflows/"+workflow+"/runs?head_sha="+sha+"&per_page=100")
 		if err != nil {
 			return err
 		}
@@ -387,7 +391,7 @@ func verifyDeploymentUpgradeImageCIAt(ctx context.Context, image, sha string) er
 			return fmt.Errorf("%s %s: %w", source.Key, workflow, err)
 		}
 		if workflow == "release.yml" {
-			raw, err = deploymentUpgradeCommand(ctx, "gh", "api", fmt.Sprintf("repos/%s/actions/runs/%d/jobs?per_page=100", repo, runID))
+			raw, err = run(ctx, "gh", "api", fmt.Sprintf("repos/%s/actions/runs/%d/jobs?per_page=100", repo, runID))
 			if err != nil {
 				return err
 			}

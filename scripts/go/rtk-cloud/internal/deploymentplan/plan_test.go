@@ -553,6 +553,29 @@ func TestControlledRetirementFencesUIDAndVersionAndPreservesData(t *testing.T) {
 	}
 }
 
+func TestCronJobRetirementPreservesOriginalOwnerAndRejectsDrift(t *testing.T) {
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		t.Run(environment, func(t *testing.T) {
+			in, _, _ := fixture(t, environment, "Deployment")
+			live := Object{"apiVersion": "batch/v1", "kind": "CronJob", "metadata": Object{"name": "scheduled-worker", "namespace": in.Stack + "-platform", "uid": "original-worker", "resourceVersion": "4", "labels": Object{"rtk.realtek.com/stack": in.Stack}}, "spec": Object{"schedule": "*/15 * * * *", "suspend": false}}
+			d := Definition{Phase: "retirement", Retire: true, Object: Object{"apiVersion": "batch/v1", "kind": "CronJob", "metadata": Object{"name": "scheduled-worker", "namespace": in.Stack + "-platform"}}}
+			plan, err := Compile(in, []Definition{d}, []Object{live})
+			if err != nil || plan.Resources[0].Action != "retire" {
+				t.Fatal("explicit scheduled worker retirement was rejected", err)
+			}
+			body, err := plan.Resources[0].Body(live)
+			if err != nil || Map(body["metadata"])["uid"] != "original-worker" || Map(body["metadata"])["resourceVersion"] != "4" {
+				t.Fatal("scheduled worker owner fence was lost", err)
+			}
+			changed := Clone(live)
+			Map(changed["metadata"])["uid"] = "replacement-worker"
+			if _, err := plan.Resources[0].Body(changed); err == nil {
+				t.Fatal("replacement scheduled worker could be retired")
+			}
+		})
+	}
+}
+
 func TestNewOwnerIsJournaledAndConcurrentReplacementStopsCompletion(t *testing.T) {
 	for _, replace := range []bool{false, true} {
 		in, d, _ := fixture(t, "dev", "Deployment")

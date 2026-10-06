@@ -128,6 +128,10 @@ Secrets and PVCs through their own lifecycles. Immutable fields, incompatible
 storage/schema or a trust-root change produce a named migration blocker. Never
 silently delete and recreate them. Retire workloads/routes only with exact owner
 preconditions; retirement cannot implicitly delete identity or persistent data.
+Reviewed scheduled-worker retirement includes CronJobs. Native deletion uses
+foreground propagation with the original UID and current resource version,
+then waits for deletion; rejected preconditions stop execution. Secrets,
+ConfigMaps, namespaces and PVCs retain their separate lifecycle protections.
 
 The common Redis and Prometheus targets use maintained persistent claims
 (`redis-data` and `video-cloud-prometheus-data`) in every environment. Shared

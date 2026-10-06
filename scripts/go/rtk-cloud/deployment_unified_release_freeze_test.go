@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 )
 
 func TestFreezeLatestReleaseUsesFrozenGitlinksAndExactPublicationForAllEnvironments(t *testing.T) {
@@ -149,6 +151,93 @@ func TestFreezeLatestReleaseUsesFrozenGitlinksAndExactPublicationForAllEnvironme
 						if count != 2 {
 							t.Fatal("source not fenced after publication", directory, count)
 						}
+					}
+					// Exercise the verifier used by real preflight against the complete
+					// frozen release, including every shared-image consumer and backup.
+					for _, verifyMode := range []string{"valid", "workspace-drift", "leaf-dirty", "gitlink-drift", "pull-failed", "OCI-drift", "CI-failed", "backup-source", "backup-base", "private-error"} {
+						t.Run("verify/"+verifyMode, func(t *testing.T) {
+							candidate := release
+							candidate.Images = map[string]environmentReleaseImage{}
+							for key, image := range release.Images {
+								candidate.Images[key] = image
+							}
+							if verifyMode == "workspace-drift" {
+								candidate.WorkspaceRevision = strings.Repeat("e", 40)
+							}
+							if verifyMode == "backup-source" {
+								image := candidate.Images["LKE_POSTGRES_BACKUP_RUNNER_IMAGE"]
+								image.SourceRevision = leafSHA
+								candidate.Images["LKE_POSTGRES_BACKUP_RUNNER_IMAGE"] = image
+							}
+							pulled := map[string]bool{}
+							verifyRun := func(ctx context.Context, command string, args ...string) ([]byte, error) {
+								if err := ctx.Err(); err != nil {
+									return nil, err
+								}
+								if command == "git" && args[2] == "status" && args[1] != cfg.Workspace && verifyMode == "leaf-dirty" {
+									return []byte(" M source.go\n"), nil
+								}
+								if command == "git" && args[2] == "ls-tree" && verifyMode == "gitlink-drift" {
+									return []byte("160000 commit " + strings.Repeat("e", 40) + "\t" + args[5] + "\n"), nil
+								}
+								if command == "docker" {
+									if args[0] == "pull" {
+										if len(args) != 4 || args[1] != "--platform" || args[2] != "linux/amd64" {
+											t.Fatal("release pull did not select the qualified platform", args)
+										}
+										pulled[args[3]] = true
+										if verifyMode == "pull-failed" {
+											return nil, errors.New("private-pull-output")
+										}
+										return nil, nil
+									}
+									sha, base := leafSHA, providers.Images["LKE_POSTGRES_IMAGE"].Reference
+									if strings.Contains(args[2], "/postgres-backup@") {
+										sha = rootSHA
+										if verifyMode == "backup-base" {
+											base = "postgres:unapproved"
+										}
+									}
+									if verifyMode == "OCI-drift" {
+										sha = strings.Repeat("e", 40)
+									}
+									return json.Marshal(map[string]string{"org.opencontainers.image.revision": sha, "org.opencontainers.image.base.name": base})
+								}
+								if command == "gh" {
+									if verifyMode == "private-error" {
+										return nil, errors.New("credential=never-public")
+									}
+									if strings.Contains(args[1], "/jobs?") {
+										return []byte(`{"total_count":1,"jobs":[{"name":"Publish LKE image","status":"completed","conclusion":"success"}]}`), nil
+									}
+									if verifyMode == "CI-failed" && strings.Contains(args[1], "/workflows/") {
+										return []byte(`{"total_count":0,"workflow_runs":[]}`), nil
+									}
+								}
+								return run(ctx, command, args...)
+							}
+							err := verifyEnvironmentReleaseWithCommand(context.Background(), cfg, candidate, verifyRun)
+							if (err == nil) != (verifyMode == "valid") {
+								t.Fatal("frozen release verification accepted drift or omitted evidence", err)
+							}
+							if verifyMode == "valid" {
+								for _, image := range candidate.Images {
+									if !pulled[image.Reference] {
+										t.Fatal("release consumer image was not verified", image.Reference)
+									}
+								}
+							}
+							if verifyMode == "private-error" {
+								plan := &deploymentplan.Plan{}
+								q, err := plan.Qualify(context.Background(), deploymentplan.QualificationOptions{}, map[string]deploymentplan.GateCheck{"deployment.release": func(ctx context.Context, _ *deploymentplan.Plan) (deploymentplan.GateEvidence, error) {
+									return deploymentplan.GateEvidence{}, verifyEnvironmentReleaseWithCommand(ctx, cfg, candidate, verifyRun)
+								}})
+								raw, _ := json.Marshal(q)
+								if err == nil || strings.Contains(string(raw), "never-public") {
+									t.Fatal("private publisher error became public evidence")
+								}
+							}
+						})
 					}
 				}
 			})

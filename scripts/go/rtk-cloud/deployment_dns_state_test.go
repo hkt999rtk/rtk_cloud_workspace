@@ -153,7 +153,17 @@ func TestDNSImportVerifiesOriginalRecordsAndPreservesSources(t *testing.T) {
 					}
 				}
 				cfg := deploymentConfig{Environment: environment, DNSAdapter: "godaddy", Values: map[string]string{"CLOUD_ENV_NAME": environment, "CLOUD_STACK_NAME": stack, "CLOUD_DNS_ROOT_DOMAIN": "example.test"}, DNSValues: map[string]string{"DNS_RECORD_TTL": "600"}}
-				count, err := importDeploymentDNSState(context.Background(), cfg, source, &goDaddyDNSAdapter{client: server.Client(), apiRoot: server.URL})
+				var count int
+				var err error
+				if mode == "valid" || mode == "denied" || mode == "drift" {
+					workspace := writeDeploymentFixture(t, environment, "lke")
+					err = runDeploymentDNSImport([]string{"--workspace", workspace, "--environment", environment, "--source-runtime", source, "--confirm", stack})
+					if err == nil {
+						count = 4
+					}
+				} else {
+					count, err = importDeploymentDNSState(context.Background(), cfg, source, &goDaddyDNSAdapter{client: server.Client(), apiRoot: server.URL})
+				}
 				if mode != "valid" {
 					if err == nil {
 						t.Fatal("unsafe import passed")

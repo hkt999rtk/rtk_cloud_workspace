@@ -75,7 +75,13 @@ func TestProviderImportVerifiesOriginalAPIOwnerAndPreservesSourcesForAllEnvironm
 					responses["/lke/clusters/123"] = "__ERROR_403__"
 				}
 				log := fakeDeploymentPreflightLKERead(t, responses)
-				count, err := importDeploymentProviderState(context.Background(), cfg, source, store.KubeconfigPath())
+				count := 0
+				if mode == "valid" {
+					err = runDeploymentProviderImport([]string{"--workspace", workspace, "--environment", environment, "--source-runtime", source, "--confirm", cfg.Values["CLOUD_STACK_NAME"]})
+					count = 2
+				} else {
+					count, err = importDeploymentProviderState(context.Background(), cfg, source, store.KubeconfigPath())
+				}
 				if (err == nil) != (mode == "valid") {
 					t.Fatal("incorrect provider import decision", mode, err)
 				}
