@@ -1056,22 +1056,16 @@ func verifyLiveServiceClientRegistry(kubeconfig, namespace string, deployments l
 	}
 	output, commandErr := secretCheckKubectl(runtimes, true, "--kubeconfig", kubeconfig, "-n", namespace, "exec", pods.Items[0].Metadata.Name, "--", "/app/pkicontroller", "recovery-inventory-service-client", issuerID, rootSHA, consumers)
 	start, end := strings.IndexByte(string(output), '{'), strings.LastIndexByte(string(output), '}')
-	var report struct {
-		Status                 string `json:"status"`
-		Issuances              int    `json:"issuances"`
-		PendingIssuances       int    `json:"pending_issuances"`
-		InvalidRecords         int    `json:"invalid_records"`
-		UnpublishedRevocations int    `json:"unpublished_revocations"`
-		MissingAcknowledgments int    `json:"missing_acknowledgments"`
-	}
-	if start < 0 || end < start || json.Unmarshal(output[start:end+1], &report) != nil {
+	var report serviceClientInventoryReport
+	if start < 0 || end < start || decodeEnvironmentJSON(output[start:end+1], &report) != nil {
 		return secretCheckFailure(commandErr, "pki-controller Service client registry verification did not return a valid report")
 	}
 	if report.Status == "service-client-registry-inventory-incomplete" {
 		return secretCheckFailure(commandErr, "pki-controller Service client registry inventory did not complete; check controller database grants and query errors")
 	}
-	if commandErr != nil || report.Status != "service-client-registry-inventory-checked" || report.Issuances == 0 || report.PendingIssuances != 0 || report.InvalidRecords != 0 || report.UnpublishedRevocations != 0 || report.MissingAcknowledgments != 0 {
-		return secretCheckFailure(commandErr, fmt.Sprintf("pki-controller Service client registry is incomplete: issuances=%d pending=%d invalid=%d unpublished_revocations=%d missing_acknowledgments=%d", report.Issuances, report.PendingIssuances, report.InvalidRecords, report.UnpublishedRevocations, report.MissingAcknowledgments))
+	if commandErr != nil || validateServiceClientInventoryReport(report, namespace, issuerID, rootSHA, time.Now().UTC()) != nil {
+		return secretCheckFailure(commandErr, "pki-controller Service client registry evidence is incomplete, stale or differs from its selected issuer, Root and environment")
 	}
+
 	return nil
 }

@@ -386,3 +386,22 @@ This target-workload verifier does not qualify PKI, candidate compatibility,
 network/business flows, recovery or production. Those required adapters and
 actual environment qualification remain incomplete; no full GO follows from
 these local tests or healthy workloads.
+
+
+### Service client CRL inventory evidence
+
+Service client recovery/readiness inventory now enforces the same original Root
+and intermediate CRL checks as server inventory. Every configured consumer must
+acknowledge each current CRL digest; empty/duplicate policy, old-digest receipts,
+a revoked intermediate, missing publication receipts and revoked serials omitted
+from the current CRL block verification. The checker uses an existing read-only
+repeatable PostgreSQL snapshot and never signs, publishes or fabricates receipts.
+
+The workspace consumer requires explicit nonnegative counters plus the exact
+selected environment/namespace, Service domain, issuer, Root fingerprint and a
+fresh snapshot time (at most five minutes old, at most five seconds ahead).
+Omitted counters do not mean zero. A checked status alone cannot qualify the
+inventory, and legacy/malformed reports require exact-source republication rather
+than a fallback. These checks repair necessary Service-domain evidence; complete
+PKI bindings, mounted identities, other trust domains and lifecycle/restore
+qualification remain separate required work. No environment GO is claimed here.
