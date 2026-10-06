@@ -63,6 +63,7 @@ not invent another workspace, worktree, external-disk or OS-specific location.
 | Normalized provider region/quota metadata (not completion evidence) | `deployment/provider-preflight.env` |
 | Temporary native Kubernetes / Docker / Buildx client identity and state | `deployment/tmp/` (operation-owned directories removed on success/failure) |
 | Deployment reports | `deployment/reports/` |
+| LKE provision operational summary | `deployment/artifacts/lke-provision/<operation-timestamp>/summary.json` |
 | Temporary deployment material | `deployment/tmp/` |
 | Protected original migration/rollback snapshots | `migration-backup/` |
 
@@ -83,7 +84,12 @@ Legacy deployment writers that still use workspace runtime are migration work
 and do not conform to this boundary. Storage evidence placement is implemented
 by this change. Edge/TURN deployment artifacts and their relay reader now use
 private `deployment/artifacts/edge-haproxy/` and `deployment/artifacts/coturn-vm/`
-with no checkout fallback or duplicate TURN summary. Remaining service,
+with no checkout fallback or duplicate TURN summary.
+LKE provision summaries also use private `deployment/artifacts/lke-provision/`;
+the legacy artifact-directory option cannot select another summary destination.
+The selected environment must be explicit and match maintained configuration.
+These summaries describe an operation and are not completion receipts or GO
+evidence. Remaining service,
 temporary and report writers are part of the
 unified deployment replacement and must be corrected before claiming completion.
 

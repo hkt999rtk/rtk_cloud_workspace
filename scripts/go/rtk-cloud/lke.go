@@ -3425,8 +3425,13 @@ func runRemoveAllLKE(envRoot string, env map[string]string, confirmed bool) erro
 }
 
 func writeLKEProvisionArtifacts(paths provisionPaths, env map[string]string) (string, error) {
-	dir := filepath.Join(paths.ArtifactsDir, "lke-provision-"+time.Now().UTC().Format("20060102T150405Z"))
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	environment, _, err := lkeProviderTarget(paths, env)
+	if err != nil {
+		return "", err
+	}
+	relative := filepath.Join("deployment", "artifacts", "lke-provision", time.Now().UTC().Format("20060102T150405.000000000Z"), "summary.json")
+	path, err := privateDeploymentStatePath(environment, relative)
+	if err != nil {
 		return "", err
 	}
 	namespaces := []string{}
@@ -3454,10 +3459,10 @@ func writeLKEProvisionArtifacts(paths provisionPaths, env map[string]string) (st
 	if err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "summary.json"), append(body, '\n'), 0o644); err != nil {
+	if err := writePrivateDeploymentState(environment, relative, append(body, '\n')); err != nil {
 		return "", err
 	}
-	return dir, nil
+	return filepath.Dir(path), nil
 }
 
 func lkeNamespaces(env map[string]string) []lkeNamespace {
