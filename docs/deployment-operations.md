@@ -4,7 +4,7 @@ Status: active
 
 Owner: `rtk_cloud_workspace`
 
-Last reviewed: 2026-10-05
+Last reviewed: 2026-10-06
 
 Audience: internal deployment operators and new maintainers
 
@@ -13,20 +13,31 @@ creating a new environment, taking over an existing environment from another
 controller, and accepting an existing deployment. Linode staging uses only
 LKE/Kubernetes; the legacy VM runtime is not an active deployment path.
 
+Complete-environment GO/NO-GO is defined by the accepted
+[Unified Deployment Readiness Standard](deployment-readiness-standard.md).
+The public complete plan/preflight/create/upgrade entries now select the shared
+v2 engine. Required capability adapters are still being completed and missing
+adapters remain BLOCKED / NO-GO in every environment. Legacy schema-1 preparation
+and complete provision entries are retired. The narrower image-only and current
+health checks do not replace complete qualification. No production activation
+qualification has been completed by these documentation/code changes.
+
 ## Select the Operation First
 
 | Scenario | Correct entry point | Modifies cloud resources? |
 | --- | --- | --- |
-| Check tracked configuration | `deployment preflight --operation plan` | No |
+| Check tracked configuration | `deployment plan --operation upgrade --release RELEASE.json` | No |
 | Check an existing-workload image upgrade | `scripts/check-deployment-preflight.sh --environment NAME --operation image-upgrade --manifest PLAN.json --image GHCR_DIGEST` | No cloud writes; validates exact candidate, CI, schema, startup and retained identity/configuration |
-| Check whether the desired deployment can proceed | `scripts/check-deployment-preflight.sh --environment NAME` | No; read-only prerequisites and route migration assessment |
+| Check whether the desired deployment can proceed | `scripts/check-deployment-preflight.sh --environment NAME` | No; shared target plan and every required evidence gate |
 | Check the health of an existing deployment | `scripts/check-deployment-health.sh --environment NAME` | No; read-only live environment checks |
-| Create a new environment | `deployment plan` -> `deployment provision` | Provision does |
+| Create a new environment | `deployment plan --operation create` -> complete preflight -> `deployment create --plan-sha256 SHA256` | Provision does |
 | Upgrade persistent staging | Reviewed plan and CI image provenance -> `deployment upgrade` (or a scoped existing-workload rollout) | Updates selected resources; never implies reset |
 | Check Console release features | `deployment console-check --environment NAME --cloud-id UUID --product-id UUID --test-account-id UUID` | Uses an existing Test Lab account; creates private login sessions, otherwise GET/HEAD only |
-| Take over an existing environment | Transfer matching non-secret controller state and SecretStore -> `deployment preflight --operation acceptance` | Preflight does not |
+| Take over an existing environment | Transfer matching controller state and SecretStore -> complete preflight and current health check | Preflight does not |
 | Prepare or migrate Object Storage | [Storage policy](object-storage-policy.md) and [storage operations](storage-credential-lifecycle.md) | Only explicitly selected bootstrap/migration/cutover steps |
 | Restore core data after deployment | [Matched backup/restore procedure](backup-restore.md) under a maintenance/write fence | Explicit restore replaces selected datasets after a safety backup |
+| Reconcile an interrupted deployment | `deployment reconcile-execution --environment NAME --plan-sha256 ORIGINAL_SHA --confirm video-cloud-NAME` on the original controller | Releases only verified original execution fences; archives receipts without resource rollback. Partial writes or uncertain acceptance require separately qualified recovery. Repeat complete preflight afterward. |
+| Import original storage completion evidence | `deployment storage-import-state --environment NAME --purpose media\|ota --source-runtime ORIGINAL_RUNTIME --confirm STACK` | Writes validated original evidence to the canonical environment directory; never changes cloud resources or generates a new completion time. See [storage evidence migration](storage-credential-lifecycle.md#environment-owned-receipts-and-proof-location). |
 | Schedule online PostgreSQL backups | [Daily PostgreSQL procedure](postgres-backup-restore.md) and isolated restore qualification | Creates dedicated backup resources; production scheduling requires measured evidence |
 | Accept an existing environment | `deployment acceptance` | Creates or updates test data; does not rebuild the deployment |
 | One-time environment rehearsal | `deployment test` | Creates resources and removes the owned resources at the end |
@@ -133,23 +144,26 @@ still queried and reported.
 
 ## Read-Only Preflight
 
-Preflight does not materialize runtime, modify tracked files, or call cloud
-mutation APIs:
+Complete preflight derives the entire target in memory from maintained settings,
+managed lifecycle bindings and an immutable formal release. It does not require
+or discover a private workload-spec plan. The default selected release is
+`~/.config/rtk_cloud/<environment>/deployment/release.json`; `--release` selects
+another explicit manifest. `deployment plan` prints a sanitized plan, not GO.
 
 ```sh
-go run ./scripts/go/rtk-cloud -- deployment preflight \
-  --environment staging \
-  --operation plan
-
-go run ./scripts/go/rtk-cloud -- deployment preflight \
-  --environment staging \
-  --operation provision
+go run ./scripts/go/rtk-cloud -- deployment plan \
+  --environment staging --operation upgrade --release /reviewed/release.json
+scripts/check-deployment-preflight.sh \
+  --environment staging --release /reviewed/release.json \
+  --report /private/controller/staging-preflight.json
 ```
 
-`plan` validates the tracked environment schema and basic tools. `provision`
-additionally validates provider, DNS, GHCR, SSH key, active-service limit, and
-existing-cluster safety state. Output shows only `PASS/WARN/FAIL`, never credential
-values. Correct every `FAIL` before proceeding to provisioning.
+Review the reported plan SHA-256. Every required gate must PASS; FAIL, ERROR,
+BLOCKED, SKIPPED or missing evidence means NO-GO. `--fast` cannot authorize a
+complete update. The report includes stable gate IDs, cause, repair, impact and
+recheck instructions, without desired Secret values or private baseline specs.
+English output uses exit codes 0 (selected operation passed), 1 (NO-GO/check
+failure), 2 (invalid invocation/configuration).
 
 ## Existing Pod image upgrade: GO / NO-GO
 
@@ -230,45 +244,26 @@ scripts/check-deployment-health.sh --environment staging --fast \
 # Direct Go entry points:
 go run ./scripts/go/rtk-cloud -- deployment check --phase pre-deploy --environment staging --fast
 go run ./scripts/go/rtk-cloud -- deployment check --phase post-deploy --environment staging --fast
-# Full pull of an affected, reviewed CI image, without provider writes:
-scripts/check-deployment-preflight.sh --environment staging \
-  --checks ghcr --image "$RELEASE_IMAGE"
+# Scoped pull evidence; this is not complete release GO:
+go run ./scripts/go/rtk-cloud -- deployment credentials-check --environment staging \
+  --read-only --checks ghcr --image "$RELEASE_IMAGE"
 ```
 
-The shell builds the checker once and executes it once. The two named entries
-are read-only: they never deploy or repair resources. `--fast` controls depth,
-not deployment phase. They reject conflicting `--phase` or `--read-only=false`
-arguments rather than silently changing their purpose. Default full-deployment pre-deploy PASS qualifies the selected deployment inputs.
-The legacy static path does not claim the old deployment is healthy; the managed
-replacement plan below additionally requires the health of retained dependencies. Existing routes that the
-deployment can safely migrate are reported as planned changes, while foreign
-ownership, identity policy and unavailable prerequisites still block deployment.
-The pre-deploy facade qualifies the default whole-environment create/upgrade
-path. It refuses the legacy whole-Deployment renderer when CertIssuer already
-uses managed host identity, Service PKI or a managed identity sidecar; even a
-down workload keeps this protection. A full managed-PKI upgrade is unsupported
-by that legacy renderer and must not receive a deployability PASS. Dev/Staging
-may instead select the private complete replacement plan described in
-[Full managed workload upgrade](#full-managed-workload-upgrade). The default
-preflight and `deployment upgrade` both discover that same environment-local
-plan; this is not the `image-upgrade` operation. A reviewed targeted
-`provision --deploy --workloads ...` rollout and a route-only `provision --dns`
-operation are distinct paths: they preserve the managed CertIssuer workload and
-have their own required deployment/route prerequisites. An image change alone
-does not authorize a full renderer replacement.
-Post-deploy requires the selected environment's SecretStore, kubeconfig, live
-Secret mirrors, workload rollout/Pod health and PKI/public-mTLS checks even when `--checks` narrows provider/TLS/mount
-checks. Missing kubeconfig blocks dependent live checks. Post-deploy PASS does
-not replace application acceptance or the release gates below.
+The shell builds the checker once and preserves its 0/1/2 exit status.
+Both named scripts are read-only. Complete preflight uses the same compiler and
+resource bodies as create/upgrade; no schema-1 file selects a different renderer.
+A production protection profile adds HA, custody/escrow and recovery/lifecycle
+qualification to the same required-gate engine. Missing implementation or evidence
+blocks every environment consistently. `--fast` reports required gates SKIPPED.
 
-`deployment preflight --operation provision` remains the prerequisite-only
-entry. `deployment preflight --operation acceptance` validates current live
-state before acceptance. The legacy `check-deployment-credentials.sh` and
-`deployment check` without `--phase` retain post-deploy behavior and identify it
-in their startup explanation. Their standard mode retains provider write
-canaries; use the named read-only entries for routine pre/post checks. Legacy
-`deployment credentials-check` keeps its provider/local-only behavior and
-existing provisioning callers.
+Use `deployment credentials-check` for a scoped provider/image/TLS check; full
+preflight does not accept `--checks`, ad hoc `--image` or `--manifest` inputs in
+place of the selected release. Use `--operation image-upgrade` only for the
+separately described narrower existing-consumer update.
+Post-deploy health still checks the existing runtime. Its PASS is health evidence,
+not complete release/plan acceptance or permission to initialize identities.
+The legacy credentials script defaults to post-deploy provider canaries; use the
+named health entry for routine read-only inspection.
 
 | Mode | Provider writes and receipts | Explicit `--image` |
 | --- | --- | --- |
@@ -303,90 +298,80 @@ the [release gates below](#upgrade-persistent-staging-release-gates).
 See [checker options and PKI gates](../scripts/README.md#existing-environment-deployment-checks)
 for TLS/mount qualification, optional PKI checks and explicit credential repairs.
 
-## Full managed workload upgrade
+## Retired schema-1 managed workload upgrade
 
-For an existing Dev or Staging managed-PKI environment, an operator may authorize
-complete Deployment-spec replacement. Prepare the private desired-state plan:
-
-```sh
-go run ./scripts/go/rtk-cloud -- deployment prepare-upgrade \
-  --environment staging --confirm video-cloud-staging \
-  --image "$VIDEO_CLOUD_IMAGE" --image "$ACCOUNT_MANAGER_IMAGE"
-```
-
-Supply each changed package as an official immutable GHCR `@sha256` image.
-The planner replaces that package on **all** existing Deployment consumers,
-including APIs, workers, sidecars and bootstrap containers. Unspecified packages
-retain their current immutable images; preparation does not select latest main
-or claim release qualification. It reads Kubernetes and writes only
-`~/.config/rtk_cloud/<environment>/deployment/managed-upgrade.json`, in a real
-private `0700` directory with a `0600` regular file. It refuses to overwrite an
-existing reviewed plan; archive that plan within the same environment's private
-store before preparing the next release. Do not commit this file or print its
-specifications: existing inline credentials can be present in baseline specs.
-
-The schema-1 file records the exact environment, stack,
-`policy: replace-managed-workloads`, qualified `images`, every Deployment under
-`workloads`, and every environment StatefulSet/DaemonSet under `retained`.
-Each entry includes the live owner UID, `baseline_spec`, and the complete
-`desired` workload (`kind`, `metadata.name`, `metadata.namespace`, `spec`).
-Review/edit only desired specs and the matching image inventory. Replicas,
-resources, probes, Pod annotations, placement and ordinary literal environment
-settings can change. Identity/credential volumes and mounts, security contexts,
-ServiceAccounts, commands/arguments, ports, indirect environment bindings,
-feature activation, migration switches and PKI/credential literal settings must
-continue to match the baseline. CA rotation, reissuance or new identity bindings
-use the accepted managed PKI lifecycle first, followed by a new plan. The
-operator's permission to overwrite workload settings is not a requirement to
-replace working issuers or private keys.
-
-Run the user's normal whole-environment entry after reviewing that plan:
+`deployment prepare-upgrade` and private `deployment/managed-upgrade.json`
+workload-spec selection are retired at the public complete deployment entry.
+Their presence or absence cannot change the v2 renderer, qualification or plan.
+Preserve any original private file for reviewed migration evidence in the same
+environment's private archive; never commit it. Necessary differences belong in
+maintained configuration or typed lifecycle/ownership bindings, not copied live
+workload specs. Use the explicit migration utility to create a review candidate:
 
 ```sh
-./scripts/check-deployment-preflight.sh --environment staging
+go run ./scripts/go/rtk-cloud -- deployment adopt-managed-state \
+  --environment staging --release /reviewed/release.json
 ```
 
-GitHub CI/provenance queries use the existing authenticated GitHub CLI session
-(or the caller's CI token), separately from environment deployment credentials.
-A stale `operator/env/GH_TOKEN` must not override that login. GHCR pull access,
-provider credentials and PKI bindings remain environment-local in SecretStore.
+This read-only cluster inventory writes a new 0600
+`~/.config/rtk_cloud/<environment>/deployment/identity-bindings.candidate.json`
+inside 0700 directories; it never overwrites active bindings or updates workloads.
+It records exact owner UIDs and typed mount/credential/identity references, without
+copying commands, application flags, probes, replicas or live desired specs.
+Review against maintained configuration before selecting the active
+`identity-bindings.json`. Review admission bindings and all consumers separately;
+a candidate is not a complete bootstrap bundle or a GO receipt.
 
-It automatically discovers the plan, requires full exact-image pulls and CI
-publication, schema prerequisites, simulator startup, all environment workload
-health, mounted identity/CRL/Secret evidence and public authenticated mTLS with
-anonymous denial. Kubernetes `replace --dry-run=server` checks the **same**
-complete desired specs with current UID/resourceVersion, update permission,
-immutable fields, admission and quota; no resources are persisted. `--fast`
-or excluding GHCR cannot qualify this operation. A missing/invalid plan,
-missing consumer/provider controller, changed owner/configuration, incompatible
-identity plumbing, failed certificate trust or failed dry-run remains NO-GO.
-Preparation itself is never GO.
+When a matching private schema-1 plan exists, the utility preserves its original
+bytes at `deployment/archive/managed-upgrade-<sha256>.json`, idempotently and
+without exposing contents. The original remains available until migration is
+verified. Necessary configuration differences must move into maintained overrides;
+do not import its workload specs. Foreign/deleting owners, unknown image roles,
+inline private identity settings or an unverified file-storage OpenBao deployment
+block adoption. Matched Raft storage/seal migration remains a separate required
+operation; importing references never proves issuer lineage.
 
-The full operation replaces every environment Deployment spec, rather than
-merely editing image fields. It retains StatefulSets, DaemonSets, database/broker
-volumes, provider sizing, Services, Secrets, ConfigMaps, public routes and CA
-custody. Those retained dependencies must already pass their required checks;
-changes to them require their own reviewed lifecycle/route/provider plan. Tracked
-legacy templates do not override private desired specs in this mode. This
-scope is printed with the private plan SHA-256 in the readiness report. It does
-not activate disabled features or claim full business/data acceptance.
+Controller consumer, authentication and worker policies belong in maintained
+architecture/environment overrides. Adoption excludes them even when an old Pod
+used a Secret reference. Set exact unprefixed receipt IDs in
+`PKI_REQUIRED_CONSUMERS_DEVICE`, `PKI_REQUIRED_CONSUMERS_APP`,
+`PKI_REQUIRED_CONSUMERS_SERVICE`, `PKI_REQUIRED_CONSUMERS_MQTT` and
+`PKI_REQUIRED_CONSUMERS_OPENBAO_TLS`. Optional
+`PKI_REQUIRED_BUNDLE_CONSUMERS_<DOMAIN>` settings select separate bundle consumers;
+an absent setting uses that domain's native consumer list. Empty, duplicated or
+`service:`-prefixed IDs block planning. The retired global
+`PKI_REQUIRED_CONSUMERS` cannot supply these domain policies.
 
-After a separately authorized rollout, `deployment upgrade --environment staging
---confirm video-cloud-staging` discovers the same file, requalifies before
-provider/runtime mutation, freezes its digest, saves private complete rollback
-specs under `deployment/rollback/<plan-sha256>/workloads.json`, and replaces
-Deployments with UID/configuration and resourceVersion fences. It bypasses old
-static runtime dependency rendering, including deletion of `certissuer-runtime`,
-old CertIssuer material creation and legacy ingress-controller reconciliation.
-A changed/deleted plan fails closed, including mid-rollout. Partial failure does
-not blindly restore over concurrent updates: inspect private rollback specs,
-read current ownership and qualify the recovery before retrying.
+Full managed deployment requires `PKI_APP_CRL_WORKER_ENABLED=true` and
+`PKI_SERVER_CRL_DOMAIN=service,mqtt,openbao_tls` (order is immaterial).
+Maintain `PKI_REQUIRE_USER_MFA=true|false` explicitly; production requires `true`.
+The renderer explicitly clears absent legacy global/bundle settings so `envFrom`
+imports cannot reactivate them. These settings do not establish live consumer
+acknowledgments or production qualification. A missing consumer integration needs
+its actual lifecycle implementation and qualification, not a placeholder name.
+The standard profile explicitly preserves the existing non-MFA controller policy;
+production selects MFA in its protection overrides. The 2026-10-06 staging
+configuration migration preserves the original private plan's Device, Service,
+MQTT and MQTT-bundle receipt IDs only. Its absent App/OpenBao transport policies
+remain blockers until their actual consumers and bindings are qualified. These
+dated settings are migration inputs, not live acknowledgment evidence.
 
-After rollout and route verification, the operation requires every desired
-Deployment spec and retained controller to match, complete workload readiness,
-Secret/PKI/CRL checks and required public mTLS. A successful update request or
-Ready Pods alone cannot complete the operation. Production rejects this policy;
-its existing release and managed lifecycle boundaries continue to apply.
+Execution requires the exact plan SHA-256 from complete preflight:
+
+```sh
+go run ./scripts/go/rtk-cloud -- deployment upgrade \
+  --environment staging --release /reviewed/release.json \
+  --confirm video-cloud-staging --plan-sha256 REVIEWED_SHA256
+```
+
+The executor requalifies and fences inputs, owner UIDs, retained identity/data,
+resource versions and completed-stage dependencies before advancing. The exact
+server-dry-run body is the write body. Private rollback and partial execution
+journals are retained under the same environment SecretStore. No automatic
+rollback overwrites concurrent changes or restores schema/PKI state blindly.
+Complete post-deploy acceptance is required before recording completion.
+Current missing capability adapters keep this entry NO-GO; no upgrade has been
+performed by this implementation work.
 
 ## CertIssuer Route Convergence
 
@@ -489,52 +474,26 @@ overwriting managed identity and discovering the mismatch after deployment.
 
 ## Create a New Environment
 
-Use this path only after confirming that the target cluster/storage does not
-exist. If a same-name cluster exists, stop and use the takeover path instead.
+Review maintained configuration, the formal release, storage/capacity and managed
+bootstrap lineage. Use the shared create operation:
 
-1. Create or review tracked configuration according to
-   [`../cloud_env/README.md`](../cloud_env/README.md).
-2. Run `preflight --operation provision`. `deployment provision` repeats this
-   preflight automatically immediately before credential validation and mutation.
-3. Generate a sanitized plan:
+```sh
+go run ./scripts/go/rtk-cloud -- deployment plan \
+  --environment staging --operation create --release /reviewed/release.json
+scripts/check-deployment-preflight.sh \
+  --environment staging --operation create --release /reviewed/release.json
+```
 
-   ```sh
-   go run ./scripts/go/rtk-cloud -- deployment plan --environment staging
-   ```
+Fresh creation requires staged infrastructure qualification, then Kubernetes
+admission after the API exists, then managed bootstrap/workload/routing and full
+acceptance. The complete provider/bootstrap stage adapters are not yet available;
+this remains a BLOCKED / NO-GO operation. Do not use retired full provision as a
+fallback. The intended execution entry requires stack confirmation and the newly
+reviewed create-plan SHA-256, and cannot enable normal production services until
+production qualification passes.
 
-4. Review the stack, provider region, resolved Product, node class, replicas,
-   storage, DNS, image, and projected active services. Use only the topology
-   values in this resolved plan.
-
-   For DNS, compare the selected environment, stack, root domain, and public
-   endpoint names with the [environment DNS naming source](environment-dns-naming.md).
-   Review record names and normalized targets in the generated
-   `runtime/resolved/dns-plan.json`; confirm that they belong to the intended
-   root zone and do not collide with another environment. Check that the same
-   names are used by Ingress/SNI routing, service base URLs and redirects, and
-   the requested or installed TLS certificate SANs. Review explicit hostname
-   exceptions and shared external dependencies before provisioning. Apply this
-   review when an upgrade changes DNS names, routing, or certificates as well.
-
-5. Mutate only after explicit approval:
-
-   ```sh
-   go run ./scripts/go/rtk-cloud -- deployment provision \
-     --environment staging \
-     --confirm video-cloud-staging
-   ```
-
-6. Run acceptance after provisioning completes:
-
-   ```sh
-   go run ./scripts/go/rtk-cloud -- deployment preflight \
-     --environment staging --operation acceptance
-   go run ./scripts/go/rtk-cloud -- deployment acceptance \
-     --environment staging --confirm video-cloud-staging
-   ```
-
-See [`staging-from-scratch.md`](staging-from-scratch.md) for the complete staging
-+ billing + 1K MQTT/Device Shadow sequence.
+See [`staging-from-scratch.md`](staging-from-scratch.md) for the older test/bootstrap
+history, not an alternate complete create path during this replacement.
 
 ## Upgrade Persistent Staging: Release Gates
 
@@ -553,8 +512,8 @@ different results. Do not report a complete staging release from ready Pods,
 2. **Desired/runtime gate.** Reconcile tracked `environment.env`, canonical
    environment-local operator settings, restored runtime and effective workload
    configuration. Restored `stack.env` is old controller state, not the desired
-   release. Save existing image overrides before `deployment plan` materializes
-   runtime; re-resolve and verify intended images afterward. `provision --deploy`
+   release. `deployment plan` reads immutable release intent and does not materialize
+   runtime or reuse old generated image overrides. `provision --deploy`
    rejects declared Console settings that differ from its effective inputs before
    provider operations. It does not silently repair or overwrite them. Direct
    image-only Kubernetes updates do not execute this guard: compare configuration
@@ -635,10 +594,10 @@ different results. Do not report a complete staging release from ready Pods,
    stage, lack of nonempty Billing/invoice fixtures and product-semantic defects
    as release blockers or explicitly accepted exceptions, not as PASS.
 
-The default `run-staging-e2e.sh --confirm ...` includes reset/provision. It is **not**
-the default persistent-staging update command. Use it only for an explicitly
-authorized destructive rehearsal after reviewing its plan. Neither a skill nor a
-test script grants permission to reset an existing environment.
+The legacy reset/provision path in `run-staging-e2e.sh` is retired and refuses
+execution before resource mutation. Use the common reviewed create/upgrade plan
+for complete environment work; acceptance runs keep reset and provisioning
+disabled. Authorization does not reactivate the retired renderer.
 
 ### Registered-service listener (opt-in, not deployed)
 
@@ -937,3 +896,21 @@ and every skipped/blocked check. Reports may contain only sanitized evidence.
 - Deployment succeeds but tests fail: run acceptance first according to
   [`testing-operations.md`](testing-operations.md), then identify data, MQTT, API,
   database, or generator bottlenecks.
+
+## Freeze the latest formal release
+
+Use `deployment freeze-release --environment <environment> --provider-release
+<reviewed-provider-manifest> --output <new-release-manifest>` to fix the refreshed
+workspace main and every service gitlink before retrieving exact-source CI
+publication artifacts. The reviewed provider manifest follows
+`rtk-cloud.release/v1` and supplies explicit upstream digests, including PostgreSQL,
+ingress and OpenBao. Its RTK application entries are ignored and replaced by the
+frozen source's formal CI digests. The backup runner must have the same PostgreSQL
+base digest. Missing API, MQTT PKI or backup publication blocks selection.
+
+The command writes a new 0600 file, never overwrites the selected release, and
+prints `FROZEN`, which is publication selection evidence rather than deployment
+GO. Review the output and pass it as `--release` to full preflight. A dirty or
+out-of-date checkout, pending/failed latest exact-source run, wrong rerun artifact,
+missing consumer digest or mismatched backup base requires repair and a new freeze.
+No environment resources are installed by release freezing.

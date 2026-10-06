@@ -41,10 +41,10 @@ func makeStorageRetirementFixture(t *testing.T) storageRetirementFixture {
 		t.Fatal(err)
 	}
 	migration := deploymentStorageMigrationState{Environment: "dev", Purpose: "media", Source: "old-media", SourceRegion: "us-sea", SourceEndpoint: "https://us-sea-1.linodeobjects.com", Destination: f.cfg.Storage.RuntimeMedia.Bucket, DestinationRegion: "us-lax", Prefix: "environments/stack"}
-	if err := writeStorageState(storageCutoverMigrationPath(f.cfg, "media"), migration); err != nil {
+	if err := writeStorageState(mustStorageStatePath(t, f.cfg, storageMigrationReceiptName("media")), migration); err != nil {
 		t.Fatal(err)
 	}
-	body, err := os.ReadFile(storageCutoverMigrationPath(f.cfg, "media"))
+	body, err := os.ReadFile(mustStorageStatePath(t, f.cfg, storageMigrationReceiptName("media")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func makeStorageRetirementFixture(t *testing.T) storageRetirementFixture {
 	}
 	now := time.Now().UTC().Truncate(time.Second)
 	f.cutover = storageRetirementCutover{Environment: "dev", Bucket: migration.Destination, Region: migration.DestinationRegion, Prefix: migration.Prefix, CutoverID: f.journal.ID, CutoverAt: now.Add(-48 * time.Hour), MigrationSHA256: f.journal.MigrationSHA256}
-	if err := writeStorageState(filepath.Join(f.cfg.RuntimeRoot, "state", "storage-cutover.json"), f.cutover); err != nil {
+	if err := writeStorageState(mustStorageStatePath(t, f.cfg, "storage-cutover.json"), f.cutover); err != nil {
 		t.Fatal(err)
 	}
 	unused, complete := false, true
@@ -130,13 +130,13 @@ func TestRetireStorageKeyRequiresExactCompletedSourceAndCurrentConsumers(t *test
 			}
 		}},
 		{name: "altered migration", edit: func(t *testing.T, f *storageRetirementFixture) {
-			if err := os.WriteFile(storageCutoverMigrationPath(f.cfg, "media"), []byte(`{}`), 0o600); err != nil {
+			if err := os.WriteFile(mustStorageStatePath(t, f.cfg, storageMigrationReceiptName("media")), []byte(`{}`), 0o600); err != nil {
 				t.Fatal(err)
 			}
 		}},
 		{name: "unbound completed receipt", edit: func(t *testing.T, f *storageRetirementFixture) {
 			f.cutover.CutoverID = "other"
-			if err := writeStorageState(filepath.Join(f.cfg.RuntimeRoot, "state", "storage-cutover.json"), f.cutover); err != nil {
+			if err := writeStorageState(mustStorageStatePath(t, f.cfg, "storage-cutover.json"), f.cutover); err != nil {
 				t.Fatal(err)
 			}
 		}},
@@ -147,7 +147,7 @@ func TestRetireStorageKeyRequiresExactCompletedSourceAndCurrentConsumers(t *test
 			if tc.edit != nil {
 				tc.edit(t, &f)
 			}
-			if err := writeStorageState(filepath.Join(f.cfg.RuntimeRoot, "state", "storage-consumers.json"), f.evidence); err != nil {
+			if err := writeStorageState(mustStorageStatePath(t, f.cfg, "storage-consumers.json"), f.evidence); err != nil {
 				t.Fatal(err)
 			}
 			deletes := 0

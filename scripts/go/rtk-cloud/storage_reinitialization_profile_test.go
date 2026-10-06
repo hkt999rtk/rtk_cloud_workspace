@@ -101,7 +101,7 @@ func TestReinitializeRejectsProfileReplacementDuringProviderValidation(t *testin
 			if _, err := f.store.read(storageCutoverJournalName("media")); !os.IsNotExist(err) {
 				t.Fatal("changed profile reached journal creation")
 			}
-			if _, err := os.Stat(filepath.Join(f.cfg.RuntimeRoot, "state", "storage-cutover.json")); !os.IsNotExist(err) {
+			if _, err := os.Stat(mustStorageStatePath(t, f.cfg, "storage-cutover.json")); !os.IsNotExist(err) {
 				t.Fatal("changed profile produced activation receipt")
 			}
 		})

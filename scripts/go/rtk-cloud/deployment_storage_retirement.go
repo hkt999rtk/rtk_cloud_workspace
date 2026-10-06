@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -116,7 +115,7 @@ func (c deploymentCredentialChecker) retireStorageKey(cfg deploymentConfig, valu
 	if json.Unmarshal([]byte(journalBody), &journal) != nil || journal.Environment != cfg.Environment || journal.Purpose != "media" || journal.Status != "complete" || journal.ID == "" {
 		return errors.New("private media cutover journal is incomplete or belongs to another environment")
 	}
-	migrationBody, err := os.ReadFile(storageCutoverMigrationPath(cfg, "media"))
+	migrationBody, err := readDeploymentStorageState(cfg.Environment, "storage-migration.json")
 	if err != nil {
 		return err
 	}
@@ -128,12 +127,16 @@ func (c deploymentCredentialChecker) retireStorageKey(cfg deploymentConfig, valu
 		return errors.New("retirement requires the unchanged migration receipt for the completed media cutover")
 	}
 	var cutover storageRetirementCutover
-	body, err := os.ReadFile(filepath.Join(cfg.RuntimeRoot, "state", "storage-cutover.json"))
+	body, err := readDeploymentStorageState(cfg.Environment, "storage-cutover.json")
 	if err != nil || json.Unmarshal(body, &cutover) != nil || cutover.Environment != cfg.Environment || cutover.Bucket != target.Bucket || cutover.Region != target.Region || cutover.Prefix != target.Prefix ||
 		cutover.CutoverAt.IsZero() || cutover.CutoverID != journal.ID || cutover.MigrationSHA256 != journal.MigrationSHA256 {
 		return errors.New("retirement requires a completed receipt bound to the private cutover journal and migration")
 	}
-	evidence, err := readStorageRetirementEvidence(filepath.Join(cfg.RuntimeRoot, "state", "storage-consumers.json"))
+	evidencePath, err := deploymentStorageStatePath(cfg.Environment, "storage-consumers.json")
+	if err != nil {
+		return err
+	}
+	evidence, err := readStorageRetirementEvidence(evidencePath)
 	if err != nil {
 		return err
 	}

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -49,18 +48,6 @@ func runKubernetesProvision(provider cloudProvider, ctx provisionContext) error 
 		activeSecretEnvironmentRoot = ""
 	}()
 	lkeRuntimeSecretStateDir = store.RuntimeDir()
-	if ctx.Opts.mode.deploy && managedUpgradeSelected(ctx.Opts) {
-		plan, err := loadManagedUpgradePlan(store, ctx.Env["CLOUD_STACK_NAME"])
-		if err != nil {
-			return err
-		}
-		if plan != nil {
-			if err := qualifyManagedUpgrade(context.Background(), ctx.Paths, ctx.Env, store, plan); err != nil {
-				return err
-			}
-			ctx.Env["RTK_MANAGED_UPGRADE_PLAN_SHA256"] = plan.digest
-		}
-	}
 	if err := loadLKEImageManifestDefaults(ctx.Paths.EnvRoot, ctx.Env); err != nil {
 		return err
 	}
@@ -98,35 +85,7 @@ func validateOTAProvisionCutoverReceipt(ctx provisionContext) error {
 	if !lkeOTADedicatedStorage(ctx.Env) {
 		return errors.New("independent OTA service requires dedicated storage before deployment")
 	}
-	path := filepath.Join(ctx.Paths.EnvRoot, "state", "storage-cutover-ota.json")
-	body, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("independent OTA service requires a completed storage-cutover-ota receipt before deployment: %w", err)
-	}
-	if isStorageReinitializationReceipt(body) {
-		return validateStorageReinitializationReceipt(ctx.Env["CLOUD_ENV_NAME"], "ota", deploymentStorageTarget{Bucket: ctx.Env["VIDEO_CLOUD_OTA_BLOB_BUCKET"], Region: ctx.Env["VIDEO_CLOUD_OTA_BLOB_REGION"], Prefix: ctx.Env["VIDEO_CLOUD_OTA_BLOB_PREFIX"]}, body)
-	}
-	var receipt struct {
-		Environment                 string `json:"environment"`
-		Bucket                      string `json:"bucket"`
-		Region                      string `json:"region"`
-		Prefix                      string `json:"prefix"`
-		CutoverAt                   string `json:"cutover_at"`
-		RollbackCredentialsRetained bool   `json:"rollback_credentials_retained"`
-		ServiceReady                bool   `json:"service_ready"`
-	}
-	if err := json.Unmarshal(body, &receipt); err != nil {
-		return fmt.Errorf("decode OTA storage cutover receipt: %w", err)
-	}
-	if receipt.Environment != ctx.Env["CLOUD_ENV_NAME"] || receipt.Bucket != ctx.Env["VIDEO_CLOUD_OTA_BLOB_BUCKET"] ||
-		receipt.Region != ctx.Env["VIDEO_CLOUD_OTA_BLOB_REGION"] || receipt.Prefix != ctx.Env["VIDEO_CLOUD_OTA_BLOB_PREFIX"] ||
-		!receipt.RollbackCredentialsRetained || !receipt.ServiceReady {
-		return errors.New("OTA storage cutover receipt does not match the selected environment and ready service")
-	}
-	if _, err := time.Parse(time.RFC3339, receipt.CutoverAt); err != nil {
-		return errors.New("OTA storage cutover receipt has no valid completion time")
-	}
-	return nil
+	return validateEnvironmentStorageCutover(ctx.Env["CLOUD_ENV_NAME"], "ota", deploymentStorageTarget{Bucket: ctx.Env["VIDEO_CLOUD_OTA_BLOB_BUCKET"], Region: ctx.Env["VIDEO_CLOUD_OTA_BLOB_REGION"], Prefix: ctx.Env["VIDEO_CLOUD_OTA_BLOB_PREFIX"]})
 }
 
 type provisionStep struct {
@@ -197,7 +156,7 @@ func kubernetesProvisionSteps(provider cloudProvider) []provisionStep {
 				return ctx.Opts.mode.apply || ctx.Opts.mode.dns || ctx.Opts.mode.deploy || ctx.Opts.mode.e2e
 			},
 			Run: func(ctx provisionContext) error {
-				if ctx.Opts.mode.deploy && ctx.Env["RTK_MANAGED_UPGRADE_PLAN_SHA256"] == "" {
+				if ctx.Opts.mode.deploy {
 					if err := ensureLKEDeployImages(ctx.Env, ctx.Opts); err != nil {
 						return err
 					}
@@ -227,7 +186,6 @@ func kubernetesProvisionSteps(provider cloudProvider) []provisionStep {
 			Enabled: func(ctx provisionContext) bool {
 				return provider.Name() == "lke" &&
 					(ctx.Opts.mode.apply || ctx.Opts.mode.deploy) &&
-					ctx.Env["RTK_MANAGED_UPGRADE_PLAN_SHA256"] == "" &&
 					(len(ctx.Opts.workloads) == 0 || lkeTargetedFleetDatabasePoolRequired(ctx.Env, ctx.Opts)) &&
 					os.Getenv("RUNTIME_COVERAGE_SHARED_CLUSTER") != "1"
 			},
@@ -265,9 +223,6 @@ func kubernetesProvisionSteps(provider cloudProvider) []provisionStep {
 				if err := lkeDeployWorkloads(ctx.Paths, ctx.Env, ctx.Opts); err != nil {
 					return err
 				}
-				if ctx.Env["RTK_MANAGED_UPGRADE_PLAN_SHA256"] != "" {
-					return nil
-				}
 				if err := applySharedKubernetesNodeClassPlacement(ctx); err != nil {
 					return err
 				}
@@ -302,14 +257,6 @@ func kubernetesProvisionSteps(provider cloudProvider) []provisionStep {
 				fmt.Fprintln(os.Stdout, dir)
 				return nil
 			},
-		},
-		{
-			Name:  "managed-upgrade-health",
-			Phase: "runtime",
-			Enabled: func(ctx provisionContext) bool {
-				return ctx.Opts.mode.deploy && ctx.Env["RTK_MANAGED_UPGRADE_PLAN_SHA256"] != ""
-			},
-			Run: func(ctx provisionContext) error { return verifyManagedUpgradePostDeploy(ctx.Paths, ctx.Env) },
 		},
 		{
 			Name:    "e2e",

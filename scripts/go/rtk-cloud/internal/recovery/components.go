@@ -98,6 +98,8 @@ func (e *Engine) Capture(ctx context.Context, dir string) error {
 		}
 		bounded := &boundedWriter{writer: out, remaining: e.Config.MaxArchiveBytes}
 		switch c.Kind {
+		case "openbao-raft":
+			err = e.captureOpenBaoRaft(ctx, c, bounded)
 		case "postgres":
 			if c.Database == "@globals" {
 				err = e.pod(ctx, c, nil, bounded, "pg_dumpall", "-U", c.User, "--globals-only", "--no-tablespaces")
@@ -341,6 +343,10 @@ func (e *Engine) ValidateArtifacts(ctx context.Context, dir string) error {
 			return errors.New("missing/nonregular/oversized component artifact")
 		}
 		switch c.Kind {
+		case "openbao-raft":
+			if i.Size() < 1 {
+				err = errors.New("empty OpenBao snapshot")
+			}
 		case "secretstore":
 			err = WalkArchive(path, e.Config.MaxArchiveBytes, func(h *tar.Header, _ io.Reader) error {
 				if !selectedSecret(c, h.Name) {
@@ -473,6 +479,8 @@ func (e *Engine) Apply(ctx context.Context, dir string) error {
 		path := filepath.Join(dir, c.ID+".data")
 		var err error
 		switch c.Kind {
+		case "openbao-raft":
+			err = e.restoreOpenBaoRaft(ctx, c, path)
 		case "secretstore":
 			err = ReplaceSecretPaths(path, e.SecretRoot, c, e.Config.MaxArchiveBytes)
 		case "redis":

@@ -10,11 +10,12 @@ in the owning service repository; shared wire and payload contracts belong in
 | Goal | Document |
 | --- | --- |
 | Prepare, deploy, restore, accept, or remove an environment | [Deployment Operations Guide](deployment-operations.md) |
+| Decide complete-environment GO/NO-GO and review production activation requirements | [Unified Deployment Readiness Standard](deployment-readiness-standard.md) |
 | Back up or restore matched core data under maintenance | [Core Backup and Restore](backup-restore.md) |
 | Review raw billing backup, replay and 90-day hot retention | [Billing raw-data lifecycle design](design/billing-raw-data-lifecycle.md) |
 | Operate isolated verification, retention authority and recovery fencing | [Billing lifecycle operations](billing-raw-lifecycle-operations.md) |
 | Review Billing backup key location, escrow and rotation | [Billing backup key custody design](design/billing-backup-key-custody.md) |
-| Back up PostgreSQL daily online and rehearse an isolated restore | [Daily PostgreSQL Backup and Restore](postgres-backup-restore.md) |
+| Back up PostgreSQL, verify continuous WAL and rehearse isolated PITR | [PostgreSQL Backup and Restore](postgres-backup-restore.md) |
 | Monitor service health, credentials, capacity and generate PDF reports | [Cloud Monitor](cloud-monitor.md) |
 | Name, retain, migrate or retire Object Storage buckets and objects | [Object Storage Policy](object-storage-policy.md) |
 | Prepare storage credentials and qualify media/OTA cutover | [Storage operations](storage-credential-lifecycle.md) |
@@ -65,12 +66,13 @@ when retrieved alongside an active source.
 | [dependency-failure-policy.md](dependency-failure-policy.md) | Source | Cross-service dependency failure policy for startup-critical dependencies, request-scoped upstreams, durable async delivery, observability, and optional features. |
 | [backend-release-readiness.md](backend-release-readiness.md) | Supporting note | Backend foundation closeout checklist, validation commands, report status, and remaining release-evidence items. |
 | [deployment-secrets-governance.md](deployment-secrets-governance.md) | Source | Local deployment secret layout, environment/provider/service taxonomy, and handling rules. |
+| [deployment-readiness-standard.md](deployment-readiness-standard.md) | Source: accepted policy, implementation/qualification in progress | Exact-plan GO/NO-GO, full resource scope, ownership/lifecycle fences, production HA/custody and measured recovery gates. |
 | [Deployment check improvements](design/deployment-check-review-2026-10-03.md) | Supporting note: implemented in this PR | Traditional Chinese implementation report and dated local mock evidence; existing-environment checks only. |
 | [backup-restore.md](backup-restore.md) | Source | Environment-scoped maintenance backup/restore, matched core data, escrow, safety backups, exclusions and qualification gates. |
 | [Billing raw-data lifecycle design](design/billing-raw-data-lifecycle.md) | Supporting note: implementation design | Dedicated billing backup boundary, early off-volume protection, 90-day eligibility, archive verification, authority and recovery gates; activation unqualified. |
 | [Billing lifecycle operations](billing-raw-lifecycle-operations.md) | Source: operations | Isolated controller, disabled activation stages, role credentials, retry/fence protocol, recovery admission and qualification. |
 | [Billing backup key custody design](design/billing-backup-key-custody.md) | Supporting note: implementation design | Off-cluster age/signing custody, independent escrow, CI exclusions, rotation and owner qualification; not deployed. |
-| [postgres-backup-restore.md](postgres-backup-restore.md) | Source: qualification pending | Native PostgreSQL 16 daily full backups, capture-window WAL, private storage, retention, monitoring and isolated restore drills. |
+| [postgres-backup-restore.md](postgres-backup-restore.md) | Source: qualification pending | Native PostgreSQL 16 full backups, continuous WAL freshness/readback, private storage, retention and isolated PITR/restore drills; environment qualification pending. |
 | [cloud-monitor.md](cloud-monitor.md) | Implementation guide | Workspace monitor setup, expected inventory, credential/capacity/performance checks, dedicated probes and PDF reports. |
 | [Deployment service identities](design/deployment-service-identities.md) | Accepted operator authority, portable operator-held Root custody and persistent workload identity boundaries; each environment requires its own qualification. |
 | [PKI operator qualification](design/pki-operator-authority-test-plan.md) | Required operator-mode tests and dated Dev evidence, separate from release qualification. |

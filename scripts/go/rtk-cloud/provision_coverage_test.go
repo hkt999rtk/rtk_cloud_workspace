@@ -139,6 +139,10 @@ func TestProvisionStateAndCredentialHelpers(t *testing.T) {
 		}
 	}
 	values := map[string]string{}
+	if err := mergeObjectStorageCredentialDefaults(root, values); err == nil {
+		t.Fatal("missing environment implicitly borrowed staging credentials")
+	}
+	writeTestFile(t, filepath.Join(root, "env", "stack.env"), "CLOUD_ENV_NAME=staging\n")
 	if err := mergeObjectStorageCredentialDefaults(root, values); err != nil {
 		t.Fatal(err)
 	}

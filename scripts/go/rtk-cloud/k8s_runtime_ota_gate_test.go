@@ -1,14 +1,15 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
 
 func TestOTAProvisionRequiresReadyCutoverReceiptBeforeMutation(t *testing.T) {
+	t.Setenv("RTK_CLOUD_CONFIG_ROOT", t.TempDir())
 	t.Setenv("LKE_OTA_SERVICE_REGISTRATION_ENABLED", "")
 	root := t.TempDir()
 	ctx := provisionContext{
@@ -24,11 +25,20 @@ func TestOTAProvisionRequiresReadyCutoverReceiptBeforeMutation(t *testing.T) {
 	if err := runKubernetesProvision(lkeCloudProvider{}, ctx); err == nil || !strings.Contains(err.Error(), "storage-cutover-ota receipt") {
 		t.Fatalf("normal deploy bypassed OTA cutover: %v", err)
 	}
-	path := filepath.Join(root, "state", "storage-cutover-ota.json")
+	path := mustStorageStatePath(t, deploymentConfig{Environment: "dev"}, "storage-cutover-ota.json")
+	proof := []byte(`{"environment":"dev","purpose":"ota-firmware","source_bucket":"old"}`)
+	if err := os.WriteFile(mustStorageStatePath(t, deploymentConfig{Environment: "dev"}, "storage-migration-ota.json"), proof, 0600); err != nil {
+		t.Fatal(err)
+	}
+	store, _ := newSecretStore("", "dev")
+	proofHash := storageReinitializationHash(json.RawMessage(proof))
+	if err := saveStorageCutoverJournal(store, storageCutoverJournal{Environment: "dev", Purpose: "ota", Status: "complete", ID: "ota-cutover", MigrationSHA256: proofHash}, false); err != nil {
+		t.Fatal(err)
+	}
 	receipt := map[string]any{
 		"environment": "dev", "bucket": "rtk-ota-firmware-dev-us-sea", "region": "us-sea",
 		"prefix": "environments/video-cloud-dev", "cutover_at": time.Now().UTC().Format(time.RFC3339),
-		"rollback_credentials_retained": true, "service_ready": true,
+		"rollback_credentials_retained": true, "service_ready": true, "cutover_id": "ota-cutover", "migration_receipt_sha256": proofHash,
 	}
 	write := func() {
 		t.Helper()

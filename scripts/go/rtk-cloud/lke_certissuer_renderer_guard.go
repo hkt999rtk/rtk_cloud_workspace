@@ -74,5 +74,5 @@ func lkeValidateCertIssuerLegacyRenderer(deployment certIssuerIngressObject) err
 }
 
 func lkeCertIssuerManagedRendererError(reason string) error {
-	return fmt.Errorf("legacy whole-Deployment CertIssuer reconciliation would overwrite managed PKI (%s); for dev/staging full upgrades prepare and review ~/.config/rtk_cloud/<environment>/deployment/managed-upgrade.json with deployment prepare-upgrade; preserve identity state, CRLs and Secrets; otherwise use an explicitly reviewed provision --deploy --workloads ... rollout or route-only provision --dns, and handle identity/schema changes through a separate managed PKI migration", reason)
+	return fmt.Errorf("legacy whole-Deployment CertIssuer reconciliation is retired for managed PKI (%s); use deployment plan and full preflight with the selected formal --release, then deployment upgrade with its exact --plan-sha256; preserve identity state, CRLs and Secrets; explicitly scoped workload or route-only changes cannot authorize a complete environment update", reason)
 }

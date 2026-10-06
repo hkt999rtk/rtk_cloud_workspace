@@ -44,22 +44,23 @@ type Manifest struct {
 // Component identifies explicitly approved data. Namespace/name are not inferred
 // from a backup when selecting a restore target: the target inventory owns them.
 type Component struct {
-	ID           string   `json:"id"`
-	Kind         string   `json:"kind"` // postgres, redis, volume, secretstore, k8s-object
-	Namespace    string   `json:"namespace,omitempty"`
-	Pod          string   `json:"pod,omitempty"`
-	Container    string   `json:"container,omitempty"`
-	Database     string   `json:"database,omitempty"`
-	User         string   `json:"user,omitempty"`
-	Prefixes     []string `json:"prefixes,omitempty"`
-	ExcludeKeys  []string `json:"exclude_keys,omitempty"`
-	PVC          string   `json:"pvc,omitempty"`
-	Image        string   `json:"image,omitempty"`
-	Purpose      string   `json:"purpose,omitempty"` // openbao-file, sqlite, checkpoint, configuration
-	SQLiteFiles  []string `json:"sqlite_files,omitempty"`
-	Paths        []string `json:"paths,omitempty"`
-	Resource     string   `json:"resource,omitempty"`
-	ResourceName string   `json:"resource_name,omitempty"`
+	OpenBao      *OpenBaoRaftSource `json:"openbao_raft,omitempty"`
+	ID           string             `json:"id"`
+	Kind         string             `json:"kind"` // postgres, redis, volume, secretstore, k8s-object
+	Namespace    string             `json:"namespace,omitempty"`
+	Pod          string             `json:"pod,omitempty"`
+	Container    string             `json:"container,omitempty"`
+	Database     string             `json:"database,omitempty"`
+	User         string             `json:"user,omitempty"`
+	Prefixes     []string           `json:"prefixes,omitempty"`
+	ExcludeKeys  []string           `json:"exclude_keys,omitempty"`
+	PVC          string             `json:"pvc,omitempty"`
+	Image        string             `json:"image,omitempty"`
+	Purpose      string             `json:"purpose,omitempty"` // openbao-file, sqlite, checkpoint, configuration
+	SQLiteFiles  []string           `json:"sqlite_files,omitempty"`
+	Paths        []string           `json:"paths,omitempty"`
+	Resource     string             `json:"resource,omitempty"`
+	ResourceName string             `json:"resource_name,omitempty"`
 }
 
 type Workload struct {
@@ -182,6 +183,9 @@ func (c Config) Validate() error {
 	pgData := map[string]bool{}
 	openbao := false
 	for _, v := range c.Components {
+		if v.OpenBao != nil && v.Kind != "openbao-raft" {
+			return errors.New("OpenBao source configuration is exclusive to its Raft lifecycle")
+		}
 		if !Name.MatchString(v.ID) || ids[v.ID] {
 			return errors.New("invalid or duplicate component id")
 		}
@@ -191,6 +195,14 @@ func (c Config) Validate() error {
 			return fmt.Errorf("component %s outside namespace inventory", v.ID)
 		}
 		switch v.Kind {
+		case "openbao-raft":
+			if v.OpenBao == nil || v.OpenBao.Validate() != nil {
+				return errors.New("OpenBao Raft requires exact managed source identity")
+			}
+			if openbao {
+				return errors.New("multiple OpenBao lifecycle representations are not supported")
+			}
+			openbao = true
 		case "postgres":
 			if !Name.MatchString(v.Pod) || !sqlIdentifier(v.User) || (v.Database != "@globals" && !sqlIdentifier(v.Database)) {
 				return errors.New("invalid postgres target")
@@ -227,6 +239,9 @@ func (c Config) Validate() error {
 				return errors.New("volume requires PVC and digest-pinned helper image")
 			}
 			if v.Purpose == "openbao-file" {
+				if openbao {
+					return errors.New("multiple OpenBao lifecycle representations are not supported")
+				}
 				openbao = true
 			}
 			if v.Purpose != "openbao-file" && v.Purpose != "sqlite" && v.Purpose != "checkpoint" && v.Purpose != "configuration" {
@@ -258,7 +273,7 @@ func (c Config) Validate() error {
 		}
 	}
 	if !kinds["postgres"] || !kinds["secretstore"] || !openbao {
-		return errors.New("core backup requires Postgres, OpenBao file storage and SecretStore")
+		return errors.New("core backup requires Postgres, a declared OpenBao storage lifecycle and SecretStore")
 	}
 	for pod := range pgData {
 		if !pgGlobals[pod] {

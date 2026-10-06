@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestRunStagingE2EResetDeletesWorkloadsByDefault(t *testing.T) {
+func TestRunStagingE2ERejectsRetiredFullProvisionBeforeMutation(t *testing.T) {
 	workspace, envRoot := makeStagingResetTestEnv(t)
 	outDir := filepath.Join(t.TempDir(), "out")
 	logPath := filepath.Join(t.TempDir(), "commands.log")
@@ -16,10 +16,6 @@ func TestRunStagingE2EResetDeletesWorkloadsByDefault(t *testing.T) {
 	t.Setenv("CLOUD_STAGING_E2E_K8S_PORT_FORWARD", "0")
 	t.Setenv("CLOUD_STAGING_E2E_REMOVE_K8S_SCRIPT", fakeStagingPhaseCommand(t, logPath, "reset"))
 	t.Setenv("CLOUD_STAGING_E2E_PROVISION_SCRIPT", fakeStagingPhaseCommand(t, logPath, "provision"))
-	t.Setenv("CLOUD_STAGING_E2E_DATA_SETUP_SCRIPT", fakeStagingPhaseDataSetupCommand(t, logPath))
-	t.Setenv("CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT", fakeStagingPhaseMQTTCommand(t, logPath))
-	t.Setenv("CLOUD_STAGING_E2E_MQTT_LOG_VERIFY_SCRIPT", fakeStagingPhaseMQTTLogVerifyCommand(t, logPath))
-	t.Setenv("CLOUD_STAGING_E2E_BILLING_VERIFY_SCRIPT", fakeStagingPhaseBillingVerifyCommand(t, logPath))
 
 	if err := runStagingE2ETest([]string{
 		"--workspace", workspace,
@@ -31,19 +27,12 @@ func TestRunStagingE2EResetDeletesWorkloadsByDefault(t *testing.T) {
 		"--user-email-prefix", "run-123",
 		"--user-email-domain", "users.invalid",
 		"--quiet",
-	}); err != nil {
-		t.Fatal(err)
+	}); err == nil || !strings.Contains(err.Error(), "legacy E2E full provisioning is retired") || !strings.Contains(err.Error(), "--skip-remove --skip-provision") {
+		t.Fatalf("retired full provision was accepted or lacked migration instructions: %v", err)
 	}
 
-	log := readTestFile(t, logPath)
-	if !strings.Contains(log, "reset DESTRUCTIVE=1") {
-		t.Fatalf("full E2E reset should delete workload resources by default, got:\n%s", log)
-	}
-	if strings.Contains(log, "reset ARGS=--workspace "+workspace+" --env-root "+envRoot+" --yes --purge-storage") {
-		t.Fatalf("full E2E reset should not purge storage by default, got:\n%s", log)
-	}
-	if !strings.Contains(log, "--user-email-prefix run-123 --user-email-domain users.invalid") {
-		t.Fatalf("data setup should receive run-scoped user identity flags, got:\n%s", log)
+	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
+		t.Fatalf("reset or provision ran before common qualification: %v", err)
 	}
 }
 

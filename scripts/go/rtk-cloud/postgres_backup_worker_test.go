@@ -22,7 +22,7 @@ func TestPostgresBackupWorkerEntryFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("RTK_POSTGRES_RUNNER_SOURCE_IMAGE", c.Worker.Source.PostgresImage)
-	for _, args := range [][]string{nil, {"run", "--unknown"}, {"run", "--config", config, "unexpected"}, {"run", "--config", "/nonexistent-backup-config"}, {"unsupported", "--config", config}, {"drill", "--config", config, "--id", "bad/id"}, {"run", "--config", config}} {
+	for _, args := range [][]string{nil, {"run", "--unknown"}, {"run", "--config", config, "unexpected"}, {"run", "--config", "/nonexistent-backup-config"}, {"unsupported", "--config", config}, {"check-wal", "--config", config, "--wal-name", "000000010000000000000001"}, {"archive-wal", "--config", config}, {"restore-wal", "--config", config}, {"drill", "--config", config, "--id", "bad/id"}, {"run", "--config", config}} {
 		if err := runPostgresBackupWorker(args); err == nil {
 			t.Fatalf("unsafe entry accepted: %v", args)
 		}

@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -29,11 +28,39 @@ func runPostgresBackupWorker(args []string) (resultErr error) {
 	config := fs.String("config", "", "mounted deployment config")
 	id := fs.String("id", "", "backup id")
 	identity := fs.String("identity", "", "mounted restore identity")
+	walName := fs.String("wal-name", "", "exact WAL segment or timeline history name")
+	walSource := fs.String("wal-source", "", "PostgreSQL-owned WAL source file")
+	walPGData := fs.String("wal-pgdata", "", "absolute PostgreSQL data directory for native archive identity verification")
+	walTarget := fs.String("wal-target", "", "absent absolute WAL restore target")
+	pitrTime := fs.String("recovery-time", "", "exact PITR target timestamp with an explicit UTC offset")
+	pitrTimeline := fs.Uint("recovery-timeline", 0, "explicit PITR recovery timeline")
+	pitrMaxWAL := fs.Int64("max-wal-bytes", 0, "bounded PITR WAL cache in bytes")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
 		return errors.New("unexpected worker arguments")
+	}
+	for _, name := range []string{"--wal-name", "--wal-source", "--wal-pgdata", "--wal-target"} {
+		if hasFlag(args[1:], name) && action != "archive-wal" && action != "restore-wal" {
+			return errors.New("WAL source/target flags require archive-wal or restore-wal")
+		}
+	}
+	if action == "archive-wal" && (*walName == "" || *walSource == "" || *walPGData == "" || hasFlag(args[1:], "--wal-target")) {
+		return errors.New("archive-wal requires its exact source name, path and PostgreSQL data directory; no restore target is accepted")
+	}
+	if action == "restore-wal" && (*walName == "" || *walTarget == "" || *identity == "" || hasFlag(args[1:], "--wal-source") || hasFlag(args[1:], "--wal-pgdata")) {
+		return errors.New("restore-wal requires its exact name, absent target and private identity; source flags are not accepted")
+	}
+	var pitr *postgresbackup.PITRTarget
+	if action == "pitr-drill" {
+		at, err := time.Parse(time.RFC3339Nano, *pitrTime)
+		if err != nil || *pitrTimeline == 0 || uint64(*pitrTimeline) > 1<<32-1 || *pitrMaxWAL <= 0 {
+			return errors.New("pitr-drill requires --recovery-time, --recovery-timeline and --max-wal-bytes")
+		}
+		pitr = &postgresbackup.PITRTarget{At: at.UTC(), Timeline: uint32(*pitrTimeline), MaxWALBytes: *pitrMaxWAL}
+	} else if hasFlag(args[1:], "--recovery-time") || hasFlag(args[1:], "--recovery-timeline") || hasFlag(args[1:], "--max-wal-bytes") {
+		return errors.New("recovery target flags require pitr-drill")
 	}
 	var c postgresBackupDeployment
 	f, err := os.Open(*config)
@@ -48,6 +75,11 @@ func runPostgresBackupWorker(args []string) (resultErr error) {
 	if err = c.validate(); err != nil {
 		return err
 	}
+	if pitr != nil {
+		if err := c.validatePITRTarget(*pitr); err != nil {
+			return err
+		}
+	}
 	_, runnerBase, baseOK := strings.Cut(os.Getenv("RTK_POSTGRES_RUNNER_SOURCE_IMAGE"), "@sha256:")
 	_, sourceDigest, _ := strings.Cut(c.Worker.Source.PostgresImage, "@sha256:")
 	if !baseOK || runnerBase != sourceDigest {
@@ -57,8 +89,40 @@ func runPostgresBackupWorker(args []string) (resultErr error) {
 	defer stop()
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(c.Worker.TimeoutSeconds)*time.Second)
 	defer cancel()
-	if action == "drill" {
-		return postgresBackupDrillWorker(ctx, c, *id, *identity)
+	if action == "heartbeat-wal" {
+		lsn, err := (postgresbackup.Engine{}).HeartbeatWAL(ctx, c.Worker)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(map[string]string{"environment": c.Environment, "heartbeat_lsn": lsn})
+	}
+	if action == "check-wal" {
+		health, err := (postgresbackup.Engine{}).CheckContinuousWAL(ctx, c.Worker)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(health)
+	}
+	if action == "archive-wal" || action == "restore-wal" {
+		// Continuous archive must remain available while a base backup owns the
+		// recovery lock. Its immutable objects cannot change an existing backup.
+		worker := c.Worker
+		worker.Directory = filepath.Join(worker.Directory, "wal-spool")
+		if action == "archive-wal" {
+			if err := (postgresbackup.Engine{}).VerifyWALSource(ctx, worker, *walPGData, *walName, *walSource); err != nil {
+				return err
+			}
+			source := *walSource
+			if !filepath.IsAbs(source) {
+				source = filepath.Join(*walPGData, source)
+			}
+			_, err := (postgresbackup.Engine{}).ArchiveWAL(ctx, worker, *walName, source)
+			return err
+		}
+		return (postgresbackup.Engine{}).RestoreWAL(ctx, worker, *walName, *identity, *walTarget)
+	}
+	if action == "drill" || action == "pitr-drill" {
+		return postgresBackupDrillWorkerWithPITR(ctx, c, *id, *identity, pitr)
 	}
 	if action != "run" && action != "retry-upload" && action != "prune" {
 		return errors.New("unsupported worker action")
@@ -241,14 +305,39 @@ func (m *postgresBackupManager) writeStatus(ctx context.Context, status postgres
 }
 
 func postgresBackupDrillWorker(ctx context.Context, c postgresBackupDeployment, id, identity string) error {
+	return postgresBackupDrillWorkerWithPITR(ctx, c, id, identity, nil)
+}
+
+func postgresBackupDrillWorkerWithPITR(ctx context.Context, c postgresBackupDeployment, id, identity string, pitr *postgresbackup.PITRTarget) error {
 	if !recovery.Name.MatchString(id) || identity != "/run/postgres-restore/identity.agekey" {
 		return errors.New("drill requires an explicit backup id and mounted private identity")
 	}
+	started := time.Now().UTC()
 	file, err := postgresbackup.Download(ctx, c.Worker, id, c.Worker.Directory)
 	if err != nil {
 		return err
 	}
 	target := filepath.Join(c.Worker.Directory, "restore-"+id)
+	if pitr != nil {
+		engine := postgresbackup.Engine{}
+		prepared, err := engine.PreparePITR(ctx, c.Worker, file, identity, target, *pitr)
+		if err != nil {
+			return err
+		}
+		if err := postgresBackupVerifyDrillManifest(c.Worker, id, prepared.Manifest); err != nil {
+			return err
+		}
+		observation, err := engine.VerifyPreparedPITR(ctx, c.Worker, target, prepared, func(query postgresbackup.RestoredQuery) error { return postgresBackupCheckRestoredData(query) })
+		if err != nil {
+			return err
+		}
+		observation.StartedAt = started
+		observation.RTOms = observation.FinishedAt.Sub(started).Milliseconds()
+		if observation.RTOms > (4 * time.Hour).Milliseconds() {
+			return errors.New("PITR exceeded the four-hour worker restore objective")
+		}
+		return json.NewEncoder(os.Stdout).Encode(postgresbackup.Drill{Version: 1, Environment: c.Environment, Stack: c.Stack, ClusterID: c.Worker.ClusterID, BackupID: id, SystemIdentifier: prepared.Manifest.SystemIdentifier, PostgresImage: prepared.Manifest.PostgresImage, FinishedAt: observation.FinishedAt, Success: true, PITR: &observation})
+	}
 	manifest, err := postgresbackup.Restore(ctx, c.Worker, file, identity, target)
 	if err != nil {
 		return err
@@ -339,26 +428,7 @@ func postgresBackupVerifyRunningClusterWithExecutor(ctx context.Context, target 
 }
 
 func postgresBackupRecoverySettings(control string) (string, error) {
-	if strings.Contains(control, "WARNING:") {
-		return "", errors.New("PostgreSQL control data reported a warning")
-	}
-	keys := []struct{ field, parameter string }{{"max_connections", "max_connections"}, {"max_worker_processes", "max_worker_processes"}, {"max_wal_senders", "max_wal_senders"}, {"max_prepared_xacts", "max_prepared_transactions"}, {"max_locks_per_xact", "max_locks_per_transaction"}}
-	values := map[string]string{}
-	for _, line := range strings.Split(control, "\n") {
-		key, value, ok := strings.Cut(line, ":")
-		if ok {
-			values[strings.TrimSpace(key)] = strings.TrimSpace(value)
-		}
-	}
-	var settings strings.Builder
-	for _, key := range keys {
-		value, err := strconv.Atoi(values[key.field+" setting"])
-		if err != nil || value < 0 || value > 262143 {
-			return "", errors.New("invalid or missing PostgreSQL recovery parameter")
-		}
-		fmt.Fprintf(&settings, "%s = %d\n", key.parameter, value)
-	}
-	return settings.String(), nil
+	return postgresbackup.NativeRecoverySettings(control)
 }
 
 type postgresBackupDataCheck struct{ Name, Database, SQL, Expected string }

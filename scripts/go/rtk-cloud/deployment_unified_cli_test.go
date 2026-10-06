@@ -1,0 +1,200 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
+)
+
+func unifiedCLIProfile(t *testing.T, environment string) (*compiledEnvironmentDeployment, unifiedDeploymentDependencies, *int) {
+	t.Helper()
+	makeIsolatedTestSecretStore(t, environment)
+	stack := "video-cloud-" + environment
+	plan, err := deploymentplan.Compile(deploymentplan.Inputs{Environment: environment, Stack: stack, Operation: "upgrade", ConfigurationSHA256: deploymentplan.Digest("config"), ReleaseSHA256: deploymentplan.Digest("release"), BindingsSHA256: deploymentplan.Digest("identity")}, []deploymentplan.Definition{{Phase: "configuration", Object: deploymentplan.Object{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": "private", "namespace": stack + "-platform", "labels": map[string]any{"rtk.realtek.com/stack": stack}}, "stringData": map[string]any{"credential": "never-public"}}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &compiledEnvironmentDeployment{Plan: plan, Configuration: deploymentConfig{Environment: environment, Values: map[string]string{"CLOUD_STACK_NAME": stack, "DEPLOYMENT_PROTECTION_PROFILE": map[bool]string{true: "production", false: "standard"}[environment == "prod"]}}}
+	writes := 0
+	deps := unifiedDeploymentDependencies{
+		Resolve: func(string, string, string) (deploymentConfig, error) { return c.Configuration, nil },
+		Compile: func(ctx context.Context, cfg deploymentConfig, operation, release string) (*compiledEnvironmentDeployment, error) {
+			if operation != "upgrade" || release != "/reviewed/release.json" {
+				t.Fatal("lost operation or selected release")
+			}
+			return c, nil
+		},
+		Checks: func(*compiledEnvironmentDeployment) map[string]deploymentplan.GateCheck {
+			checks := map[string]deploymentplan.GateCheck{}
+			for _, id := range deploymentplan.RequiredGateIDs(environment == "prod") {
+				checks[id] = func(context.Context, *deploymentplan.Plan) (deploymentplan.GateEvidence, error) {
+					return deploymentplan.GateEvidence{SHA256: deploymentplan.Digest("isolated fixture evidence")}, nil
+				}
+			}
+			return checks
+		},
+		Execute: func(ctx context.Context, c *compiledEnvironmentDeployment, sha string, qualify func(context.Context, *deploymentplan.Plan) error, accept func(context.Context, *compiledEnvironmentDeployment) error) error {
+			if sha != c.Plan.SHA256() {
+				t.Fatal("unreviewed plan executed")
+			}
+			if err := qualify(ctx, c.Plan); err != nil {
+				return err
+			}
+			writes++
+			return accept(ctx, c)
+		},
+		Accept: func(context.Context, *compiledEnvironmentDeployment) error { return nil },
+	}
+	return c, deps, &writes
+}
+
+func TestUnifiedPublicFlowUsesSamePlanAndRequiredGatesForAllEnvironments(t *testing.T) {
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		t.Run(environment, func(t *testing.T) {
+			c, deps, writes := unifiedCLIProfile(t, environment)
+			args := []string{"--environment", environment, "--release", "/reviewed/release.json"}
+			for _, action := range []string{"plan", "preflight", "upgrade"} {
+				var out, diagnostics bytes.Buffer
+				selected := append([]string{}, args...)
+				store, _ := newSecretStore("", environment)
+				path := filepath.Join(store.Root, "deployment", "reports", action+".json")
+				selected = append(selected, "--report", path)
+				if action == "upgrade" {
+					selected = append(selected, "--confirm", "video-cloud-"+environment, "--plan-sha256", c.Plan.SHA256())
+				}
+				if err := runUnifiedEnvironmentDeploymentWithDependencies(context.Background(), action, selected, &out, &diagnostics, deps); err != nil {
+					t.Fatal(action, err, diagnostics.String())
+				}
+				var report unifiedDeploymentReport
+				raw, err := os.ReadFile(path)
+				if err != nil || json.Unmarshal(raw, &report) != nil {
+					t.Fatal("missing report")
+				}
+				if report.Plan == nil || report.Plan.PlanSHA256 != c.Plan.SHA256() || strings.Contains(string(raw), "never-public") || strings.Contains(out.String(), "never-public") {
+					t.Fatal("changed plan or leaked desired Secret")
+				}
+				info, _ := os.Stat(path)
+				if info.Mode().Perm() != 0600 {
+					t.Fatal("public report permissions")
+				}
+				if action == "plan" && report.Decision != "PLANNED" || action != "plan" && report.Decision != "GO" || report.Completed != (action == "upgrade") {
+					t.Fatal("scope or completion changed")
+				}
+			}
+			if *writes != 1 {
+				t.Fatal("planning/preflight wrote resources")
+			}
+		})
+	}
+}
+
+func TestUnifiedPublicFlowNeverExecutesIncompleteEvidenceOrUnreviewedPlan(t *testing.T) {
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		for _, mode := range []string{"missing-gate", "failed-gate", "missing-acceptance", "wrong-plan", "partial-failure", "acceptance-failure", "fast"} {
+			t.Run(environment+"/"+mode, func(t *testing.T) {
+				c, deps, writes := unifiedCLIProfile(t, environment)
+				original := deps.Checks
+				deps.Checks = func(c *compiledEnvironmentDeployment) map[string]deploymentplan.GateCheck {
+					checks := original(c)
+					if mode == "missing-gate" {
+						delete(checks, "deployment.pki")
+					}
+					if mode == "failed-gate" {
+						checks["deployment.recovery"] = func(context.Context, *deploymentplan.Plan) (deploymentplan.GateEvidence, error) {
+							return deploymentplan.GateEvidence{}, errors.New("private failure=never-public")
+						}
+					}
+					return checks
+				}
+				if mode == "missing-acceptance" {
+					deps.Accept = nil
+				}
+				if mode == "partial-failure" {
+					deps.Execute = func(context.Context, *compiledEnvironmentDeployment, string, func(context.Context, *deploymentplan.Plan) error, func(context.Context, *compiledEnvironmentDeployment) error) error {
+						*writes++
+						return errors.New("private partial=never-public")
+					}
+				}
+				if mode == "acceptance-failure" {
+					deps.Accept = func(context.Context, *compiledEnvironmentDeployment) error { return errors.New("never-public") }
+				}
+				sha := c.Plan.SHA256()
+				if mode == "wrong-plan" {
+					sha = strings.Repeat("b", 64)
+				}
+				action := "upgrade"
+				args := []string{"--environment", environment, "--release", "/reviewed/release.json", "--confirm", "video-cloud-" + environment, "--plan-sha256", sha}
+				if mode == "fast" {
+					action = "preflight"
+					args = []string{"--environment", environment, "--release", "/reviewed/release.json", "--fast"}
+				}
+				var out, diagnostics bytes.Buffer
+				err := runUnifiedEnvironmentDeploymentWithDependencies(context.Background(), action, args, &out, &diagnostics, deps)
+				if err != exitCode(1) || !strings.Contains(out.String(), "NO-GO") || strings.Contains(out.String(), "never-public") || strings.Contains(out.String(), "completed=true") {
+					t.Fatal(mode, err, out.String())
+				}
+				if mode != "partial-failure" && mode != "acceptance-failure" && *writes != 0 {
+					t.Fatal("unqualified environment was mutated")
+				}
+			})
+		}
+	}
+}
+
+func TestUnifiedEntryRejectsRetiredActionsAndBadInputs(t *testing.T) {
+	for _, args := range [][]string{{"--deploy"}, {"--apply"}, {"--all"}, {"--reset-and-all"}} {
+		args = append(args, "--confirm", "video-cloud-dev", "--env-root", "/reviewed/dev")
+		if err := runProvisionCompatibilityEntry(args); err == nil || !strings.Contains(err.Error(), "retired") {
+			t.Fatal("direct provision bypasses common complete gates", args)
+		}
+	}
+	for _, action := range []string{"prepare-upgrade", "provision", "test"} {
+		if err := runDeployment([]string{action, "--environment", "dev"}); err == nil || !strings.Contains(err.Error(), "retired") {
+			t.Fatal("legacy fallback remained reachable", action)
+		}
+	}
+	for _, args := range [][]string{{"--environment", "dev"}, {"--environment", "dev", "--plan-sha256", "bad"}, {"--environment", "dev", "--plan-sha256", strings.Repeat("a", 64), "--fast"}, {"--environment", "dev", "--plan-sha256", strings.Repeat("a", 64), "--operation", "create"}} {
+		if _, err := parseUnifiedDeploymentOptions("upgrade", args, &bytes.Buffer{}); err == nil {
+			t.Fatal("invalid execution flags accepted", args)
+		}
+	}
+}
+
+func TestUnifiedReportsRejectWorktreesOtherEnvironmentsAndSymlinkParents(t *testing.T) {
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		t.Run(environment, func(t *testing.T) {
+			_, deps, _ := unifiedCLIProfile(t, environment)
+			deps.Compile = func(context.Context, deploymentConfig, string, string) (*compiledEnvironmentDeployment, error) {
+				t.Fatal("invalid report destination reached planning")
+				return nil, nil
+			}
+			store, _ := newSecretStore("", environment)
+			for _, path := range []string{filepath.Join(t.TempDir(), "report.json"), filepath.Join(store.ConfigRoot, "other", "deployment", "reports", "report.json"), filepath.Join(store.Root, "pki", "report.json"), filepath.Join(store.Root, "deployment", "reports", "report.txt")} {
+				var out, diagnostics bytes.Buffer
+				err := runUnifiedEnvironmentDeploymentWithDependencies(context.Background(), "preflight", []string{"--environment", environment, "--release", "/reviewed/release.json", "--report", path}, &out, &diagnostics, deps)
+				if err != exitCode(2) {
+					t.Fatal("deployment report escaped its environment authority", err)
+				}
+				if _, err := os.Stat(path); !os.IsNotExist(err) {
+					t.Fatal("rejected report was created")
+				}
+			}
+			if err := os.MkdirAll(filepath.Join(store.Root, "deployment"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(t.TempDir(), filepath.Join(store.Root, "deployment", "reports")); err != nil {
+				t.Fatal(err)
+			}
+			if err := validateEnvironmentDeploymentReportPath(environment, filepath.Join(store.Root, "deployment", "reports", "report.json")); err == nil {
+				t.Fatal("symlink report parent accepted")
+			}
+		})
+	}
+}

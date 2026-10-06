@@ -214,6 +214,12 @@ func runDeploymentPreflightWithChecksContext(ctx context.Context, cfg deployment
 	reporter := &deploymentPreflightReporter{out: out}
 	fmt.Fprintf(out, "Deployment preflight: environment=%s operation=%s runtime=%s\n", cfg.Environment, operation, cfg.RuntimeRoot)
 	reporter.pass("environment-config", "tracked environment, architecture, adapter, and DNS config are valid")
+	if operation == "provision" || operation == "ephemeral-test" {
+		if err := validateDeploymentStorageActivation(cfg); err != nil {
+			reporter.fail("deployment.storage.activation", err)
+			return reporter.result()
+		}
+	}
 
 	tools := []string{"git"}
 	switch operation {

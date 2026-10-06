@@ -89,8 +89,8 @@ var commands = map[string]commandSpec{
 	"provisioning-lifecycle-evidence":  {run: runProvisioningLifecycleEvidence},
 	"video-cloud-admin-token":          {run: runVideoCloudAdminToken},
 	"cloud-logger-token":               {run: runCloudLoggerToken},
-	"provision":                        {run: runProvision},
-	"provision-k8s":                    {run: runProvisionK8s},
+	"provision":                        {run: runProvisionCompatibilityEntry},
+	"provision-k8s":                    {run: runRetiredFullProvisionEntry},
 	"refresh-user-tokens":              {run: runRefreshUserTokens},
 	"schema":                           {run: runSchema},
 	"refresh-runtime-client-ca":        {run: runRefreshRuntimeClientCA},
@@ -109,7 +109,7 @@ var commands = map[string]commandSpec{
 	"staging-e2e-mqtt-log-verify":      {run: runStagingE2EMQTTLogVerify},
 	"environment-e2e-mqtt-log-verify":  {run: runStagingE2EMQTTLogVerify},
 	"staging-e2e-test":                 {run: runStagingE2ETest},
-	"staging-provision":                {run: runStagingProvision},
+	"staging-provision":                {run: runRetiredFullProvisionEntry},
 	"staging-reset-k8s":                {run: runStagingResetK8s},
 	"status-all":                       {run: runStatusAll},
 	"sync-env":                         {run: runSyncEnv},
@@ -4939,6 +4939,9 @@ func runStagingE2ETest(args []string) error {
 	}
 	if *confirm != stackName {
 		return fmt.Errorf("--confirm %s does not match CLOUD_STACK_NAME=%s", *confirm, stackName)
+	}
+	if selection.Provision {
+		return errors.New("legacy E2E full provisioning is retired; qualify and execute the shared deployment plan first, then run explicit acceptance steps with --skip-remove --skip-provision; no reset or provisioning was started")
 	}
 	if useLKEProvision && selection.Provision {
 		if err := materializeStagingE2EDeploymentConfig(workspace, envRoot); err != nil {

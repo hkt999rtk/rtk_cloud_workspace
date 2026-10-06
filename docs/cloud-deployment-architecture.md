@@ -2,6 +2,24 @@
 
 ## Contract
 
+### Local configuration and deployment state ownership
+
+`cloud_env/` contains configuration only. All local deployment-generated data,
+whether sensitive or redacted, belongs in `~/.config/rtk_cloud/<environment>/`:
+tokens, keys, certificates, kubeconfig, allocated provider state, receipts and
+proofs, journals/locks, reports, rollback/recovery and temporary deployment data.
+Use private `0700` directories and `0600` files. Every renderer, preflight,
+executor and recovery operation uses the same explicit environment resolver;
+none may invent a location from CWD, a worktree, external disk or volume format.
+
+See the [canonical path table and migration boundary](deployment-secrets-governance.md#configuration-versus-deployment-generated-data).
+Only deterministic secret-free resolved configuration may remain under
+`cloud_env/<environment>/runtime/`. Legacy operational files there require an
+explicit validated migration. Missing evidence never authorizes identity/data
+reinitialization or an automatic fallback. Existing provider-state examples
+in this document describe the older implementation; moving those writers and
+readers is an unfinished part of the unified replacement, not a policy exception.
+
 RTK Cloud uses one reusable architecture description, many environment instances, and replaceable deployment adapters. Environments such as `dev`, `staging`, and `prod` select an architecture and adapter; they do not own copies of the architecture or adapter implementation.
 
 The Kubernetes architecture owns workloads, namespaces, logical node classes, resource intent, capacity rules, placement, edge requirements, and TURN requirements. It uses `rtk.io/node-class` and standard Kubernetes topology labels. It must not contain cloud resource IDs or provider-specific labels.
@@ -14,6 +32,15 @@ Adapter resolution is deterministic. LKE maps the logical location to an LKE reg
 
 ## Resolution and lifecycle
 
+The complete deployment qualification contract is
+[Unified Deployment Readiness](deployment-readiness-standard.md), accepted in
+[ADR 0003](adr/0003-unified-environment-deployment.md). Create and upgrade resolve
+one maintained target and qualify the exact execution plan. Existing resources
+are ownership/identity/concurrency evidence, not desired configuration templates.
+An environment-local schema-1 snapshot must not select a different renderer.
+The replacement is in progress; legacy prerequisite PASS does not establish
+complete-environment GO under the accepted standard.
+
 The directory name under `cloud_env/` is the environment identity. Configuration is resolved in this order: architecture defaults, adapter defaults, environment stack/selection, environment architecture overrides, environment adapter overrides, and allow-listed explicit overrides. Cross-layer duplicate keys, unknown keys, invalid types, and provider keys in architecture config are errors.
 
 The [environment DNS naming source](environment-dns-naming.md) defines how the
@@ -25,10 +52,10 @@ adapter applies records; changing a deployment or DNS provider does not change
 the naming policy.
 
 ```text
-resolve -> validate -> plan -> ensure adapter infrastructure
-        -> normalize kube access -> deploy shared Kubernetes workloads
-        -> configure adapter edge -> configure selected DNS adapter
-        -> acceptance -> evidence
+resolve -> immutable release -> complete versioned plan -> qualification
+        -> infrastructure stage -> Kubernetes admission/bootstrap stage
+        -> fenced workload/storage/network/route stages
+        -> target health and business acceptance -> completion evidence
 ```
 
 The normalized runtime contract is `cloud_env/<environment>/runtime`. Shared commands never inspect adapter-private state. A resolved plan is sanitized and contains no credentials, kubeconfig content, private keys, tokens, or generated service secrets.
@@ -87,4 +114,9 @@ Every Pod must fit one planning node. Persistent volumes are storage intent and 
 | `LKE_*_NODE_TYPE` | `NODE_CLASS_*_MIN_VCPU/MIN_MEMORY_GIB` plus LKE instance catalog |
 | `LINODE_ACTIVE_SERVICE_LIMIT` | ignored `runtime/adapters/lke/account.env:LKE_ACTIVE_SERVICE_LIMIT` |
 
-The LKE adapter may translate the resolved contract into compatibility inputs while the existing renderer is decomposed, but compatibility keys are generated runtime material and are not architecture or environment source of truth.
+The LKE adapter may translate resolved settings into compatibility inputs inside
+the bounded common catalog compiler while helpers are decomposed. Those keys
+are generated inputs, not configuration authority. Compatibility cannot select
+a legacy execution path, regenerate managed PKI, copy a live desired spec, or
+weaken a required readiness gate. See the readiness standard's replacement
+status for capabilities that still require implementation and qualification.

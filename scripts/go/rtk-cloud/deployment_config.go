@@ -113,7 +113,9 @@ var deploymentEnvironmentServiceKeys = keySet(
 
 func architectureKeySet() map[string]bool {
 	out := keySet(
-		"DEPLOYMENT_RUNTIME", "NODE_CLASS_LABEL_KEY", "DEFAULT_WORKLOAD_NODE_CLASS", "POD_SPREAD_TOPOLOGY_KEY",
+		"DEPLOYMENT_RUNTIME", "DEPLOYMENT_PROTECTION_PROFILE", "NODE_CLASS_LABEL_KEY", "DEFAULT_WORKLOAD_NODE_CLASS", "POD_SPREAD_TOPOLOGY_KEY",
+		"DURABLE_DATA_STORAGE_CLASS", "REDIS_DATA_STORAGE", "PROMETHEUS_DATA_STORAGE",
+		"PKI_APP_CRL_WORKER_ENABLED", "PKI_SERVER_CRL_DOMAIN", "PKI_REQUIRE_USER_MFA",
 		"CAPACITY_TARGET_CONNECTIONS", "CAPACITY_CONNECTIONS_PER_MQTT_POD",
 		"CAPACITY_ACTIVE_DEVICES", "CAPACITY_ACTIVE_DEVICES_PER_API_POD", "CAPACITY_SYSTEM_RESERVED_CPU_MILLI", "CAPACITY_SYSTEM_RESERVED_MEMORY_MIB",
 		"NODE_CLASS_GENERAL_MIN_COUNT", "NODE_CLASS_BROKER_MIN_COUNT", "NODE_CLASS_DATABASE_MIN_COUNT",
@@ -128,6 +130,10 @@ func architectureKeySet() map[string]bool {
 	for _, key := range capacitySourceKeys() {
 		out[key] = true
 	}
+	for _, domain := range managedPKIDomains {
+		out["PKI_REQUIRED_CONSUMERS_"+strings.ToUpper(domain)] = true
+		out["PKI_REQUIRED_BUNDLE_CONSUMERS_"+strings.ToUpper(domain)] = true
+	}
 	return out
 }
 
@@ -140,6 +146,24 @@ func keySet(keys ...string) map[string]bool {
 }
 
 func runDeployment(args []string) error {
+	if len(args) > 0 {
+		switch args[0] {
+		case "plan", "create", "upgrade", "preflight":
+			return runUnifiedEnvironmentDeployment(args[0], args[1:])
+		case "freeze-release":
+			return runEnvironmentReleaseFreeze(args[1:])
+		case "adopt-managed-state":
+			return runEnvironmentManagedAdoption(args[1:])
+		case "reconcile-execution":
+			return runEnvironmentExecutionReconcile(args[1:])
+		case "storage-import-state":
+			return runDeploymentStorageImport(args[1:])
+		case "prepare-upgrade":
+			return errors.New("prepare-upgrade and schema-1 workload plans are retired; select the formal --release, maintain identity bindings, then use deployment plan and full preflight")
+		case "provision", "test":
+			return errors.New("legacy full provision/test is retired; use deployment plan/create/upgrade with the selected formal release and exact --plan-sha256; bootstrap and isolated qualification must pass their required gates")
+		}
+	}
 	return runDeploymentWithOperations(args, defaultDeploymentOperations())
 }
 
@@ -221,7 +245,7 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 		}
 		return err
 	}
-	if (action == "credentials-check" || action == "storage-metrics-export" || action == "prepare-upgrade") && fs.NArg() != 0 {
+	if (action == "credentials-check" || action == "storage-metrics-export") && fs.NArg() != 0 {
 		return errors.New("unexpected positional arguments; use --flag=value for boolean values")
 	}
 	if action != "storage-reinitialize" && (hasFlag(args[1:], "--acknowledge-discarded-source") || hasFlag(args[1:], "--plan")) {
@@ -242,7 +266,7 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 	})
 	if customQualification {
 		preflightReadOnlyOnly := action == "preflight" && qualification.readOnly && selectedChecks == "" && len(qualification.images) == 0 && len(qualification.manifests) == 0 && qualification.tls.cert == "" && qualification.tls.key == "" && qualification.tls.ca == "" && qualification.tls.hostname == "" && !hasFlag(args[1:], "--tls-purpose") && !hasFlag(args[1:], "--min-valid-days")
-		if action != "credentials-check" && action != "prepare-upgrade" && !preflightReadOnlyOnly {
+		if action != "credentials-check" && !preflightReadOnlyOnly {
 			return errors.New("qualification flags are only valid with deployment credentials-check")
 		}
 		if *createMissingObjectStorageBucket || *grantObjectStorageBucketAccess {
@@ -261,7 +285,7 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 		}
 	}
 	storageAction := strings.HasPrefix(action, "storage-")
-	if action != "prepare-upgrade" && action != "preflight" && action != "credentials-check" && action != "plan" && action != "create" && action != "upgrade" && action != "provision" && action != "acceptance" && action != "remove" && action != "test" && !keySet("storage-plan", "storage-bootstrap", "storage-migrate", "storage-cutover", "storage-reinitialize", "storage-rollback", "storage-retire", "storage-metrics-export")[action] {
+	if action != "preflight" && action != "credentials-check" && action != "plan" && action != "create" && action != "upgrade" && action != "provision" && action != "acceptance" && action != "remove" && action != "test" && !keySet("storage-plan", "storage-bootstrap", "storage-migrate", "storage-cutover", "storage-reinitialize", "storage-rollback", "storage-retire", "storage-metrics-export")[action] {
 		return fmt.Errorf("unknown deployment action %q", action)
 	}
 	if *createMissingObjectStorageBucket && action != "credentials-check" {
@@ -297,18 +321,6 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 	stack := cfg.Values["CLOUD_STACK_NAME"]
 	if action != "plan" && action != "credentials-check" && action != "storage-plan" && !(action == "storage-reinitialize" && *reinitializePlan) && *confirm != stack {
 		return fmt.Errorf("--confirm %s is required", stack)
-	}
-	if action == "prepare-upgrade" {
-		invalid := false
-		fs.Visit(func(f *flag.Flag) {
-			if qualificationFlags[f.Name] && f.Name != "image" {
-				invalid = true
-			}
-		})
-		if invalid {
-			return errors.New("prepare-upgrade accepts only --image qualification inputs; use the default preflight after reviewing the private plan")
-		}
-		return prepareManagedUpgrade(cfg, qualification.images, os.Stdout)
 	}
 	if *destinationEnvFile != "" && !storageAction {
 		return errors.New("--destination-env-file requires a storage action")
@@ -392,7 +404,7 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 			if !profileCheck.Passed {
 				return errors.New(profileCheck.Detail)
 			}
-			receipt, receiptErr := readDeploymentStorageReceipt(cfg.RuntimeRoot)
+			receipt, receiptErr := readDeploymentStorageReceipt(cfg)
 			if receiptErr != nil {
 				return errors.New("validated storage receipt is required before provisioning")
 			}
@@ -460,18 +472,8 @@ func provisionDeploymentEnvironment(cfg deploymentConfig) error {
 		if err := validateLKEEnvironmentStateBeforeMutation(cfg); err != nil {
 			return err
 		}
-		store, err := newSecretStore("", cfg.Environment)
-		if err != nil {
+		if err := resolveLKEImagesIfNeeded(cfg.Workspace, cfg.RuntimeRoot); err != nil {
 			return err
-		}
-		plan, err := loadManagedUpgradePlan(store, cfg.Values["CLOUD_STACK_NAME"])
-		if err != nil {
-			return err
-		}
-		if plan == nil {
-			if err := resolveLKEImagesIfNeeded(cfg.Workspace, cfg.RuntimeRoot); err != nil {
-				return err
-			}
 		}
 	}
 	return runProvision([]string{"--workspace", cfg.Workspace, "--env-root", cfg.RuntimeRoot, "--preflight", "--plan", "--apply", "--deploy", "--dns", "--artifacts", "--confirm", cfg.Values["CLOUD_STACK_NAME"]})
@@ -770,16 +772,17 @@ func printDeploymentUsage() {
   rtk-cloud deployment credentials-check --environment NAME --read-only [--checks ghcr,tls,mounts] [--image GHCR_DIGEST] [--manifest WORKLOAD_JSON]
   rtk-cloud deployment credentials-check --environment NAME --create-missing-object-storage-bucket
   rtk-cloud deployment credentials-check --environment NAME --grant-object-storage-bucket-access
-  rtk-cloud deployment preflight --environment NAME --operation plan|provision|acceptance|ephemeral-test
-  rtk-cloud deployment plan --environment NAME
+  rtk-cloud deployment preflight --environment NAME [--operation create|upgrade] [--release PATH] [--report PATH]
+  rtk-cloud deployment freeze-release --environment NAME --provider-release PATH --output NEW_PATH
+  rtk-cloud deployment adopt-managed-state --environment NAME [--release PATH] [--output identity-bindings.candidate.json]
+  rtk-cloud deployment plan --environment NAME [--operation create|upgrade] [--release PATH]
   rtk-cloud deployment console-check --environment NAME --cloud-id UUID [--product-id UUID]
-  rtk-cloud deployment create --environment NAME --confirm STACK
-  rtk-cloud deployment prepare-upgrade --environment NAME --confirm STACK [--image GHCR_DIGEST]...
-  rtk-cloud deployment upgrade --environment NAME --confirm STACK
-  rtk-cloud deployment provision --environment NAME --confirm STACK
+  rtk-cloud deployment create --environment NAME --confirm STACK --plan-sha256 SHA256 [--release PATH]
+  rtk-cloud deployment upgrade --environment NAME --confirm STACK --plan-sha256 SHA256 [--release PATH]
+  rtk-cloud deployment reconcile-execution --environment NAME --confirm STACK --plan-sha256 ORIGINAL_SHA256
+  rtk-cloud deployment storage-import-state --environment NAME --source-runtime ORIGINAL_RUNTIME --confirm STACK
   rtk-cloud deployment acceptance --environment NAME --confirm STACK
   rtk-cloud deployment remove --environment NAME --confirm STACK
-  rtk-cloud deployment test --environment NAME --confirm STACK
   rtk-cloud deployment storage-plan --environment NAME
   rtk-cloud deployment storage-bootstrap --environment NAME --purpose media|ota|artifacts --destination-env-file PATH --confirm STACK
   rtk-cloud deployment storage-reinitialize --environment NAME --purpose media|ota --source-env-file PATH --destination-env-file PATH --acknowledge-discarded-source BUCKET [--plan | --confirm STACK]
@@ -1370,12 +1373,12 @@ func materializeDeploymentRuntime(cfg deploymentConfig) error {
 	stack["VIDEO_CLOUD_OTA_BLOB_BUCKET"] = cfg.Storage.OTAFirmware.Bucket
 	stack["VIDEO_CLOUD_OTA_BLOB_REGION"] = cfg.Storage.OTAFirmware.Region
 	stack["VIDEO_CLOUD_OTA_BLOB_PREFIX"] = cfg.Storage.OTAFirmware.Prefix
-	if receipt, err := readDeploymentStorageReceipt(cfg.RuntimeRoot); err == nil && receipt.Bucket == cfg.Storage.RuntimeMedia.Bucket && receipt.Region == cfg.Storage.RuntimeMedia.Region {
+	if receipt, err := readDeploymentStorageReceipt(cfg); err == nil && receipt.Bucket == cfg.Storage.RuntimeMedia.Bucket && receipt.Region == cfg.Storage.RuntimeMedia.Region {
 		stack["VIDEO_CLOUD_BLOB_ENDPOINT"] = receipt.Endpoint
 	}
 	if cfg.Storage.OTAMode == "dedicated" {
 		var receipt deploymentStorageReceipt
-		if body, err := os.ReadFile(filepath.Join(cfg.RuntimeRoot, "state", "storage-preflight-ota.json")); err == nil && json.Unmarshal(body, &receipt) == nil && receipt.Bucket == cfg.Storage.OTAFirmware.Bucket && receipt.Region == cfg.Storage.OTAFirmware.Region {
+		if body, err := readDeploymentStorageState(cfg.Environment, "storage-preflight-ota.json"); err == nil && json.Unmarshal(body, &receipt) == nil && receipt.Bucket == cfg.Storage.OTAFirmware.Bucket && receipt.Region == cfg.Storage.OTAFirmware.Region {
 			stack["VIDEO_CLOUD_OTA_BLOB_ENDPOINT"] = receipt.Endpoint
 			stack["VIDEO_CLOUD_OTA_BLOB_ENDPOINT_TYPE"] = receipt.EndpointType
 		}

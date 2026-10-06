@@ -1,5 +1,11 @@
 # Staging Runtime Bootstrap and Restore
 
+
+Complete create/upgrade now uses the shared v2 engine and the selected formal release.
+Required capability adapters are still being completed; missing gates remain NO-GO.
+The older bootstrap/provision sequence below is historical context, not a supported
+fallback. See [deployment operations](deployment-operations.md) and
+[the readiness standard](deployment-readiness-standard.md).
 This document explains how to prepare the staging runtime required for MQTT/
 shadow load tests after cloning the workspace onto another macOS controller.
 
@@ -68,6 +74,15 @@ and its small documented allowlist of LKE controller metadata; it does not
 recursively copy service env, kubeconfig, keys or test databases. Review any
 additional non-secret controller artifacts separately. For matched cloud data
 recovery after deployment, follow [Core Backup and Restore](backup-restore.md).
+
+Storage completion receipts and migration proofs are environment-owned under
+`~/.config/rtk_cloud/staging/deployment/storage/`, with their private journals in
+`migration-backup/`. They must accompany the encrypted SecretStore transfer;
+copying workspace runtime alone cannot recover them. For older completed
+operations whose receipts remain in a worktree, use the explicit
+[storage evidence import](storage-credential-lifecycle.md#environment-owned-receipts-and-proof-location)
+and repeat full preflight. Missing receipts never justify repeating destructive
+reinitialization or changing the cutover-required setting.
 
 The restore tool handles only non-sensitive runtime. Prepare the SecretStore
 separately and pass `secrets verify`. GitHub Actions should write GitHub Secrets

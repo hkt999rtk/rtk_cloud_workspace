@@ -20,12 +20,12 @@ import (
 // This facade is deliberately separate from credentials-check: its existing
 // callers include local-only qualification and provision/bootstrap operations.
 type deploymentCheckOptions struct {
-	environment, environmentRoot, workspace, report string
-	phase                                           string
-	operation                                       string
-	timeout                                         time.Duration
-	requireMigration, requireProduct                bool
-	qualification                                   deploymentCredentialCheckOptions
+	environment, environmentRoot, workspace, report, release string
+	phase                                                    string
+	operation                                                string
+	timeout                                                  time.Duration
+	requireMigration, requireProduct                         bool
+	qualification                                            deploymentCredentialCheckOptions
 }
 
 type deploymentCheckDependencies struct {
@@ -65,7 +65,7 @@ func parseDeploymentCheckOptions(args []string, out io.Writer) (deploymentCheckO
 	fs := flag.NewFlagSet("deployment check", flag.ContinueOnError)
 	fs.SetOutput(out)
 	o.phase = deploymentCheckPostDeploy
-	fs.StringVar(&o.operation, "operation", "full-deployment", "full-deployment or image-upgrade (preserves existing workload configuration)")
+	fs.StringVar(&o.operation, "operation", "full-deployment", "full-deployment (complete upgrade), create, or image-upgrade")
 	var selectedPhase string
 	fs.Func("phase", "pre-deploy (can deploy) or post-deploy (existing runtime health; default)", func(v string) error {
 		if v != deploymentCheckPreDeploy && v != deploymentCheckPostDeploy {
@@ -81,11 +81,12 @@ func parseDeploymentCheckOptions(args []string, out io.Writer) (deploymentCheckO
 	fs.StringVar(&o.environmentRoot, "environment-root", "", "explicit environment root")
 	fs.StringVar(&o.workspace, "workspace", "", "workspace root")
 	fs.StringVar(&o.report, "report", "", "write a sanitized JSON report (0600)")
+	fs.StringVar(&o.release, "release", "", "selected immutable formal release manifest for complete preflight")
 	fs.DurationVar(&o.timeout, "timeout", 0, "overall deadline (default: fast 2m, standard 10m)")
 	fs.BoolVar(&o.requireMigration, "require-pki-migration", false, "require PKI migration-owner binding")
 	fs.BoolVar(&o.requireProduct, "require-product-pki", false, "require active pinned Product Device Root")
 	q := &o.qualification
-	fs.BoolVar(&q.fast, "fast", false, "image metadata only; retains the selected phase checks (does not select a phase)")
+	fs.BoolVar(&q.fast, "fast", false, "reduced evidence; complete updates and image upgrades cannot receive GO")
 	fs.BoolVar(&q.readOnly, "read-only", false, "suppress DNS/storage writes and receipts; --image still pulls")
 	fs.StringVar(&selected, "checks", "", "linode,ghcr,dns,storage,tls,mounts; selected phase prerequisites always apply")
 	fs.Func("image", "repeatable GHCR digest-pinned image for linux/amd64", func(v string) error { q.images = append(q.images, v); return nil })
@@ -103,8 +104,11 @@ func parseDeploymentCheckOptions(args []string, out io.Writer) (deploymentCheckO
 	if err := fs.Parse(args); err != nil {
 		return o, err
 	}
-	if o.operation != "full-deployment" && o.operation != "image-upgrade" {
-		return o, errors.New("--operation must be full-deployment or image-upgrade")
+	if o.operation != "full-deployment" && o.operation != "image-upgrade" && o.operation != "create" {
+		return o, errors.New("--operation must be full-deployment, create or image-upgrade")
+	}
+	if (o.release != "" || o.operation == "create") && (o.phase != deploymentCheckPreDeploy || o.operation == "image-upgrade") {
+		return o, errors.New("--release and create qualification require complete pre-deploy checks")
 	}
 	if fs.NArg() != 0 {
 		return o, errors.New("unexpected positional arguments; use --flag=value for boolean values")
@@ -571,6 +575,10 @@ func writeDeploymentCheckReport(path string, report deploymentCheckReport) error
 	if err != nil {
 		return err
 	}
+	return writePrivateDeploymentReportJSON(path, data)
+}
+
+func writePrivateDeploymentReportJSON(path string, data []byte) error {
 	f, err := os.CreateTemp(filepath.Dir(path), ".deployment-check-*.json")
 	if err != nil {
 		return errors.New("cannot create deployment check report")
@@ -592,6 +600,26 @@ func writeDeploymentCheckReport(path string, report deploymentCheckReport) error
 func runDeploymentCheck(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	o, err := parseDeploymentCheckOptions(args, io.Discard)
+	if err == nil && o.phase == deploymentCheckPreDeploy && o.operation != "image-upgrade" {
+		if o.qualification.selected != nil || len(o.qualification.images) != 0 || len(o.qualification.manifests) != 0 || o.qualification.tls.cert != "" {
+			fmt.Fprintln(os.Stderr, "error: complete preflight derives every required check and image from the selected release; use credentials-check for scoped provider checks")
+			return exitCode(2)
+		}
+		forward := []string{"--environment", o.environment, "--timeout", o.timeout.String()}
+		if o.operation == "create" {
+			forward = append(forward, "--operation", "create")
+		}
+		for _, pair := range [][2]string{{"--workspace", o.workspace}, {"--environment-root", o.environmentRoot}, {"--release", o.release}, {"--report", o.report}} {
+			if pair[1] != "" {
+				forward = append(forward, pair[0], pair[1])
+			}
+		}
+		if o.qualification.fast {
+			forward = append(forward, "--fast")
+		}
+		return runUnifiedEnvironmentDeploymentWithDependencies(ctx, "preflight", forward, os.Stdout, os.Stderr, defaultUnifiedDeploymentDependencies())
+	}
 	return runDeploymentCheckWithDependencies(ctx, args, os.Stdout, os.Stderr, defaultDeploymentCheckDependencies())
 }
 

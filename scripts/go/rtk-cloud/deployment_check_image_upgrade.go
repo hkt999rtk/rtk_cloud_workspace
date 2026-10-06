@@ -178,7 +178,11 @@ func validateDeploymentUpgradeTargets(targets, live []deploymentUpgradeTarget, i
 }
 
 func deploymentUpgradeCommand(ctx context.Context, command string, args ...string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	deadline := 20 * time.Second
+	if command == "docker" && len(args) > 0 && args[0] == "pull" {
+		deadline = 5 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, command, args...)
 	cmd.WaitDelay = time.Second
@@ -351,6 +355,16 @@ func verifyDeploymentUpgradeImageCI(ctx context.Context, workspace, image string
 		return err
 	}
 	sha := strings.TrimSpace(string(shaRaw))
+	return verifyDeploymentUpgradeImageCIAt(ctx, image, sha)
+}
+
+// Unified release qualification passes the manifest's exact source revision;
+// it never resolves a mutable tag or silently substitutes the current checkout.
+func verifyDeploymentUpgradeImageCIAt(ctx context.Context, image, sha string) error {
+	source, err := deploymentUpgradeImageSource(image)
+	if err != nil {
+		return err
+	}
 	if !deploymentUpgradeSHA.MatchString(sha) {
 		return errors.New("candidate source revision is invalid")
 	}

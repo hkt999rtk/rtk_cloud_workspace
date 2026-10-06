@@ -41,6 +41,7 @@ type postgresBackupDeployment struct {
 	ImagePullSecret string                `json:"image_pull_secret,omitempty"`
 	Schedule        string                `json:"schedule,omitempty"`
 	TimeZone        string                `json:"time_zone,omitempty"`
+	ScheduleEnabled *bool                 `json:"schedule_enabled,omitempty"`
 	Worker          postgresbackup.Config `json:"worker"`
 }
 
@@ -126,6 +127,17 @@ func (c postgresBackupDeployment) validate() error {
 	return c.Worker.Validate()
 }
 
+func (c postgresBackupDeployment) validatePITRTarget(target postgresbackup.PITRTarget) error {
+	if target.At.IsZero() || target.At.After(time.Now().UTC()) || target.Timeline == 0 || target.MaxWALBytes <= 0 || target.MaxWALBytes > c.Worker.MaxPlaintextBytes {
+		return errors.New("invalid bounded past PITR target")
+	}
+	scratch, err := postgresBackupStorageBytes(c.ScratchStorage)
+	if err != nil || target.MaxWALBytes > scratch-(64<<20)-c.Worker.MaxPlaintextBytes-c.Worker.MaxArchiveBytes {
+		return errors.New("PITR scratch must fit downloaded ciphertext, restored data, WAL cache and a 64MiB reserve")
+	}
+	return nil
+}
+
 func (c postgresBackupDeployment) schedule() string {
 	if c.Schedule != "" {
 		return c.Schedule
@@ -200,7 +212,7 @@ func runPostgresRestore(args []string) error { return runPostgresBackupCLI(true,
 func runPostgresBackupCLI(restore bool, args []string) error {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
 		fmt.Println("postgres-backup: plan | configure | run | status | retry-upload | prune --dry-run")
-		fmt.Println("postgres-restore: drill | cleanup (isolated same-environment namespace only)")
+		fmt.Println("postgres-restore: drill | pitr-drill | cleanup (isolated same-environment namespace only)")
 		fmt.Println("Required: --environment ENV --config FILE. Mutations require --confirm-environment ENV --confirm-stack STACK.")
 		fmt.Println("configure defaults to a suspended schedule; --enable-schedule enables daily 03:00 Asia/Shanghai backups.")
 		return nil
@@ -208,7 +220,7 @@ func runPostgresBackupCLI(restore bool, args []string) error {
 	action := args[0]
 	allowed := map[string]bool{"plan": true, "configure": true, "run": true, "status": true, "retry-upload": true, "prune": true}
 	if restore {
-		allowed = map[string]bool{"drill": true, "cleanup": true}
+		allowed = map[string]bool{"drill": true, "pitr-drill": true, "cleanup": true}
 	}
 	if !allowed[action] {
 		return errors.New("unsupported PostgreSQL backup/restore action")
@@ -226,6 +238,9 @@ func runPostgresBackupCLI(restore bool, args []string) error {
 	drillID := fs.String("drill-id", "", "isolated drill resource suffix")
 	identity := fs.String("identity", "", "private age identity file for isolated drill")
 	qualification := fs.String("qualification", "", "reviewed staging performance evidence required to enable schedule")
+	pitrTime := fs.String("recovery-time", "", "exact PITR target timestamp with an explicit UTC offset")
+	pitrTimeline := fs.Uint("recovery-timeline", 0, "explicit PITR timeline")
+	pitrMaxWAL := fs.Int64("max-wal-bytes", 0, "bounded PITR WAL cache in bytes")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -235,6 +250,19 @@ func runPostgresBackupCLI(restore bool, args []string) error {
 	cfg, err := readPostgresBackupDeployment(*configPath, *environment)
 	if err != nil {
 		return err
+	}
+	var pitr *postgresbackup.PITRTarget
+	if action == "pitr-drill" {
+		at, err := time.Parse(time.RFC3339Nano, *pitrTime)
+		if err != nil || at.After(time.Now().UTC()) || *pitrTimeline == 0 || uint64(*pitrTimeline) > 1<<32-1 || *pitrMaxWAL <= 0 || *pitrMaxWAL > cfg.Worker.MaxPlaintextBytes {
+			return errors.New("pitr-drill requires an exact past --recovery-time, explicit --recovery-timeline and bounded --max-wal-bytes")
+		}
+		pitr = &postgresbackup.PITRTarget{At: at.UTC(), Timeline: uint32(*pitrTimeline), MaxWALBytes: *pitrMaxWAL}
+		if err := cfg.validatePITRTarget(*pitr); err != nil {
+			return err
+		}
+	} else if hasFlag(args[1:], "--recovery-time") || hasFlag(args[1:], "--recovery-timeline") || hasFlag(args[1:], "--max-wal-bytes") {
+		return errors.New("recovery target flags require postgres-restore pitr-drill")
 	}
 	if action == "plan" {
 		b, _ := json.MarshalIndent(postgresBackupPlan(cfg), "", "  ")
@@ -286,6 +314,8 @@ func runPostgresBackupCLI(restore bool, args []string) error {
 		return m.createJob(ctx, action, *id)
 	case "drill":
 		return m.drill(ctx, *id, *drillID, *identity)
+	case "pitr-drill":
+		return m.drillWithPITR(ctx, *id, *drillID, *identity, pitr)
 	case "cleanup":
 		return m.cleanupDrill(ctx, *drillID)
 	}

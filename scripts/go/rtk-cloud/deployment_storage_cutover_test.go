@@ -381,9 +381,10 @@ func TestStorageCutoverPrivateJournalAndConditionalCreatedResourceRollback(t *te
 	}
 }
 func TestStorageRollbackRejectsChangedMigrationProofBeforeClusterMutation(t *testing.T) {
+	makeIsolatedTestSecretStore(t, "dev")
 	root := installStorageCutoverMock(t)
-	cfg := deploymentConfig{RuntimeRoot: t.TempDir()}
-	if err := writeStorageState(storageCutoverMigrationPath(cfg, "media"), map[string]any{"changed": true}); err != nil {
+	cfg := deploymentConfig{Environment: "dev", RuntimeRoot: t.TempDir()}
+	if err := writeStorageState(mustStorageStatePath(t, cfg, storageMigrationReceiptName("media")), map[string]any{"changed": true}); err != nil {
 		t.Fatal(err)
 	}
 	err := validateStorageRollbackData(cfg, storageCutoverJournal{Purpose: "media", MigrationSHA256: "old-proof", Mutations: []storageCutoverMutation{{Attempted: true}}})
@@ -688,7 +689,7 @@ func newStorageCutoverRecoveryFixture(t *testing.T) storageCutoverRecoveryFixtur
 		t.Fatal(err)
 	}
 	state := deploymentStorageMigrationState{Environment: "dev", Purpose: "media", Source: "old", SourceRegion: "us-sea", SourceEndpoint: "file://" + sourceRoot, SourcePrefixExplicit: true, Destination: "destination", DestinationRegion: "us-sea", DestinationEndpoint: server.URL, Prefix: "environments/stack", Objects: map[string]storageObjectProof{"environments/stack/clips/a": otaObjectProof([]byte("payload"))}, SourceKeys: map[string]string{"clips/a": "environments/stack/clips/a"}, ObjectCount: 1, ByteCount: 7, UpdatedAt: time.Now().UTC().Format(time.RFC3339)}
-	if err := writeStorageState(storageCutoverMigrationPath(cfg, "media"), state); err != nil {
+	if err := writeStorageState(mustStorageStatePath(t, cfg, storageMigrationReceiptName("media")), state); err != nil {
 		t.Fatal(err)
 	}
 	consumer := storageCutoverFixture("Deployment", "api")
@@ -749,7 +750,7 @@ func TestStorageCutoverFailurePromotionRestoresExistingSecretBeforeWorkload(t *t
 	if storageCutoverGet(consumer, "/spec/template/spec/containers/0/env/0/value") != "old" || storageCutoverGet(secret, "/data/AWS_ACCESS_KEY_ID") != "b2xk" || storageCutoverGet(secret, "/data/UNRELATED") != "a2VlcA==" {
 		t.Fatal("failed promotion did not restore workload and preserve old Secret data")
 	}
-	if _, err := os.Stat(filepath.Join(f.cfg.RuntimeRoot, "state", "storage-cutover.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(mustStorageStatePath(t, f.cfg, "storage-cutover.json")); !os.IsNotExist(err) {
 		t.Fatal("failed promotion retained completion receipt")
 	}
 	active, _ := f.store.readOperator()
@@ -818,7 +819,7 @@ func TestStorageCutoverExplicitRollbackAndDataDriftFence(t *testing.T) {
 			if active["LINODE_MEDIA_OBJ_ACCESS_KEY_ID"] != "prior-active" {
 				t.Fatal("explicit rollback did not restore active credential")
 			}
-			if _, err := os.Stat(filepath.Join(f.cfg.RuntimeRoot, "state", "storage-cutover.json")); !os.IsNotExist(err) {
+			if _, err := os.Stat(mustStorageStatePath(t, f.cfg, "storage-cutover.json")); !os.IsNotExist(err) {
 				t.Fatal("rollback left completion receipt")
 			}
 		})
@@ -1005,7 +1006,7 @@ func TestStorageCutoverFailedVerificationPreservesDestinationOnNewWrites(t *test
 	if json.Unmarshal([]byte(raw), &saved) != nil || saved.Status == "rolled-back" {
 		t.Fatal("blocked recovery lost its applied journal")
 	}
-	if _, err := os.Stat(filepath.Join(f.cfg.RuntimeRoot, "state", "storage-cutover.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(mustStorageStatePath(t, f.cfg, "storage-cutover.json")); !os.IsNotExist(err) {
 		t.Fatal("failed verification left completion receipt")
 	}
 }
@@ -1023,7 +1024,7 @@ func TestStorageRollbackRejectsInvalidJournalAndProfile(t *testing.T) {
 	if err := rollbackStorageCutover(f.cfg, "media"); err == nil || !strings.Contains(err.Error(), "identity") {
 		t.Fatalf("foreign journal accepted: %v", err)
 	}
-	proof, err := os.ReadFile(storageCutoverMigrationPath(f.cfg, "media"))
+	proof, err := os.ReadFile(mustStorageStatePath(t, f.cfg, storageMigrationReceiptName("media")))
 	if err != nil {
 		t.Fatal(err)
 	}

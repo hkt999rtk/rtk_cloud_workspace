@@ -29,6 +29,53 @@ It is a governance document only; it must not contain secret values.
 
 ## Canonical Local Secret Root
 
+### Configuration versus deployment-generated data
+
+This is a required workspace boundary, independent of whether data is secret.
+`cloud_env/` contains configuration only: maintained environment intent,
+overrides and deterministic secret-free resolved configuration. Operational
+deployment outputs are never configuration merely because they are redacted.
+
+All deployment-generated local data lives beneath
+`~/.config/rtk_cloud/<environment>/`. This includes tokens, credentials, private
+keys, certificates and chains, kubeconfig, allocated cloud IDs/provider state,
+receipts/proofs, journals, execution locks, deployment reports, rollback/restore
+material and temporary deployment files. Use `0700` directories and `0600`
+files. Code must use the selected environment's shared path resolver; it must
+not invent another workspace, worktree, external-disk or OS-specific location.
+
+| Local material | Environment-relative location |
+| --- | --- |
+| Operator credentials | `operator/env/` |
+| Runtime secret mirrors | `runtime/` |
+| Kubernetes identity | `kube/` |
+| PKI identities/certificates | `pki/` |
+| OpenBao controller material | `openbao/` |
+| Plans, releases, reviewed identity bindings and execution evidence | `deployment/` |
+| Storage preparation/completion receipts and migration proofs | `deployment/storage/` |
+| Provider operational state | `deployment/adapters/<adapter>/` |
+| Deployment reports | `deployment/reports/` |
+| Temporary deployment material | `deployment/tmp/` |
+| Protected original migration/rollback snapshots | `migration-backup/` |
+
+Every producer and consumer must agree on one documented location. An explicit
+legacy import validates the environment and original proof before migration;
+normal operation has no worktree/environment fallback. A missing file is a
+repair/qualification blocker, not authority to generate replacement keys,
+reinitialize data or create a successful receipt. Preflight only validates.
+
+Synthetic tests may use isolated fixture roots containing no real environment
+material. CI deployment controllers use their own canonical environment store;
+they must not choose arbitrary temporary roots for actual deployment secrets.
+Online OpenBao/Kubernetes storage and independently held encrypted escrow retain
+their documented runtime/custody authority; this section governs local controller
+files and does not export online CA keys.
+
+Legacy deployment writers that still use workspace runtime are migration work
+and do not conform to this boundary. Storage evidence placement is implemented
+by this change; remaining provider/temporary/report writers are part of the
+unified deployment replacement and must be corrected before claiming completion.
+
 The canonical local secret root is defined by [SecretStore](secret-store.md):
 
 ```text
@@ -38,7 +85,14 @@ The canonical local secret root is defined by [SecretStore](secret-store.md):
 Environment names such as `staging` and `prod` select independent stores; there
 is no implicit alias, shared fallback or staging-to-production reuse.
 `RTK_CLOUD_CONFIG_ROOT` may select a different parent directory. The repository
-`cloud_env/<environment>/runtime/` contains non-secret generated state only.
+`cloud_env/<environment>/runtime/` may contain secret-free resolved configuration
+only; dynamic operational state belongs in the canonical environment store.
+
+Authoritative storage receipts and migration proofs live in
+`~/.config/rtk_cloud/<environment>/deployment/storage/` (`0700`/`0600`). They
+survive checkout changes; private cutover journals remain in `migration-backup/`.
+Workspace runtime copies are explicit legacy import sources only. See
+[storage evidence location and migration](storage-credential-lifecycle.md#environment-owned-receipts-and-proof-location).
 
 The former `.secrets/<environment>/<provider>/<service>/` layout is
 reference-only migration input, not the current deployment or recovery source.

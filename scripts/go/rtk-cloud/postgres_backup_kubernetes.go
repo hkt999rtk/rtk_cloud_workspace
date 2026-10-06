@@ -156,7 +156,7 @@ func (m *postgresBackupManager) configure(ctx context.Context, enable bool, qual
 		}
 		credentials[key] = value
 	}
-	if _, err = m.sourceSQL(ctx, "DO $backup$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='rtk_postgres_backup') THEN CREATE ROLE rtk_postgres_backup; END IF; END $backup$;\nALTER ROLE rtk_postgres_backup LOGIN REPLICATION NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT CONNECTION LIMIT 2 PASSWORD '"+strings.ReplaceAll(password, "'", "''")+"';\nGRANT CONNECT ON DATABASE postgres TO rtk_postgres_backup;\n"); err != nil {
+	if _, err = m.sourceSQL(ctx, "DO $backup$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='rtk_postgres_backup') THEN CREATE ROLE rtk_postgres_backup; END IF; END $backup$;\nALTER ROLE rtk_postgres_backup LOGIN REPLICATION NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT CONNECTION LIMIT 2 PASSWORD '"+strings.ReplaceAll(password, "'", "''")+"';\nGRANT CONNECT ON DATABASE postgres TO rtk_postgres_backup;\nGRANT pg_monitor TO rtk_postgres_backup;\n"); err != nil {
 		return err
 	}
 	hba, err := m.sourceSQL(ctx, "SELECT pg_read_file(current_setting('hba_file'));\n")
@@ -212,8 +212,10 @@ func (m *postgresBackupManager) configure(ctx context.Context, enable bool, qual
 			return errors.New("schedule remains suspended: complete a manual backup and successful isolated restore drill before enabling it")
 		}
 		b, _ := json.Marshal(map[string]any{"spec": map[string]any{"suspend": false}})
-		if _, err = m.kube(ctx, bytes.NewReader(b), "-n", c.Namespace, "patch", "cronjob", postgresBackupName, "--type=merge", "--patch-file=/dev/stdin"); err != nil {
-			return err
+		for _, name := range []string{postgresBackupName, postgresBackupName + "-wal-monitor"} {
+			if _, err = m.kube(ctx, bytes.NewReader(b), "-n", c.Namespace, "patch", "cronjob", name, "--type=merge", "--patch-file=/dev/stdin"); err != nil {
+				return err
+			}
 		}
 	}
 	fmt.Printf("PostgreSQL backup configured: environment=%s schedule_enabled=%t; include scratch PVC %s-scratch as an explicit exclusion in core recovery inventory.\n", c.Environment, enable, postgresBackupName)
@@ -263,8 +265,31 @@ func postgresBackupObjects(c postgresBackupDeployment, enabled bool) []map[strin
 		object("v1", "PersistentVolumeClaim", postgresBackupName+"-scratch", map[string]any{"spec": pvcSpec}),
 		object("networking.k8s.io/v1", "NetworkPolicy", postgresBackupName+"-source", map[string]any{"spec": map[string]any{"podSelector": map[string]any{"matchLabels": map[string]string{"app.kubernetes.io/name": "postgresql"}}, "policyTypes": []string{"Ingress"}, "ingress": []any{map[string]any{"from": []any{map[string]any{"podSelector": map[string]any{"matchLabels": map[string]string{"app.kubernetes.io/name": postgresBackupName}}}}, "ports": []any{map[string]any{"protocol": "TCP", "port": 5432}}}}}}),
 		object("batch/v1", "CronJob", postgresBackupName, map[string]any{"spec": map[string]any{"schedule": c.schedule(), "timeZone": c.timeZone(), "suspend": !enabled, "concurrencyPolicy": "Forbid", "startingDeadlineSeconds": 3600, "successfulJobsHistoryLimit": 2, "failedJobsHistoryLimit": 3, "jobTemplate": map[string]any{"spec": postgresBackupJobSpec(c, "run", "")}}}),
+		object("batch/v1", "CronJob", postgresBackupName+"-wal-monitor", map[string]any{"spec": map[string]any{"schedule": "* * * * *", "timeZone": "UTC", "suspend": !enabled, "concurrencyPolicy": "Forbid", "startingDeadlineSeconds": 120, "successfulJobsHistoryLimit": 2, "failedJobsHistoryLimit": 3, "jobTemplate": map[string]any{"spec": postgresWALMonitorJobSpec(c)}}}),
 	}
 	return objects
+}
+
+// Reuse the protected worker image, credentials and network labels. Monitoring
+// does not need Kubernetes permissions or the backup's RWO scratch claim; a
+// bounded temporary volume avoids competing with a running base backup.
+func postgresWALMonitorJobSpec(c postgresBackupDeployment) map[string]any {
+	job := postgresBackupJobSpec(c, "heartbeat-wal", "")
+	job["activeDeadlineSeconds"] = 180
+	pod := job["template"].(map[string]any)["spec"].(map[string]any)
+	pod["automountServiceAccountToken"] = false
+	delete(pod, "serviceAccountName")
+	container := pod["containers"].([]any)[0].(map[string]any)
+	container["command"] = []string{"sh", "-ceu"}
+	container["args"] = []string{"/usr/local/bin/rtk-cloud postgres-backup-worker heartbeat-wal --config /etc/postgres-backup/config.json; sleep 65; exec /usr/local/bin/rtk-cloud postgres-backup-worker check-wal --config /etc/postgres-backup/config.json"}
+	for _, raw := range pod["volumes"].([]any) {
+		volume := raw.(map[string]any)
+		if volume["name"] == "scratch" {
+			delete(volume, "persistentVolumeClaim")
+			volume["emptyDir"] = map[string]any{"sizeLimit": "64Mi"}
+		}
+	}
+	return job
 }
 
 func postgresBackupJobSpec(c postgresBackupDeployment, action, id string) map[string]any {

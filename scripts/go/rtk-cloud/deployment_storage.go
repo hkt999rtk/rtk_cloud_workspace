@@ -46,15 +46,39 @@ type storageObjectProof struct {
 var errStorageEndpointUnassigned = errors.New("Object Storage endpoint is not assigned to this account")
 
 func validateDeploymentStorageActivation(cfg deploymentConfig) error {
-	if !cfg.Storage.RuntimeMediaCutoverRequired {
-		return nil
+	if cfg.Storage.RuntimeMediaCutoverRequired {
+		if err := validateEnvironmentStorageCutover(cfg.Environment, "media", cfg.Storage.RuntimeMedia); err != nil {
+			return err
+		}
 	}
-	body, err := os.ReadFile(filepath.Join(cfg.RuntimeRoot, "state", "storage-cutover.json"))
+	env := appendMap(cfg.Values, cfg.AdapterResolved)
+	if env["LKE_OTA_SERVICE_REGISTRATION_ENABLED"] == "true" {
+		if cfg.Storage.OTAMode != "dedicated" {
+			return errors.New("enabled OTA service requires dedicated storage")
+		}
+		return validateEnvironmentStorageCutover(cfg.Environment, "ota", cfg.Storage.OTAFirmware)
+	}
+	return nil
+}
+
+func validateEnvironmentStorageCutover(environment, purpose string, target deploymentStorageTarget) error {
+	body, err := readDeploymentStorageState(environment, storageCutoverReceiptName(purpose))
 	if err != nil {
-		return fmt.Errorf("runtime media bucket %s is prepared but not cut over; storage-cutover receipt is required before deployment", cfg.Storage.RuntimeMedia.Bucket)
+		return fmt.Errorf("completed %s receipt is unavailable in ~/.config/rtk_cloud/%s/deployment/storage; use storage-import-state for original completed records or finish the managed storage lifecycle", strings.TrimSuffix(storageCutoverReceiptName(purpose), ".json"), environment)
 	}
+	var proof []byte
+	if !isStorageReinitializationReceipt(body) {
+		proof, err = readDeploymentStorageState(environment, storageMigrationReceiptName(purpose))
+		if err != nil {
+			return errors.New("canonical storage migration proof is unavailable")
+		}
+	}
+	return validateStorageCutoverReceipt(environment, purpose, target, body, proof)
+}
+
+func validateStorageCutoverReceipt(environment, purpose string, target deploymentStorageTarget, body, proof []byte) error {
 	if isStorageReinitializationReceipt(body) {
-		return validateStorageReinitializationReceipt(cfg.Environment, "media", cfg.Storage.RuntimeMedia, body)
+		return validateStorageReinitializationReceipt(environment, purpose, target, body)
 	}
 	var receipt struct {
 		Environment                 string    `json:"environment"`
@@ -65,24 +89,24 @@ func validateDeploymentStorageActivation(cfg deploymentConfig) error {
 		MigrationSHA256             string    `json:"migration_receipt_sha256"`
 		CutoverAt                   time.Time `json:"cutover_at"`
 		RollbackCredentialsRetained bool      `json:"rollback_credentials_retained"`
+		ServiceReady                bool      `json:"service_ready"`
 	}
-	if json.Unmarshal(body, &receipt) != nil || receipt.Environment != cfg.Environment || receipt.Bucket != cfg.Storage.RuntimeMedia.Bucket || receipt.Region != cfg.Storage.RuntimeMedia.Region || receipt.Prefix != cfg.Storage.RuntimeMedia.Prefix || receipt.CutoverAt.IsZero() || receipt.CutoverAt.After(time.Now().UTC()) || receipt.CutoverID == "" || receipt.MigrationSHA256 == "" || !receipt.RollbackCredentialsRetained {
-		return fmt.Errorf("runtime media bucket %s has no matching completed cutover receipt", cfg.Storage.RuntimeMedia.Bucket)
+	if json.Unmarshal(body, &receipt) != nil || receipt.Environment != environment || receipt.Bucket != target.Bucket || receipt.Region != target.Region || receipt.Prefix != target.Prefix || receipt.CutoverAt.IsZero() || receipt.CutoverAt.After(time.Now().UTC()) || receipt.CutoverID == "" || receipt.MigrationSHA256 == "" || !receipt.RollbackCredentialsRetained || (purpose == "ota" && !receipt.ServiceReady) {
+		return errors.New("storage cutover receipt does not match the selected environment, target and completed service")
 	}
-	store, err := newSecretStore("", cfg.Environment)
+	store, err := newSecretStore("", environment)
 	if err != nil {
 		return err
 	}
-	raw, err := store.read(storageCutoverJournalName("media"))
+	raw, err := store.read(storageCutoverJournalName(purpose))
 	if err != nil {
-		return errors.New("completed private storage cutover journal is required before deployment")
+		return errors.New("completed private storage cutover journal is required")
 	}
 	var journal storageCutoverJournal
-	if json.Unmarshal([]byte(raw), &journal) != nil || journal.Environment != cfg.Environment || journal.Purpose != "media" || journal.Status != "complete" || journal.ID != receipt.CutoverID || journal.MigrationSHA256 != receipt.MigrationSHA256 {
+	if json.Unmarshal([]byte(raw), &journal) != nil || journal.Environment != environment || journal.Purpose != purpose || journal.Status != "complete" || journal.Operation == "reinitialize" || journal.ID != receipt.CutoverID || journal.MigrationSHA256 != receipt.MigrationSHA256 {
 		return errors.New("storage cutover receipt does not match its completed private journal")
 	}
-	proof, err := os.ReadFile(storageCutoverMigrationPath(cfg, "media"))
-	if err != nil || fmt.Sprintf("%x", sha256.Sum256(proof)) != receipt.MigrationSHA256 {
+	if len(proof) == 0 || fmt.Sprintf("%x", sha256.Sum256(proof)) != receipt.MigrationSHA256 {
 		return errors.New("storage migration proof changed after cutover; reconcile it before deployment")
 	}
 	return nil
@@ -425,7 +449,7 @@ func (c deploymentCredentialChecker) checkResolvedOTAStorage(cfg deploymentConfi
 		return deploymentCredentialCheck{Name: name, Detail: err.Error()}
 	}
 	receipt := deploymentStorageReceipt{Environment: cfg.Environment, Purpose: target.Purpose, Bucket: target.Bucket, Region: target.Region, Endpoint: endpoint, EndpointType: bucket.EndpointType, KeyID: key.ID, AccessSuffix: redactAccessKey(access), ValidatedAt: time.Now().UTC().Format(time.RFC3339)}
-	if err := writeStorageState(filepath.Join(cfg.RuntimeRoot, "state", "storage-preflight-ota.json"), receipt); err != nil {
+	if err := writeDeploymentStorageState(cfg.Environment, "storage-preflight-ota.json", receipt); err != nil {
 		return deploymentCredentialCheck{Name: name, Detail: err.Error()}
 	}
 	return deploymentCredentialCheck{Name: name, Passed: true, Detail: "inventory, limited key, and write/read/delete canary verified"}
@@ -551,7 +575,13 @@ func (c deploymentCredentialChecker) migrateStoragePurpose(cfg deploymentConfig,
 		return err
 	}
 	destination := provisionObjectStore{bucket: target.Bucket, endpoint: endpoint, region: target.Region, accessKey: access, secretKey: secret}
-	statePath := filepath.Join(cfg.RuntimeRoot, "state", stateName)
+	statePath, err := deploymentStorageStatePath(cfg.Environment, stateName)
+	if err != nil {
+		return err
+	}
+	if err := ensurePrivateDirectory(filepath.Dir(statePath)); err != nil {
+		return err
+	}
 	if purpose == "ota" {
 		return c.migrateOTAFirmwareObjects(cfg, source, destination, statePath)
 	}
@@ -856,7 +886,7 @@ func (c deploymentCredentialChecker) checkResolvedObjectStorage(cfg deploymentCo
 		return deploymentCredentialCheck{Name: "Linode runtime-media storage", Detail: err.Error()}
 	}
 	receipt := deploymentStorageReceipt{Environment: cfg.Environment, Purpose: target.Purpose, Bucket: target.Bucket, Region: target.Region, Endpoint: endpoint, KeyID: key.ID, AccessSuffix: redactAccessKey(access), ValidatedAt: time.Now().UTC().Format(time.RFC3339)}
-	if err := writeDeploymentStorageReceipt(cfg.RuntimeRoot, receipt); err != nil {
+	if err := writeDeploymentStorageReceipt(cfg, receipt); err != nil {
 		return deploymentCredentialCheck{Name: "Linode runtime-media storage", Detail: "validation passed but receipt could not be written"}
 	}
 	return deploymentCredentialCheck{Name: "Linode runtime-media storage", Passed: true, Detail: "inventory region/endpoint, limited key scope, signed list, and write/read/delete canary verified"}
@@ -908,7 +938,7 @@ func (c deploymentCredentialChecker) checkResolvedArtifactStorage(cfg deployment
 		return deploymentCredentialCheck{Name: "Linode release-artifact storage", Detail: err.Error()}
 	}
 	receipt := deploymentStorageReceipt{Environment: cfg.Environment, Purpose: target.Purpose, Bucket: target.Bucket, Region: target.Region, Endpoint: endpoint, KeyID: key.ID, AccessSuffix: redactAccessKey(access), ValidatedAt: time.Now().UTC().Format(time.RFC3339)}
-	if err := writeStorageState(filepath.Join(cfg.RuntimeRoot, "state", "storage-preflight-release-artifacts.json"), receipt); err != nil {
+	if err := writeDeploymentStorageState(cfg.Environment, "storage-preflight-release-artifacts.json", receipt); err != nil {
 		return deploymentCredentialCheck{Name: "Linode release-artifact storage", Detail: "validation passed but receipt could not be written"}
 	}
 	return deploymentCredentialCheck{Name: "Linode release-artifact storage", Passed: true, Detail: "shared policy, inventory region/endpoint, limited key scope, signed list, and write/read/delete canary verified"}
@@ -1143,21 +1173,13 @@ func redactAccessKey(value string) string {
 	return "..." + value[len(value)-6:]
 }
 
-func writeDeploymentStorageReceipt(runtimeRoot string, receipt deploymentStorageReceipt) error {
-	path := filepath.Join(runtimeRoot, "state", "storage-preflight.json")
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	body, err := json.MarshalIndent(receipt, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, append(body, '\n'), 0o600)
+func writeDeploymentStorageReceipt(cfg deploymentConfig, receipt deploymentStorageReceipt) error {
+	return writeDeploymentStorageState(cfg.Environment, "storage-preflight.json", receipt)
 }
 
-func readDeploymentStorageReceipt(runtimeRoot string) (deploymentStorageReceipt, error) {
+func readDeploymentStorageReceipt(cfg deploymentConfig) (deploymentStorageReceipt, error) {
 	var receipt deploymentStorageReceipt
-	body, err := os.ReadFile(filepath.Join(runtimeRoot, "state", "storage-preflight.json"))
+	body, err := readDeploymentStorageState(cfg.Environment, "storage-preflight.json")
 	if err != nil {
 		return receipt, err
 	}

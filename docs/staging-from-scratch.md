@@ -1,5 +1,11 @@
 # Build Staging From Scratch and Run the 1K Test
 
+
+Complete create/upgrade now uses the shared v2 engine and the selected formal release.
+Required capability adapters are still being completed; missing gates remain NO-GO.
+The older bootstrap/provision sequence below is historical context, not a supported
+fallback. See [deployment operations](deployment-operations.md) and
+[the readiness standard](deployment-readiness-standard.md).
 This runbook creates a new LKE staging environment from a fresh clone, proves
 the service and billing paths, prepares 1,000 Home IoT identities, and runs the
 canonical MQTT/Device Shadow 1K workflow.

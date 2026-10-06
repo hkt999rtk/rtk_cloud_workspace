@@ -162,46 +162,24 @@ unconfigured provider fails. GoDaddy reads authenticate against the selected
 zone. Route53 credential qualification reports `UNSUPPORTED`; it cannot pass.
 Read-only checks still verify advertised required Linode/key scopes.
 
-Pre-deploy uses the tracked configuration and the existing provision
-prerequisites, then assesses the desired CertIssuer route without changing live
-objects. A recognized, owned terminating legacy route can pass when it has a
-safe migration plan. Installed serving identity requirements, foreign routes,
-unrecognized ownership and unfinished migration records still block. The legacy static-render qualification does not
-require old Kubernetes Secret mirrors or live PKI health to pass; the managed
-replacement plan instead retains those owners and requires their current health. See
+Complete pre-deploy qualification uses one maintained renderer for dev, staging
+and prod: resolved configuration, a selected immutable release, and typed
+identity/ownership bindings produce the same plan used by execution. Preflight
+compiles in memory and reports its SHA-256. Missing capability or evidence is
+NO-GO; `--fast` and scoped provider checks cannot approve a complete update.
+See the [readiness standard](../docs/deployment-readiness-standard.md) for the
+required gates and the [deployment runbook](../docs/deployment-operations.md#retired-schema-1-managed-workload-upgrade)
+for existing-owner adoption. The presence of `managed-upgrade.json` never selects
+another renderer. `deployment prepare-upgrade` is retired.
+
+Targeted `provision --deploy --workloads ...` and route-only `provision --dns`
+retain their explicit smaller scope and managed identity checks. They do not
+approve a complete environment update. Route changes use the
 [CertIssuer route convergence](../docs/deployment-operations.md#certissuer-route-convergence)
-for the narrow legacy-route allowlist, serving identity prerequisites,
-conditional mutation/rollback journal and separate endpoint acceptance gates.
-The default full-deployment renderer cannot reconstruct separately managed
-CertIssuer PKI state. Pre-deploy therefore refuses a full reconciliation over
-managed host identity, Service PKI or an identity sidecar, including an unhealthy
-workload. Reviewed targeted `provision --deploy --workloads ...` rollouts and
-route-only `provision --dns` use separate deployment prerequisites and preserve
-the existing managed CertIssuer configuration; an image qualification or a safe
-Ingress migration plan does not make a legacy full managed-PKI replacement supported.
-Dev/Staging may instead prepare an environment-local complete managed workload
-replacement plan with `deployment prepare-upgrade --environment NAME --confirm
-STACK [--image GHCR_DIGEST]...`. The default preflight and actual full upgrade
-consume the same private plan and fail closed on incomplete inventory, changed
-ownership, incompatible identity/credential bindings, failed CI/images, schema,
-startup, live PKI/public mTLS or Kubernetes server dry-run. Workload settings may
-be overwritten while existing CA/CRL/PVC/Secret owners and provider controllers
-retain their separate lifecycles. Production rejects this policy. See
-[Full managed workload upgrade](../docs/deployment-operations.md#full-managed-workload-upgrade)
-for canonical paths, plan review, exact GO/NO-GO gates, rollback and post-rollout
-verification.
-For a compatible full static render, pre-deploy may qualify an owned old
-Service/listener topology for repair, after proving unchanged persisted identity
-and exact Service/Deployment ownership. Route-only and targeted operations keep
-the strict installed-topology checks, and routing mutation/post-deploy always
-require the desired serving state. Provider absence detection likewise uses
-the actual selected/persisted cluster ID, or a complete label inventory when no
-ID is selected; a missing kubeconfig, failed ID lookup or incomplete inventory
-cannot certify a new environment.
-An absent CertIssuer Deployment is not sufficient bootstrap evidence: a
-surviving Service, public/selected-stack route or `certissuer-runtime` Secret
-requires restoration of the existing identity owner. The Secret fence reads
-metadata UID only, preserving the Kubernetes private-material boundary.
+ownership allowlist, conditional mutation journal and endpoint acceptance gates.
+Missing access or surviving identity owners require restoration and cannot
+certify a fresh environment. Retained Secret fences read owner metadata; private
+material is not copied into public reports.
 
 Dynamic Root policy checks validate the referenced issuer and its trust scope.
 A ready, active or retiring Root can legitimately have an empty distrust policy;

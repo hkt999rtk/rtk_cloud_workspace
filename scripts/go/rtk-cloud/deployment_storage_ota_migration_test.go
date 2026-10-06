@@ -13,6 +13,7 @@ import (
 )
 
 func TestOTACutoverReconcilesLiveSourceReceiptAndDestination(t *testing.T) {
+	t.Setenv("RTK_CLOUD_CONFIG_ROOT", t.TempDir())
 	const bucket = "rtk-ota-firmware-dev-us-sea"
 	const prefix = "environments/video-cloud-dev"
 	const sourceKey = "ota-billable-v1/brand/product/release/firmware.bin"
@@ -68,7 +69,7 @@ func TestOTACutoverReconcilesLiveSourceReceiptAndDestination(t *testing.T) {
 	cfg := deploymentConfig{Environment: "dev", RuntimeRoot: t.TempDir(), Storage: deploymentStoragePlan{OTAFirmware: deploymentStorageTarget{Bucket: bucket, Region: "us-sea", Prefix: prefix}}}
 	checker := deploymentCredentialChecker{client: server.Client(), linodeAPIRoot: server.URL + "/v4"}
 	values := map[string]string{"LINODE_TOKEN": "token", "LINODE_OTA_OBJ_ACCESS_KEY_ID": "access", "LINODE_OTA_OBJ_SECRET_ACCESS_KEY": "secret"}
-	statePath := filepath.Join(cfg.RuntimeRoot, "state", "storage-migration-ota.json")
+	statePath := mustStorageStatePath(t, cfg, "storage-migration-ota.json")
 	if err := checker.validateOTAMigrationCutover(cfg, values, sourceFile); err == nil || !strings.Contains(err.Error(), "migration receipt") {
 		t.Fatalf("missing migration receipt accepted: %v", err)
 	}
@@ -142,6 +143,7 @@ func TestOTACutoverReconcilesLiveSourceReceiptAndDestination(t *testing.T) {
 }
 
 func TestOTACutoverRequiresCurrentCoreSourceBucket(t *testing.T) {
+	t.Setenv("RTK_CLOUD_CONFIG_ROOT", t.TempDir())
 	deployment := []byte(`{"metadata":{"name":"video-cloud-api"},"spec":{"template":{"spec":{"containers":[{"name":"app","env":[{"name":"VIDEO_CLOUD_BLOB_BUCKET","value":"live-media"},{"name":"VIDEO_CLOUD_BLOB_REGION","value":"us-sea"},{"name":"VIDEO_CLOUD_BLOB_ENDPOINT","value":"https://us-sea-1.linodeobjects.com"},{"name":"VIDEO_CLOUD_BLOB_PREFIX","value":"environments/video-cloud-dev"}]}]}}}}`)
 	if err := validateLiveOTASourceBucket(deployment, "live-media", "us-sea", "us-sea-1.linodeobjects.com/", "environments/video-cloud-dev"); err != nil {
 		t.Fatalf("matching live source rejected: %v", err)

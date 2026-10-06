@@ -232,3 +232,11 @@ func TestQuietExecDoesNotLeak(t *testing.T) {
 		t.Fatal("subprocess error leaks output")
 	}
 }
+
+func TestQuietExecCannotBypassBoundedMetadataWriter(t *testing.T) {
+	out := limitedBuffer{limit: 1024}
+	err := QuietExec(context.Background(), []string{"sh", "-c", "printf 'private-diagnostic' >&2; head -c 2048 /dev/zero"}, nil, &out)
+	if err == nil || out.Len() > 1024 || strings.Contains(err.Error(), "private-diagnostic") {
+		t.Fatal("native subprocess bypassed the metadata bound or exposed diagnostics")
+	}
+}

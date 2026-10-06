@@ -30,7 +30,10 @@ type Engine struct {
 func quietExec(ctx context.Context, argv, env []string, out io.Writer) error {
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Env = env
-	cmd.Stdout = out
+	// Hide ReaderFrom: io.Copy's optimization must not bypass a bounded
+	// metadata writer's Write method when it embeds bytes.Buffer.
+	cmd.Stdout = struct{ io.Writer }{out}
+	cmd.WaitDelay = time.Second
 	cmd.Stderr = io.Discard
 	if err := cmd.Run(); err != nil {
 		return errors.New("PostgreSQL backup subprocess failed (output suppressed)")
@@ -64,6 +67,31 @@ func safeEnvironment() []string {
 	return append(env, "LC_ALL=C", "LANG=C")
 }
 
+func sourceEnvironment(c Config, tmp string) ([]string, error) {
+	password, err := readPrivateFile(c.Source.PasswordFile, 65536)
+	if err != nil {
+		return nil, err
+	}
+	password = bytes.TrimSuffix(password, []byte("\n"))
+	if len(password) == 0 || bytes.ContainsAny(password, "\r\n\x00") {
+		return nil, errors.New("invalid PostgreSQL password file")
+	}
+	passfile := filepath.Join(tmp, "pgpass")
+	escape := func(s string) string { return strings.NewReplacer(`\`, `\\`, `:`, `\:`).Replace(s) }
+	line := ""
+	for _, database := range []string{"replication", "postgres"} {
+		line += escape(c.Source.Host) + ":" + strconv.Itoa(c.Source.Port) + ":" + database + ":" + escape(c.Source.User) + ":" + escape(string(password)) + "\n"
+	}
+	if err := os.WriteFile(passfile, []byte(line), 0600); err != nil {
+		return nil, errors.New("cannot prepare PostgreSQL credential file")
+	}
+	env := append(safeEnvironment(), "PGHOST="+c.Source.Host, "PGPORT="+strconv.Itoa(c.Source.Port), "PGUSER="+c.Source.User, "PGPASSFILE="+passfile, "PGSSLMODE="+c.Source.SSLMode, "PGCONNECT_TIMEOUT=15", "PGAPPNAME=rtk-postgres-backup")
+	if c.Source.RootCertFile != "" {
+		env = append(env, "PGSSLROOTCERT="+c.Source.RootCertFile)
+	}
+	return env, nil
+}
+
 func Capture(ctx context.Context, c Config) (CaptureResult, error) { return (Engine{}).Capture(ctx, c) }
 
 func (e Engine) Capture(ctx context.Context, c Config) (result CaptureResult, err error) {
@@ -83,26 +111,9 @@ func (e Engine) Capture(ctx context.Context, c Config) (result CaptureResult, er
 		return result, errors.New("cannot create private capture directory")
 	}
 	defer os.RemoveAll(tmp)
-	password, err := readPrivateFile(c.Source.PasswordFile, 65536)
+	env, err := sourceEnvironment(c, tmp)
 	if err != nil {
 		return result, err
-	}
-	password = bytes.TrimSuffix(password, []byte("\n"))
-	if len(password) == 0 || bytes.ContainsAny(password, "\r\n\x00") {
-		return result, errors.New("invalid PostgreSQL password file")
-	}
-	passfile := filepath.Join(tmp, "pgpass")
-	escape := func(s string) string { return strings.NewReplacer(`\`, `\\`, `:`, `\:`).Replace(s) }
-	line := ""
-	for _, database := range []string{"replication", "postgres"} {
-		line += escape(c.Source.Host) + ":" + strconv.Itoa(c.Source.Port) + ":" + database + ":" + escape(c.Source.User) + ":" + escape(string(password)) + "\n"
-	}
-	if err = os.WriteFile(passfile, []byte(line), 0600); err != nil {
-		return result, errors.New("cannot prepare PostgreSQL credential file")
-	}
-	env := append(safeEnvironment(), "PGHOST="+c.Source.Host, "PGPORT="+strconv.Itoa(c.Source.Port), "PGUSER="+c.Source.User, "PGPASSFILE="+passfile, "PGSSLMODE="+c.Source.SSLMode, "PGCONNECT_TIMEOUT=15", "PGAPPNAME=rtk-postgres-backup")
-	if c.Source.RootCertFile != "" {
-		env = append(env, "PGSSLROOTCERT="+c.Source.RootCertFile)
 	}
 	var out cappedBuffer
 	if err = e.run(ctx, []string{"pg_basebackup", "--version"}, env, &out); err != nil {

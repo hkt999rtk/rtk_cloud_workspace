@@ -158,7 +158,7 @@ func TestPostgresBackupJobIsolationAndLimits(t *testing.T) {
 	objects := postgresBackupObjects(c, false)
 	var schedule map[string]any
 	for _, obj := range objects {
-		if obj["kind"] == "CronJob" {
+		if obj["kind"] == "CronJob" && obj["metadata"].(map[string]any)["name"] == postgresBackupName {
 			schedule = obj["spec"].(map[string]any)
 		}
 		if obj["kind"] == "Role" {
