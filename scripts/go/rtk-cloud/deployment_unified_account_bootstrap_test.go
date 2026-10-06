@@ -240,4 +240,31 @@ func TestAccountBootstrapRetirementMarkerCannotAuthorizeGOOrRegenerateSeed(t *te
 	if _, err := os.Lstat(path); !os.IsNotExist(err) {
 		t.Fatal("closed seed was regenerated")
 	}
+	// Older catalogs may not have recorded the bootstrap credential. Updating
+	// such a catalog cannot bypass the same retirement fence as ensure.
+	raw, err := store.read("inventory.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var inventory secretInventory
+	if err := json.Unmarshal([]byte(raw), &inventory); err != nil {
+		t.Fatal(err)
+	}
+	kept := inventory.Entries[:0]
+	for _, entry := range inventory.Entries {
+		if entry.ID != "platform-admin" {
+			kept = append(kept, entry)
+		}
+	}
+	inventory.Entries = kept
+	body, _ := json.Marshal(inventory)
+	if err := store.write("inventory.json", body, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureSecretStoreCatalogAdditions(&out, store); err == nil {
+		t.Fatal("catalog migration regenerated an unverified retired seed")
+	}
+	if _, err := os.Lstat(path); !os.IsNotExist(err) {
+		t.Fatal("catalog migration wrote a new bootstrap seed")
+	}
 }

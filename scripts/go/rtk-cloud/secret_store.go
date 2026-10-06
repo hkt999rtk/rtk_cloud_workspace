@@ -627,6 +627,14 @@ func ensureSecretStoreCatalogAdditions(out io.Writer, store secretStore) error {
 		if entry.ExplicitProvision {
 			continue
 		}
+		if entry.ID == "platform-admin" {
+			if !supportSecretRequired(store, entry.ID) {
+				continue
+			}
+			if _, err := store.read("deployment/account-bootstrap-retired.json"); !errors.Is(err, os.ErrNotExist) {
+				return errors.New("Account Manager bootstrap credentials are retired or their lifecycle marker is unavailable; catalog migration cannot regenerate the seed")
+			}
+		}
 		if value, readErr := store.readRuntime(entry.ID); readErr == nil && value != "" {
 			continue
 		} else if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {

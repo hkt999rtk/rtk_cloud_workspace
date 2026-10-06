@@ -339,7 +339,7 @@ func (b environmentKubernetesBackend) Inventory(ctx context.Context, stack strin
 			continue
 		}
 		resources = append(resources, namespace)
-		raw, err = b.command(ctx, nil, "get", "deployment,statefulset,daemonset,replicaset,pod,job,cronjob,service,configmap,secret,persistentvolumeclaim,serviceaccount,role,rolebinding,networkpolicy,ingress,poddisruptionbudget,horizontalpodautoscaler", "--namespace", name, "-o", "json")
+		raw, err = b.command(ctx, nil, "get", environmentNamespacedInventoryKinds, "--namespace", name, "-o", "json")
 		if err != nil {
 			return nil, fmt.Errorf("deployment.inventory: cannot enumerate resources in %s", name)
 		}
@@ -349,7 +349,7 @@ func (b environmentKubernetesBackend) Inventory(ctx context.Context, stack strin
 		}
 		resources = append(resources, list.Items...)
 	}
-	raw, err = b.command(ctx, nil, "get", "clusterrole,clusterrolebinding,ingressclass,validatingwebhookconfiguration", "-l", "rtk.realtek.com/stack="+stack, "-o", "json")
+	raw, err = b.command(ctx, nil, "get", environmentClusterInventoryKinds, "-l", "rtk.realtek.com/stack="+stack, "-o", "json")
 	if err != nil {
 		return nil, err
 	}

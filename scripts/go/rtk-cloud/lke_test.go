@@ -620,13 +620,13 @@ esac
 	}
 }
 
-func TestRunProvisionLKEPlanWithoutStackUsesProviderEnv(t *testing.T) {
+func TestRunProvisionLKEPlanWithoutStackRejectsImplicitEnvironment(t *testing.T) {
 	workspace := t.TempDir()
 	envRoot := filepath.Join(workspace, "cloud_env", "staging", "runtime")
 	t.Setenv("CLOUD_PROVIDER", "lke")
 
-	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--plan"}); err != nil {
-		t.Fatal(err)
+	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--plan"}); err == nil || !strings.Contains(err.Error(), "implicit staging defaults are retired") {
+		t.Fatalf("missing maintained environment configuration must fail, got %v", err)
 	}
 }
 

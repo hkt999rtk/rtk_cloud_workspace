@@ -54,6 +54,18 @@ blocker. Operator-facing help and output are English. Shell exit codes remain
 0 for passed required checks, 1 for failed/incomplete qualification and 2 for
 invalid input/configuration.
 
+The execution adapter checks the selected frozen Kubernetes identity with native
+`SelfSubjectAccessReview` requests. Collection-level create, name-scoped
+get/update/delete and named rollout list/watch permissions follow the exact plan.
+Phase inventory also requires namespace-wide collection reads for all inventoried
+resource types, plus cluster-level namespace/access-policy inventory reads;
+label selectors do not narrow RBAC authorization. A missing or ambiguous review
+blocks `deployment.execution` with the internal blocker
+`deployment.execution.permissions`, without modifying
+workloads. These access reviews, execution-lease checks and server dry-run are
+partial execution evidence: capacity, quota, placement and storage qualification
+must also pass before the complete execution gate can be GO.
+
 An old fault that blocks a necessary dependency blocks the plan. When the plan
 repairs that fault, qualify the repaired candidate's behavior before passing;
 neither unconditional old-health requirements nor ignoring dependency failures
@@ -256,9 +268,10 @@ session owner record, checks current registered workload leaves, fences namespac
 and Secret UIDs, and confirms authenticated absence before finalization. The common
 renderer grants only exact-Secret get/delete and exact-namespace read through a
 separate projected API token. Missing/malformed bindings and uncertain deletes
-stay closed. Initial binding capture, bootstrap PVC credential cleanup, Account
-Manager sealed-credential removal and complete-environment acceptance are still
-unfinished; this adapter does not independently prove fresh-create qualification.
+stay closed. Initial binding capture, complete-engine bootstrap credential cleanup
+and complete-environment acceptance are still unfinished; this adapter does not
+independently prove fresh-create qualification. The upgrade-specific Account
+Manager credential lifecycle is described below.
 The dedicated bootstrap owner now supports registry-backed credential removal:
 it persists an immutable public completion marker, locks the original private
 state directory, verifies key/CSR/chain ownership and removes only the recorded
@@ -280,7 +293,8 @@ must report the observed generation and all updated/available replicas before
 the local `runtime/platform-admin`
 seed is removed only if the accepted Secret owner and approved seed still match.
 A private `deployment/account-bootstrap-retired.json` negative marker prevents
-regeneration, while credential verification skips the retired binding only when
+regeneration through both missing-secret repair and old catalog expansion, while
+credential verification skips the retired binding only when
 current original-database/Secret evidence passes. A marker alone is never GO.
 Native isolated PostgreSQL tests cover permanent sealing and disabled-admin
 restart behavior; environment qualification and fresh-create stage orchestration

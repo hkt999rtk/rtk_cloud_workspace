@@ -44,6 +44,9 @@ func defaultUnifiedDeploymentDependencies() unifiedDeploymentDependencies {
 					return deploymentplan.GateEvidence{SHA256: p.SHA256()}, nil
 				},
 				"deployment.execution": func(ctx context.Context, p *deploymentplan.Plan) (deploymentplan.GateEvidence, error) {
+					if err := c.Backend.CheckPlanAccess(ctx, p); err != nil {
+						return deploymentplan.GateEvidence{}, err
+					}
 					if err := c.Backend.CheckExecutionPrerequisites(ctx, p, c.Store.Root); err != nil {
 						return deploymentplan.GateEvidence{}, err
 					}
