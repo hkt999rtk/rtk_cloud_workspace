@@ -233,3 +233,7 @@ the normalized `cloud_env/staging/runtime`.
 - Before and after transferring a SecretStore, confirm directories are `0700` and files are `0600`.
 - If runtime is lost, first determine whether it can be restored from the original
   workspace. Reprovision or reenroll only when intentionally creating new staging.
+
+## Environment-owned storage evidence
+
+Storage receipts and migration proofs live under `~/.config/rtk_cloud/<environment>/deployment/storage/` (0700 directories, 0600 files); completed private journals remain in `migration-backup/`. Preflight and deployment validate the same state. Preflight never performs cutover or creates completion evidence. Workspace runtime files are explicit legacy import sources only. See [storage evidence location and import](storage-credential-lifecycle.md#environment-owned-receipts-and-proof-location).

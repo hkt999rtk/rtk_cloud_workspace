@@ -95,6 +95,9 @@ func executeDeploymentPreDeployCheck(ctx context.Context, o deploymentCheckOptio
 		}},
 		{"secrets.legacy-paths", func() error { return verifyDeploymentCheckLegacyPaths(store, cfg.Workspace) }},
 		{"deployment.preflight", func() error {
+			if err := validateDeploymentStorageActivation(cfg); err != nil {
+				return err
+			}
 			if managedErr != nil {
 				return managedErr
 			}

@@ -204,6 +204,7 @@ func TestResolveOTAMetricsEndpointTypeRequiresAvailableE3(t *testing.T) {
 }
 
 func TestOTABootstrapRequiresCreatedBucketE3AssignedEndpoint(t *testing.T) {
+	t.Setenv("RTK_CLOUD_CONFIG_ROOT", t.TempDir())
 	for _, tc := range []struct{ name, bucketType, endpoint, want string }{
 		{"wrong endpoint type", "E2", "https://assigned.example.test", "requires an E3 bucket"},
 		{"missing assigned endpoint", "E3", "", "omitted s3_endpoint"},
@@ -247,7 +248,7 @@ func TestOTABootstrapRequiresCreatedBucketE3AssignedEndpoint(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), tc.want) || created != 1 || endpointReads != 1 || keyPosts != 0 || s3Requests != 0 {
 				t.Fatalf("invalid created bucket was accepted or used: error=%v creates=%d endpoint_reads=%d key_posts=%d s3_requests=%d", err, created, endpointReads, keyPosts, s3Requests)
 			}
-			for _, path := range []string{profile, filepath.Join(cfg.RuntimeRoot, "state", "storage-preflight-ota.json"), filepath.Join(cfg.RuntimeRoot, "state", "storage-cutover-ota.json")} {
+			for _, path := range []string{profile, mustStorageStatePath(t, cfg, "storage-preflight-ota.json"), mustStorageStatePath(t, cfg, "storage-cutover-ota.json")} {
 				if _, err := os.Stat(path); !os.IsNotExist(err) {
 					t.Fatalf("invalid created bucket left credentials or receipt: %s: %v", path, err)
 				}
@@ -257,6 +258,7 @@ func TestOTABootstrapRequiresCreatedBucketE3AssignedEndpoint(t *testing.T) {
 }
 
 func TestResolvedObjectStorageValidationWritesRedactedReceipt(t *testing.T) {
+	makeIsolatedTestSecretStore(t, "staging")
 	var mu sync.Mutex
 	objects := map[string][]byte{}
 	var server *httptest.Server
@@ -314,7 +316,7 @@ func TestResolvedObjectStorageValidationWritesRedactedReceipt(t *testing.T) {
 	if !check.Passed {
 		t.Fatal(check.Detail)
 	}
-	body, err := os.ReadFile(filepath.Join(cfg.RuntimeRoot, "state", "storage-preflight.json"))
+	body, err := os.ReadFile(mustStorageStatePath(t, cfg, "storage-preflight.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -426,14 +428,14 @@ func TestDeploymentStorageActivationRequiresMatchingCutover(t *testing.T) {
 	if err := validateDeploymentStorageActivation(cfg); err == nil {
 		t.Fatal("deployment activated before media cutover")
 	}
-	if err := writeStorageState(filepath.Join(cfg.RuntimeRoot, "state", "storage-cutover.json"), map[string]any{"environment": "dev", "bucket": "wrong-bucket", "cutover_at": "2026-09-27T00:00:00Z", "rollback_credentials_retained": true}); err != nil {
+	if err := writeStorageState(mustStorageStatePath(t, cfg, "storage-cutover.json"), map[string]any{"environment": "dev", "bucket": "wrong-bucket", "cutover_at": "2026-09-27T00:00:00Z", "rollback_credentials_retained": true}); err != nil {
 		t.Fatal(err)
 	}
 	if err := validateDeploymentStorageActivation(cfg); err == nil {
 		t.Fatal("deployment accepted mismatched cutover")
 	}
 	proof := []byte(`{"verified":true}`)
-	if err := os.WriteFile(storageCutoverMigrationPath(cfg, "media"), proof, 0600); err != nil {
+	if err := os.WriteFile(mustStorageStatePath(t, cfg, storageMigrationReceiptName("media")), proof, 0600); err != nil {
 		t.Fatal(err)
 	}
 	hash := fmt.Sprintf("%x", sha256.Sum256(proof))
@@ -441,7 +443,7 @@ func TestDeploymentStorageActivationRequiresMatchingCutover(t *testing.T) {
 	if err := saveStorageCutoverJournal(store, storageCutoverJournal{Environment: "dev", Purpose: "media", Status: "complete", ID: "cutover-id", MigrationSHA256: hash}, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeStorageState(filepath.Join(cfg.RuntimeRoot, "state", "storage-cutover.json"), map[string]any{"environment": "dev", "bucket": cfg.Storage.RuntimeMedia.Bucket, "region": "us-sea", "prefix": cfg.Storage.RuntimeMedia.Prefix, "cutover_id": "cutover-id", "migration_receipt_sha256": hash, "cutover_at": "2026-09-27T00:00:00Z", "rollback_credentials_retained": true}); err != nil {
+	if err := writeStorageState(mustStorageStatePath(t, cfg, "storage-cutover.json"), map[string]any{"environment": "dev", "bucket": cfg.Storage.RuntimeMedia.Bucket, "region": "us-sea", "prefix": cfg.Storage.RuntimeMedia.Prefix, "cutover_id": "cutover-id", "migration_receipt_sha256": hash, "cutover_at": "2026-09-27T00:00:00Z", "rollback_credentials_retained": true}); err != nil {
 		t.Fatal(err)
 	}
 	if err := validateDeploymentStorageActivation(cfg); err != nil {
@@ -452,7 +454,7 @@ func TestDeploymentStorageActivationRequiresMatchingCutover(t *testing.T) {
 		t.Fatal("changed prefix accepted with stale receipt")
 	}
 	cfg.Storage.RuntimeMedia.Prefix = "environments/video-cloud-dev"
-	if err := os.WriteFile(storageCutoverMigrationPath(cfg, "media"), []byte("changed"), 0600); err != nil {
+	if err := os.WriteFile(mustStorageStatePath(t, cfg, storageMigrationReceiptName("media")), []byte("changed"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := validateDeploymentStorageActivation(cfg); err == nil {
@@ -680,12 +682,12 @@ func TestDeploymentStorageLifecycleHappyPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 	var migration deploymentStorageMigrationState
-	stateBody, err := os.ReadFile(filepath.Join(cfg.RuntimeRoot, "state", "storage-migration.json"))
+	stateBody, err := os.ReadFile(mustStorageStatePath(t, cfg, "storage-migration.json"))
 	if err != nil || json.Unmarshal(stateBody, &migration) != nil || migration.ObjectCount != 3 {
 		t.Fatalf("migration state = %#v, err = %v", migration, err)
 	}
 
-	if err := writeStorageState(filepath.Join(cfg.RuntimeRoot, "state", "storage-cutover.json"), map[string]bool{"complete": true}); err != nil {
+	if err := writeStorageState(mustStorageStatePath(t, cfg, "storage-cutover.json"), map[string]bool{"complete": true}); err != nil {
 		t.Fatal(err)
 	}
 	if err := writeStorageState(filepath.Join(cfg.RuntimeRoot, "state", "storage-consumers.json"), map[string]bool{"generic_key_in_use": false}); err != nil {
@@ -717,7 +719,7 @@ func TestDeploymentStorageLifecycleHappyPaths(t *testing.T) {
 	if err := os.WriteFile(store.KubeconfigPath(), []byte("apiVersion: v1\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeDeploymentStorageReceipt(cutoverCfg.RuntimeRoot, deploymentStorageReceipt{
+	if err := writeDeploymentStorageReceipt(cutoverCfg, deploymentStorageReceipt{
 		Purpose:  cutoverCfg.Storage.RuntimeMedia.Purpose,
 		Bucket:   cutoverCfg.Storage.RuntimeMedia.Bucket,
 		Region:   cutoverCfg.Storage.RuntimeMedia.Region,
@@ -725,7 +727,7 @@ func TestDeploymentStorageLifecycleHappyPaths(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(cutoverCfg.RuntimeRoot, "state", "storage-migration.json"), stateBody, 0o600); err != nil {
+	if err := os.WriteFile(mustStorageStatePath(t, cutoverCfg, "storage-migration.json"), stateBody, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	candidate := filepath.Join(t.TempDir(), "media-candidate.env")
@@ -754,7 +756,7 @@ func TestDeploymentStorageLifecycleHappyPaths(t *testing.T) {
 	if err := runDeploymentStorageLifecycle("storage-cutover", cutoverCfg, candidate, sourceFile, 0); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(cutoverCfg.RuntimeRoot, "state", "storage-cutover.json")); err != nil {
+	if _, err := os.Stat(mustStorageStatePath(t, cutoverCfg, "storage-cutover.json")); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -899,7 +901,7 @@ func TestDedicatedOTAStorageLifecycle(t *testing.T) {
 	if check := readOnlyChecker.checkResolvedOTAStorage(cfg, values); !check.Passed {
 		t.Fatalf("OTA read-only storage qualification failed: %s", check.Detail)
 	}
-	if _, err := os.Stat(filepath.Join(cfg.RuntimeRoot, "state", "storage-preflight-ota.json")); err != nil {
+	if _, err := os.Stat(mustStorageStatePath(t, cfg, "storage-preflight-ota.json")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -927,7 +929,7 @@ func TestDedicatedOTAStorageLifecycle(t *testing.T) {
 		t.Fatalf("billable OTA object copied as %q", copied)
 	}
 	var migration deploymentStorageMigrationState
-	body, err := os.ReadFile(filepath.Join(cfg.RuntimeRoot, "state", "storage-migration-ota.json"))
+	body, err := os.ReadFile(mustStorageStatePath(t, cfg, "storage-migration-ota.json"))
 	if err != nil || json.Unmarshal(body, &migration) != nil || migration.ObjectCount != 1 {
 		t.Fatalf("OTA migration receipt = %#v, error = %v", migration, err)
 	}
@@ -946,7 +948,7 @@ func TestDedicatedOTAStorageLifecycle(t *testing.T) {
 	if err := checker.migrateStoragePurpose(cfg, values, sourceFile, "ota"); err == nil || !strings.Contains(err.Error(), "differs from migration receipt") {
 		t.Fatalf("receipt-listed OTA source was not rechecked: %v", err)
 	}
-	if err := os.Remove(filepath.Join(cfg.RuntimeRoot, "state", "storage-migration-ota.json")); err != nil {
+	if err := os.Remove(mustStorageStatePath(t, cfg, "storage-migration-ota.json")); err != nil {
 		t.Fatal(err)
 	}
 	if err := checker.migrateStoragePurpose(cfg, values, sourceFile, "ota"); err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
@@ -974,7 +976,7 @@ func TestDedicatedOTAStorageLifecycle(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(cutoverCfg.RuntimeRoot, "state"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeStorageState(filepath.Join(cutoverCfg.RuntimeRoot, "state", "storage-preflight-ota.json"), deploymentStorageReceipt{Environment: "dev", Purpose: "ota-firmware", Bucket: bucketName, Region: "us-sea", Endpoint: server.URL, EndpointType: "E3"}); err != nil {
+	if err := writeStorageState(mustStorageStatePath(t, cutoverCfg, "storage-preflight-ota.json"), deploymentStorageReceipt{Environment: "dev", Purpose: "ota-firmware", Bucket: bucketName, Region: "us-sea", Endpoint: server.URL, EndpointType: "E3"}); err != nil {
 		t.Fatal(err)
 	}
 	store, err := newSecretStore("", "dev")
@@ -1031,14 +1033,17 @@ func TestDedicatedOTAStorageLifecycle(t *testing.T) {
 		ExportFile: archiveRelative, ExportSHA256: hex.EncodeToString(archiveHash[:]),
 		GETMetric: "obj_requests_get", GETRequests: 1, DownloadedBytesMetric: "obj_bytes_downloaded", DownloadedBytes: 32,
 	}))
-	if err := runDeploymentStorageLifecyclePurpose("storage-cutover", cutoverCfg, profile, sourceFile, 0, "ota"); err == nil || !strings.Contains(err.Error(), "migration receipt") {
-		t.Fatalf("OTA cutover accepted missing migration inventory: %v", err)
-	}
-	migrationBody, err := os.ReadFile(filepath.Join(cfg.RuntimeRoot, "state", "storage-migration-ota.json"))
+	migrationBody, err := os.ReadFile(mustStorageStatePath(t, cfg, "storage-migration-ota.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(cutoverCfg.RuntimeRoot, "state", "storage-migration-ota.json"), migrationBody, 0o600); err != nil {
+	if err := os.Remove(mustStorageStatePath(t, cfg, "storage-migration-ota.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := runDeploymentStorageLifecyclePurpose("storage-cutover", cutoverCfg, profile, sourceFile, 0, "ota"); err == nil || !strings.Contains(err.Error(), "migration receipt") {
+		t.Fatalf("OTA cutover accepted missing migration inventory: %v", err)
+	}
+	if err := os.WriteFile(mustStorageStatePath(t, cutoverCfg, "storage-migration-ota.json"), migrationBody, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	before, err := os.ReadFile(kubectlLog)
@@ -1074,7 +1079,7 @@ func TestDedicatedOTAStorageLifecycle(t *testing.T) {
 	if err := runDeploymentStorageLifecyclePurpose("storage-cutover", cutoverCfg, candidate, sourceFile, 0, "ota"); err == nil || !strings.Contains(err.Error(), "no ready registered endpoint") {
 		t.Fatalf("OTA cutover accepted a Service without ready endpoints: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(cutoverCfg.RuntimeRoot, "state", "storage-cutover-ota.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(mustStorageStatePath(t, cutoverCfg, "storage-cutover-ota.json")); !os.IsNotExist(err) {
 		t.Fatalf("OTA cutover wrote receipt before Service readiness: %v", err)
 	}
 	journalPath, err := store.safePath(filepath.Join("migration-backup", "storage-cutover-ota.json"))
@@ -1104,7 +1109,7 @@ func TestDedicatedOTAStorageLifecycle(t *testing.T) {
 	if err := runDeploymentStorageLifecyclePurpose("storage-cutover", cutoverCfg, candidate, sourceFile, 0, "ota"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(cutoverCfg.RuntimeRoot, "state", "storage-cutover-ota.json")); err != nil {
+	if _, err := os.Stat(mustStorageStatePath(t, cutoverCfg, "storage-cutover-ota.json")); err != nil {
 		t.Fatal(err)
 	}
 }

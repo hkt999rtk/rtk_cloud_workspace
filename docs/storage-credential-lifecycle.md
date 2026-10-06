@@ -32,6 +32,52 @@ Credentials are individual `0600` files below `~/.config/rtk_cloud/<environment>
 
 ## Operator lifecycle
 
+### Environment-owned receipts and proof location
+
+All environments use `~/.config/rtk_cloud/<environment>/deployment/storage/`
+for authoritative storage evidence (directories `0700`, files `0600`).
+`RTK_CLOUD_CONFIG_ROOT` changes the parent configuration root, never the
+environment binding. This state is independent of the workspace or worktree.
+
+| File | Written after |
+| --- | --- |
+| `storage-preflight.json` | Explicit Media storage write/read/delete qualification |
+| `storage-preflight-ota.json` | Explicit OTA storage qualification |
+| `storage-preflight-release-artifacts.json` | Explicit artifact storage qualification |
+| `storage-migration.json`, `storage-migration-ota.json`, `storage-migration-artifacts.json` | Verified object migration; the completed cutover binds the unchanged proof digest |
+| `storage-cutover.json`, `storage-cutover-ota.json` | Successful cutover or reinitialization, workload verification, credential promotion and completed private journal |
+
+The private journals remain under the same environment's `migration-backup/`;
+they contain sensitive original workload/Secret state and are not copied into
+reports. Preserve receipts, migration proofs and journals together in the
+encrypted environment backup. `cloud_env/<environment>/runtime/state/` is no
+longer the authority for these files. Normal reads never search old worktrees.
+
+Preflight and deployment use the same storage activation verifier. Missing,
+wrong-environment or mismatched receipt/proof/journal is NO-GO. Preflight is
+read-only: it neither performs a cutover nor produces a completion receipt.
+Explicit storage qualification can produce a preparation receipt, which alone
+does not prove cutover. Full deployment binds the current storage evidence into
+its plan input digest and repeats checks before execution stages.
+
+For existing completed operations, explicitly import the original evidence:
+
+```sh
+./scripts/deploy-environment.sh storage-import-state \
+  --environment staging --purpose media \
+  --source-runtime /absolute/original/cloud_env/staging/runtime \
+  --confirm video-cloud-staging
+```
+
+Repeat with `--purpose ota` and its original runtime when necessary. Import
+checks the selected environment/target and completed private journal, binds the
+unchanged migration or reinitialization proof, preserves original bytes and
+completion times, and refuses conflicting canonical state. Identical retries
+are idempotent. No cloud resources or active credentials change. A partial
+import remains subject to the same deployment gates. Import is not GO; repeat
+the full preflight. Do not rerun `storage-reinitialize` merely because a checkout
+lost its generated files, edit a receipt, or disable the activation gate.
+
 Follow [the migration and retirement policy](object-storage-policy.md#existing-bucket-migration-and-retirement) before using these commands. Fetch the latest workspace and submodule refs, inspect live buckets, then run `storage-plan`. The command selectors `--purpose media`, `--purpose ota` and `--purpose artifacts` address policy purposes `runtime`, `ota-firmware` and `artifacts`.
 
 ```bash
@@ -280,4 +326,4 @@ The export follows Akamai's [service token](https://techdocs.akamai.com/linode-a
 [metrics query](https://techdocs.akamai.com/linode-api/reference/post-read-metric),
 and [Object Storage metric definitions](https://techdocs.akamai.com/cloud-computing/docs/object-storage-cloud-pulse-metrics).
 
-Media validation writes `runtime/state/storage-preflight.json`; OTA validation writes `runtime/state/storage-preflight-ota.json`. Receipts contain bucket, region, API endpoint, numeric key ID, redacted access suffix, and time. Runtime state should be backed up using the encrypted environment-state procedure.
+Media validation writes `~/.config/rtk_cloud/<environment>/deployment/storage/storage-preflight.json`; OTA validation writes `storage-preflight-ota.json` in that same directory. Receipts contain bucket, region, API endpoint, numeric key ID, redacted access suffix, and time. Preserve this evidence with the environment's encrypted state backup.

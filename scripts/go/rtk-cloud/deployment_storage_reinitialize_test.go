@@ -301,7 +301,7 @@ func TestReinitializeFailsBeforeWorkloadMutation(t *testing.T) {
 			if strings.Contains(string(commands), "patch ") || strings.Contains(string(commands), "create ") {
 				t.Fatal("failed precondition changed Kubernetes")
 			}
-			if _, err := os.Stat(filepath.Join(f.cfg.RuntimeRoot, "state/storage-cutover.json")); !os.IsNotExist(err) {
+			if _, err := os.Stat(mustStorageStatePath(t, f.cfg, "storage-cutover.json")); !os.IsNotExist(err) {
 				t.Fatal("failed activation emitted receipt")
 			}
 		})
@@ -415,7 +415,7 @@ func TestReinitializeRejectsCandidateReplacementDuringRollout(t *testing.T) {
 	if active["LINODE_MEDIA_OBJ_ACCESS_KEY_ID"] != "active-old" {
 		t.Fatal("unverified candidate was promoted")
 	}
-	if _, err := os.Stat(filepath.Join(f.cfg.RuntimeRoot, "state/storage-cutover.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(mustStorageStatePath(t, f.cfg, "storage-cutover.json")); !os.IsNotExist(err) {
 		t.Fatal("failed reinitialization left an activation receipt")
 	}
 	raw, err := f.store.read(storageCutoverJournalName("media"))

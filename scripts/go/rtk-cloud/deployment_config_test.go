@@ -424,6 +424,7 @@ func fakeDeploymentUpgradeKubectl(t *testing.T, output string, exitCode int) {
 }
 
 func TestDeploymentProvisionInstallsValidatedStorageCredentials(t *testing.T) {
+	makeIsolatedTestSecretStore(t, "staging")
 	workspace := writeDeploymentFixture(t, "staging", "lke")
 	cfg, err := resolveDeploymentConfig(workspace, "staging", "")
 	if err != nil {
@@ -437,7 +438,7 @@ func TestDeploymentProvisionInstallsValidatedStorageCredentials(t *testing.T) {
 	if err := os.WriteFile(environmentFile, []byte("LINODE_MEDIA_OBJ_ACCESS_KEY_ID=media-access\nLINODE_MEDIA_OBJ_SECRET_ACCESS_KEY=media-secret\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeDeploymentStorageReceipt(cfg.RuntimeRoot, deploymentStorageReceipt{
+	if err := writeDeploymentStorageReceipt(cfg, deploymentStorageReceipt{
 		Purpose: "runtime-media", Bucket: cfg.Storage.RuntimeMedia.Bucket, Region: cfg.Storage.RuntimeMedia.Region, Endpoint: "https://example.invalid",
 	}); err != nil {
 		t.Fatal(err)
@@ -467,6 +468,11 @@ func TestDeploymentProvisionInstallsValidatedStorageCredentials(t *testing.T) {
 		t.Fatal("child storage credential leaked after provisioning")
 	}
 
+	// A new checkout shares environment-owned evidence. Remove the actual
+	// canonical receipt to exercise the missing-evidence branch explicitly.
+	if err := os.Remove(mustStorageStatePath(t, cfg, "storage-preflight.json")); err != nil {
+		t.Fatal(err)
+	}
 	missingReceiptWorkspace := writeDeploymentFixture(t, "staging", "lke")
 	err = runDeploymentWithOperations([]string{
 		"provision", "--workspace", missingReceiptWorkspace, "--environment", "staging", "--confirm", "video-cloud-staging", "--env-file", environmentFile, "--shared-env-file", sharedFile,

@@ -26,7 +26,7 @@ func (c deploymentCredentialChecker) cutoverRuntimeStorage(cfg deploymentConfig,
 	if err := materializeDeploymentRuntime(cfg); err != nil {
 		return err
 	}
-	receipt, err := readDeploymentStorageReceipt(cfg.RuntimeRoot)
+	receipt, err := readDeploymentStorageReceipt(cfg)
 	if err != nil {
 		return err
 	}
@@ -337,7 +337,7 @@ func beginStorageCutover(cfg deploymentConfig, purpose, sourceFile, environmentF
 	if err != nil {
 		return store, storageCutoverJournal{}, err
 	}
-	migration, err := os.ReadFile(storageCutoverMigrationPath(cfg, purpose))
+	migration, err := readDeploymentStorageState(cfg.Environment, storageMigrationReceiptName(purpose))
 	if err != nil {
 		return store, storageCutoverJournal{}, err
 	}
@@ -594,7 +594,11 @@ func rollbackStorageCutover(cfg deploymentConfig, purpose string) error {
 	if purpose == "ota" {
 		name = "storage-cutover-ota.json"
 	}
-	if err := os.Remove(filepath.Join(cfg.RuntimeRoot, "state", name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+	path, err := deploymentStorageStatePath(cfg.Environment, name)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	fmt.Fprintln(os.Stderr, "Storage workload settings restored. Keep writers fenced until destination writes/deletions are reconciled back and the active credential profile is restored.")
@@ -997,7 +1001,10 @@ func completeStorageCutover(cfg deploymentConfig, environmentFile, purpose strin
 	if purpose == "ota" {
 		receiptName = "storage-cutover-ota.json"
 	}
-	receiptPath := filepath.Join(cfg.RuntimeRoot, "state", receiptName)
+	receiptPath, err := deploymentStorageStatePath(cfg.Environment, receiptName)
+	if err != nil {
+		return err
+	}
 	credentialsActivated := false
 	defer func() {
 		if result != nil {
@@ -1035,9 +1042,6 @@ func completeStorageCutover(cfg deploymentConfig, environmentFile, purpose strin
 		}
 	}
 	state["workloads_rolled"] = workloads
-	if err := writeStorageState(receiptPath, state); err != nil {
-		return err
-	}
 	if err := activateStorageCandidate(cfg, environmentFile, purpose); err != nil {
 		return err
 	}
@@ -1046,7 +1050,7 @@ func completeStorageCutover(cfg deploymentConfig, environmentFile, purpose strin
 	if err := saveStorageCutoverJournal(store, *journal, true); err != nil {
 		return fmt.Errorf("finalize private storage cutover journal: %w", err)
 	}
-	return nil
+	return writeDeploymentStorageState(cfg.Environment, receiptName, state)
 }
 
 func ensureOTACutoverSource(namespace, sourceFile, destinationPrefix string) error {
@@ -1095,14 +1099,6 @@ func ensureOTACutoverSource(namespace, sourceFile, destinationPrefix string) err
 	return nil
 }
 
-func storageCutoverMigrationPath(cfg deploymentConfig, purpose string) string {
-	name := "storage-migration.json"
-	if purpose == "ota" {
-		name = "storage-migration-ota.json"
-	}
-	return filepath.Join(cfg.RuntimeRoot, "state", name)
-}
-
 func validateStorageRollbackData(cfg deploymentConfig, journal storageCutoverJournal) error {
 	if journal.Operation == "reinitialize" {
 		return errors.New("reinitialized storage has no source data to restore; rollback to the deleted source is prohibited")
@@ -1117,7 +1113,7 @@ func validateStorageRollbackData(cfg deploymentConfig, journal storageCutoverJou
 	if !attempted {
 		return nil
 	}
-	migration, err := os.ReadFile(storageCutoverMigrationPath(cfg, journal.Purpose))
+	migration, err := readDeploymentStorageState(cfg.Environment, storageMigrationReceiptName(journal.Purpose))
 	if err != nil {
 		return err
 	}
