@@ -356,3 +356,33 @@ Use the explicitly verified `deployment dns-import-state` migration described in
 checkout fallback. Import is not deployment GO.
 Remaining edge/TURN, service and artifact-state writers still require migration before the
 configuration/state separation is complete.
+
+
+### Native target-workload acceptance
+
+The unified native executor checks a fresh complete inventory through its frozen
+Kubernetes identity before PKI, public-endpoint and business acceptance. This
+includes retained workloads: matching specs and a previously Ready controller
+do not establish current runtime health. Controller UID/generation, exact owned
+Pod lineage and replica count, application/sidecar/init startup, approved Pod
+image references and actual runtime imageIDs must all agree. Enabled DaemonSets
+must have eligible scheduled nodes; declared one-time Jobs must complete.
+
+OCI index digests may differ from platform manifest or config imageIDs. The
+checker uses native Buildx raw metadata, verifies each requested digest, and
+selects linux/amd64 descendants. Tags, changed bytes, missing or ambiguous platform
+metadata and absent runtime image evidence fail with
+`deployment.post-deploy.workloads`. Docker/Buildx clients use private temporary
+`deployment/tmp/image-metadata-*` directories and canonical environment registry
+credentials. Installed plugin paths are discovered from the existing Docker
+client; global Docker authentication is not copied into the temporary client.
+Temporary identity material is removed after success or failure.
+
+Typed acceptance blockers retain their stable ID/resource and repair action in
+the journal and public report; raw subprocess diagnostics remain suppressed.
+Failed acceptance retains local and cluster execution fences and never records
+completion. Missing complete functional acceptance is rejected before writes.
+This target-workload verifier does not qualify PKI, candidate compatibility,
+network/business flows, recovery or production. Those required adapters and
+actual environment qualification remain incomplete; no full GO follows from
+these local tests or healthy workloads.

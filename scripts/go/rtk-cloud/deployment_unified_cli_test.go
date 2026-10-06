@@ -198,3 +198,15 @@ func TestUnifiedReportsRejectWorktreesOtherEnvironmentsAndSymlinkParents(t *test
 		})
 	}
 }
+
+func TestUnifiedReportsRetainSanitizedAcceptanceResourceAndRepair(t *testing.T) {
+	c, deps, _ := unifiedCLIProfile(t, "dev")
+	deps.Execute = func(context.Context, *compiledEnvironmentDeployment, string, func(context.Context, *deploymentplan.Plan) error, func(context.Context, *compiledEnvironmentDeployment) error) error {
+		return &deploymentplan.Blocker{ID: "deployment.post-deploy.workloads", Resource: "Deployment/video-cloud-dev-application/application", Cause: "runtime image cannot be verified", Next: "repair the original planned runtime"}
+	}
+	var out, diagnostics bytes.Buffer
+	err := runUnifiedEnvironmentDeploymentWithDependencies(context.Background(), "upgrade", []string{"--environment", "dev", "--release", "/reviewed/release.json", "--confirm", "video-cloud-dev", "--plan-sha256", c.Plan.SHA256()}, &out, &diagnostics, deps)
+	if err == nil || !strings.Contains(out.String(), "deployment.post-deploy.workloads") || !strings.Contains(out.String(), "Deployment/video-cloud-dev-application/application") || !strings.Contains(out.String(), "repair the original planned runtime") || !strings.Contains(out.String(), "completed=false") {
+		t.Fatal("acceptance repair lost", err, out.String())
+	}
+}

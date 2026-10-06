@@ -678,7 +678,7 @@ func TestAPIDefaultsInsideContainersAndDependencySorting(t *testing.T) {
 
 func TestAcceptanceKeepsDistributedFenceAndRejectsConcurrentChanges(t *testing.T) {
 	for _, environment := range []string{"dev", "staging", "prod"} {
-		for _, mode := range []string{"success", "failed", "owner-drift", "spec-drift", "lease-lost", "input-drift", "plan-drift", "missing"} {
+		for _, mode := range []string{"success", "failed", "typed-failed", "owner-drift", "spec-drift", "lease-lost", "input-drift", "plan-drift", "missing"} {
 			t.Run(environment+"/"+mode, func(t *testing.T) {
 				in, d, _ := fixture(t, environment, "Deployment")
 				p, err := Compile(in, []Definition{d}, nil)
@@ -713,6 +713,8 @@ func TestAcceptanceKeepsDistributedFenceAndRejectsConcurrentChanges(t *testing.T
 					switch mode {
 					case "failed":
 						return errors.New("private-endpoint")
+					case "typed-failed":
+						return fmt.Errorf("private-endpoint: %w", &Blocker{ID: "deployment.post-deploy.workloads", Resource: ID(d.Object), Cause: "owned Pod image differs", Next: "repair the actual target"})
 					case "owner-drift":
 						Map(b.objects[ID(d.Object)]["metadata"])["uid"] = "replacement"
 					case "spec-drift":
@@ -755,6 +757,12 @@ func TestAcceptanceKeepsDistributedFenceAndRejectsConcurrentChanges(t *testing.T
 					}
 					if _, err := os.Stat(filepath.Join(root, "deployment", ".execution-active")); err != nil {
 						t.Fatal("failed acceptance removed local recovery fence")
+					}
+					if mode == "typed-failed" {
+						var failure *Blocker
+						if !errors.As(err, &failure) || failure.ID != "deployment.post-deploy.workloads" || failure.Resource != ID(d.Object) || journal.Failed != failure.ID || strings.Contains(err.Error(), "private-endpoint") {
+							t.Fatal("typed acceptance cause or privacy lost", err)
+						}
 					}
 					if mode == "failed" && (journal.Failed != "deployment.post-deploy" || strings.Contains(err.Error(), "private-endpoint")) {
 						t.Fatal("acceptance failure lost its stable safe cause")

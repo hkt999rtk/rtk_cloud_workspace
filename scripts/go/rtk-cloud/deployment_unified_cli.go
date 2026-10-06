@@ -73,7 +73,15 @@ func defaultUnifiedDeploymentDependencies() unifiedDeploymentDependencies {
 			}
 		},
 		Execute: func(ctx context.Context, c *compiledEnvironmentDeployment, sha string, qualify func(context.Context, *deploymentplan.Plan) error, accept func(context.Context, *compiledEnvironmentDeployment) error) error {
-			if err := c.Plan.Execute(ctx, c.Backend, sha, c.Store.Root, qualify, c.Fence, func(ctx context.Context, _ *deploymentplan.Plan) error { return accept(ctx, c) }); err != nil {
+			if accept == nil {
+				return &deploymentplan.Blocker{ID: "deployment.post-deploy", Cause: "complete acceptance is unavailable", Next: "install and qualify all required target, PKI, endpoint and business acceptance before execution"}
+			}
+			if err := c.Plan.Execute(ctx, c.Backend, sha, c.Store.Root, qualify, c.Fence, func(ctx context.Context, p *deploymentplan.Plan) error {
+				if err := c.Backend.CheckTargetWorkloads(ctx, p); err != nil {
+					return err
+				}
+				return accept(ctx, c)
+			}); err != nil {
 				return err
 			}
 			return retireLocalAccountBootstrapSeed(ctx, c)
@@ -193,6 +201,9 @@ func runUnifiedEnvironmentDeploymentWithDependencies(parent context.Context, act
 		var blocker *deploymentplan.Blocker
 		if errors.As(err, &blocker) {
 			row.ID, row.Cause, row.Next = blocker.ID, blocker.Cause, blocker.Next
+			if blocker.Resource != "" {
+				row.Cause += " (" + blocker.Resource + ")"
+			}
 		}
 		report.Gates = []deploymentplan.GateResult{row}
 		return emitUnifiedDeploymentReport(out, diagnostics, o.Report, report, exitCode(1))
@@ -244,6 +255,9 @@ func runUnifiedEnvironmentDeploymentWithDependencies(parent context.Context, act
 			var blocker *deploymentplan.Blocker
 			if errors.As(err, &blocker) {
 				row.ID, row.Cause, row.Next = blocker.ID, blocker.Cause, blocker.Next
+				if blocker.Resource != "" {
+					row.Cause += " (" + blocker.Resource + ")"
+				}
 			}
 			report.Gates = append(report.Gates, row)
 			return emitUnifiedDeploymentReport(out, diagnostics, o.Report, report, exitCode(1))

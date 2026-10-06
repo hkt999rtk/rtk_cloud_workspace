@@ -92,6 +92,10 @@ func verifyDeploymentWorkloadHealth(store secretStore) error {
 }
 
 func validateDeploymentWorkloadHealth(environment string, raw []byte) error {
+	return validateDeploymentWorkloadHealthForStack("video-cloud-"+environment, raw)
+}
+
+func validateDeploymentWorkloadHealthForStack(stack string, raw []byte) error {
 	var inventory struct {
 		Items []deploymentHealthResource `json:"items"`
 	}
@@ -101,7 +105,7 @@ func validateDeploymentWorkloadHealth(environment string, raw []byte) error {
 	controllers, pods := 0, 0
 	var failures []string
 	for _, resource := range inventory.Items {
-		if !deploymentHealthNamespace(environment, resource.Metadata.Namespace) {
+		if resource.Metadata.Namespace != stack && !strings.HasPrefix(resource.Metadata.Namespace, stack+"-") {
 			continue
 		}
 		name := resource.Metadata.Namespace + "/" + resource.Metadata.Name

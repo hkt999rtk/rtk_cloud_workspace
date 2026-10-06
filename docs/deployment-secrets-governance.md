@@ -61,6 +61,7 @@ not invent another workspace, worktree, external-disk or OS-specific location.
 | Original provider migration sources | `migration-backup/provider-state/<source-sha256>/` |
 | Controlled teardown state/credential archive | `migration-backup/destroy-lke-<operation-id>/` |
 | Normalized provider region/quota metadata (not completion evidence) | `deployment/provider-preflight.env` |
+| Temporary native Kubernetes / Docker / Buildx client identity and state | `deployment/tmp/` (operation-owned directories removed on success/failure) |
 | Deployment reports | `deployment/reports/` |
 | Temporary deployment material | `deployment/tmp/` |
 | Protected original migration/rollback snapshots | `migration-backup/` |

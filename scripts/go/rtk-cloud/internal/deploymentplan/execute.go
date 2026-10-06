@@ -298,6 +298,12 @@ func (p *Plan) Execute(ctx context.Context, backend Backend, expectedDigest, pri
 	possibleMutation = true
 	if err := accept(ctx, p); err != nil {
 		journal.Failed = "deployment.post-deploy"
+		var failure *Blocker
+		if errors.As(err, &failure) {
+			journal.Failed = failure.ID
+			_ = saveJournal(directory, journal)
+			return &Blocker{ID: failure.ID, Resource: failure.Resource, Cause: failure.Cause, Next: failure.Next}
+		}
 		_ = saveJournal(directory, journal)
 		return blocked("deployment.post-deploy", "", "complete PKI, endpoint and business-flow acceptance failed", "inspect private evidence and repair the actual target; retain the execution lease until reviewed recovery completes")
 	}
