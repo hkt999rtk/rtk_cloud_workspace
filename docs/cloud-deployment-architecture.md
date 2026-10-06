@@ -18,8 +18,11 @@ Only deterministic secret-free resolved configuration may remain under
 explicit validated migration. Missing evidence never authorizes identity/data
 reinitialization or an automatic fallback. LKE cluster/node-pool state and quota now use the private environment store, including
 preflight, execution input hashing and controlled teardown archives. Remaining
-legacy edge/TURN, DNS, service and artifact state writers still require migration; their old
+legacy edge/TURN, service and artifact state writers still require migration; their old
 locations are implementation gaps, not policy exceptions.
+DNS ownership, ACME challenge cleanup, zone evidence and synchronization metadata
+now share `deployment/dns/<adapter>/` in the environment store. Their input digest
+is fenced by the unified compiler. See [the explicit DNS state migration](dns-adapter-architecture.md#migration).
 
 RTK Cloud uses one reusable architecture description, many environment instances, and replaceable deployment adapters. Environments such as `dev`, `staging`, and `prod` select an architecture and adapter; they do not own copies of the architecture or adapter implementation.
 

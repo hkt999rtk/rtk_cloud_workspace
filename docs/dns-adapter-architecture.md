@@ -32,10 +32,24 @@ reviewed provider escape hatches live in
 `cloud_env/<environment>/overrides/dns.env`. Zone IDs, API keys, AWS profile
 sessions, change IDs, and credentials are never tracked configuration.
 
-The generic plan is written to `runtime/resolved/dns-plan.json`. Normalized
-state is written to `runtime/state/dns.env`. Provider-private state is written
-to `runtime/dns/<adapter>/state.json`; it is ignored and must not be read by the
-shared Kubernetes renderer or load tests.
+The generic configuration plan remains at
+`cloud_env/<environment>/runtime/resolved/dns-plan.json`; deterministic root and
+adapter metadata uses `runtime/resolved/dns.env`. Every operational DNS
+file uses `~/.config/rtk_cloud/<environment>/deployment/dns/<adapter>/`:
+
+| File | Producer and consumer |
+| --- | --- |
+| `ownership.json` | Shared record synchronization and controlled removal; binds the selected environment, adapter, zone and exact recorded values. |
+| `challenges.json` | Certbot's shared `dns-hook present/cleanup` and interrupted-challenge cleanup; retains only the outstanding domain/value pairs. |
+| `state.json` | Adapter zone discovery evidence, including provider-private hosted-zone ID. |
+| `dns.env` | Shared synchronization metadata, including the original applied-record count and update time. |
+
+Directories are real `0700` directories and files are regular `0600` files.
+Writers, readers, cleanup and the unified plan input digest use the same path
+resolver. Credentials require explicit configured `CLOUD_ENV_NAME`; a missing
+environment never selects staging. Switching checkouts does not change authority.
+Operational files are not desired Kubernetes templates, release intent or GO
+evidence. Their exact digest fences input drift between deployment phases.
 
 Generic defaults are `DNS_RECORD_TTL=600`,
 `DNS_PROPAGATION_TIMEOUT_SECONDS=900`, and
@@ -66,7 +80,7 @@ vendor HTTP calls. Multiple validations for one `_acme-challenge` name are
 submitted as one record set. Cleanup removes only the matching validation
 value and preserves unrelated TXT values.
 
-Public record ownership is recorded in ignored runtime state. Removal deletes
+Public record ownership is recorded in the selected environment private store. Removal deletes
 only records owned by the environment whose current values still equal the
 recorded target. External drift stops removal instead of overwriting or
 deleting operator-owned data.
@@ -105,5 +119,30 @@ run the opt-in SDK smoke with
 - Do not copy GoDaddy credentials into environment config or runtime evidence.
 - Remove `--godaddy-env` and GoDaddy-specific TTL flags from active commands;
   use the generic DNS timing keys.
-- Existing historical reports and the ignored `cloud_env/staging/lke` tree are
-  evidence only and are not migrated or read.
+- Legacy operational files are never read by normal execution as a fallback.
+  An existing old file with a missing private counterpart blocks adapter mutation
+  with `deployment.dns.state`. Restore the original private store, or explicitly
+  import a selected original runtime:
+
+  ```sh
+  go run ./scripts/go/rtk-cloud -- deployment dns-import-state \
+    --environment staging --source-runtime /absolute/original/runtime \
+    --confirm video-cloud-staging
+  ```
+
+  The importer requires matching original environment, stack and root zone,
+  authenticated current zone reads, exact owned record values and outstanding
+  challenge values; Route53 additionally verifies the original hosted-zone ID.
+  It changes no DNS records or credentials. Bounded original `0600` source files
+  remain intact and are archived byte-for-byte under
+  `migration-backup/dns-state/<source-sha256>/` in that same environment store.
+  Ownership gains an explicit environment binding. Source changes, active
+  execution fences, malformed files, DNS drift and conflicting destinations
+  reject import. Repeating the same verified source is idempotent.
+- Missing or no-longer-visible original records require a separately reviewed
+  DNS reconciliation; do not fabricate ownership or silently discard cleanup
+  evidence to pass import. Import success is not full deployment GO.
+- GoDaddy read-then-delete has no provider CAS primitive. The existing remote
+  value drift check is required but does not exclude an external edit between
+  that read and mutation; perform controlled removal without concurrent DNS
+  writers. This local-state migration does not claim atomic remote transactions.

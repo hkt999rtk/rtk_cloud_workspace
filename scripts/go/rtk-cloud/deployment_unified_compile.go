@@ -35,6 +35,7 @@ type environmentDeploymentSnapshot struct {
 	StorageEvidenceSHA256 string
 	ProviderState         map[string]string
 	ProviderAccount       map[string]string
+	DNSStateSHA256        string
 }
 
 func (s environmentDeploymentSnapshot) Digest(cfg deploymentConfig) string {
@@ -152,7 +153,11 @@ func readEnvironmentDeploymentSnapshot(cfg deploymentConfig, store secretStore) 
 	if err != nil {
 		return snapshot, lkeProviderStateBlocker("private provider account profile cannot be verified")
 	}
-	return environmentDeploymentSnapshot{Operator: operator, Secrets: secrets, Kubeconfig: kubeconfig, PostgresProtection: protection, StorageEvidenceSHA256: storageEvidence, ProviderState: providerState, ProviderAccount: account}, nil
+	dnsDigest, err := environmentDNSStateDigest(cfg)
+	if err != nil {
+		return snapshot, err
+	}
+	return environmentDeploymentSnapshot{DNSStateSHA256: dnsDigest, Operator: operator, Secrets: secrets, Kubeconfig: kubeconfig, PostgresProtection: protection, StorageEvidenceSHA256: storageEvidence, ProviderState: providerState, ProviderAccount: account}, nil
 }
 
 func compileEnvironmentDeployment(ctx context.Context, cfg deploymentConfig, operation, releasePath string) (*compiledEnvironmentDeployment, error) {

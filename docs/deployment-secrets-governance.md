@@ -56,6 +56,8 @@ not invent another workspace, worktree, external-disk or OS-specific location.
 | Account Manager bootstrap retirement guard | `deployment/account-bootstrap-retired.json` |
 | Storage preparation/completion receipts and migration proofs | `deployment/storage/` |
 | Provider operational state | `deployment/adapters/<adapter>/` (LKE uses `state.env` and `account.env`) |
+| DNS ownership, ACME challenges, zone evidence and synchronization metadata | `deployment/dns/<adapter>/` (`ownership.json`, `challenges.json`, `state.json`, `dns.env`) |
+| Original DNS migration sources | `migration-backup/dns-state/<source-sha256>/` |
 | Original provider migration sources | `migration-backup/provider-state/<source-sha256>/` |
 | Controlled teardown state/credential archive | `migration-backup/destroy-lke-<operation-id>/` |
 | Normalized provider region/quota metadata (not completion evidence) | `deployment/provider-preflight.env` |
@@ -78,7 +80,7 @@ files and does not export online CA keys.
 
 Legacy deployment writers that still use workspace runtime are migration work
 and do not conform to this boundary. Storage evidence placement is implemented
-by this change; remaining provider/temporary/report writers are part of the
+by this change; remaining edge/TURN/service/temporary/report writers are part of the
 unified deployment replacement and must be corrected before claiming completion.
 
 The canonical local secret root is defined by [SecretStore](secret-store.md):

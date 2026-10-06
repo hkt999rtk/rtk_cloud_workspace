@@ -110,7 +110,9 @@ when retrieved alongside an active source.
 | [testing.md](testing.md) | Source | Cross-repository validation commands for pinned snapshots. |
 | [adr/README.md](adr/README.md) | Index | Workspace architecture decision record location and format. |
 
-The active runtime contract is `cloud_env/<environment>/runtime`. References to
+The active resolved-configuration contract is `cloud_env/<environment>/runtime`;
+deployment-generated state belongs in `~/.config/rtk_cloud/<environment>/` under
+the [canonical location policy](deployment-secrets-governance.md#configuration-versus-deployment-generated-data). References to
 `cloud_env/staging/lke` or `cloud_env/staging/linode` below are historical
 evidence, not current operator instructions.
 

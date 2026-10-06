@@ -349,5 +349,10 @@ provider bytes and refuses conflicting or concurrent destinations. Missing
 recorded clusters cannot be recreated through automatic label discovery.
 Teardown captures original local owners before cloud mutation, privately archives
 the destroyed identity and refuses to erase a concurrent file replacement.
-Remaining edge/TURN, DNS, service and artifact-state writers still require migration before the
+DNS state now uses private `deployment/dns/<adapter>/` for synchronization,
+ACME cleanup and provider evidence; the unified input digest fences changes.
+Use the explicitly verified `deployment dns-import-state` migration described in
+[DNS architecture](dns-adapter-architecture.md#migration), never an implicit
+checkout fallback. Import is not deployment GO.
+Remaining edge/TURN, service and artifact-state writers still require migration before the
 configuration/state separation is complete.

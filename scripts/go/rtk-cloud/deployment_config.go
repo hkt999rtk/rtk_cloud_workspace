@@ -158,6 +158,8 @@ func runDeployment(args []string) error {
 			return runEnvironmentExecutionReconcile(args[1:])
 		case "storage-import-state":
 			return runDeploymentStorageImport(args[1:])
+		case "dns-import-state":
+			return runDeploymentDNSImport(args[1:])
 		case "provider-import-state":
 			return runDeploymentProviderImport(args[1:])
 		case "prepare-upgrade":
@@ -783,6 +785,7 @@ func printDeploymentUsage() {
   rtk-cloud deployment upgrade --environment NAME --confirm STACK --plan-sha256 SHA256 [--release PATH]
   rtk-cloud deployment reconcile-execution --environment NAME --confirm STACK --plan-sha256 ORIGINAL_SHA256
   rtk-cloud deployment storage-import-state --environment NAME --purpose media|ota|artifacts --source-runtime ORIGINAL_RUNTIME --confirm STACK
+  rtk-cloud deployment dns-import-state --environment NAME --source-runtime ORIGINAL_RUNTIME --confirm STACK
   rtk-cloud deployment provider-import-state --environment NAME --source-runtime ORIGINAL_RUNTIME --confirm STACK [--source-kubeconfig ORIGINAL_KUBECONFIG]
   rtk-cloud deployment acceptance --environment NAME --confirm STACK
   rtk-cloud deployment remove --environment NAME --confirm STACK
@@ -1444,7 +1447,7 @@ func materializeDeploymentRuntime(cfg deploymentConfig) error {
 	} else if err := os.WriteFile(filepath.Join(cfg.RuntimeRoot, "resolved", "dns-plan.json"), append(body, '\n'), 0o600); err != nil {
 		return err
 	}
-	if err := writeSortedEnv(filepath.Join(cfg.RuntimeRoot, "state", "dns.env"), map[string]string{"DNS_ADAPTER": cfg.DNSAdapter, "DNS_ROOT_DOMAIN": cfg.Values["CLOUD_DNS_ROOT_DOMAIN"]}, 0o600); err != nil {
+	if err := writeSortedEnv(filepath.Join(cfg.RuntimeRoot, "resolved", "dns.env"), map[string]string{"DNS_ADAPTER": cfg.DNSAdapter, "DNS_ROOT_DOMAIN": cfg.Values["CLOUD_DNS_ROOT_DOMAIN"]}, 0o600); err != nil {
 		return err
 	}
 	plan := map[string]any{"environment": cfg.Environment, "architecture": cfg.Architecture, "adapter": cfg.Adapter, "dns_adapter": cfg.DNSAdapter, "values": resolved, "capacity": cfg.Capacity, "storage": cfg.Storage}

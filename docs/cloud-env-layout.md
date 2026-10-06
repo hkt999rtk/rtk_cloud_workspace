@@ -61,9 +61,8 @@ All of `cloud_env/<environment>/runtime/` is Git-ignored:
 
 ```text
 runtime/
-  resolved/{deployment.env,deployment-plan.json}
+  resolved/{deployment.env,deployment-plan.json,dns-plan.json,dns.env}
   env/stack.env
-  state/dns.env # deterministic adapter/root configuration, no allocated IDs
   adapters/<adapter>/{config.env,resolved-resources.env}
   dns/<dns-adapter>/config.env
   services/
@@ -78,7 +77,8 @@ workspace directory does not make operational state permitted there.
 
 The generic DNS plan is `runtime/resolved/dns-plan.json`. DNS ownership/change
 IDs and provider cluster/node-pool IDs are operational state under the selected
-environment store's `deployment/adapters/`; consumers must not search worktrees
+environment store's `deployment/dns/<dns-adapter>/` and
+`deployment/adapters/<deployment-adapter>/`; consumers must not search worktrees
 or legacy runtime directories for missing state.
 
 Adapter resolution writes `runtime/adapters/lke/resolved-resources.env`.
@@ -89,7 +89,12 @@ preflight or deployment receipt. LKE cluster/node-pool IDs and operator-confirme
 `deployment/adapters/lke/{state,account}.env`. Public migration uses
 `deployment provider-import-state`, verifies original API/CA ownership and keeps
 source bytes in `migration-backup/provider-state/`. Normal operations never read
-legacy operational files as a fallback. Remaining edge/TURN, DNS, service and artifact-state
+legacy operational files as a fallback. DNS synchronization, ACME cleanup and
+zone evidence now share private `deployment/dns/<adapter>/`;
+[explicit DNS import](dns-adapter-architecture.md#migration) verifies original
+records and archives the source. Pure root/adapter configuration uses
+`runtime/resolved/dns.env`, never the old operational `runtime/state/dns.env`.
+Remaining edge/TURN, service and artifact-state
 readers/writers still require migration; old locations are implementation gaps,
 not exceptions to the location rule.
 
@@ -104,9 +109,15 @@ The production operator interface uses the environment name:
 
 ```sh
 go run ./scripts/go/rtk-cloud -- deployment plan --environment staging
-go run ./scripts/go/rtk-cloud -- deployment provision --environment staging --confirm video-cloud-staging
-go run ./scripts/go/rtk-cloud -- deployment acceptance --environment staging
+go run ./scripts/go/rtk-cloud -- deployment preflight --environment staging
+go run ./scripts/go/rtk-cloud -- deployment upgrade --environment staging --confirm video-cloud-staging --plan-sha256 "$APPROVED_PLAN_SHA256"
 ```
+
+The same explicitly selected formal release is used for planning, preflight and
+execution. Required missing capabilities remain NO-GO; these entry points do not
+claim that environment qualification has completed. Actual workloads, PKI, public
+endpoints and representative business acceptance must pass before completion is
+recorded. The old full `deployment provision` entry is retired.
 
 Legacy `cloud_env/staging/lke` is neither moved nor deleted, but is no longer an
 active input. The new runtime is generated from scratch; commands receiving a
