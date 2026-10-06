@@ -2,6 +2,24 @@
 
 ## Contract
 
+### Local configuration and deployment state ownership
+
+`cloud_env/` contains configuration only. All local deployment-generated data,
+whether sensitive or redacted, belongs in `~/.config/rtk_cloud/<environment>/`:
+tokens, keys, certificates, kubeconfig, allocated provider state, receipts and
+proofs, journals/locks, reports, rollback/recovery and temporary deployment data.
+Use private `0700` directories and `0600` files. Every renderer, preflight,
+executor and recovery operation uses the same explicit environment resolver;
+none may invent a location from CWD, a worktree, external disk or volume format.
+
+See the [canonical path table and migration boundary](deployment-secrets-governance.md#configuration-versus-deployment-generated-data).
+Only deterministic secret-free resolved configuration may remain under
+`cloud_env/<environment>/runtime/`. Legacy operational files there require an
+explicit validated migration. Missing evidence never authorizes identity/data
+reinitialization or an automatic fallback. Existing provider-state examples
+in this document describe the older implementation; moving those writers and
+readers is an unfinished part of the unified replacement, not a policy exception.
+
 RTK Cloud uses one reusable architecture description, many environment instances, and replaceable deployment adapters. Environments such as `dev`, `staging`, and `prod` select an architecture and adapter; they do not own copies of the architecture or adapter implementation.
 
 The Kubernetes architecture owns workloads, namespaces, logical node classes, resource intent, capacity rules, placement, edge requirements, and TURN requirements. It uses `rtk.io/node-class` and standard Kubernetes topology labels. It must not contain cloud resource IDs or provider-specific labels.

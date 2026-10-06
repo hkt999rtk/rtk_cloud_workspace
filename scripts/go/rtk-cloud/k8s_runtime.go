@@ -98,35 +98,7 @@ func validateOTAProvisionCutoverReceipt(ctx provisionContext) error {
 	if !lkeOTADedicatedStorage(ctx.Env) {
 		return errors.New("independent OTA service requires dedicated storage before deployment")
 	}
-	path := filepath.Join(ctx.Paths.EnvRoot, "state", "storage-cutover-ota.json")
-	body, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("independent OTA service requires a completed storage-cutover-ota receipt before deployment: %w", err)
-	}
-	if isStorageReinitializationReceipt(body) {
-		return validateStorageReinitializationReceipt(ctx.Env["CLOUD_ENV_NAME"], "ota", deploymentStorageTarget{Bucket: ctx.Env["VIDEO_CLOUD_OTA_BLOB_BUCKET"], Region: ctx.Env["VIDEO_CLOUD_OTA_BLOB_REGION"], Prefix: ctx.Env["VIDEO_CLOUD_OTA_BLOB_PREFIX"]}, body)
-	}
-	var receipt struct {
-		Environment                 string `json:"environment"`
-		Bucket                      string `json:"bucket"`
-		Region                      string `json:"region"`
-		Prefix                      string `json:"prefix"`
-		CutoverAt                   string `json:"cutover_at"`
-		RollbackCredentialsRetained bool   `json:"rollback_credentials_retained"`
-		ServiceReady                bool   `json:"service_ready"`
-	}
-	if err := json.Unmarshal(body, &receipt); err != nil {
-		return fmt.Errorf("decode OTA storage cutover receipt: %w", err)
-	}
-	if receipt.Environment != ctx.Env["CLOUD_ENV_NAME"] || receipt.Bucket != ctx.Env["VIDEO_CLOUD_OTA_BLOB_BUCKET"] ||
-		receipt.Region != ctx.Env["VIDEO_CLOUD_OTA_BLOB_REGION"] || receipt.Prefix != ctx.Env["VIDEO_CLOUD_OTA_BLOB_PREFIX"] ||
-		!receipt.RollbackCredentialsRetained || !receipt.ServiceReady {
-		return errors.New("OTA storage cutover receipt does not match the selected environment and ready service")
-	}
-	if _, err := time.Parse(time.RFC3339, receipt.CutoverAt); err != nil {
-		return errors.New("OTA storage cutover receipt has no valid completion time")
-	}
-	return nil
+	return validateEnvironmentStorageCutover(ctx.Env["CLOUD_ENV_NAME"], "ota", deploymentStorageTarget{Bucket: ctx.Env["VIDEO_CLOUD_OTA_BLOB_BUCKET"], Region: ctx.Env["VIDEO_CLOUD_OTA_BLOB_REGION"], Prefix: ctx.Env["VIDEO_CLOUD_OTA_BLOB_PREFIX"]})
 }
 
 type provisionStep struct {

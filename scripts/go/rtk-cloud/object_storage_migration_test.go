@@ -448,6 +448,7 @@ type storagePurposeFixture struct {
 }
 
 func newStoragePurposeFixture(t *testing.T, exists bool, failure string) (deploymentCredentialChecker, deploymentConfig, *storagePurposeFixture) {
+	makeIsolatedTestSecretStore(t, "dev")
 	t.Helper()
 	f := &storagePurposeFixture{objects: &migrationTestStorage{objects: map[string]storageObjectSnapshot{}}, bucketExists: exists, failure: failure}
 	bucketName := "destination"

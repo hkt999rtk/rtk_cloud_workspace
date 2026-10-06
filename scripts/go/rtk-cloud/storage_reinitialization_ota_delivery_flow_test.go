@@ -249,7 +249,7 @@ func assertOTADeliveryNotPromoted(t *testing.T, f *otaDeliveryReinitializeFixtur
 	if active["LINODE_OTA_OBJ_ACCESS_KEY_ID"] != "active-old" {
 		t.Fatal("unverified OTA credentials were promoted")
 	}
-	if _, err := os.Stat(filepath.Join(f.cfg.RuntimeRoot, "state", "storage-cutover-ota.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(mustStorageStatePath(t, f.cfg, "storage-cutover-ota.json")); !os.IsNotExist(err) {
 		t.Fatal("failed OTA reinitialization created an activation receipt")
 	}
 }
@@ -313,7 +313,7 @@ func TestReinitializeOTADeliveryQualifiedActivation(t *testing.T) {
 			if err != nil || active["LINODE_OTA_OBJ_ACCESS_KEY_ID"] != "candidate-access" {
 				t.Fatal("qualified activation did not promote credentials", err)
 			}
-			if _, err := os.Stat(filepath.Join(f.cfg.RuntimeRoot, "state", "storage-cutover-ota.json")); err != nil {
+			if _, err := os.Stat(mustStorageStatePath(t, f.cfg, "storage-cutover-ota.json")); err != nil {
 				t.Fatal(err)
 			}
 			deployment, err := storageCutoverRead("Deployment", "stack-video-cloud", otaServiceWorkloadName)

@@ -937,3 +937,7 @@ and every skipped/blocked check. Reports may contain only sanitized evidence.
 - Deployment succeeds but tests fail: run acceptance first according to
   [`testing-operations.md`](testing-operations.md), then identify data, MQTT, API,
   database, or generator bottlenecks.
+
+## Environment-owned storage evidence
+
+Storage receipts and migration proofs live under `~/.config/rtk_cloud/<environment>/deployment/storage/` (0700 directories, 0600 files); completed private journals remain in `migration-backup/`. Preflight and deployment validate the same state. Preflight never performs cutover or creates completion evidence. Workspace runtime files are explicit legacy import sources only. See [storage evidence location and import](storage-credential-lifecycle.md#environment-owned-receipts-and-proof-location).

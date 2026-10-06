@@ -140,6 +140,9 @@ func keySet(keys ...string) map[string]bool {
 }
 
 func runDeployment(args []string) error {
+	if len(args) > 0 && args[0] == "storage-import-state" {
+		return runDeploymentStorageImport(args[1:])
+	}
 	return runDeploymentWithOperations(args, defaultDeploymentOperations())
 }
 
@@ -392,7 +395,7 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 			if !profileCheck.Passed {
 				return errors.New(profileCheck.Detail)
 			}
-			receipt, receiptErr := readDeploymentStorageReceipt(cfg.RuntimeRoot)
+			receipt, receiptErr := readDeploymentStorageReceipt(cfg)
 			if receiptErr != nil {
 				return errors.New("validated storage receipt is required before provisioning")
 			}
@@ -780,6 +783,7 @@ func printDeploymentUsage() {
   rtk-cloud deployment acceptance --environment NAME --confirm STACK
   rtk-cloud deployment remove --environment NAME --confirm STACK
   rtk-cloud deployment test --environment NAME --confirm STACK
+  rtk-cloud deployment storage-import-state --environment NAME --purpose media|ota --source-runtime ORIGINAL_RUNTIME --confirm STACK
   rtk-cloud deployment storage-plan --environment NAME
   rtk-cloud deployment storage-bootstrap --environment NAME --purpose media|ota|artifacts --destination-env-file PATH --confirm STACK
   rtk-cloud deployment storage-reinitialize --environment NAME --purpose media|ota --source-env-file PATH --destination-env-file PATH --acknowledge-discarded-source BUCKET [--plan | --confirm STACK]
@@ -1370,12 +1374,12 @@ func materializeDeploymentRuntime(cfg deploymentConfig) error {
 	stack["VIDEO_CLOUD_OTA_BLOB_BUCKET"] = cfg.Storage.OTAFirmware.Bucket
 	stack["VIDEO_CLOUD_OTA_BLOB_REGION"] = cfg.Storage.OTAFirmware.Region
 	stack["VIDEO_CLOUD_OTA_BLOB_PREFIX"] = cfg.Storage.OTAFirmware.Prefix
-	if receipt, err := readDeploymentStorageReceipt(cfg.RuntimeRoot); err == nil && receipt.Bucket == cfg.Storage.RuntimeMedia.Bucket && receipt.Region == cfg.Storage.RuntimeMedia.Region {
+	if receipt, err := readDeploymentStorageReceipt(cfg); err == nil && receipt.Bucket == cfg.Storage.RuntimeMedia.Bucket && receipt.Region == cfg.Storage.RuntimeMedia.Region {
 		stack["VIDEO_CLOUD_BLOB_ENDPOINT"] = receipt.Endpoint
 	}
 	if cfg.Storage.OTAMode == "dedicated" {
 		var receipt deploymentStorageReceipt
-		if body, err := os.ReadFile(filepath.Join(cfg.RuntimeRoot, "state", "storage-preflight-ota.json")); err == nil && json.Unmarshal(body, &receipt) == nil && receipt.Bucket == cfg.Storage.OTAFirmware.Bucket && receipt.Region == cfg.Storage.OTAFirmware.Region {
+		if body, err := readDeploymentStorageState(cfg.Environment, "storage-preflight-ota.json"); err == nil && json.Unmarshal(body, &receipt) == nil && receipt.Bucket == cfg.Storage.OTAFirmware.Bucket && receipt.Region == cfg.Storage.OTAFirmware.Region {
 			stack["VIDEO_CLOUD_OTA_BLOB_ENDPOINT"] = receipt.Endpoint
 			stack["VIDEO_CLOUD_OTA_BLOB_ENDPOINT_TYPE"] = receipt.EndpointType
 		}

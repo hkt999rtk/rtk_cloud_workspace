@@ -155,7 +155,11 @@ func (c deploymentCredentialChecker) validateOTAMigrationCutover(cfg deploymentC
 		return err
 	}
 	destination := provisionObjectStore{bucket: target.Bucket, endpoint: endpoint, region: target.Region, accessKey: values["LINODE_OTA_OBJ_ACCESS_KEY_ID"], secretKey: values["LINODE_OTA_OBJ_SECRET_ACCESS_KEY"]}
-	return c.validateStorageMigrationCutover(cfg.Environment, source, destination, target.Prefix, filepath.Join(cfg.RuntimeRoot, "state", "storage-migration-ota.json"), "ota-firmware", []string{"ota-billable-v1/"})
+	path, err := deploymentStorageStatePath(cfg.Environment, "storage-migration-ota.json")
+	if err != nil {
+		return err
+	}
+	return c.validateStorageMigrationCutover(cfg.Environment, source, destination, target.Prefix, path, "ota-firmware", []string{"ota-billable-v1/"})
 }
 
 func (c deploymentCredentialChecker) validateMediaMigrationCutover(cfg deploymentConfig, values map[string]string, sourceFile string) error {
@@ -182,7 +186,11 @@ func (c deploymentCredentialChecker) validateMediaMigrationCutover(cfg deploymen
 	destination := provisionObjectStore{bucket: target.Bucket, endpoint: endpoint, region: target.Region,
 		accessKey: firstNonEmpty(values["LINODE_MEDIA_OBJ_ACCESS_KEY_ID"], values["LINODE_OBJ_ACCESS_KEY_ID"]),
 		secretKey: firstNonEmpty(values["LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY"], values["LINODE_OBJ_SECRET_ACCESS_KEY"])}
-	return c.validateStorageMigrationCutover(cfg.Environment, source, destination, target.Prefix, filepath.Join(cfg.RuntimeRoot, "state", "storage-migration.json"), "media", []string{"clips/", "brands/", "snapshots/", "clip-index/", "ota/", "firmware/"})
+	path, err := deploymentStorageStatePath(cfg.Environment, "storage-migration.json")
+	if err != nil {
+		return err
+	}
+	return c.validateStorageMigrationCutover(cfg.Environment, source, destination, target.Prefix, path, "media", []string{"clips/", "brands/", "snapshots/", "clip-index/", "ota/", "firmware/"})
 }
 
 func (c deploymentCredentialChecker) validateStorageMigrationCutover(environment string, source, destination provisionObjectStore, prefix, statePath, purpose string, namespaces []string) error {

@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 	"unicode"
@@ -204,6 +203,9 @@ func runStorageReinitialize(cfg deploymentConfig, purpose, sourceFile, candidate
 func (c deploymentCredentialChecker) reinitializeStorage(cfg deploymentConfig, purpose, sourceFile, candidateFile, acknowledged string, plan bool) (result error) {
 	target, credentialPrefix, err := storageReinitializationTarget(cfg, purpose)
 	if err != nil {
+		return err
+	}
+	if _, err := deploymentStorageStatePath(cfg.Environment, storageCutoverReceiptName(purpose)); err != nil {
 		return err
 	}
 	source, sourceHash, err := readStorageReinitializationSource(sourceFile, cfg.Environment)
@@ -429,7 +431,7 @@ func (c deploymentCredentialChecker) reinitializeStorage(cfg deploymentConfig, p
 	if purpose == "ota" {
 		name = "storage-cutover-ota.json"
 	}
-	return writeStorageState(filepath.Join(cfg.RuntimeRoot, "state", name), receipt)
+	return writeDeploymentStorageState(cfg.Environment, name, receipt)
 }
 
 func verifyStorageReinitializationProfiles(proof storageReinitializationProof, sourceFile, candidateFile string) error {

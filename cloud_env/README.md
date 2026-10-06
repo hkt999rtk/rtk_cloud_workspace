@@ -1,5 +1,20 @@
 # Creating and Configuring an Environment
 
+## Required configuration/data boundary
+
+`cloud_env/` is configuration only. Maintained environment intent, overrides and
+deterministic secret-free resolved configuration may live here. Deployment
+outputs, including allocated provider state, receipts/proofs, tokens, keys,
+certificates, kubeconfig, journals, reports and recovery/temporary data, must
+live under `~/.config/rtk_cloud/<environment>/` (`0700`/`0600`). Do not choose
+an alternate location from the current checkout, worktree or external disk.
+
+Use the locations in [deployment secrets and state governance](../docs/deployment-secrets-governance.md#configuration-versus-deployment-generated-data).
+Older runtime state locations below are legacy migration context, not authority
+for new deployment outputs. Storage evidence now uses the canonical environment
+directory; the complete provider/state migration remains part of the unified
+deployment implementation. Missing state is NO-GO until explicitly recovered.
+
 This is the operational entry point for adding `dev`, `staging`, `prod`, `qa`, or another deployment environment. See [`docs/environment-dns-naming.md`](../docs/environment-dns-naming.md) for environment-to-DNS mappings and endpoint naming rules, [`docs/cloud-deployment-architecture.md`](../docs/cloud-deployment-architecture.md) for architecture responsibilities and resolution rules, [`cloud_deploy/README.md`](../cloud_deploy/README.md) for shared defaults and adapter keys, [`docs/storage-credential-lifecycle.md`](../docs/storage-credential-lifecycle.md) for storage operations and credentials, and [`docs/object-storage-policy.md`](../docs/object-storage-policy.md) for canonical naming, namespaces and retention.
 
 To build LKE staging from a fresh clone, complete service acceptance, and run the 1K MQTT/Device Shadow test, follow [`staging-from-scratch.md`](../docs/staging-from-scratch.md). Do not use that procedure for an existing cluster; safely restore the existing environment's ignored `runtime/` first.

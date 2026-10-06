@@ -159,12 +159,8 @@ type reinitializeFixture struct {
 
 func newReinitializeFixture(t *testing.T) *reinitializeFixture {
 	t.Helper()
-	t.Setenv("RTK_CLOUD_CONFIG_ROOT", t.TempDir())
+	store := makeIsolatedTestSecretStore(t, "dev")
 	mock := installStorageCutoverMock(t)
-	store, err := newSecretStore("", "dev")
-	if err != nil {
-		t.Fatal(err)
-	}
 	for name, value := range map[string]string{"operator/env/LINODE_TOKEN": "selected-token", "operator/env/LINODE_MEDIA_OBJ_ACCESS_KEY_ID": "active-old", "operator/env/LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY": "active-secret", "kube/kubeconfig.yaml": "mock"} {
 		if err := store.write(name, []byte(value), true); err != nil {
 			t.Fatal(err)
@@ -284,6 +280,26 @@ func TestReinitializePlanAndActivation(t *testing.T) {
 	}
 }
 
+func TestReinitializeRejectsPublicReceiptAuthorityBeforeMutation(t *testing.T) {
+	f := newReinitializeFixture(t)
+	path := mustStorageStatePath(t, f.cfg, "storage-cutover.json")
+	if err := os.Chmod(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.checker.reinitializeStorage(f.cfg, "media", f.source, f.candidate, "old", false); err == nil {
+		t.Fatal("unprivate receipt authority accepted")
+	}
+	if _, err := os.Stat(filepath.Join(f.mockRoot, "commands")); !os.IsNotExist(err) {
+		t.Fatal("Kubernetes was touched before authority validation")
+	}
+	if f.providerWrites != 0 || len(f.canary) != 0 {
+		t.Fatal("provider or storage canary changed before authority validation")
+	}
+	if _, err := f.store.read(storageCutoverJournalName("media")); !os.IsNotExist(err) {
+		t.Fatal("failed authority check created a journal")
+	}
+}
+
 func TestReinitializeFailsBeforeWorkloadMutation(t *testing.T) {
 	for _, kind := range []string{"source exists", "canary fails", "ack differs"} {
 		t.Run(kind, func(t *testing.T) {
@@ -301,7 +317,7 @@ func TestReinitializeFailsBeforeWorkloadMutation(t *testing.T) {
 			if strings.Contains(string(commands), "patch ") || strings.Contains(string(commands), "create ") {
 				t.Fatal("failed precondition changed Kubernetes")
 			}
-			if _, err := os.Stat(filepath.Join(f.cfg.RuntimeRoot, "state/storage-cutover.json")); !os.IsNotExist(err) {
+			if _, err := os.Stat(mustStorageStatePath(t, f.cfg, "storage-cutover.json")); !os.IsNotExist(err) {
 				t.Fatal("failed activation emitted receipt")
 			}
 		})
@@ -415,7 +431,7 @@ func TestReinitializeRejectsCandidateReplacementDuringRollout(t *testing.T) {
 	if active["LINODE_MEDIA_OBJ_ACCESS_KEY_ID"] != "active-old" {
 		t.Fatal("unverified candidate was promoted")
 	}
-	if _, err := os.Stat(filepath.Join(f.cfg.RuntimeRoot, "state/storage-cutover.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(mustStorageStatePath(t, f.cfg, "storage-cutover.json")); !os.IsNotExist(err) {
 		t.Fatal("failed reinitialization left an activation receipt")
 	}
 	raw, err := f.store.read(storageCutoverJournalName("media"))

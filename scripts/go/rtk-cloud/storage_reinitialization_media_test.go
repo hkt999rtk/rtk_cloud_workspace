@@ -65,7 +65,7 @@ func TestReinitializeDedicatedMediaPreservesCompleteOTATree(t *testing.T) {
 	if err != nil || active["LINODE_OTA_OBJ_ACCESS_KEY_ID"] != "unqualified-ota-key" {
 		t.Fatal("media activation changed OTA credentials")
 	}
-	if _, err := os.Stat(filepath.Join(f.cfg.RuntimeRoot, "state/storage-cutover-ota.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(mustStorageStatePath(t, f.cfg, "storage-cutover-ota.json")); !os.IsNotExist(err) {
 		t.Fatal("media activation wrote an OTA receipt")
 	}
 }
