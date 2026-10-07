@@ -189,8 +189,8 @@ func TestDeploymentCheckFastRetainsSecretPKIAndProducesPrivateReport(t *testing.
 	deps.product = func(secretStore) error { record("product"); return nil }
 	base := deps.collect
 	deps.collect = func(ctx context.Context, cfg deploymentConfig, path string, o deploymentCredentialCheckOptions, allow bool, emit func(deploymentCredentialCheck)) []deploymentCredentialCheck {
-		if !o.fast || !o.readOnly || !allow {
-			t.Fatalf("fast=%t readonly=%t prerequisites=%t", o.fast, o.readOnly, allow)
+		if !o.fast || !o.readOnly || allow {
+			t.Fatalf("fast=%t readonly=%t allow-writes=%t", o.fast, o.readOnly, allow)
 		}
 		return base(ctx, cfg, path, o, allow, emit)
 	}

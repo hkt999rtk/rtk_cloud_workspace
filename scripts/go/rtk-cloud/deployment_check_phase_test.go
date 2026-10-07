@@ -198,3 +198,52 @@ chmod +x "$3"
 		})
 	}
 }
+
+func TestDeploymentScriptPreservesNativeExitCodesArgumentsAndCleansCompilerOutput(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin, compilerRoot := t.TempDir(), t.TempDir()
+	writeTestFile(t, filepath.Join(bin, "go"), `#!/bin/sh
+[ "$1" = build ] && [ "$2" = -o ] || exit 1
+[ "$PWD" = "$EXPECTED_WORKSPACE" ] || exit 1
+cat > "$3" <<'CLI'
+#!/bin/sh
+printf 'ARG:%s\n' "$@"
+exit "$NATIVE_DEPLOY_EXIT"
+CLI
+chmod +x "$3"
+`)
+	if err := os.Chmod(filepath.Join(bin, "go"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("TMPDIR", compilerRoot)
+	t.Setenv("EXPECTED_WORKSPACE", workspace)
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		for _, status := range []string{"0", "1", "2"} {
+			t.Setenv("NATIVE_DEPLOY_EXIT", status)
+			cmd := exec.Command("bash", filepath.Join(workspace, "scripts", "deploy-environment.sh"), "upgrade", "--environment", environment, "--release", "/reviewed/release with spaces.json")
+			cmd.Dir = bin
+			out, err := cmd.CombinedOutput()
+			if status == "0" {
+				if err != nil {
+					t.Fatal(err, string(out))
+				}
+			} else {
+				var failed *exec.ExitError
+				if !errors.As(err, &failed) || failed.ExitCode() != int(status[0]-'0') {
+					t.Fatal("native exit code lost", status, err, string(out))
+				}
+			}
+			if !strings.Contains(string(out), "ARG:deployment\nARG:upgrade\nARG:--environment\nARG:"+environment+"\nARG:--release\nARG:/reviewed/release with spaces.json\n") {
+				t.Fatal("CLI argument boundaries changed", string(out))
+			}
+			files, err := os.ReadDir(compilerRoot)
+			if err != nil || len(files) != 0 {
+				t.Fatal("compiler output retained", err, files)
+			}
+		}
+	}
+}

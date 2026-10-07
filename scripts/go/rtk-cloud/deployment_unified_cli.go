@@ -100,9 +100,12 @@ func defaultUnifiedDeploymentDependencies() unifiedDeploymentDependencies {
 				},
 			}
 		},
+		Accept: func(ctx context.Context, c *compiledEnvironmentDeployment) error {
+			return acceptEnvironmentRollout(ctx, c, defaultDeploymentCheckDependencies(), os.Stdout)
+		},
 		Execute: func(ctx context.Context, c *compiledEnvironmentDeployment, sha string, qualify func(context.Context, *deploymentplan.Plan) error, accept func(context.Context, *compiledEnvironmentDeployment) error) error {
 			if accept == nil {
-				return &deploymentplan.Blocker{ID: "deployment.post-deploy", Cause: "complete acceptance is unavailable", Next: "install and qualify all required target, PKI, endpoint and business acceptance before execution"}
+				return &deploymentplan.Blocker{ID: "deployment.post-deploy", Cause: "complete acceptance is unavailable", Next: "restore the required target, PKI and endpoint rollout health checks before execution"}
 			}
 			window, err := environmentPKIValidityWindow(c.Configuration.Values)
 			if err != nil {
@@ -121,6 +124,23 @@ func defaultUnifiedDeploymentDependencies() unifiedDeploymentDependencies {
 			return retireLocalAccountBootstrapSeed(ctx, c)
 		},
 	}
+}
+
+// Rollout acceptance reuses the maintained health checker. Target image/owner
+// verification is already performed by Execute; these are its required runtime
+// Secret, PKI, workload and public-mTLS checks, without provider write canaries.
+func acceptEnvironmentRollout(ctx context.Context, c *compiledEnvironmentDeployment, checks deploymentCheckDependencies, out io.Writer) error {
+	if c == nil || c.Plan == nil || c.Configuration.Environment != c.Plan.Environment {
+		return &deploymentplan.Blocker{ID: "deployment.post-deploy", Cause: "selected rollout environment is unavailable", Next: "restore the exact checked plan and environment before retrying deployment"}
+	}
+	args := []string{"--environment", c.Plan.Environment, "--workspace", c.Configuration.Workspace, "--phase", deploymentCheckPostDeploy, "--read-only"}
+	if c.Configuration.EnvironmentRoot != "" {
+		args = append(args, "--environment-root", c.Configuration.EnvironmentRoot)
+	}
+	if err := runDeploymentCheckWithDependencies(ctx, args, out, out, checks); err != nil {
+		return &deploymentplan.Blocker{ID: "deployment.post-deploy", Cause: "required rollout health checks failed or were incomplete; deployment is not complete", Next: "resolve the failed Secret, PKI, workload or public mTLS check above; repeat check-deployment-health.sh for this environment and review the execution journal before retrying"}
+	}
+	return nil
 }
 
 // Missing runtime adapters remain required BLOCKED gates. Neither a private
@@ -263,7 +283,7 @@ func runUnifiedEnvironmentDeploymentWithDependencies(parent context.Context, act
 					return deploymentplan.GateEvidence{}, err
 				}
 			}
-			return deploymentplan.GateEvidence{}, &deploymentplan.Blocker{ID: "deployment.execution", Cause: "complete post-deploy acceptance is unavailable", Next: "implement and qualify actual workload, PKI, endpoint and business-flow acceptance before execution"}
+			return deploymentplan.GateEvidence{}, &deploymentplan.Blocker{ID: "deployment.execution", Cause: "complete post-deploy acceptance is unavailable", Next: "restore the required workload, PKI and endpoint rollout health checks before execution"}
 		}
 	}
 	options := deploymentplan.QualificationOptions{Fast: o.Fast, Production: cfg.Values["DEPLOYMENT_PROTECTION_PROFILE"] == "production"}
@@ -275,7 +295,7 @@ func runUnifiedEnvironmentDeploymentWithDependencies(parent context.Context, act
 	if action == "create" || action == "upgrade" {
 		if deps.Accept == nil {
 			report.Decision = "NO-GO"
-			report.Gates = append(report.Gates, deploymentplan.GateResult{ID: "deployment.post-deploy", Status: "BLOCKED", Required: true, Cause: "complete post-deploy acceptance adapter is unavailable", Next: "implement and qualify actual workload, PKI, endpoint and business-flow acceptance before execution", Impact: "deployment completion cannot be verified", Recheck: "repeat complete qualification for the selected release"})
+			report.Gates = append(report.Gates, deploymentplan.GateResult{ID: "deployment.post-deploy", Status: "BLOCKED", Required: true, Cause: "complete post-deploy acceptance adapter is unavailable", Next: "restore the required workload, PKI and endpoint rollout health checks before execution", Impact: "deployment completion cannot be verified", Recheck: "repeat complete qualification for the selected release"})
 			return emitUnifiedDeploymentReport(out, diagnostics, o.Report, report, exitCode(1))
 		}
 		if o.PlanSHA256 != c.Plan.SHA256() {
@@ -289,7 +309,7 @@ func runUnifiedEnvironmentDeploymentWithDependencies(parent context.Context, act
 		}
 		if err := deps.Execute(ctx, c, o.PlanSHA256, qualify, deps.Accept); err != nil {
 			report.Decision = "NO-GO"
-			row := deploymentplan.GateResult{ID: "deployment.execution", Status: "FAIL", Required: true, Cause: "execution stopped; private completed-resource and recovery evidence retained", Next: "inspect the environment-local journal and requalify the remaining plan", Impact: "deployment has not completed", Recheck: "verify actual state, PKI, public endpoints and representative business flows"}
+			row := deploymentplan.GateResult{ID: "deployment.execution", Status: "FAIL", Required: true, Cause: "execution stopped; private completed-resource and recovery evidence retained", Next: "inspect the environment-local journal and requalify the remaining plan", Impact: "deployment has not completed", Recheck: "verify actual target state, PKI and required public endpoints"}
 			var blocker *deploymentplan.Blocker
 			if errors.As(err, &blocker) {
 				row.ID, row.Cause, row.Next = blocker.ID, blocker.Cause, blocker.Next

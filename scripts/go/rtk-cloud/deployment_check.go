@@ -537,15 +537,15 @@ func executeDeploymentCheck(ctx context.Context, o deploymentCheckOptions, cfg d
 		}(t)
 	}
 	live.Wait()
-	allowWrites := true
+	runtimeReady := true
 	for _, t := range tasks {
 		if t.required && !passed[t.id] {
-			allowWrites = false
+			runtimeReady = false
 		}
 	}
-	providers := deps.collect(ctx, cfg, q.envFile, q, allowWrites, reporter.emit)
+	providers := deps.collect(ctx, cfg, q.envFile, q, runtimeReady && !q.readOnly, reporter.emit)
 	if o.operation == "image-upgrade" {
-		ready := allowWrites
+		ready := runtimeReady
 		for _, provider := range providers {
 			if provider.Required && provider.Status != "PASS" {
 				ready = false

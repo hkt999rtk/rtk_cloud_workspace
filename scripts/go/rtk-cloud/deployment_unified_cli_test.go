@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -93,6 +94,81 @@ func TestUnifiedPublicFlowUsesSamePlanAndRequiredGatesForAllEnvironments(t *test
 				t.Fatal("planning/preflight wrote resources")
 			}
 		})
+	}
+}
+
+func TestRolloutAcceptanceReusesRequiredReadOnlyHealthChecksAcrossEnvironments(t *testing.T) {
+	if defaultUnifiedDeploymentDependencies().Accept == nil {
+		t.Fatal("public deployment has no rollout acceptance")
+	}
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		for _, mode := range []string{"healthy", "secret-failure", "pki-failure", "workload-failure", "public-failure", "cancelled"} {
+			t.Run(environment+"/"+mode, func(t *testing.T) {
+				checks, _ := facadeFixture(t, true)
+				store := makeIsolatedTestSecretStore(t, environment)
+				if err := store.write("kube/kubeconfig.yaml", []byte("test-only-kubeconfig"), true); err != nil {
+					t.Fatal(err)
+				}
+				checks.store = func(selected string) (secretStore, error) {
+					if selected != environment {
+						t.Fatal("wrong health environment store")
+					}
+					return store, nil
+				}
+				c := &compiledEnvironmentDeployment{Plan: &deploymentplan.Plan{Inputs: deploymentplan.Inputs{Environment: environment}}, Configuration: deploymentConfig{Environment: environment, Workspace: t.TempDir(), Values: map[string]string{"VIDEO_CLOUD_CERTISSUER_DOMAIN": "issuer." + environment + ".example.test"}}}
+				checks.resolve = func(_, selected, _ string) (deploymentConfig, error) {
+					if selected != environment {
+						t.Fatal("acceptance selected another environment")
+					}
+					return c.Configuration, nil
+				}
+				called := make(map[string]bool)
+				var mu sync.Mutex
+				result := func(name string) error {
+					mu.Lock()
+					called[name] = true
+					mu.Unlock()
+					if mode == name+"-failure" {
+						return errors.New("required runtime check failed")
+					}
+					return nil
+				}
+				checks.bindings = func(secretStore) error { return result("secret") }
+				checks.runtime = func(secretStore, time.Time) error { return result("pki") }
+				checks.workloads = func(secretStore) error { return result("workload") }
+				checks.public = func(context.Context, deploymentConfig, secretStore) error { return result("public") }
+				base := checks.collect
+				checks.collect = func(ctx context.Context, cfg deploymentConfig, path string, o deploymentCredentialCheckOptions, writes bool, emit func(deploymentCredentialCheck)) []deploymentCredentialCheck {
+					if writes || !o.readOnly || o.fast {
+						t.Fatal("acceptance allows writes or reduced health verification")
+					}
+					return base(ctx, cfg, path, o, writes, emit)
+				}
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				if mode == "cancelled" {
+					cancel()
+				}
+				var out bytes.Buffer
+				err := acceptEnvironmentRollout(ctx, c, checks, &out)
+				if (err == nil) != (mode == "healthy") {
+					t.Fatal("incorrect rollout acceptance", err, out.String())
+				}
+				if mode != "cancelled" {
+					for _, name := range []string{"secret", "pki", "workload", "public"} {
+						if !called[name] {
+							t.Fatal("required health check omitted", name, out.String())
+						}
+					}
+				}
+				if err != nil {
+					var block *deploymentplan.Blocker
+					if !errors.As(err, &block) || block.ID != "deployment.post-deploy" || block.Next == "" {
+						t.Fatal("inactionable acceptance failure", err)
+					}
+				}
+			})
+		}
 	}
 }
 

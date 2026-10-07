@@ -16,6 +16,15 @@ Fresh bootstrap and Production custody/backup/restore activation work are separa
 from this delivery. The incomplete prototype entries described below are not yet
 a completed two-script handoff.
 
+The deployment wrapper builds and runs the native CLI so exit codes 0/1/2 are
+preserved, including when called outside the workspace. Its temporary directory
+contains compiler output only and is removed on exit; environment credentials,
+reports and operational data use the canonical environment store. After exact
+target-image/owner rollout verification, deployment reuses the maintained
+read-only health checker for runtime Secrets, PKI, workloads, configured provider
+reads and required public CertIssuer mTLS. A failed or incomplete required check
+leaves deployment incomplete; Ready Pods alone do not establish completion.
+
 This document is the deployment entry point for internal operators. It covers
 creating a new environment, taking over an existing environment from another
 controller, and accepting an existing deployment. Linode staging uses only
