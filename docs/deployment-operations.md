@@ -939,8 +939,9 @@ workspace main and every service gitlink before retrieving exact-source CI
 publication artifacts. The reviewed provider manifest follows
 `rtk-cloud.release/v1` and supplies explicit upstream digests, including PostgreSQL,
 ingress and OpenBao. Its RTK application entries are ignored and replaced by the
-frozen source's formal CI digests. The backup runner must have the same PostgreSQL
-base digest. Missing API, MQTT PKI or backup publication blocks selection.
+frozen source's formal CI digests. When `DEPLOYMENT_POSTGRES_BACKUP_ENABLED=true`, the daily backup runner must
+have the same PostgreSQL base digest and its formal publication is required.
+Missing API, MQTT PKI or any other enabled consumer publication blocks selection.
 
 The command writes a new 0600 file, never overwrites the selected release, and
 prints `FROZEN`, which is publication selection evidence rather than deployment

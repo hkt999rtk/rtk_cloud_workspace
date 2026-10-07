@@ -38,11 +38,11 @@ live qualification on the operator's behalf.
 
 Fresh-environment bootstrap, Production activation, new custody/escrow systems,
 backup/PITR implementation and restore/RPO/RTO qualification are outside this
-delivery. The broader qualification design below remains a separate roadmap;
-building those capabilities is not a dependency of finishing these two scripts.
-Necessary safeguards for the selected update remain in force. Existing prototype
-gates still need alignment with this scope; this scope record does not itself
-make the implementation usable or establish environment GO.
+delivery. The broader qualification design is retained as a separate roadmap; building
+those capabilities is not a dependency of finishing these two scripts. Necessary
+safeguards for the selected update remain in force. Local regression results do
+not establish environment GO; the operator must run the scripts against the
+selected environment and release.
 
 ## GO for an existing environment update
 
