@@ -51,6 +51,51 @@ func (b environmentKubernetesBackend) checkManagedIdentityStates(ctx context.Con
 		}
 	}
 
+	return b.inspectOriginalManagedStatePods(ctx, plan, block, func(object, container deploymentplan.Object) ([]originalManagedStateProbe, error) {
+		policies, err := environmentServerIdentityPolicies(container)
+		if clients {
+			policies, err = environmentClientIdentityPolicies(object, container)
+		}
+		if err != nil {
+			return nil, err
+		}
+		probes := []originalManagedStateProbe{}
+		for _, policy := range policies {
+			probes = append(probes, originalManagedStateProbe{Paths: []string{policy.State}, Inspect: func(ctx context.Context, args []string) error {
+				if registry && clients {
+					args = append(args, "inspect-registry", plan.Environment, policy.State, policy.Subject, policy.Root)
+				} else if registry {
+					args = append(args, "inspect-server-registry", plan.Environment, policy.State, policy.Domain, policy.Subject, policy.Root, policy.Names)
+				} else if clients {
+					args = append(args, "inspect", policy.State, policy.Subject, policy.Root)
+				} else {
+					args = append(args, "inspect-server", policy.State, policy.Domain, policy.Subject, policy.Root, policy.Names)
+				}
+				if registry {
+					args = append(args, strconv.FormatInt(window, 10), policy.Database)
+				}
+				raw, err := b.command(ctx, nil, args...)
+				if err != nil {
+					return errors.New("original identity inspector unavailable")
+				}
+				return validateEnvironmentIdentitySummary(raw, policy, registry, window)
+			}})
+		}
+		return probes, nil
+	})
+}
+
+type originalManagedStateProbe struct {
+	Paths    []string
+	Inspect  func(context.Context, []string) error
+	Fence    func(context.Context) error
+	CheckPod func(deploymentplan.Object) error
+}
+
+// All original-state probes share the same Pod lineage, claims, replica and
+// source fences. Adding a trust probe cannot bypass an identity ownership gate.
+func (b environmentKubernetesBackend) inspectOriginalManagedStatePods(ctx context.Context, plan *deploymentplan.Plan, block func(string, string) error, makeProbes func(deploymentplan.Object, deploymentplan.Object) ([]originalManagedStateProbe, error)) error {
+
 	if plan == nil || plan.Environment != b.Store.Environment || plan.Stack != "video-cloud-"+b.Store.Environment || plan.Operation != "upgrade" {
 		return block("", "original managed server state requires a complete selected upgrade plan; fresh bootstrap must qualify its own original session")
 	}
@@ -88,10 +133,7 @@ func (b environmentKubernetesBackend) checkManagedIdentityStates(ctx context.Con
 				}
 				return block(resource.ID, "public identity setting references are unavailable, changed or lack a planned original owner")
 			}
-			policies, err := environmentServerIdentityPolicies(resolved)
-			if clients {
-				policies, err = environmentClientIdentityPolicies(resource.Desired, resolved)
-			}
+			policies, err := makeProbes(resource.Desired, resolved)
 			if err != nil {
 				return block(resource.ID, "target managed host policy is unresolved, incomplete or ambiguous")
 			}
@@ -106,8 +148,10 @@ func (b environmentKubernetesBackend) checkManagedIdentityStates(ctx context.Con
 				return block(resource.ID, "original workload ownership or configuration drifted after planning")
 			}
 			for _, policy := range policies {
-				if !environmentServerStateOnPVC(resource.Desired, container, policy.State) {
-					return block(resource.ID, "managed server identity state is not backed by an explicit durable claim")
+				for _, path := range policy.Paths {
+					if !environmentServerStateOnPVC(resource.Desired, container, path) {
+						return block(resource.ID, "managed PKI state is not backed by an explicit durable claim")
+					}
 				}
 			}
 			found := 0
@@ -131,26 +175,26 @@ func (b environmentKubernetesBackend) checkManagedIdentityStates(ctx context.Con
 					return err
 				}
 				for _, policy := range policies {
-					if !environmentServerPodStateClaim(plan, resource.Desired, container, object, policy.State) {
-						return block(resource.ID, "owned Pod does not mount the original planned state claim")
+					for _, path := range policy.Paths {
+						if !environmentServerPodStateClaim(plan, resource.Desired, container, object, path) {
+							return block(resource.ID, "owned Pod does not mount the original planned state claim")
+						}
+					}
+					if policy.CheckPod != nil {
+						if err := policy.CheckPod(object); err != nil {
+							return block(resource.ID, "original Pod public manifest mount differs from the planned owner")
+						}
 					}
 					args := []string{"exec", "--namespace", namespace, name, "--container", deploymentplan.String(container["name"]), "--", "/app/serviceidentity-bootstrap"}
-					if registry && clients {
-						args = append(args, "inspect-registry", plan.Environment, policy.State, policy.Subject, policy.Root)
-					} else if registry {
-						args = append(args, "inspect-server-registry", plan.Environment, policy.State, policy.Domain, policy.Subject, policy.Root, policy.Names)
-					} else if clients {
-						args = append(args, "inspect", policy.State, policy.Subject, policy.Root)
-					} else {
-						args = append(args, "inspect-server", policy.State, policy.Domain, policy.Subject, policy.Root, policy.Names)
+					if err := policy.Inspect(ctx, args); err != nil {
+						return block(resource.ID, "original managed PKI inspection is unavailable or incomplete")
 					}
-					if registry {
-						args = append(args, strconv.FormatInt(window, 10), policy.Database)
+					if policy.Fence != nil {
+						if err := policy.Fence(ctx); err != nil {
+							return err
+						}
 					}
-					raw, err := b.command(ctx, nil, args...)
-					if err != nil || validateEnvironmentIdentitySummary(raw, policy, registry, window) != nil {
-						return block(resource.ID, "original server identity inspection failed or reports incomplete/currently pending state")
-					}
+
 					checked++
 				}
 				if err := recheckSettings(ctx); err != nil {

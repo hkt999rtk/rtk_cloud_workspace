@@ -126,9 +126,8 @@ Pending state, missing/invalid public summary or owner drift is
 `deployment.pki.server-identity`. A new state, unavailable original inspector or
 unresolved policy needs bootstrap/candidate qualification; no state is initialized
 by preflight. Registry inspection additionally requires the original configured
-registry and formal issuance/issuer admission. Secret-backed leaves, installed
-revocation/CRL acknowledgments still require their
-own checks. These remaining gaps keep the complete PKI gate NO-GO even when
+registry and formal issuance/issuer admission. Secret-backed leaves and installed Root-policy/live-consumer evidence still
+require their own checks; original CRL/receipt inspection is described below. These remaining gaps keep the complete PKI gate NO-GO even when
 server-state inspection succeeds.
 
 Managed Service client states now use the same original-owner/PVC/Pod observer
@@ -141,7 +140,8 @@ pending state or failed inspection is `deployment.pki.client-identity`; it does
 not enroll, renew or replace state. Registry failures use stable
 `deployment.pki.server-registry`/`deployment.pki.client-registry` IDs and require
 explicit positive registry evidence; there is no basic-inspection fallback.
-Secret-backed identities and installed CRLs/acknowledgments remain required gaps,
+Secret-backed identities and full installed Root-policy/live-consumer evidence
+remain required gaps,
 so these observations do not pass the complete PKI gate.
 
 An old fault that blocks a necessary dependency blocks the plan. When the plan
@@ -483,9 +483,9 @@ The service also provides `inspect-deployment` and `inspect-server-deployment`:
 these verify the explicit upgrade window, original installed Root/intermediate
 CRLs, exact current-digest domain consumer receipts and Root distrust in one
 read-only registry snapshot. Their native isolated tests cover dev/staging/prod
-and Service client plus Service/MQTT/OpenBao server domains. Connecting the full
-reviewed consumer inventory and original CRL mounts
-to the complete deployment adapter is still required; the adapter continues to
+and Service client plus Service/MQTT/OpenBao server domains. The complete deployment adapter now binds the maintained consumer inventory
+and original CRL mounts to its native CRL probe; Root-policy/live-consumer and
+Secret-backed identity verification is still required; the adapter continues to
 report NO-GO for those missing qualifications. These local fixtures and commands
 do not prove actual environment readiness or production qualification.
 
@@ -533,3 +533,36 @@ source ownership and versions after original state inspection. Missing/foreign
 sources, malformed public values or concurrent changes use stable
 `deployment.pki.settings` with the exact source resource and repair guidance.
 No file, Secret or ConfigMap is created or modified by this resolution.
+
+### Original installed CRL and consumer coverage
+
+Complete preflight now inspects installed CRL manifests through the shared
+original-Pod observer. The same lineage, original PVC/PV claim, replica count,
+public-setting source and ownership/version fences apply to identity and CRL
+probes. Manifest paths resolve only to explicit planned Secret/ConfigMap file
+projections, including reviewed `items` or file `subPath` mappings. The original
+Pod must mount that exact reference; unresolved/expressive projections and
+worktree/controller paths cannot substitute for consumer state. Bind the native
+report's raw-byte manifest SHA-256, domain, receipt ID, authority count and
+validity window to the same reviewed plan. Re-read manifest owner and version
+after every probe; observation never writes a source, cache or acknowledgment.
+
+Receipt IDs come from all maintained `PKI_REQUIRED_CONSUMERS_<DOMAIN>` policies.
+Every configured manifest must map to its owning workload's maintained runtime
+loader contract and appear in its domain policy. Every required receipt ID must
+have a qualified original workload/manifest; missing workloads or manifests are
+NO-GO, not omitted checks. API Device/App selection follows explicit native
+feature settings and its shared manifest format. No staging-specific receipt or
+private workload-plan file selects this behavior. Failures use stable
+`deployment.pki.crls` and preserve actionable repair instructions without private
+payloads.
+
+The service checks complete active/retiring authority inventory, registered
+lineage and native CA metadata/horizon rules, signed current CRLs, exact consumer
+receipts and known unpublished revocations in one read-only snapshot. Isolated
+native PostgreSQL/crypto tests prove that service behavior; deployment adapter
+protocol fixtures separately prove owner/mount/digest/coverage boundaries. These
+fixtures are not actual environment qualification. Installed Root policy and
+live consumer proof, dynamic/terminal authority state and Secret-backed leaves
+remain independently required gaps, so this stage alone cannot make the complete
+PKI gate GO.
