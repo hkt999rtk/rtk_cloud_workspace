@@ -53,7 +53,7 @@ func (b environmentKubernetesBackend) checkInstalledConsumerTrust(ctx context.Co
 			required[key] = true
 		}
 	}
-	err = b.inspectOriginalManagedStatePods(ctx, plan, block, func(object, container deploymentplan.Object) ([]originalManagedStateProbe, error) {
+	err = b.inspectOriginalManagedStatePods(ctx, plan, block, true, func(object, container deploymentplan.Object) ([]originalManagedStateProbe, error) {
 		settings, err := environmentPKINamedFields(container["env"])
 		if err != nil {
 			return nil, err

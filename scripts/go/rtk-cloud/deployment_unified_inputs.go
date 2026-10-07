@@ -97,6 +97,7 @@ func readBoundedEnvironmentFile(path string, private bool) ([]byte, error) {
 // Identity bindings are lifecycle-owned mounts, references and public settings.
 // They cannot carry image, replicas, resources, probes or a desired Deployment.
 type environmentIdentityBindings struct {
+	SecretServers    []environmentSecretServerBinding    `json:"secret_servers,omitempty"`
 	Version          int                                 `json:"schema_version"`
 	Environment      string                              `json:"environment"`
 	Stack            string                              `json:"stack"`
@@ -104,6 +105,18 @@ type environmentIdentityBindings struct {
 	Pods             []environmentPodBindings            `json:"pods"`
 	IngressAdmission *environmentAdmissionBinding        `json:"ingress_admission,omitempty"`
 	BootstrapCleanup *environmentBootstrapCleanupBinding `json:"bootstrap_cleanup,omitempty"`
+}
+
+// These are lifecycle identity references/pins, never a workload spec or key.
+type environmentSecretServerBinding struct {
+	Workload        string   `json:"workload"`
+	Container       string   `json:"container"`
+	Domain          string   `json:"domain"`
+	Subject         string   `json:"subject"`
+	Root            string   `json:"root_sha256"`
+	DNSNames        []string `json:"dns_names"`
+	CertificatePath string   `json:"certificate_path"`
+	KeyPath         string   `json:"key_path"`
 }
 type environmentAdmissionBinding struct {
 	SecretName string `json:"secret_name"`
@@ -154,6 +167,9 @@ func validateEnvironmentIdentityBindings(b environmentIdentityBindings, environm
 		return errors.New("deployment.bindings: exact environment and stack bindings required")
 	}
 	if err := validateEnvironmentBootstrapCleanupBinding(b.BootstrapCleanup, environment); err != nil {
+		return err
+	}
+	if err := validateSecretServerBindings(b.SecretServers, b.Stack); err != nil {
 		return err
 	}
 	seen := map[string]bool{}

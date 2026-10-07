@@ -51,7 +51,7 @@ func (b environmentKubernetesBackend) checkManagedIdentityStates(ctx context.Con
 		}
 	}
 
-	return b.inspectOriginalManagedStatePods(ctx, plan, block, func(object, container deploymentplan.Object) ([]originalManagedStateProbe, error) {
+	return b.inspectOriginalManagedStatePods(ctx, plan, block, true, func(object, container deploymentplan.Object) ([]originalManagedStateProbe, error) {
 		policies, err := environmentServerIdentityPolicies(container)
 		if clients {
 			policies, err = environmentClientIdentityPolicies(object, container)
@@ -94,7 +94,7 @@ type originalManagedStateProbe struct {
 
 // All original-state probes share the same Pod lineage, claims, replica and
 // source fences. Adding a trust probe cannot bypass an identity ownership gate.
-func (b environmentKubernetesBackend) inspectOriginalManagedStatePods(ctx context.Context, plan *deploymentplan.Plan, block func(string, string) error, makeProbes func(deploymentplan.Object, deploymentplan.Object) ([]originalManagedStateProbe, error)) error {
+func (b environmentKubernetesBackend) inspectOriginalManagedStatePods(ctx context.Context, plan *deploymentplan.Plan, block func(string, string) error, requireProbe bool, makeProbes func(deploymentplan.Object, deploymentplan.Object) ([]originalManagedStateProbe, error)) error {
 
 	if plan == nil || plan.Environment != b.Store.Environment || plan.Stack != "video-cloud-"+b.Store.Environment || plan.Operation != "upgrade" {
 		return block("", "original managed server state requires a complete selected upgrade plan; fresh bootstrap must qualify its own original session")
@@ -135,6 +135,10 @@ func (b environmentKubernetesBackend) inspectOriginalManagedStatePods(ctx contex
 			}
 			policies, err := makeProbes(resource.Desired, resolved)
 			if err != nil {
+				var detail *deploymentplan.Blocker
+				if errors.As(err, &detail) {
+					return detail
+				}
 				return block(resource.ID, "target managed host policy is unresolved, incomplete or ambiguous")
 			}
 			if len(policies) == 0 {
@@ -233,7 +237,7 @@ func (b environmentKubernetesBackend) inspectOriginalManagedStatePods(ctx contex
 			}
 		}
 	}
-	if checked == 0 {
+	if requireProbe && checked == 0 {
 		return block("", "no complete managed server identity policy was inspected")
 	}
 	return nil

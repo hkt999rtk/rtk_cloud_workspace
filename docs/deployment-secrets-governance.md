@@ -52,6 +52,8 @@ not invent another workspace, worktree, external-disk or OS-specific location.
 | PKI identities/certificates | `pki/` |
 | OpenBao controller material | `openbao/` |
 | Plans, releases, reviewed identity bindings and execution evidence | `deployment/` |
+| Lifecycle owner/identity bindings, including independent Secret server pins | `deployment/identity-bindings.json` (bootstrap or reviewed adoption; compiler/preflight/executor read and hash the same file) |
+| Read-only adoption review candidate | `deployment/identity-bindings.candidate.json` (`deployment adopt-managed-state` writes; reviewed migration selects active bindings) |
 | Newly frozen release candidates (exclusive JSON output) | `deployment/releases/` |
 | Account Manager bootstrap retirement guard | `deployment/account-bootstrap-retired.json` |
 | Storage preparation/completion receipts and migration proofs | `deployment/storage/` |
@@ -73,6 +75,15 @@ legacy import validates the environment and original proof before migration;
 normal operation has no worktree/environment fallback. A missing file is a
 repair/qualification blocker, not authority to generate replacement keys,
 reinitialize data or create a successful receipt. Preflight only validates.
+
+The optional `secret_servers` identity records contain public pins, policy and
+mounted paths, never PEM keys or a desired workload spec. Their bootstrap/adoption
+population remains integration work; preflight must reject an active server
+without independently recorded policy. It may not derive the trusted Root from
+that server's Secret. Kubernetes owns the mounted synchronized Secret files;
+read-only native probes retain key bytes in memory and return public digests.
+Controller validation also binds the exact original Secret bytes in memory;
+neither observer exports keys into arguments, reports or temporary files.
 
 Synthetic tests may use isolated fixture roots containing no real environment
 material. CI deployment controllers use their own canonical environment store;

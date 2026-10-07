@@ -24,6 +24,18 @@ DNS ownership, ACME challenge cleanup, zone evidence and synchronization metadat
 now share `deployment/dns/<adapter>/` in the environment store. Their input digest
 is fenced by the unified compiler. See [the explicit DNS state migration](dns-adapter-architecture.md#migration).
 
+Lifecycle bindings use `deployment/identity-bindings.json` beneath the selected
+environment store. Bootstrap or reviewed adoption owns this record; compiler,
+preflight and execution hash the same active file. Read-only adoption writes
+`deployment/identity-bindings.candidate.json` for review, never active state.
+Secret server records bind independent Root/DNS policy and original mounted
+references, without importing a workload spec. Their automatic lifecycle
+population remains an implementation gap. Native Secret inspection reads only
+original owned Pod files and its original registry; controller observation binds
+their exact synchronized Secret bytes and resource versions. Neither operation
+writes credential material locally or creates receipts. See the
+[original Secret server subgate](deployment-readiness-standard.md#original-secret-backed-server-identity).
+
 RTK Cloud uses one reusable architecture description, many environment instances, and replaceable deployment adapters. Environments such as `dev`, `staging`, and `prod` select an architecture and adapter; they do not own copies of the architecture or adapter implementation.
 
 The Kubernetes architecture owns workloads, namespaces, logical node classes, resource intent, capacity rules, placement, edge requirements, and TURN requirements. It uses `rtk.io/node-class` and standard Kubernetes topology labels. It must not contain cloud resource IDs or provider-specific labels.

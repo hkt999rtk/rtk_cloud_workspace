@@ -126,8 +126,9 @@ Pending state, missing/invalid public summary or owner drift is
 `deployment.pki.server-identity`. A new state, unavailable original inspector or
 unresolved policy needs bootstrap/candidate qualification; no state is initialized
 by preflight. Registry inspection additionally requires the original configured
-registry and formal issuance/issuer admission. Secret-backed leaves and installed Root-policy/live-consumer evidence still
-require their own checks; original CRL/receipt inspection is described below. These remaining gaps keep the complete PKI gate NO-GO even when
+registry and formal issuance/issuer admission. Original Secret-backed server,
+CRL and Root-policy probes are described below. Remaining Secret consumer and
+live-consumer coverage keep the complete PKI gate NO-GO even when
 server-state inspection succeeds.
 
 Managed Service client states now use the same original-owner/PVC/Pod observer
@@ -140,8 +141,7 @@ pending state or failed inspection is `deployment.pki.client-identity`; it does
 not enroll, renew or replace state. Registry failures use stable
 `deployment.pki.server-registry`/`deployment.pki.client-registry` IDs and require
 explicit positive registry evidence; there is no basic-inspection fallback.
-Secret-backed identities and full installed Root-policy/live-consumer evidence
-remain required gaps,
+Remaining Secret consumers and live-consumer evidence remain required gaps,
 so these observations do not pass the complete PKI gate.
 
 An old fault that blocks a necessary dependency blocks the plan. When the plan
@@ -484,8 +484,8 @@ these verify the explicit upgrade window, original installed Root/intermediate
 CRLs, exact current-digest domain consumer receipts and Root distrust in one
 read-only registry snapshot. Their native isolated tests cover dev/staging/prod
 and Service client plus Service/MQTT/OpenBao server domains. The complete deployment adapter now binds the maintained consumer inventory
-and original CRL mounts to its native CRL probe; Root-policy/live-consumer and
-Secret-backed identity verification is still required; the adapter continues to
+and original CRL/Root mounts and supported Secret servers to native probes;
+complete Secret consumer and live-consumer verification is still required; the adapter continues to
 report NO-GO for those missing qualifications. These local fixtures and commands
 do not prove actual environment readiness or production qualification.
 
@@ -514,8 +514,8 @@ incomplete deployment with its existing execution journal and fences; it does
 not trigger blind rollback or extend certificate evidence.
 
 This completes the managed-state certificate window check, not the complete PKI
-gate: Secret-backed leaves, complete installed trust/CRL consumer coverage and
-current acknowledgments remain separate required evidence. Fresh bootstrap must
+gate: remaining Secret consumers and current live-consumer evidence remain
+required. Fresh bootstrap must
 qualify its own original session, and production still requires its independent
 HA, custody and recovery evidence.
 
@@ -562,8 +562,8 @@ lineage and native CA metadata/horizon rules, signed current CRLs, exact consume
 receipts and known unpublished revocations in one read-only snapshot. Isolated
 native PostgreSQL/crypto tests prove that service behavior; deployment adapter
 protocol fixtures separately prove owner/mount/digest/coverage boundaries. These
-fixtures are not actual environment qualification. Installed Root policy and
-live consumer proof, dynamic/terminal authority state and Secret-backed leaves
+fixtures are not actual environment qualification. Live consumer proof,
+dynamic/terminal authority state and remaining Secret consumers
 remain independently required gaps, so this stage alone cannot make the complete
 PKI gate GO.
 
@@ -591,6 +591,40 @@ separately cover original mount/source/Pod ownership and report binding.
 
 This completes the installed Root-state/receipt subgate. It does not attest a
 running consumer's in-memory state, its connection eviction or the repaired
-candidate's behavior. Those live checks, Secret-backed identity and required
+candidate's behavior. Those live checks, remaining Secret consumers and required
 dynamic/terminal authority qualification remain independently required; the
 complete PKI gate continues to reject missing evidence.
+
+### Original Secret-backed server identity
+
+The shared observer also verifies active CertIssuer, PKI controller and Video
+Cloud API Secret-backed server credentials through `inspect-secret-server`.
+Public certificate/key path settings follow the same literal, `valueFrom` and
+`envFrom` resolution and original-source fences. Certificate and key must each
+resolve to an exact planned Secret projection, match every original Pod mount
+and return raw-file hashes matching those original Secret bytes. Source,
+controller and Pod ownership are rechecked after the probe. A managed host's old
+bootstrap Secret is not its active credential; absence of an active Secret
+server is allowed at this subgate, without relaxing required managed-state gates.
+
+The typed `secret_servers` records in environment-local
+`deployment/identity-bindings.json` contain exact workload/container, domain,
+subject, independent Root pin, DNS policy and certificate/key paths. They contain
+no private key or workload spec. The reviewed bindings hash is part of the plan.
+Missing, ambiguous or unused records fail with `deployment.pki.secret-identity`.
+Pins must come from recorded bootstrap/custody or independently reviewed managed
+adoption; a certificate's own Root cannot choose its trust policy. Automatic
+bootstrap/adoption population of these records and remaining Secret consumer
+contracts are unfinished integration work, not grounds to skip verification.
+
+The native probe checks key possession, exact names/purpose/pin, original formal
+issuance/issuer admission and validity through the reviewed window in one
+read-only registry snapshot. Leaf-only, leaf-plus-intermediate and full-chain
+Secret files are supported; every supplied authority must match the original
+recorded chain. Completing the validation chain does not prove the listener
+sends its intermediate: candidate startup and real TLS path checks remain
+required. Projected Secret links are supported; world-readable key files fail.
+The probe neither writes files nor creates credentials or receipts. Its public
+summary contains hashes and qualification fields only. Native PostgreSQL/crypto
+tests and deployment protocol tests provide separate local evidence; neither is
+live environment GO.
