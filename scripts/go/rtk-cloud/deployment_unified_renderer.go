@@ -15,7 +15,7 @@ import (
 var environmentManagedComponents = map[string]string{
 	"certissuer": "certissuer", "factoryenroll": "certissuer", "certissuer-service-pki": "service-issuer",
 	"pki-controller": "pki-controller", "video-cloud-api-pki": "managed-api", "mqtt-pki": "managed-mqtt", "openbao": "managed-openbao",
-	"pkiturn": "managed-turn",
+	"pkiturn": "managed-turn", "video-cloud-api-app-pki": "managed-app-api",
 }
 
 // The catalog describes desired configuration, not copies of live workloads.
@@ -33,6 +33,9 @@ func renderEnvironmentResources(env map[string]string, bindings environmentIdent
 		// environment. Installing a new identity is a separate bootstrap stage.
 		if binding.Component == "managed-turn" {
 			needed["pkiturn"] = true
+		}
+		if binding.Component == "managed-app-api" {
+			needed[binding.Name] = true
 		}
 		if binding.Component != "existing-workload" {
 			if !needed[binding.Name] {
@@ -232,6 +235,16 @@ func renderEnvironmentResources(env map[string]string, bindings environmentIdent
 		if err := applyEnvironmentPodBindings(object, bindings, release); err != nil {
 			return nil, err
 		}
+		if err := applyEnvironmentAuthRole(env, object); err != nil {
+			return nil, err
+		}
+		if binding.Component == "managed-app-api" {
+			dependencies, err := environmentAppDependencies(env, bindings)
+			if err != nil {
+				return nil, err
+			}
+			definitions = append(definitions, dependencies...)
+		}
 		if binding.Component == "pki-controller" {
 			if err := applyEnvironmentControllerPolicy(env, object); err != nil {
 				return nil, err
@@ -296,7 +309,7 @@ func renderManagedEnvironmentComponent(env map[string]string, binding environmen
 	if binding.Kind != "Deployment" || binding.NamespaceSuffix != "video-cloud" {
 		return nil, errors.New("deployment.bindings: managed service has an invalid resource identity")
 	}
-	if binding.Component == "managed-api" {
+	if binding.Component == "managed-api" || binding.Component == "managed-app-api" {
 		return renderManagedEnvironmentAPI(env, binding)
 	}
 	if binding.Component == "managed-turn" {

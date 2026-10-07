@@ -1431,6 +1431,15 @@ func writeDeploymentFixture(t *testing.T, environment, adapter string) string {
 		filepath.Join("cloud_env", environment, "environment.env"): "CLOUD_STACK_NAME=video-cloud-" + environment + "\nCLOUD_DNS_ROOT_DOMAIN=example.test\nDEPLOYMENT_LOCATION=us-west\n",
 		filepath.Join("cloud_env", environment, "deployment.env"):  "DEPLOYMENT_ARCHITECTURE=kubernetes\nDEPLOYMENT_ADAPTER=" + adapter + "\nDNS_ADAPTER=godaddy\n",
 	}
+	for _, role := range environmentAuthRoles {
+		for _, key := range role {
+			value := "true"
+			if key == "DEVICE_API_AUTH_APP_PKI_ENABLED" || key == "APP_API_AUTH_PRODUCT_PKI_ENABLED" {
+				value = "false"
+			}
+			files["cloud_deploy/architectures/kubernetes/architecture.env"] += key + "=" + value + "\n"
+		}
+	}
 	for path, body := range files {
 		writeTestFile(t, filepath.Join(root, path), body)
 	}

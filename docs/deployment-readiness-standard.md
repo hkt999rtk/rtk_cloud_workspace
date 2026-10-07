@@ -31,6 +31,11 @@ live qualification on the operator's behalf.
 - Deployment rechecks that same target and ownership, executes the checked
   resource bodies, waits for rollout and verifies required workload, PKI and
   endpoint health before reporting completion. Partial failure is not success.
+- Device/App API and main issuer role flags come from shared architecture
+  settings. Existing App API main/initializer images, retained trust-state
+  references and the original TLS passthrough route are included in the same
+  plan. Missing references or role incompatibility remain explicit blockers;
+  see [the role mapping](cloud-deployment-architecture.md#shared-device-and-app-authentication-roles).
 - Existing identity, keys, CRLs, Secrets and persistent data are retained.
   A required incompatible identity/schema/storage change is an explicit migration
   blocker, not an automatic reset or an additional recovery project.

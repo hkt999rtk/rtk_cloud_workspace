@@ -14,6 +14,12 @@ import (
 func completeEnvironmentRenderFixture(environment string) (map[string]string, environmentIdentityBindings, environmentRelease) {
 	stack := "video-cloud-" + environment
 	env := map[string]string{"CLOUD_STACK_NAME": stack, "CLOUD_ENV_NAME": environment, "OPENBAO_EFFECTIVE_REPLICAS": "3", "OPENBAO_REQUEST_CPU": "500m", "OPENBAO_REQUEST_MEMORY": "512Mi", "OPENBAO_NODE_CLASS": "general", "CLOUD_DNS_ROOT_DOMAIN": "example.invalid", "TEST_LAB_ENABLED": "true", "FRONTEND_DOMAIN": "www." + environment + ".example.invalid", "CONSOLE_DOMAIN": "console." + environment + ".example.invalid"}
+	for _, role := range environmentAuthRoles {
+		for _, key := range role {
+			env[key] = "true"
+		}
+	}
+	env["DEVICE_API_AUTH_APP_PKI_ENABLED"], env["APP_API_AUTH_PRODUCT_PKI_ENABLED"] = "false", "false"
 	env["OPENBAO_STORAGE_BACKEND"], env["OPENBAO_DATA_STORAGE"], env["OPENBAO_AUDIT_STORAGE"], env["OPENBAO_POD_MANAGEMENT_POLICY"], env["OPENBAO_UPDATE_STRATEGY"] = "raft", "20Gi", "10Gi", "Parallel", "RollingUpdate"
 	env["PKI_APP_CRL_WORKER_ENABLED"], env["PKI_SERVER_CRL_DOMAIN"], env["PKI_REQUIRE_USER_MFA"] = "true", "service,mqtt,openbao_tls", "true"
 	env["REDIS_DATA_STORAGE"], env["PROMETHEUS_DATA_STORAGE"] = "5Gi", "20Gi"

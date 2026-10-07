@@ -67,6 +67,7 @@ type environmentIdentityBindings struct {
 	Pods             []environmentPodBindings            `json:"pods"`
 	IngressAdmission *environmentAdmissionBinding        `json:"ingress_admission,omitempty"`
 	BootstrapCleanup *environmentBootstrapCleanupBinding `json:"bootstrap_cleanup,omitempty"`
+	AppIngress       *environmentAppIngressBinding       `json:"app_ingress,omitempty"`
 }
 
 type environmentAdmissionBinding struct {
@@ -107,7 +108,7 @@ func validateEnvironmentIdentityBindings(b environmentIdentityBindings, environm
 	podFields := keySet("volumes", "securityContext", "serviceAccountName", "automountServiceAccountToken", "imagePullSecrets")
 	containerFields := keySet("volumeMounts", "securityContext", "envFrom", "env")
 	for _, pod := range b.Pods {
-		if (pod.Kind != "Deployment" && pod.Kind != "StatefulSet" && pod.Kind != "DaemonSet") || !secretEnvironmentPattern.MatchString(pod.NamespaceSuffix) || !secretEnvironmentPattern.MatchString(pod.Name) || !keySet("existing-workload", "certissuer", "pki-controller", "managed-api", "managed-mqtt", "managed-openbao", "managed-turn", "service-issuer")[pod.Component] {
+		if (pod.Kind != "Deployment" && pod.Kind != "StatefulSet" && pod.Kind != "DaemonSet") || !secretEnvironmentPattern.MatchString(pod.NamespaceSuffix) || !secretEnvironmentPattern.MatchString(pod.Name) || !keySet("existing-workload", "certissuer", "pki-controller", "managed-api", "managed-app-api", "managed-mqtt", "managed-openbao", "managed-turn", "service-issuer")[pod.Component] {
 			return errors.New("deployment.bindings: unsupported managed component")
 		}
 		id := pod.Kind + "/" + b.Stack + "-" + pod.NamespaceSuffix + "/" + pod.Name
@@ -115,8 +116,13 @@ func validateEnvironmentIdentityBindings(b environmentIdentityBindings, environm
 			return errors.New("deployment.bindings: duplicate or empty managed component")
 		}
 		seen[id] = true
-		if pod.Component != "managed-openbao" && pod.OpenBao != nil || pod.Component != "managed-openbao" && pod.Component != "managed-turn" && len(pod.InitContainers) != 0 {
+		if pod.Component != "managed-openbao" && pod.OpenBao != nil || pod.Component != "managed-openbao" && pod.Component != "managed-turn" && pod.Component != "managed-app-api" && len(pod.InitContainers) != 0 {
 			return errors.New("deployment.bindings: OpenBao lifecycle references require the managed OpenBao component")
+		}
+		if pod.Component == "managed-app-api" {
+			if err := validateEnvironmentAppBinding(pod); err != nil {
+				return err
+			}
 		}
 		if pod.Component == "managed-turn" {
 			if err := validateEnvironmentTurnBinding(pod); err != nil {
@@ -151,7 +157,7 @@ func validateEnvironmentIdentityBindings(b environmentIdentityBindings, environm
 					return errors.New("deployment.bindings: invalid managed environment setting")
 				}
 				if environmentControllerPolicySetting(name) {
-					return errors.New("deployment.bindings: controller consumer, CRL worker and authentication policies belong in maintained configuration, not identity references")
+					return errors.New("deployment.bindings: API/issuer authentication, controller consumer and CRL worker policies belong in maintained configuration, not identity references")
 				}
 				if _, literal := setting["value"]; literal && !environmentIdentitySetting(name) {
 					return errors.New("deployment.bindings: ordinary environment settings belong in maintained configuration, not private identity bindings")
@@ -203,7 +209,7 @@ func environmentPrivateFileMount(pod environmentPodBindings, container environme
 }
 
 func environmentManagedImageKey(component, name string, index int) string {
-	if component == "managed-turn" {
+	if component == "managed-turn" || component == "managed-app-api" {
 		return "LKE_VIDEO_CLOUD_IMAGE"
 	}
 	if component == "managed-openbao" {
@@ -308,7 +314,7 @@ func applyEnvironmentPodBindings(object deploymentplan.Object, b environmentIden
 			containers = append(containers, container)
 		}
 		pod["containers"] = containers
-		if binding.Component == "managed-openbao" || binding.Component == "managed-turn" {
+		if binding.Component == "managed-openbao" || binding.Component == "managed-turn" || binding.Component == "managed-app-api" {
 			for _, bound := range binding.InitContainers {
 				var container map[string]any
 				for _, v := range certIssuerObjectList(pod["initContainers"]) {
@@ -342,7 +348,7 @@ func environmentIdentitySetting(name string) bool {
 	if environmentControllerPolicySetting(name) {
 		return false
 	}
-	for _, prefix := range []string{"PKI_", "OPENBAO_", "EMQX_PKI_", "CERT_ISSUER_SERVICE_", "CERT_ISSUER_HOST_", "CERT_ISSUER_SERVER_PKI_", "CERT_ISSUER_MQTT_SERVER_PKI_", "FACTORY_ENROLL_CERT_ISSUER_", "VIDEO_CLOUD_API_TLS_", "VIDEO_CLOUD_AUTH_PRODUCT_PKI_", "VIDEO_CLOUD_SERVICE_PKI_", "VIDEO_CLOUD_SERVER_PKI_", "VIDEO_CLOUD_CONTROLLER_PKI_", "VIDEO_CLOUD_AUTH_DEVICE_CA_", "VIDEO_CLOUD_AUTH_DEVICE_ROOT_TRUST_", "VIDEO_CLOUD_AUTH_ISSUER_TRUST_", "VIDEO_CLOUD_MQTT_SERVER_PKI_", "VIDEO_CLOUD_MQTT_BUNDLE_", "APP_PKI_", "SERVER_PKI_"} {
+	for _, prefix := range []string{"PKI_", "OPENBAO_", "EMQX_PKI_", "CERT_ISSUER_SERVICE_", "CERT_ISSUER_HOST_", "CERT_ISSUER_SERVER_PKI_", "CERT_ISSUER_MQTT_SERVER_PKI_", "FACTORY_ENROLL_CERT_ISSUER_", "VIDEO_CLOUD_API_TLS_", "VIDEO_CLOUD_AUTH_PRODUCT_PKI_", "VIDEO_CLOUD_AUTH_APP_", "VIDEO_CLOUD_SERVICE_PKI_", "VIDEO_CLOUD_SERVER_PKI_", "VIDEO_CLOUD_CONTROLLER_PKI_", "VIDEO_CLOUD_AUTH_DEVICE_CA_", "VIDEO_CLOUD_AUTH_DEVICE_ROOT_TRUST_", "VIDEO_CLOUD_AUTH_ISSUER_TRUST_", "VIDEO_CLOUD_MQTT_SERVER_PKI_", "VIDEO_CLOUD_MQTT_BUNDLE_", "APP_PKI_", "SERVER_PKI_"} {
 		if strings.HasPrefix(name, prefix) {
 			return true
 		}

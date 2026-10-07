@@ -90,6 +90,11 @@ func observeEnvironmentBindings(environment string, release environmentRelease, 
 			}
 			continue
 		}
+		if kind == "Ingress" {
+			if err := observeEnvironmentAppIngress(&b, object); err != nil {
+				return b, err
+			}
+		}
 		if kind != "Deployment" && kind != "StatefulSet" && kind != "DaemonSet" {
 			continue
 		}
@@ -111,7 +116,7 @@ func observeEnvironmentBindings(environment string, release environmentRelease, 
 			}
 		}
 		groups := []string{"containers"}
-		if component == "managed-openbao" || component == "managed-turn" {
+		if component == "managed-openbao" || component == "managed-turn" || component == "managed-app-api" {
 			groups = append(groups, "initContainers")
 		}
 		for _, group := range groups {
@@ -142,6 +147,17 @@ func observeEnvironmentBindings(environment string, release environmentRelease, 
 					default:
 						return b, openBaoCompatibilityBlocker(id, "existing OpenBao contains an unsupported container")
 					}
+				}
+				if component == "managed-app-api" && group == "initContainers" && bound.Name == "initialize-app-trust-state" {
+					command := certIssuerObjectList(container["command"])
+					if len(command) != 3 || command[0] != "/bin/sh" || command[1] != "-ec" || command[2] != environmentAppTrustInitialize || len(certIssuerObjectList(container["args"])) != 0 {
+						return b, environmentAppBlocker(id, "trust initializer differs from the supported preserve-on-retry command")
+					}
+					repository := environmentImageRepository(deploymentplan.String(container["image"]))
+					if repository != environmentImageRepository(release.Images["LKE_VIDEO_CLOUD_IMAGE"].Reference) && repository != "ghcr.io/hkt999rtk/rtk_cloud_dev/video-cloud-api" {
+						return b, environmentAppBlocker(id, "trust initializer has an unknown image source")
+					}
+					bound.ImageKey = "LKE_VIDEO_CLOUD_IMAGE"
 				}
 				if component == "managed-turn" {
 					bound.ImageKey = "LKE_VIDEO_CLOUD_IMAGE"

@@ -114,6 +114,9 @@ var deploymentEnvironmentServiceKeys = keySet(
 
 func architectureKeySet() map[string]bool {
 	out := keySet(
+		"DEVICE_API_AUTH_APP_PKI_ENABLED", "DEVICE_API_AUTH_PRODUCT_PKI_ENABLED", "DEVICE_API_AUTH_MTLS_REQUIRED",
+		"APP_API_AUTH_APP_PKI_ENABLED", "APP_API_AUTH_PRODUCT_PKI_ENABLED", "APP_API_AUTH_MTLS_REQUIRED",
+		"CERT_ISSUER_PRODUCT_PKI_ENABLED", "CERT_ISSUER_APP_PKI_ENABLED", "FACTORY_ENROLL_PRODUCT_PKI_ENABLED",
 		"DEPLOYMENT_RUNTIME", "DEPLOYMENT_PROTECTION_PROFILE", "DEPLOYMENT_UPGRADE_WINDOW_SECONDS", "DEPLOYMENT_POSTGRES_BACKUP_ENABLED", "NODE_CLASS_LABEL_KEY", "DEFAULT_WORKLOAD_NODE_CLASS", "POD_SPREAD_TOPOLOGY_KEY",
 		"DURABLE_DATA_STORAGE_CLASS", "REDIS_DATA_STORAGE", "PROMETHEUS_DATA_STORAGE",
 		"ZAMMAD_CHART_VERSION", "ZAMMAD_CHART_SHA256",
@@ -898,10 +901,16 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 		return deploymentConfig{}, err
 	}
 	for k := range architectureOverride {
+		if environmentAuthArchitectureKey(k) {
+			return deploymentConfig{}, environmentAuthBlocker("", "shared authentication roles cannot be overridden per environment: "+k)
+		}
 		if _, ok := values[k]; !ok {
 			return deploymentConfig{}, fmt.Errorf("unknown architecture override %s", k)
 		}
 		values[k] = architectureOverride[k]
+	}
+	if err := validateEnvironmentAuthConfiguration(values); err != nil {
+		return deploymentConfig{}, err
 	}
 	for k, v := range envIdentity {
 		values[k] = v

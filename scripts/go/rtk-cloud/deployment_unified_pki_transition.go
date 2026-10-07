@@ -48,6 +48,11 @@ func validateEnvironmentPKITransition(definitions []deploymentplan.Definition, l
 				return environmentPKITransitionBlocker(id, "target removes or ambiguously replaces an existing PKI container")
 			}
 			wanted := containers[name]
+			if containerName == "app" || component == "certissuer" {
+				if err := validateEnvironmentAuthTransition(component, old, wanted, id); err != nil {
+					return err
+				}
+			}
 			wantedSettings, err := environmentPKISettings(wanted["env"])
 			if err != nil || !reflect.DeepEqual(settings, wantedSettings) {
 				return environmentPKITransitionBlocker(id, "target changes existing identity or trust settings")

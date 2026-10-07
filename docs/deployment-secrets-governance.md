@@ -4,7 +4,7 @@ Status: active workspace source document for deployment secret handling.
 
 Owner: rtk_cloud_workspace.
 
-Last reviewed: 2026-08-31.
+Last reviewed: 2026-10-08.
 
 This document defines how RTK Cloud deployment secrets, keys, certificates,
 runtime environment files, bootstrap tokens, and operator state are organized.
@@ -422,3 +422,15 @@ passes:
 ```sh
 scripts/run-staging-e2e.sh
 ```
+
+### App API lifecycle references
+
+Preflight observes the existing App API's TLS Secret, App trust ConfigMap,
+management Secret, trust-state PVC, mounts and original owned public route.
+They are saved only as generated reference/ownership evidence in the selected
+`~/.config/rtk_cloud/<environment>/deployment/identity-bindings.json` (0700
+parent directories, 0600 file), using the common environment path resolver.
+Deployment re-observes and fences these references through the same compiler;
+neither preflight nor an ordinary upgrade regenerates their payloads or resets
+initialized root-policy state. Desired role booleans remain secret-free shared
+configuration in `architecture.env`, not observed bindings.

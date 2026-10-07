@@ -24,7 +24,7 @@ func TestCompleteCompilerUsesMaintainedCatalogAndFencesNativeSnapshot(t *testing
 			}
 			architecture := "DEPLOYMENT_RUNTIME=kubernetes\nNODE_CLASS_LABEL_KEY=rtk.io/node-class\nDEFAULT_WORKLOAD_NODE_CLASS=general\nDEPLOYMENT_PROTECTION_PROFILE=" + profile + "\nDEPLOYMENT_POSTGRES_BACKUP_ENABLED=true\nREDIS_DATA_STORAGE=5Gi\nPROMETHEUS_DATA_STORAGE=20Gi\n"
 			for key, value := range settings {
-				if environmentControllerPolicySetting(key) || key == "OPENBAO_STORAGE_BACKEND" || key == "OPENBAO_DATA_STORAGE" || key == "OPENBAO_AUDIT_STORAGE" || key == "OPENBAO_POD_MANAGEMENT_POLICY" || key == "OPENBAO_UPDATE_STRATEGY" {
+				if environmentAuthArchitectureKey(key) || environmentControllerPolicySetting(key) || key == "OPENBAO_STORAGE_BACKEND" || key == "OPENBAO_DATA_STORAGE" || key == "OPENBAO_AUDIT_STORAGE" || key == "OPENBAO_POD_MANAGEMENT_POLICY" || key == "OPENBAO_UPDATE_STRATEGY" {
 					architecture += key + "=" + value + "\n"
 				}
 			}
@@ -38,6 +38,7 @@ func TestCompleteCompilerUsesMaintainedCatalogAndFencesNativeSnapshot(t *testing
 			if err != nil {
 				t.Fatal(err)
 			}
+			attachEnvironmentAppFixture(&bindings)
 			bindings.IngressAdmission = &environmentAdmissionBinding{SecretName: "ingress-nginx-admission", CABundle: base64.StdEncoding.EncodeToString(testOpenBaoCAPEM(t))}
 			raw, _ := json.Marshal(bindings)
 			if err := store.write("deployment/identity-bindings.json", raw, true); err != nil {
@@ -105,10 +106,15 @@ func TestCompleteCompilerUsesMaintainedCatalogAndFencesNativeSnapshot(t *testing
 			// compiler test also exercises lifecycle preservation during upgrade.
 			for _, d := range definitions {
 				name := deploymentplan.String(deploymentplan.Map(d.Object["metadata"])["name"])
-				if environmentManagedComponents[name] == "" && name != "openbao-raft" && name != "ingress-nginx-controller" && d.Object["kind"] != "ValidatingWebhookConfiguration" || d.Object["kind"] != "Deployment" && d.Object["kind"] != "StatefulSet" && d.Object["kind"] != "ConfigMap" && d.Object["kind"] != "ValidatingWebhookConfiguration" {
+				appRoute := d.Object["kind"] == "Ingress" && name == bindings.AppIngress.Name
+				appService := d.Object["kind"] == "Service" && name == "video-cloud-api-app-pki"
+				if !appRoute && !appService && (environmentManagedComponents[name] == "" && name != "openbao-raft" && name != "ingress-nginx-controller" && d.Object["kind"] != "ValidatingWebhookConfiguration" || d.Object["kind"] != "Deployment" && d.Object["kind"] != "StatefulSet" && d.Object["kind"] != "ConfigMap" && d.Object["kind"] != "ValidatingWebhookConfiguration") {
 					continue
 				}
 				object := deploymentplan.Clone(d.Object)
+				if appService {
+					deploymentplan.Map(object["spec"])["clusterIP"] = "10.96.0.8"
+				}
 				id := deploymentplan.ID(object)
 				metadata := deploymentplan.Map(object["metadata"])
 				metadata["uid"], metadata["resourceVersion"] = "original-managed-"+name, "1"
@@ -205,6 +211,12 @@ esac
 				if resource.Action == "create" && (resource.UID != "" || compiled.Bindings.Owners[resource.ID] != "") {
 					t.Fatal("preflight invented an owner UID for a new resource", resource.ID)
 				}
+			}
+			appServiceID := "Service/" + bindings.Stack + "-video-cloud/video-cloud-api-app-pki"
+			serviceResource := planned[appServiceID]
+			serviceBody, serviceErr := serviceResource.Body(dependencies[appServiceID])
+			if serviceErr != nil || deploymentplan.Map(serviceBody["spec"])["clusterIP"] != "10.96.0.8" {
+				t.Fatal("App Service lost its original cluster IP", serviceErr)
 			}
 			approved := compiled.Plan.SHA256()
 			if err := compiled.Plan.Admit(context.Background(), compiled.Backend); err != nil {

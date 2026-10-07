@@ -69,6 +69,53 @@ SHA-256 is a computed identifier in the plan/report, not an additional
 operator-maintained configuration file. Re-run preflight after changing inputs
 or upgrading a compiler that previously omitted adapter settings from its hash.
 
+### Shared Device and App authentication roles
+
+`cloud_deploy/architectures/kubernetes/architecture.env` owns the explicit
+boolean role settings for all environments; environment overrides are rejected.
+The shared preflight/deployment compiler projects them into container settings:
+
+| Shared configuration | Consumer / runtime settings | Default |
+| --- | --- | --- |
+| `DEVICE_API_AUTH_APP_PKI_ENABLED` | Device API / `VIDEO_CLOUD_AUTH_APP_PKI_ENABLED` | `false` |
+| `DEVICE_API_AUTH_PRODUCT_PKI_ENABLED` | Device API / `VIDEO_CLOUD_AUTH_PRODUCT_PKI_ENABLED` | `true` |
+| `DEVICE_API_AUTH_MTLS_REQUIRED` | Device API / `VIDEO_CLOUD_AUTH_MTLS_REQUIRED` | `true` |
+| `APP_API_AUTH_APP_PKI_ENABLED` | App API / `VIDEO_CLOUD_AUTH_APP_PKI_ENABLED` | `true` |
+| `APP_API_AUTH_PRODUCT_PKI_ENABLED` | App API / `VIDEO_CLOUD_AUTH_PRODUCT_PKI_ENABLED` | `false` |
+| `APP_API_AUTH_MTLS_REQUIRED` | App API / `VIDEO_CLOUD_AUTH_MTLS_REQUIRED` | `true` |
+| `CERT_ISSUER_PRODUCT_PKI_ENABLED` | Main CertIssuer / same key | `true` |
+| `CERT_ISSUER_APP_PKI_ENABLED` | Main CertIssuer / same key | `true` |
+| `FACTORY_ENROLL_PRODUCT_PKI_ENABLED` | FactoryEnroll / same key | `true` |
+
+The App API's Product PKI flag does not disable Device CSR issuance. Device
+admission and issuance use FactoryEnroll and the main CertIssuer; Device
+certificate authentication uses `video-cloud-api-pki`. The dedicated Service
+issuer does not receive the main issuer role flags. Missing or invalid values
+block qualification; existing role differences require a reviewed authentication
+migration rather than a silent role change. Role configuration participates in
+the plan input SHA-256 and invalidates previous qualification when changed.
+
+An existing `video-cloud-api-app-pki` uses the common API renderer with its App
+role, formal CI API image for both the main container and
+`initialize-app-trust-state`, and retained TLS, App trust, management Secret and
+trust-state PVC references. The initializer copies the initial root policy only
+when no state file exists, retaining initialized state on retries. Observation
+records references and ownership, never Secret payloads or an arbitrary workload
+specification. Missing references or an unknown initializer remain NO-GO.
+
+The same plan includes the App Service, ingress access NetworkPolicy, and the
+original owned App Ingress name, hostname and TLS references. The maintained
+route uses the environment's ingress class, HTTPS backend and TLS passthrough,
+so the API receives the client certificate directly. A missing or ambiguous
+original route blocks the update; the compiler does not invent a second route
+or rename a historically named Ingress. Environments without an existing App
+instance do not acquire a new identity through an ordinary upgrade.
+
+These render/compatibility checks do not establish full runtime GO. Operators
+must run complete preflight and, after deployment, verify Device CSR admission,
+issuance and Device API mTLS, plus App certificate authentication and token
+issuance. Production qualification remains an independent required gate.
+
 ### TURN CLI credential lifecycle
 
 `PKI_TURN_CLI_PASSWORD_FILE` names a **container-runtime file**, not a password

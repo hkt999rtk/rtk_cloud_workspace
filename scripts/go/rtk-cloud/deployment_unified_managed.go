@@ -12,7 +12,7 @@ import (
 var managedPKIDomains = []string{"device", "app", "service", "mqtt", "openbao_tls"}
 
 func environmentControllerPolicySetting(name string) bool {
-	return name == "PKI_REQUIRED_CONSUMERS" || strings.HasPrefix(name, "PKI_REQUIRED_CONSUMERS_") || strings.HasPrefix(name, "PKI_REQUIRED_BUNDLE_CONSUMERS_") || name == "PKI_APP_CRL_WORKER_ENABLED" || name == "PKI_SERVER_CRL_DOMAIN" || name == "PKI_REQUIRE_USER_MFA" || strings.HasPrefix(name, "PKI_BOOTSTRAP_CLEANUP") || strings.HasPrefix(name, "PKI_BOOTSTRAP_KUBERNETES")
+	return environmentAuthRuntimeKey(name) || name == "PKI_REQUIRED_CONSUMERS" || strings.HasPrefix(name, "PKI_REQUIRED_CONSUMERS_") || strings.HasPrefix(name, "PKI_REQUIRED_BUNDLE_CONSUMERS_") || name == "PKI_APP_CRL_WORKER_ENABLED" || name == "PKI_SERVER_CRL_DOMAIN" || name == "PKI_REQUIRE_USER_MFA" || strings.HasPrefix(name, "PKI_BOOTSTRAP_CLEANUP") || strings.HasPrefix(name, "PKI_BOOTSTRAP_KUBERNETES")
 }
 
 // Process policies belong to maintained settings, not live workload adoption.
@@ -102,8 +102,6 @@ func renderManagedEnvironmentAPI(env map[string]string, binding environmentPodBi
 		map[string]any{"name": "VIDEO_CLOUD_ENV", "value": env["CLOUD_ENV_NAME"]},
 		map[string]any{"name": "VIDEO_CLOUD_API_ADDR", "value": "0.0.0.0:8443"},
 		map[string]any{"name": "VIDEO_CLOUD_API_BASE_URL", "value": "https://" + binding.Name + "." + lkeNamespaceName(env, "video-cloud") + ".svc:8443"},
-		map[string]any{"name": "VIDEO_CLOUD_AUTH_PRODUCT_PKI_ENABLED", "value": "true"},
-		map[string]any{"name": "VIDEO_CLOUD_AUTH_MTLS_REQUIRED", "value": "true"},
 		map[string]any{"name": "VIDEO_CLOUD_AUTH_DISABLE_ACL", "value": "false"},
 		map[string]any{"name": "VIDEO_CLOUD_AUTH_TRUSTED_CLIENT_CERT_HEADERS", "value": "false"},
 		map[string]any{"name": "VIDEO_CLOUD_AUTH_ENABLE_LEGACY_CERT", "value": "false"},
@@ -116,6 +114,19 @@ func renderManagedEnvironmentAPI(env map[string]string, binding environmentPodBi
 	container["volumeMounts"] = mergeEnvironmentNamedFields(container["volumeMounts"], []any{map[string]any{"name": "pki-server", "mountPath": "/run/pki-server", "readOnly": true}})
 	for _, value := range certIssuerObjectList(pod["topologySpreadConstraints"]) {
 		deploymentplan.Map(value)["labelSelector"] = map[string]any{"matchLabels": map[string]any{"app.kubernetes.io/name": binding.Name}}
+	}
+	if binding.Component == "managed-app-api" {
+		if err := validateEnvironmentAppBinding(binding); err != nil {
+			return nil, err
+		}
+		pod["securityContext"] = map[string]any{"fsGroup": float64(10001), "fsGroupChangePolicy": "OnRootMismatch"}
+		spec["strategy"] = map[string]any{"type": "Recreate"}
+		container["ports"] = []any{map[string]any{"name": "https", "containerPort": float64(8443)}}
+		container["env"] = mergeEnvironmentNamedFields(container["env"], []any{map[string]any{"name": "VIDEO_CLOUD_MQTT_ENABLED", "value": "false"}, map[string]any{"name": "VIDEO_CLOUD_MQTT_AUTH_ADDR", "value": ""}})
+		pod["initContainers"] = []any{map[string]any{"name": "initialize-app-trust-state", "command": []any{"/bin/sh", "-ec", environmentAppTrustInitialize}, "volumeMounts": []any{map[string]any{"name": "pki-state", "mountPath": "/run/pki-state"}, map[string]any{"name": "pki-app", "mountPath": "/run/pki-app", "readOnly": true}}}}
+	}
+	if err := applyEnvironmentAuthRole(env, object); err != nil {
+		return nil, err
 	}
 	// Optional maintained sidecars are added by the typed binding adapter.
 	return object, nil
