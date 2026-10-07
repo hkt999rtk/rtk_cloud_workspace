@@ -60,6 +60,15 @@ invented for future resources. The generated file uses a 0700 parent directory
 and 0600 permissions. `adopt-managed-state` is retired; operators must not
 hand-produce or promote a candidate JSON to pass preflight.
 
+The common compiler includes the selected adapter defaults/overrides
+(`AdapterValues`) alongside shared/environment settings, resolved provider
+settings and DNS settings. These inputs participate in both rendering and the
+configuration SHA-256 used by the deployment plan. Adapter changes invalidate
+earlier qualification just like other maintained configuration changes. This
+SHA-256 is a computed identifier in the plan/report, not an additional
+operator-maintained configuration file. Re-run preflight after changing inputs
+or upgrading a compiler that previously omitted adapter settings from its hash.
+
 ### TURN CLI credential lifecycle
 
 `PKI_TURN_CLI_PASSWORD_FILE` names a **container-runtime file**, not a password

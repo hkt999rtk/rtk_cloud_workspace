@@ -2,12 +2,76 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 )
+
+func TestCommonRendererIncludesAndHashesSelectedAdapterWorkers(t *testing.T) {
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		t.Run(environment, func(t *testing.T) {
+			values, bindings, release := completeEnvironmentRenderFixture(environment)
+			bindings.IngressAdmission = &environmentAdmissionBinding{SecretName: "ingress-nginx-admission", CABundle: base64.StdEncoding.EncodeToString(testOpenBaoCAPEM(t))}
+			cfg := deploymentConfig{Environment: environment, Values: values, AdapterValues: map[string]string{"LKE_ACCOUNT_MANAGER_HANDOFF_WORKER_ENABLED": "true"}}
+			store := makeIsolatedTestSecretStore(t, environment)
+			snapshot := environmentDeploymentSnapshot{}
+			// Match the existing worker observation that previously failed to
+			// find an enabled renderer. This must retain the maintained image,
+			// launch command and Secret reference without copying a live spec.
+			bindings.Pods = append(bindings.Pods, environmentPodBindings{Kind: "Deployment", NamespaceSuffix: "account-manager", Name: "account-manager-cloud-deletion-worker", Component: "existing-workload", Containers: []environmentContainerBindings{{Name: "worker", ImageKey: "LKE_ACCOUNT_MANAGER_IMAGE", Fields: map[string]any{}}}})
+			t.Setenv("LKE_ACCOUNT_MANAGER_HANDOFF_WORKER_ENABLED", "false")
+			before := snapshot.Digest(cfg)
+			var resourceDigest string
+			for i := 0; i < 2; i++ {
+				if err := withEnvironmentRenderInputs(cfg, store, release, snapshot, func(env map[string]string) error {
+					if !lkeAccountManagerHandoffWorkerEnabled(env) {
+						t.Fatal("selected adapter setting was lost to ambient/default settings")
+					}
+					definitions, err := renderEnvironmentResources(env, bindings, release)
+					if err != nil {
+						return err
+					}
+					found := map[string]bool{}
+					for _, definition := range definitions {
+						name := deploymentplan.String(deploymentplan.Map(definition.Object["metadata"])["name"])
+						found[name] = true
+						if name == "account-manager-cloud-deletion-worker" {
+							container := deploymentplan.Map(certIssuerObjectList(environmentZammadPod(definition.Object)["containers"])[0])
+							if container["image"] != release.Images["LKE_ACCOUNT_MANAGER_IMAGE"].Reference || deploymentplan.Digest(container["command"]) != deploymentplan.Digest([]any{"/app/rtk-account-manager-cloud-deletion-worker"}) || !strings.Contains(mustJSON(t, container["envFrom"]), "account-manager-runtime") {
+								t.Fatal("worker lost its maintained image, command or credential reference")
+							}
+						}
+					}
+					for _, name := range []string{"account-manager-handoff-worker", "account-manager-cloud-deletion-worker", "billing-settlement-collector"} {
+						if !found[name] {
+							t.Fatal("selected worker omitted from the shared target", name)
+						}
+					}
+					if i == 0 {
+						resourceDigest = deploymentplan.Digest(definitions)
+					} else if resourceDigest != deploymentplan.Digest(definitions) {
+						t.Fatal("identical selected inputs produced different shared targets")
+					}
+					return nil
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if os.Getenv("LKE_ACCOUNT_MANAGER_HANDOFF_WORKER_ENABLED") != "false" || snapshot.Digest(cfg) != before {
+				t.Fatal("rendering changed the selected configuration or process environment")
+			}
+			cfg.AdapterValues["LKE_ACCOUNT_MANAGER_HANDOFF_WORKER_ENABLED"] = "false"
+			if snapshot.Digest(cfg) == before {
+				t.Fatal("adapter setting changes did not invalidate preflight configuration hash")
+			}
+		})
+	}
+}
 
 func TestCommonRendererConsumesOnlyTheHashedPrivateSnapshot(t *testing.T) {
 	for _, environment := range []string{"dev", "staging", "prod"} {

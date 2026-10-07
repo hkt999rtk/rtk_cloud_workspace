@@ -46,9 +46,17 @@ func maintainedDeploymentSnapshotFixture(t *testing.T, environment string) (depl
 
 func TestMaintainedSnapshotAndNativeFenceRejectInputDriftAcrossEnvironments(t *testing.T) {
 	for _, environment := range []string{"dev", "staging", "prod"} {
-		for _, mode := range []string{"valid", "runtime-drift", "operator-drift", "release-drift", "binding-drift", "provider-drift", "config-drift", "unknown-workload", "cancelled"} {
+		for _, mode := range []string{"valid", "runtime-drift", "operator-drift", "release-drift", "binding-drift", "provider-drift", "config-drift", "adapter-drift", "unknown-workload", "cancelled"} {
 			t.Run(environment+"/"+mode, func(t *testing.T) {
 				cfg, store, release, bindings := maintainedDeploymentSnapshotFixture(t, environment)
+				if mode == "adapter-drift" {
+					appendFile(t, filepath.Join(cfg.Workspace, "cloud_deploy", "adapters", "lke", "defaults.env"), "LKE_ACCOUNT_MANAGER_HANDOFF_WORKER_ENABLED=false\n")
+					var err error
+					cfg, err = resolveDeploymentConfig(cfg.Workspace, environment, "")
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
 				snapshot, err := readEnvironmentDeploymentSnapshot(cfg, store)
 				if err != nil {
 					t.Fatal("maintained snapshot unavailable", err)
@@ -98,6 +106,12 @@ func TestMaintainedSnapshotAndNativeFenceRejectInputDriftAcrossEnvironments(t *t
 					writePrivateDeploymentState(environment, "deployment/adapters/lke/account.env", []byte("LKE_ACTIVE_SERVICE_LIMIT=10\n"))
 				case "config-drift":
 					appendFile(t, filepath.Join(cfg.EnvironmentRoot, "environment.env"), "UNREVIEWED_SETTING=true\n")
+				case "adapter-drift":
+					writeTestFile(t, filepath.Join(cfg.EnvironmentRoot, "overrides", "adapter.env"), "LKE_ACCOUNT_MANAGER_HANDOFF_WORKER_ENABLED=true\n")
+					fresh, err := resolveDeploymentConfig(cfg.Workspace, environment, "")
+					if err != nil || fresh.AdapterValues["LKE_ACCOUNT_MANAGER_HANDOFF_WORKER_ENABLED"] != "true" {
+						t.Fatal("adapter drift fixture did not resolve a valid changed configuration", err)
+					}
 				}
 				ctx, cancel := context.WithCancel(context.Background())
 				defer cancel()
@@ -107,6 +121,9 @@ func TestMaintainedSnapshotAndNativeFenceRejectInputDriftAcrossEnvironments(t *t
 				err = compiled.Fence(ctx, plan)
 				if (err == nil) != (mode == "valid" || mode == "provider-drift") {
 					t.Fatal("wrong native input fence outcome", err)
+				}
+				if mode == "adapter-drift" && !strings.Contains(err.Error(), "maintained configuration or environment credentials changed") {
+					t.Fatal("adapter drift was not rejected by the configuration hash fence", err)
 				}
 			})
 		}

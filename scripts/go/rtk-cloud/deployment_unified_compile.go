@@ -40,11 +40,11 @@ type environmentDeploymentSnapshot struct {
 
 func (s environmentDeploymentSnapshot) Digest(cfg deploymentConfig) string {
 	return deploymentplan.Digest(struct {
-		Values, Adapter, DNS map[string]string
-		Capacity             sharedCapacityPlan
-		Storage              deploymentStoragePlan
-		Private              environmentDeploymentSnapshot
-	}{cfg.Values, cfg.AdapterResolved, cfg.DNSValues, cfg.Capacity, cfg.Storage, s})
+		Values, AdapterValues, AdapterResolved, DNS map[string]string
+		Capacity                                    sharedCapacityPlan
+		Storage                                     deploymentStoragePlan
+		Private                                     environmentDeploymentSnapshot
+	}{cfg.Values, cfg.AdapterValues, cfg.AdapterResolved, cfg.DNSValues, cfg.Capacity, cfg.Storage, s})
 }
 
 // Only the bounded rendering scope installs compatibility helper inputs. It
@@ -55,7 +55,9 @@ func withEnvironmentRenderInputs(cfg deploymentConfig, store secretStore, releas
 	if err := verifySecretStorePermissionsOnly(store); err != nil {
 		return err
 	}
-	values := appendMap(cfg.Values, cfg.AdapterResolved)
+	// Include selected adapter defaults/overrides as well as resolved provider
+	// values. Both preflight and execution use and hash these same inputs.
+	values := appendMap(appendMap(cfg.Values, cfg.AdapterValues), cfg.AdapterResolved)
 	values = appendMap(values, deploymentLegacyLKEValues(values, cfg.Environment))
 	values = appendMap(values, cfg.DNSValues)
 	values["CLOUD_ENV_NAME"] = cfg.Environment

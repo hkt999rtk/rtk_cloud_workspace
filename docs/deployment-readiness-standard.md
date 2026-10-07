@@ -4,7 +4,7 @@ Status: accepted deployment policy; existing-update script implementation delive
 
 Owner: `rtk_cloud_workspace`; service owners supply candidate and recovery checks.
 
-Last reviewed: 2026-10-07.
+Last reviewed: 2026-10-08.
 
 Authority: deployment scope and readiness policy. The [deployment architecture](cloud-deployment-architecture.md)
 owns configuration/provider boundaries, and [Platform PKI](../repos/rtk_cloud_contracts_doc/platform_pki.md)
@@ -76,6 +76,12 @@ dedicated credentials and selected runner image remain required. Missing optiona
 backup configuration never creates a backup project during normal preflight.
 Existing undeclared workloads still block planning; the flag cannot silently
 remove or reset an already enabled component.
+
+Preflight and deployment use the same common compiler, including selected
+adapter defaults/overrides and resolved provider settings. The computed
+configuration SHA-256 includes both sets; changing an adapter setting requires
+new preflight qualification. It is a plan/report identifier, not a new
+configuration file that operators must create.
 
 ## Retired static PKI templates
 
