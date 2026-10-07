@@ -1544,3 +1544,35 @@ func TestSharedPKIConsumerDefaultsResolveAndRenderAcrossEnvironments(t *testing.
 		})
 	}
 }
+
+func TestObservedOpenBaoBaselineResolvesFromSharedArchitecture(t *testing.T) {
+	root := mustWorkspaceRoot(t)
+	common, err := readStrictEnv(filepath.Join(root, "cloud_deploy", "architectures", "kubernetes", "architecture.env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := []string{"OPENBAO_STORAGE_BACKEND", "OPENBAO_DATA_STORAGE", "OPENBAO_AUDIT_STORAGE", "OPENBAO_POD_MANAGEMENT_POLICY", "OPENBAO_UPDATE_STRATEGY"}
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		t.Run(environment, func(t *testing.T) {
+			workspace := writeDeploymentFixture(t, environment, "lke")
+			path := filepath.Join(workspace, "cloud_deploy", "architectures", "kubernetes", "architecture.env")
+			body := readTestFile(t, path)
+			for _, key := range keys {
+				if common[key] == "" {
+					t.Fatal("shared observed OpenBao baseline is missing", key)
+				}
+				body += key + "=" + common[key] + "\n"
+			}
+			writeTestFile(t, path, body)
+			cfg, err := resolveDeploymentConfig(workspace, environment, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, key := range keys {
+				if cfg.Values[key] != common[key] {
+					t.Fatal("OpenBao baseline did not resolve from common architecture", key)
+				}
+			}
+		})
+	}
+}

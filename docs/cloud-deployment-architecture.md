@@ -163,6 +163,25 @@ a legacy execution path, regenerate managed PKI, copy a live desired spec, or
 weaken a required readiness gate. See the readiness standard's replacement
 status for capabilities that still require implementation and qualification.
 
+## Existing OpenBao configuration baseline
+
+The shared `architecture.env` explicitly records the non-secret common Dev and
+Staging baseline observed on 2026-10-07: `OPENBAO_STORAGE_BACKEND=file`,
+`OPENBAO_DATA_STORAGE=10Gi`, `OPENBAO_AUDIT_STORAGE=5Gi`,
+`OPENBAO_POD_MANAGEMENT_POLICY=OrderedReady` and
+`OPENBAO_UPDATE_STRATEGY=OnDelete`. These maintained inputs are resolved and hashed
+with the deployment configuration. They are not a completed storage migration.
+The current OpenBao renderer remains Raft-only and does not yet consume these
+five inputs; existing-environment qualification remains NO-GO until a compatible
+renderer is implemented.
+
+Dev retains a managed TLS installer/sidecar, shared private runtime files and a
+separate 10Gi PKI identity claim. Staging currently projects TLS from a Secret
+and has no PKI sidecar. Do not invent a single current TLS mode, copy Dev identity
+references into Staging, or remove Dev's PKI installer to match the existing
+Raft renderer. Names/UIDs, keys, certificates and private recovery evidence
+remain in the selected environment's lifecycle bindings and runtime stores.
+
 ## Complete update validity window
 
 The maintained `DEPLOYMENT_UPGRADE_WINDOW_SECONDS` setting bounds a complete
