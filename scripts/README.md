@@ -1003,3 +1003,8 @@ The tool creates or verifies the `RTK Support` group and required Ticket fields,
 then reports the group ID for the environment configuration. It does not
 provision human support Agents. See
 [`support-ticket-zammad.md`](../docs/deployment/support-ticket-zammad.md).
+
+Complete preflight reads formal CI `image-manifest.json` artifacts directly for
+current workspace service revisions, with no local `release.json` or `--release`
+requirement. Deployment rechecks that same digest-pinned selection and approved
+plan SHA-256. Third-party image versions use maintained `LKE_*_IMAGE` settings.

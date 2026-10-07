@@ -37,42 +37,6 @@ func decodeEnvironmentJSON(raw []byte, target any) error {
 	return nil
 }
 
-func loadEnvironmentRelease(cfg deploymentConfig, path string) (environmentRelease, error) {
-	var release environmentRelease
-	selectedDefault := path == ""
-	path = selectedEnvironmentReleasePath(cfg, path)
-	if path == "" {
-		return release, errors.New("deployment.release: selected environment release path cannot be resolved")
-	}
-	if selectedDefault {
-		for _, directory := range []string{filepath.Dir(filepath.Dir(path)), filepath.Dir(path)} {
-			info, err := os.Lstat(directory)
-			if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0700 {
-				return release, errors.New("deployment.release: selected environment release requires real private 0700 directories")
-			}
-		}
-	}
-	raw, err := readBoundedEnvironmentFile(path, selectedDefault)
-	if err != nil {
-		return release, errors.New("deployment.release: selected release manifest is unavailable; next: select the environment's exact CI-published release.json or pass --release; runtime image artifacts are not release intent")
-	}
-	if err = decodeEnvironmentJSON(raw, &release); err != nil {
-		return release, err
-	}
-	if release.Schema != "rtk-cloud.release/v1" || release.Environment != cfg.Environment || release.Stack != cfg.Values["CLOUD_STACK_NAME"] || !deploymentUpgradeSHA.MatchString(release.WorkspaceRevision) || len(release.Images) == 0 {
-		return release, errors.New("deployment.release: manifest requires exact environment/stack, workspace revision and immutable images")
-	}
-	for key, image := range release.Images {
-		if !strings.HasPrefix(key, "LKE_") || !strings.HasSuffix(key, "_IMAGE") || !immutableEnvironmentImage.MatchString(image.Reference) {
-			return release, fmt.Errorf("deployment.release: %s requires an immutable image digest", key)
-		}
-		if strings.HasPrefix(image.Reference, "ghcr.io/hkt999rtk/") && !deploymentUpgradeSHA.MatchString(image.SourceRevision) {
-			return release, fmt.Errorf("deployment.release: %s requires its full official source revision", key)
-		}
-	}
-	return release, nil
-}
-
 func readBoundedEnvironmentFile(path string, private bool) ([]byte, error) {
 	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > 4<<20 || (private && info.Mode().Perm() != 0600) {

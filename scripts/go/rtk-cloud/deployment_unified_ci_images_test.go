@@ -6,22 +6,38 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 	"strings"
 	"testing"
-
-	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 )
 
-func TestFreezeLatestReleaseUsesFrozenGitlinksAndExactPublicationForAllEnvironments(t *testing.T) {
+func TestDirectCIImagesUseFrozenGitlinksAndExactPublicationForAllEnvironments(t *testing.T) {
 	for _, environment := range []string{"dev", "staging", "prod"} {
-		for _, mode := range []string{"valid", "backups-disabled", "root-dirty", "old-main", "leaf-dirty", "source-drift", "CI-pending", "MQTT-missing", "old-attempt", "backup-base", "mutable-provider", "fetch-failed", "private-error"} {
+		for _, mode := range []string{"valid", "backups-disabled", "root-dirty", "leaf-dirty", "source-drift", "CI-pending", "MQTT-missing", "old-attempt", "backup-base", "mutable-provider", "legacy-file-invalid", "private-error"} {
 			t.Run(environment+"/"+mode, func(t *testing.T) {
 				_, _, providers := completeEnvironmentRenderFixture(environment)
+				legacyRoot := t.TempDir()
+				t.Setenv("RTK_CLOUD_CONFIG_ROOT", legacyRoot)
+				legacyPath := filepath.Join(legacyRoot, environment, "deployment", "release.json")
+				if mode == "legacy-file-invalid" {
+					if err := os.MkdirAll(filepath.Dir(legacyPath), 0700); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(legacyPath, []byte("invalid retired file"), 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+
 				rootSHA, leafSHA := strings.Repeat("a", 40), strings.Repeat("b", 40)
 				if mode == "mutable-provider" {
 					providers.Images["LKE_POSTGRES_IMAGE"] = environmentReleaseImage{Reference: "postgres:16-alpine"}
 				}
 				cfg := deploymentConfig{Workspace: "/frozen", Environment: environment, Values: map[string]string{"CLOUD_STACK_NAME": "video-cloud-" + environment, "DEPLOYMENT_POSTGRES_BACKUP_ENABLED": "true"}}
+				for key, image := range providers.Images {
+					if image.SourceRevision == "" {
+						cfg.Values[key] = image.Reference
+					}
+				}
 				if mode == "backups-disabled" {
 					cfg.Values["DEPLOYMENT_POSTGRES_BACKUP_ENABLED"] = "false"
 				}
@@ -32,6 +48,9 @@ func TestFreezeLatestReleaseUsesFrozenGitlinksAndExactPublicationForAllEnvironme
 				run := func(ctx context.Context, command string, args ...string) ([]byte, error) {
 					if mode == "private-error" {
 						return nil, errors.New("credential=never-public")
+					}
+					if command == "docker" {
+						return nil, errors.New("registry unavailable")
 					}
 					if command == "git" {
 						directory, operation := args[1], args[2]
@@ -132,8 +151,8 @@ func TestFreezeLatestReleaseUsesFrozenGitlinksAndExactPublicationForAllEnvironme
 					raw, _ := json.Marshal(manifest)
 					return publicationZIP(t, file, raw), nil
 				}
-				release, err := freezeEnvironmentRelease(context.Background(), cfg, providers, run)
-				if (err == nil) != (mode == "valid" || mode == "backups-disabled") {
+				release, err := loadEnvironmentCIImages(context.Background(), cfg, run)
+				if (err == nil) != (mode == "valid" || mode == "backups-disabled" || mode == "legacy-file-invalid") {
 					t.Fatal("release decision differs", mode, err)
 				}
 				if err != nil && strings.Contains(err.Error(), "never-public") {
@@ -259,93 +278,45 @@ func TestFreezeLatestReleaseUsesFrozenGitlinksAndExactPublicationForAllEnvironme
 		}
 	}
 }
-func TestFrozenReleaseDestinationNeverOverwritesExistingSelection(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "release.json")
-	if err := writeExclusiveEnvironmentRelease(path, []byte("reviewed release")); err != nil {
-		t.Fatal(err)
-	}
-	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0600 {
-		t.Fatal("release permissions")
-	}
-	if err := writeExclusiveEnvironmentRelease(path, []byte("replacement")); err == nil {
-		t.Fatal("overwrote reviewed release")
-	}
-	raw, _ := os.ReadFile(path)
-	if string(raw) != "reviewed release" {
-		t.Fatal("prior selection changed")
-	}
-	link := filepath.Join(t.TempDir(), "release.json")
-	if err := os.Symlink(path, link); err != nil {
-		t.Fatal(err)
-	}
-	if writeExclusiveEnvironmentRelease(link, []byte("redirect")) == nil {
-		t.Fatal("followed destination symlink")
-	}
-}
 
-func TestFrozenReleaseUsesOnlySelectedEnvironmentPrivateDirectory(t *testing.T) {
-	for _, environment := range []string{"dev", "staging", "prod"} {
-		t.Run(environment, func(t *testing.T) {
-			store := makeIsolatedTestSecretStore(t, environment)
-			workspace := writeDeploymentFixture(t, environment, "lke")
-			for _, path := range []string{
-				filepath.Join(t.TempDir(), "release.json"),
-				filepath.Join(workspace, "cloud_env", environment, "runtime", "release.json"),
-				filepath.Join(store.ConfigRoot, "other", "deployment", "releases", "release.json"),
-				filepath.Join(store.Root, "pki", "release.json"),
-				filepath.Join(store.Root, "deployment", "reports", "release.json"),
-				filepath.Join(store.Root, "deployment", "releases", "release.txt"),
-			} {
-				if err := publishEnvironmentReleaseSelection(environment, path, []byte("fixture")); err == nil {
-					t.Fatal("release escaped selected authority", path)
+func TestConfiguredProviderImagesResolveExactRegistryDigest(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("d", 64)
+	for _, mode := range []string{"valid", "pull-failed", "wrong-repository", "ambiguous", "implicit-latest"} {
+		t.Run(mode, func(t *testing.T) {
+			reference := "postgres:16-alpine"
+			if mode == "implicit-latest" {
+				reference = "postgres"
+			}
+			calls := 0
+			run := func(ctx context.Context, command string, args ...string) ([]byte, error) {
+				calls++
+				if command != "docker" {
+					t.Fatal("provider resolution used an unexpected tool")
 				}
-				// Reject the destination before loading provider evidence or querying
-				// GitHub; an invalid output is a usage error, not a publication failure.
-				if err := runEnvironmentReleaseFreeze([]string{"--workspace", workspace, "--environment", environment, "--provider-release", "/missing-provider-evidence.json", "--output", path}); err != exitCode(2) {
-					t.Fatal("invalid output reached publication verification", err)
+				if args[0] == "pull" {
+					if mode == "pull-failed" {
+						return nil, errors.New("private registry error")
+					}
+					return nil, nil
 				}
-				if _, err := os.Lstat(path); !os.IsNotExist(err) {
-					t.Fatal("rejected destination was written")
+				refs := []string{"postgres@" + digest}
+				if mode == "wrong-repository" {
+					refs = []string{"redis@" + digest}
 				}
-			}
-			path := filepath.Join(store.Root, "deployment", "releases", "candidate.json")
-			if err := publishEnvironmentReleaseSelection(environment, path, []byte("original selection")); err != nil {
-				t.Fatal(err)
-			}
-			for _, directory := range []string{store.Root, filepath.Join(store.Root, "deployment"), filepath.Dir(path)} {
-				if info, err := os.Lstat(directory); err != nil || !info.IsDir() || info.Mode().Perm() != 0700 {
-					t.Fatal("release directory was not private")
+				if mode == "ambiguous" {
+					refs = append(refs, "postgres@sha256:"+strings.Repeat("e", 64))
 				}
+				return json.Marshal(refs)
 			}
-			if info, err := os.Lstat(path); err != nil || info.Mode().Perm() != 0600 {
-				t.Fatal("release was not private")
+			selected, err := resolveConfiguredProviderImage(context.Background(), reference, run)
+			if (err == nil) != (mode == "valid") {
+				t.Fatalf("%s result=%s err=%v", mode, selected, err)
 			}
-			if err := publishEnvironmentReleaseSelection(environment, path, []byte("replacement")); err == nil {
-				t.Fatal("release selection overwritten")
+			if mode == "valid" && selected != "postgres@"+digest {
+				t.Fatal("wrong registry digest")
 			}
-			if raw, err := os.ReadFile(path); err != nil || string(raw) != "original selection" {
-				t.Fatal("existing release changed")
-			}
-			if err := os.Chmod(filepath.Dir(path), 0755); err != nil {
-				t.Fatal(err)
-			}
-			if err := publishEnvironmentReleaseSelection(environment, filepath.Join(filepath.Dir(path), "public.json"), []byte("fixture")); err == nil {
-				t.Fatal("public output directory accepted")
-			}
-			if err := os.Chmod(filepath.Dir(path), 0700); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Remove(path); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Remove(filepath.Dir(path)); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Symlink(t.TempDir(), filepath.Dir(path)); err != nil {
-				t.Fatal(err)
-			}
-			if err := publishEnvironmentReleaseSelection(environment, path, []byte("redirect")); err == nil {
-				t.Fatal("followed output directory symlink")
+			if mode == "implicit-latest" && calls != 0 {
+				t.Fatal("implicit latest was pulled")
 			}
 		})
 	}

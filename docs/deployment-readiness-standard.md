@@ -85,3 +85,12 @@ Kubernetes samples are test fixtures only. Public plan/preflight/create/upgrade
 entries use the maintained managed-PKI engine, with no private-file detection or
 static renderer fallback. Scoped legacy video-cloud deployment is rejected
 before mutation rather than rebuilding identities through deleted templates.
+
+## CI image selection
+
+Preflight reads formal service `image-manifest.json` artifacts directly for the
+selected clean workspace service revisions; the pinned selection is held in
+memory and included in the plan digest. Deployment repeats selection and requires
+the approved plan SHA-256. Missing or invalid CI publication is NO-GO. Local
+`release.json` selection and freeze-release file generation are retired. Provider
+image versions remain maintained configuration and are registry-digest pinned.

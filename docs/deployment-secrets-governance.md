@@ -54,7 +54,6 @@ not invent another workspace, worktree, external-disk or OS-specific location.
 | Plans, releases, reviewed identity bindings and execution evidence | `deployment/` |
 | Lifecycle owner/identity bindings, including independent Secret server pins | `deployment/identity-bindings.json` (bootstrap or reviewed adoption; compiler/preflight/executor read and hash the same file) |
 | Read-only adoption review candidate | `deployment/identity-bindings.candidate.json` (`deployment adopt-managed-state` writes; reviewed migration selects active bindings) |
-| Newly frozen release candidates (exclusive JSON output) | `deployment/releases/` |
 | Account Manager bootstrap retirement guard | `deployment/account-bootstrap-retired.json` |
 | Storage preparation/completion receipts and migration proofs | `deployment/storage/` |
 | Provider operational state | `deployment/adapters/<adapter>/` (LKE uses `state.env` and `account.env`) |

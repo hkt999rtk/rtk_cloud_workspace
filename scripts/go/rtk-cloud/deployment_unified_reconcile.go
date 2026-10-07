@@ -178,7 +178,7 @@ func reconcileEnvironmentExecution(ctx context.Context, api environmentReconcili
 		VerifiedAt                         time.Time
 	}{sha, outcome, deploymentplan.Digest(journal), owner.Lease, time.Now().UTC()}
 	encoded, err := json.Marshal(receipt)
-	if err != nil || writeExclusiveEnvironmentRelease(filepath.Join(attempt, "verification.json"), encoded) != nil {
+	if err != nil || writeExclusivePrivateDeploymentJSON(filepath.Join(attempt, "verification.json"), encoded) != nil {
 		return "", errors.New("private reconciliation verification cannot be persisted")
 	}
 	// Repeat the complete outcome immediately before the conditional lease
@@ -205,7 +205,7 @@ func reconcileEnvironmentExecution(ctx context.Context, api environmentReconcili
 	if err := os.Rename(active, filepath.Join(attempt, "owner")); err != nil {
 		return "", errors.New("original local fence could not be archived")
 	}
-	if err := writeExclusiveEnvironmentRelease(filepath.Join(attempt, "released.json"), encoded); err != nil {
+	if err := writeExclusivePrivateDeploymentJSON(filepath.Join(attempt, "released.json"), encoded); err != nil {
 		return "", &deploymentplan.Blocker{ID: "deployment.execution.reconciliation", Cause: "fences released but completion receipt could not be persisted", Next: "inspect the retained private reconciliation verification; repeat complete preflight before any new execution"}
 	}
 	return outcome, nil

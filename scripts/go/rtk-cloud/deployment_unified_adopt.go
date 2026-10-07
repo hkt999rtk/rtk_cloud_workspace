@@ -173,7 +173,7 @@ func archiveLegacyEnvironmentPlan(store secretStore) error {
 	if old, err := readBoundedEnvironmentFile(archive, true); err == nil && string(old) == string(raw) {
 		return nil
 	}
-	return writeExclusiveEnvironmentRelease(archive, raw)
+	return writeExclusivePrivateDeploymentJSON(archive, raw)
 }
 
 func runEnvironmentManagedAdoption(args []string) error {
@@ -181,7 +181,6 @@ func runEnvironmentManagedAdoption(args []string) error {
 	environment := fs.String("environment", "", "maintained environment")
 	workspace := fs.String("workspace", "", "workspace root")
 	root := fs.String("environment-root", "", "explicit maintained environment root")
-	releasePath := fs.String("release", "", "selected immutable release manifest")
 	output := fs.String("output", "identity-bindings.candidate.json", "new basename in the environment SecretStore deployment directory")
 	timeout := fs.Duration("timeout", 10*time.Minute, "read-only inventory deadline")
 	if err := fs.Parse(args); err != nil {
@@ -202,7 +201,9 @@ func runEnvironmentManagedAdoption(args []string) error {
 	if err != nil {
 		return exitCode(2)
 	}
-	release, err := loadEnvironmentRelease(cfg, *releasePath)
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+	release, err := loadEnvironmentCIImages(ctx, cfg, environmentCIImageCommand(cfg))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error: selected immutable release unavailable")
 		return exitCode(1)
@@ -215,8 +216,6 @@ func runEnvironmentManagedAdoption(args []string) error {
 	if err != nil {
 		return exitCode(1)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
-	defer cancel()
 	live, err := backend.Inventory(ctx, cfg.Values["CLOUD_STACK_NAME"])
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error: exact environment inventory unavailable")
@@ -255,10 +254,28 @@ func runEnvironmentManagedAdoption(args []string) error {
 		fmt.Fprintln(os.Stderr, "error: legacy plan cannot be preserved in the private environment archive")
 		return exitCode(1)
 	}
-	if err := writeExclusiveEnvironmentRelease(filepath.Join(directory, *output), raw); err != nil {
+	if err := writeExclusivePrivateDeploymentJSON(filepath.Join(directory, *output), raw); err != nil {
 		fmt.Fprintln(os.Stderr, "error: cannot publish new private bindings; existing files are never overwritten")
 		return exitCode(1)
 	}
 	fmt.Fprintf(os.Stdout, "ADOPTION CANDIDATE environment=%s bindings_sha256=%s; review lifecycle references and maintained configuration differences, then run full preflight; this is not GO\n", cfg.Environment, deploymentplan.Digest(bindings))
+	return nil
+}
+
+func writeExclusivePrivateDeploymentJSON(path string, raw []byte) error {
+	if !filepath.IsAbs(path) || len(raw) == 0 || len(raw) > 4<<20 {
+		return errors.New("bounded absolute private JSON destination required")
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	written, writeErr := file.Write(raw)
+	syncErr := file.Sync()
+	closeErr := file.Close()
+	if writeErr != nil || written != len(raw) || syncErr != nil || closeErr != nil {
+		_ = os.Remove(path)
+		return errors.New("cannot persist complete private JSON")
+	}
 	return nil
 }

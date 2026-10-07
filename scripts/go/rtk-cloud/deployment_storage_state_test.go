@@ -144,7 +144,7 @@ func TestStorageStateIsEnvironmentOwnedAndPreflightCannotCreateCompletion(t *tes
 			if err := runDeploymentPreflightWithChecksContext(context.Background(), cfg, "provision", checks, &output); err == nil || !strings.Contains(output.String(), "deployment.storage.activation") {
 				t.Fatal("preflight did not expose execution's storage blocker", err)
 			}
-			_, err = compileEnvironmentDeployment(context.Background(), cfg, "upgrade", "")
+			_, err = compileEnvironmentDeploymentWithImages(context.Background(), cfg, "upgrade", environmentRelease{}, nil)
 			blocker, ok := err.(*deploymentplan.Blocker)
 			if !ok || blocker.ID != "deployment.storage.activation" {
 				t.Fatal("common compiler omitted storage activation", err)

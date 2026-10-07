@@ -11,7 +11,7 @@ import (
 )
 
 func verifyEnvironmentRelease(ctx context.Context, cfg deploymentConfig, release environmentRelease) error {
-	return verifyEnvironmentReleaseWithCommand(ctx, cfg, release, deploymentUpgradeCommand)
+	return verifyEnvironmentReleaseWithCommand(ctx, cfg, release, environmentCIImageCommand(cfg))
 }
 
 func verifyEnvironmentReleaseWithCommand(ctx context.Context, cfg deploymentConfig, release environmentRelease, run func(context.Context, string, ...string) ([]byte, error)) error {

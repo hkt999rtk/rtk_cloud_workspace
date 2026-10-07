@@ -28,8 +28,8 @@ func unifiedCLIProfile(t *testing.T, environment string) (*compiledEnvironmentDe
 	writes := 0
 	deps := unifiedDeploymentDependencies{
 		Resolve: func(string, string, string) (deploymentConfig, error) { return c.Configuration, nil },
-		Compile: func(ctx context.Context, cfg deploymentConfig, operation, release string) (*compiledEnvironmentDeployment, error) {
-			if operation != "upgrade" || release != "/reviewed/release.json" {
+		Compile: func(ctx context.Context, cfg deploymentConfig, operation string) (*compiledEnvironmentDeployment, error) {
+			if operation != "upgrade" {
 				t.Fatal("lost operation or selected release")
 			}
 			return c, nil
@@ -62,7 +62,7 @@ func TestUnifiedPublicFlowUsesSamePlanAndRequiredGatesForAllEnvironments(t *test
 	for _, environment := range []string{"dev", "staging", "prod"} {
 		t.Run(environment, func(t *testing.T) {
 			c, deps, writes := unifiedCLIProfile(t, environment)
-			args := []string{"--environment", environment, "--release", "/reviewed/release.json"}
+			args := []string{"--environment", environment}
 			for _, action := range []string{"plan", "preflight", "upgrade"} {
 				var out, diagnostics bytes.Buffer
 				selected := append([]string{}, args...)
@@ -224,10 +224,10 @@ func TestUnifiedPublicFlowNeverExecutesIncompleteEvidenceOrUnreviewedPlan(t *tes
 					sha = strings.Repeat("b", 64)
 				}
 				action := "upgrade"
-				args := []string{"--environment", environment, "--release", "/reviewed/release.json", "--confirm", "video-cloud-" + environment, "--plan-sha256", sha}
+				args := []string{"--environment", environment, "--confirm", "video-cloud-" + environment, "--plan-sha256", sha}
 				if mode == "fast" {
 					action = "preflight"
-					args = []string{"--environment", environment, "--release", "/reviewed/release.json", "--fast"}
+					args = []string{"--environment", environment, "--fast"}
 				}
 				var out, diagnostics bytes.Buffer
 				err := runUnifiedEnvironmentDeploymentWithDependencies(context.Background(), action, args, &out, &diagnostics, deps)
@@ -265,14 +265,14 @@ func TestUnifiedReportsRejectWorktreesOtherEnvironmentsAndSymlinkParents(t *test
 	for _, environment := range []string{"dev", "staging", "prod"} {
 		t.Run(environment, func(t *testing.T) {
 			_, deps, _ := unifiedCLIProfile(t, environment)
-			deps.Compile = func(context.Context, deploymentConfig, string, string) (*compiledEnvironmentDeployment, error) {
+			deps.Compile = func(context.Context, deploymentConfig, string) (*compiledEnvironmentDeployment, error) {
 				t.Fatal("invalid report destination reached planning")
 				return nil, nil
 			}
 			store, _ := newSecretStore("", environment)
 			for _, path := range []string{filepath.Join(t.TempDir(), "report.json"), filepath.Join(store.ConfigRoot, "other", "deployment", "reports", "report.json"), filepath.Join(store.Root, "pki", "report.json"), filepath.Join(store.Root, "deployment", "reports", "report.txt")} {
 				var out, diagnostics bytes.Buffer
-				err := runUnifiedEnvironmentDeploymentWithDependencies(context.Background(), "preflight", []string{"--environment", environment, "--release", "/reviewed/release.json", "--report", path}, &out, &diagnostics, deps)
+				err := runUnifiedEnvironmentDeploymentWithDependencies(context.Background(), "preflight", []string{"--environment", environment, "--report", path}, &out, &diagnostics, deps)
 				if err != exitCode(2) {
 					t.Fatal("deployment report escaped its environment authority", err)
 				}
@@ -299,7 +299,7 @@ func TestUnifiedReportsRetainSanitizedAcceptanceResourceAndRepair(t *testing.T) 
 		return &deploymentplan.Blocker{ID: "deployment.post-deploy.workloads", Resource: "Deployment/video-cloud-dev-application/application", Cause: "runtime image cannot be verified", Next: "repair the original planned runtime"}
 	}
 	var out, diagnostics bytes.Buffer
-	err := runUnifiedEnvironmentDeploymentWithDependencies(context.Background(), "upgrade", []string{"--environment", "dev", "--release", "/reviewed/release.json", "--confirm", "video-cloud-dev", "--plan-sha256", c.Plan.SHA256()}, &out, &diagnostics, deps)
+	err := runUnifiedEnvironmentDeploymentWithDependencies(context.Background(), "upgrade", []string{"--environment", "dev", "--confirm", "video-cloud-dev", "--plan-sha256", c.Plan.SHA256()}, &out, &diagnostics, deps)
 	if err == nil || !strings.Contains(out.String(), "deployment.post-deploy.workloads") || !strings.Contains(out.String(), "Deployment/video-cloud-dev-application/application") || !strings.Contains(out.String(), "repair the original planned runtime") || !strings.Contains(out.String(), "completed=false") {
 		t.Fatal("acceptance repair lost", err, out.String())
 	}
@@ -363,12 +363,12 @@ func TestUnifiedPreflightPreparesBucketBeforeCompilationAndStopsOnFailure(t *tes
 			}
 			return nil
 		}
-		deps.Compile = func(ctx context.Context, cfg deploymentConfig, operation, release string) (*compiledEnvironmentDeployment, error) {
+		deps.Compile = func(ctx context.Context, cfg deploymentConfig, operation string) (*compiledEnvironmentDeployment, error) {
 			compiled++
-			return compile(ctx, cfg, operation, release)
+			return compile(ctx, cfg, operation)
 		}
 		var out bytes.Buffer
-		err := runUnifiedEnvironmentDeploymentWithDependencies(context.Background(), "preflight", []string{"--environment", "dev", "--release", "/reviewed/release.json"}, &out, &out, deps)
+		err := runUnifiedEnvironmentDeploymentWithDependencies(context.Background(), "preflight", []string{"--environment", "dev"}, &out, &out, deps)
 		if calls != 1 || (err != nil) != fail || (compiled == 0) != fail {
 			t.Fatalf("prepare=%d compile=%d err=%v", calls, compiled, err)
 		}

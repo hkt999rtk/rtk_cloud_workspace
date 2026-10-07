@@ -18,14 +18,14 @@ import (
 )
 
 type unifiedDeploymentOptions struct {
-	Action, Environment, EnvironmentRoot, Workspace, Release, Operation, Confirm, PlanSHA256, Report string
-	Fast                                                                                             bool
-	Timeout                                                                                          time.Duration
+	Action, Environment, EnvironmentRoot, Workspace, Operation, Confirm, PlanSHA256, Report string
+	Fast                                                                                    bool
+	Timeout                                                                                 time.Duration
 }
 type unifiedDeploymentDependencies struct {
 	PrepareStorage func(context.Context, deploymentConfig, io.Writer) error
 	Resolve        func(string, string, string) (deploymentConfig, error)
-	Compile        func(context.Context, deploymentConfig, string, string) (*compiledEnvironmentDeployment, error)
+	Compile        func(context.Context, deploymentConfig, string) (*compiledEnvironmentDeployment, error)
 	Checks         func(*compiledEnvironmentDeployment) map[string]deploymentplan.GateCheck
 	Execute        func(context.Context, *compiledEnvironmentDeployment, string, func(context.Context, *deploymentplan.Plan) error, func(context.Context, *compiledEnvironmentDeployment) error) error
 	Accept         func(context.Context, *compiledEnvironmentDeployment) error
@@ -216,7 +216,6 @@ func parseUnifiedDeploymentOptions(action string, args []string, out io.Writer) 
 	fs.StringVar(&o.Environment, "environment", "", "selected maintained environment")
 	fs.StringVar(&o.EnvironmentRoot, "environment-root", "", "explicit maintained environment root")
 	fs.StringVar(&o.Workspace, "workspace", "", "workspace root")
-	fs.StringVar(&o.Release, "release", "", "immutable formal release manifest; defaults to the environment SecretStore deployment/release.json")
 	fs.StringVar(&o.Operation, "operation", o.Operation, "create or upgrade")
 	fs.StringVar(&o.Confirm, "confirm", "", "exact environment stack confirmation for execution")
 	fs.StringVar(&o.PlanSHA256, "plan-sha256", "", "exact reviewed plan SHA-256; required for execution")
@@ -315,7 +314,7 @@ func runUnifiedEnvironmentDeploymentWithDependencies(parent context.Context, act
 			return emitUnifiedDeploymentReport(out, diagnostics, o.Report, report, exitCode(1))
 		}
 	}
-	c, err := deps.Compile(ctx, cfg, o.Operation, o.Release)
+	c, err := deps.Compile(ctx, cfg, o.Operation)
 	if err != nil {
 		// Never print compiler/provider output: it can contain private payloads.
 		row := deploymentplan.GateResult{ID: "deployment.target", Status: "BLOCKED", Required: true, Cause: "complete target plan could not be compiled", Next: "select the exact formal release and repair maintained configuration, managed identity bindings, ownership and migration prerequisites", Impact: "the complete environment update has no executable reviewed plan", Recheck: "repeat full preflight for the same release"}

@@ -54,10 +54,6 @@ func TestCompleteCompilerUsesMaintainedCatalogAndFencesNativeSnapshot(t *testing
 			release.Images["LKE_POSTGRES_BACKUP_RUNNER_IMAGE"] = environmentReleaseImage{Reference: protection.RunnerImage, SourceRevision: release.WorkspaceRevision}
 			raw, _ = json.Marshal(protection)
 			writeTestFile(t, filepath.Join(cfg.EnvironmentRoot, "postgres-backup.json"), string(raw))
-			raw, _ = json.Marshal(release)
-			if err := store.write("deployment/release.json", raw, true); err != nil {
-				t.Fatal(err)
-			}
 			if err := store.write("runtime/postgres-backup", []byte("fixture-backup-password"), true); err != nil {
 				t.Fatal(err)
 			}
@@ -174,7 +170,7 @@ esac
 			admissionPath := filepath.Join(directory, "admission.jsonl")
 			t.Setenv("RTK_COMPILE_ADMISSION", admissionPath)
 			t.Setenv("RTK_COMPILE_MUTATE_ADMISSION", "0")
-			compiled, err := compileEnvironmentDeployment(context.Background(), cfg, "upgrade", "")
+			compiled, err := compileEnvironmentDeploymentWithImages(context.Background(), cfg, "upgrade", release, nil)
 			if err != nil {
 				t.Fatal("complete compiler failed", err)
 			}
@@ -219,7 +215,7 @@ esac
 			if err := store.write("deployment/managed-upgrade.json", []byte("retired invalid schema-1 plan"), true); err != nil {
 				t.Fatal(err)
 			}
-			repeated, err := compileEnvironmentDeployment(context.Background(), cfg, "upgrade", "")
+			repeated, err := compileEnvironmentDeploymentWithImages(context.Background(), cfg, "upgrade", release, nil)
 			if err != nil || repeated.Plan.SHA256() != approved {
 				t.Fatal("retired private plan changed the common compiler", err)
 			}
@@ -239,7 +235,7 @@ esac
 			raw, _ = json.Marshal(dependencies)
 			writeTestFile(t, filepath.Join(directory, "dependencies.json"), string(raw))
 			admittedBefore := readTestFile(t, admissionPath)
-			if _, err := compileEnvironmentDeployment(context.Background(), cfg, "upgrade", ""); !errors.As(err, &blocker) || blocker.ID != "deployment.pki.bindings" || strings.Contains(err.Error(), "private-pin-canary") {
+			if _, err := compileEnvironmentDeploymentWithImages(context.Background(), cfg, "upgrade", release, nil); !errors.As(err, &blocker) || blocker.ID != "deployment.pki.bindings" || strings.Contains(err.Error(), "private-pin-canary") {
 				t.Fatal("complete compiler ignored original PKI bindings", err)
 			}
 			if readTestFile(t, admissionPath) != admittedBefore {

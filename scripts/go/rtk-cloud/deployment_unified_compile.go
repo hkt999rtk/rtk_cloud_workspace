@@ -23,7 +23,7 @@ type compiledEnvironmentDeployment struct {
 	Store         secretStore
 	Backend       environmentKubernetesBackend
 	Configuration deploymentConfig
-	ReleasePath   string
+	SourceCommand environmentReleaseCommand
 }
 
 type environmentDeploymentSnapshot struct {
@@ -164,7 +164,16 @@ func readEnvironmentDeploymentSnapshot(cfg deploymentConfig, store secretStore) 
 	return environmentDeploymentSnapshot{DNSStateSHA256: dnsDigest, Operator: operator, Secrets: secrets, Kubeconfig: kubeconfig, PostgresProtection: protection, StorageEvidenceSHA256: storageEvidence, ProviderState: providerState, ProviderAccount: account}, nil
 }
 
-func compileEnvironmentDeployment(ctx context.Context, cfg deploymentConfig, operation, releasePath string) (*compiledEnvironmentDeployment, error) {
+func compileEnvironmentDeployment(ctx context.Context, cfg deploymentConfig, operation string) (*compiledEnvironmentDeployment, error) {
+	run := environmentCIImageCommand(cfg)
+	release, err := loadEnvironmentCIImages(ctx, cfg, run)
+	if err != nil {
+		return nil, err
+	}
+	return compileEnvironmentDeploymentWithImages(ctx, cfg, operation, release, run)
+}
+
+func compileEnvironmentDeploymentWithImages(ctx context.Context, cfg deploymentConfig, operation string, release environmentRelease, sourceCommand environmentReleaseCommand) (*compiledEnvironmentDeployment, error) {
 	if err := validateDeploymentStorageActivation(cfg); err != nil {
 		return nil, &deploymentplan.Blocker{ID: "deployment.storage.activation", Cause: "completed environment storage activation evidence is unavailable or invalid", Next: "import the exact original completed receipt/proof with deployment storage-import-state, or finish the managed storage lifecycle; preflight cannot produce completion evidence"}
 	}
@@ -177,10 +186,6 @@ func compileEnvironmentDeployment(ctx context.Context, cfg deploymentConfig, ope
 	}
 	if cfg.Adapter != "lke" {
 		return nil, errors.New("deployment.adapter: selected infrastructure adapter has no complete shared implementation")
-	}
-	release, err := loadEnvironmentRelease(cfg, releasePath)
-	if err != nil {
-		return nil, &deploymentplan.Blocker{ID: "deployment.release", Cause: "selected release manifest is missing, invalid or belongs to another environment/stack", Next: "select a complete exact-source formal CI release with immutable images; pass --release or maintain ~/.config/rtk_cloud/<environment>/deployment/release.json"}
 	}
 	store, err := newSecretStore("", cfg.Environment)
 	if err != nil {
@@ -275,7 +280,7 @@ func compileEnvironmentDeployment(ctx context.Context, cfg deploymentConfig, ope
 		return nil, err
 	}
 	plan.StorageSHA256 = deploymentplan.Digest(storage)
-	compiled := &compiledEnvironmentDeployment{Plan: plan, Release: release, Bindings: bindings, Store: store, Backend: backend, Configuration: cfg, ReleasePath: releasePath}
+	compiled := &compiledEnvironmentDeployment{Plan: plan, Release: release, Bindings: bindings, Store: store, Backend: backend, Configuration: cfg, SourceCommand: sourceCommand}
 	if err := compiled.Fence(ctx, plan); err != nil {
 		return nil, err
 	}
@@ -302,9 +307,13 @@ func (c *compiledEnvironmentDeployment) Fence(ctx context.Context, plan *deploym
 	if err != nil || digest != plan.ConfigurationSHA256 {
 		return errors.New("deployment.inputs: maintained configuration or environment credentials changed")
 	}
-	release, err := loadEnvironmentRelease(fresh, c.ReleasePath)
-	if err != nil || deploymentplan.Digest(release) != plan.ReleaseSHA256 {
-		return errors.New("deployment.inputs: selected release changed")
+	if deploymentplan.Digest(c.Release) != plan.ReleaseSHA256 {
+		return errors.New("deployment.inputs: pinned CI image selection changed")
+	}
+	if c.SourceCommand != nil {
+		if err := verifyEnvironmentImageSources(ctx, fresh, c.Release, c.SourceCommand); err != nil {
+			return err
+		}
 	}
 	bindings, err := loadEnvironmentIdentityBindings(c.Store)
 	if err != nil || deploymentplan.Digest(bindings) != plan.BindingsSHA256 {
@@ -390,15 +399,4 @@ func bindRetainedEnvironmentDependencies(definitions []deploymentplan.Definition
 		sort.Strings(definitions[i].Dependencies)
 	}
 	return definitions, nil
-}
-
-func selectedEnvironmentReleasePath(cfg deploymentConfig, path string) string {
-	if path != "" {
-		return path
-	}
-	store, err := newSecretStore("", cfg.Environment)
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(store.Root, "deployment", "release.json")
 }

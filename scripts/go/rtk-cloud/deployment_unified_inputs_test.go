@@ -1,53 +1,13 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 )
-
-func TestEnvironmentReleaseRequiresExplicitImmutableCompleteIntent(t *testing.T) {
-	for _, environment := range []string{"dev", "staging", "prod"} {
-		t.Run(environment, func(t *testing.T) {
-			t.Setenv("RTK_CLOUD_CONFIG_ROOT", t.TempDir())
-			cfg := deploymentConfig{Environment: environment, EnvironmentRoot: t.TempDir(), Values: map[string]string{"CLOUD_STACK_NAME": "video-cloud-" + environment}}
-			if _, err := loadEnvironmentRelease(cfg, ""); err == nil {
-				t.Fatal("missing release used implicit latest")
-			}
-			release := environmentRelease{Schema: "rtk-cloud.release/v1", Environment: environment, Stack: cfg.Values["CLOUD_STACK_NAME"], WorkspaceRevision: strings.Repeat("a", 40), Images: map[string]environmentReleaseImage{"LKE_VIDEO_CLOUD_IMAGE": {Reference: "ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api@sha256:" + strings.Repeat("b", 64), SourceRevision: strings.Repeat("c", 40)}}}
-			write := func() {
-				raw, _ := json.Marshal(release)
-				path := selectedEnvironmentReleasePath(cfg, "")
-				if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(path, raw, 0600); err != nil {
-					t.Fatal(err)
-				}
-			}
-			write()
-			if selectedEnvironmentReleasePath(cfg, "") == filepath.Join(cfg.EnvironmentRoot, "release.json") {
-				t.Fatal("selected release would make workspace revision self-referential")
-			}
-			if _, err := loadEnvironmentRelease(cfg, ""); err != nil {
-				t.Fatal(err)
-			}
-			image := release.Images["LKE_VIDEO_CLOUD_IMAGE"]
-			image.Reference = "ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api:latest"
-			release.Images["LKE_VIDEO_CLOUD_IMAGE"] = image
-			write()
-			if _, err := loadEnvironmentRelease(cfg, ""); err == nil {
-				t.Fatal("mutable release passed")
-			}
-		})
-	}
-}
 
 func TestManagedBindingsCannotOverrideReleaseOrRemoveConsumer(t *testing.T) {
 	for _, environment := range []string{"dev", "staging", "prod"} {

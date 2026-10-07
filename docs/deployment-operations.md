@@ -44,7 +44,7 @@ qualification has been completed by these documentation/code changes.
 
 | Scenario | Correct entry point | Modifies cloud resources? |
 | --- | --- | --- |
-| Check tracked configuration | `deployment plan --operation upgrade --release RELEASE.json` | No |
+| Check tracked configuration | `deployment plan --operation upgrade` | No |
 | Check an existing-workload image upgrade | `scripts/check-deployment-preflight.sh --environment NAME --operation image-upgrade --manifest PLAN.json --image GHCR_DIGEST` | No cloud writes; validates exact candidate, CI, schema, startup and retained identity/configuration |
 | Check whether the desired deployment can proceed | `scripts/check-deployment-preflight.sh --environment NAME` | No; shared target plan and every required evidence gate |
 | Check the health of an existing deployment | `scripts/check-deployment-health.sh --environment NAME` | No; read-only live environment checks |
@@ -166,15 +166,18 @@ still queried and reported.
 
 Complete preflight derives the entire target in memory from maintained settings,
 managed lifecycle bindings and an immutable formal release. It does not require
-or discover a private workload-spec plan. The default selected release is
-`~/.config/rtk_cloud/<environment>/deployment/release.json`; `--release` selects
-another explicit manifest. `deployment plan` prints a sanitized plan, not GO.
+or discover a private workload-spec plan. Preflight reads the successful exact-source `image-manifest.json` artifacts
+directly from each service's formal CI Release workflow. It builds the image
+selection in memory from the current clean workspace and its service gitlinks.
+No local release file is read or written. Provider image versions belong in
+maintained architecture/environment settings; registry lookup pins configured
+version tags to digests. `deployment plan` prints a sanitized plan, not GO.
 
 ```sh
 go run ./scripts/go/rtk-cloud -- deployment plan \
-  --environment staging --operation upgrade --release "$HOME/.config/rtk_cloud/staging/deployment/release.json"
+  --environment staging --operation upgrade
 scripts/check-deployment-preflight.sh \
-  --environment staging --release "$HOME/.config/rtk_cloud/staging/deployment/release.json" \
+  --environment staging \
   --report "$HOME/.config/rtk_cloud/staging/deployment/reports/staging-preflight.json"
 ```
 
@@ -337,7 +340,7 @@ workload specs. Use the explicit migration utility to create a review candidate:
 
 ```sh
 go run ./scripts/go/rtk-cloud -- deployment adopt-managed-state \
-  --environment staging --release "$HOME/.config/rtk_cloud/staging/deployment/release.json"
+  --environment staging
 ```
 
 This read-only cluster inventory writes a new 0600
@@ -387,7 +390,7 @@ Execution requires the exact plan SHA-256 from complete preflight:
 
 ```sh
 ./scripts/deploy-environment.sh upgrade \
-  --environment staging --release "$HOME/.config/rtk_cloud/staging/deployment/release.json" \
+  --environment staging \
   --confirm video-cloud-staging --plan-sha256 REVIEWED_SHA256
 ```
 
@@ -520,9 +523,9 @@ bootstrap lineage. Use the shared create operation:
 
 ```sh
 go run ./scripts/go/rtk-cloud -- deployment plan \
-  --environment staging --operation create --release "$HOME/.config/rtk_cloud/staging/deployment/release.json"
+  --environment staging --operation create
 scripts/check-deployment-preflight.sh \
-  --environment staging --operation create --release "$HOME/.config/rtk_cloud/staging/deployment/release.json"
+  --environment staging --operation create
 ```
 
 Fresh creation requires staged infrastructure qualification, then Kubernetes
@@ -942,31 +945,28 @@ and every skipped/blocked check. Reports may contain only sanitized evidence.
   [`testing-operations.md`](testing-operations.md), then identify data, MQTT, API,
   database, or generator bottlenecks.
 
-## Freeze the latest formal release
+## Formal CI images before deployment
 
-Use `deployment freeze-release --environment <environment> --provider-release
-<reviewed-provider-manifest> --output <new-release-manifest>` to fix the refreshed
-workspace main and every service gitlink before retrieving exact-source CI
-publication artifacts. The reviewed provider manifest follows
-`rtk-cloud.release/v1` and supplies explicit upstream digests, including PostgreSQL,
-ingress and OpenBao. Its RTK application entries are ignored and replaced by the
-frozen source's formal CI digests. When `DEPLOYMENT_POSTGRES_BACKUP_ENABLED=true`, the daily backup runner must
-have the same PostgreSQL base digest and its formal publication is required.
-Missing API, MQTT PKI or any other enabled consumer publication blocks selection.
+Preflight, plan, adoption and deployment read formal service `image-manifest.json`
+artifacts directly. They freeze the executing workspace revision and service
+pointers, require successful exact-source main publication with matching run,
+attempt and immutable digests, and reject missing/expired/mismatched evidence.
+The executing checkout must be clean. A different CI image selection changes the
+plan SHA-256, so deployment refuses a previously approved plan rather than
+silently selecting a new image.
 
-The command writes a new 0600 file, never overwrites the selected release, and
-prints `FROZEN`, which is publication selection evidence rather than deployment
-GO. Review the output and pass it as `--release` to full preflight. A dirty or
-out-of-date checkout, pending/failed latest exact-source run, wrong rerun artifact,
-missing consumer digest or mismatched backup base requires repair and a new freeze.
-No environment resources are installed by release freezing.
+Upstream provider versions use maintained `LKE_*_IMAGE` settings in the shared
+architecture or environment overrides. Configured version tags are resolved to
+matching immutable registry digests; missing configuration or registry failure is
+NO-GO. At minimum PostgreSQL, ingress and OpenBao versions must be explicit.
+`GHCR_PULL_TOKEN` in the selected environment operator store supplies GitHub
+artifact access. No environment deployment has to run to produce these inputs.
 
-The new manifest destination must be an absolute JSON filename under
-`~/.config/rtk_cloud/<environment>/deployment/releases/` with real 0700 parent
-directories. The writer creates missing private directories and writes a new
-0600 file; existing selections are never overwritten. External/worktree and
-other-environment output paths are rejected before querying publication. Review
-the resulting candidate and pass that same canonical path to `--release`.
+Local `deployment/release.json`, candidate release files, `--release` and
+`deployment freeze-release` are retired. Existing old files are not consumed as a
+fallback. The compiler uses CI metadata in memory; operational plans, reports and
+journals retain their canonical environment-store paths and private permissions.
+
 ## Environment-owned storage evidence
 
 Storage receipts and migration proofs live under `~/.config/rtk_cloud/<environment>/deployment/storage/` (0700 directories, 0600 files); completed private journals remain in `migration-backup/`. Preflight and deployment validate the same state. Preflight never performs cutover or creates completion evidence. Workspace runtime files are explicit legacy import sources only. See [storage evidence location and import](storage-credential-lifecycle.md#environment-owned-receipts-and-proof-location).

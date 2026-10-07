@@ -47,10 +47,6 @@ func maintainedDeploymentSnapshotFixture(t *testing.T, environment string) (depl
 	if err := store.write("deployment/identity-bindings.json", raw, true); err != nil {
 		t.Fatal(err)
 	}
-	raw, _ = json.Marshal(release)
-	if err := store.write("deployment/release.json", raw, true); err != nil {
-		t.Fatal(err)
-	}
 	return cfg, store, release, bindings
 }
 
@@ -99,8 +95,7 @@ func TestMaintainedSnapshotAndNativeFenceRejectInputDriftAcrossEnvironments(t *t
 					store.write("operator/env/LINODE_TOKEN", []byte("changed"), true)
 				case "release-drift":
 					release.WorkspaceRevision = strings.Repeat("c", 40)
-					raw, _ = json.Marshal(release)
-					store.write("deployment/release.json", raw, true)
+					compiled.Release = release
 				case "binding-drift":
 					bindings.Owners["Service/"+bindings.Stack+"-platform/unchanged"] = "changed"
 					raw, _ = json.Marshal(bindings)

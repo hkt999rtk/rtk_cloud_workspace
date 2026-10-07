@@ -157,3 +157,12 @@ configuration/plan hashing, native PKI qualification and execution deadlines.
 A required missing or invalid value is NO-GO; runtime code must not invent a
 window or extend an approved deadline. See the deployment readiness standard
 for the remaining required trust-consumer and recovery gates.
+
+### Deployment image inputs
+
+Service images come directly from exact-source formal CI `image-manifest.json`
+artifacts. The compiler holds their verified immutable selection in memory; a
+local release file is not a configuration input or deployment prerequisite.
+Provider image versions are explicit `LKE_*_IMAGE` settings in maintained shared
+architecture/environment configuration. Preflight resolves their registry digests
+and includes the complete selected images in the approved plan SHA-256.

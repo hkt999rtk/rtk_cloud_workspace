@@ -4,19 +4,114 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"flag"
-	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
+	"sort"
 	"strings"
 	"time"
 )
 
+var environmentProviderImageKeys = []string{
+	"LKE_POSTGRES_IMAGE", "LKE_REDIS_IMAGE", "LKE_FLEET_VALKEY_IMAGE", "LKE_REDIS_EXPORTER_IMAGE",
+	"LKE_MQTT_IMAGE", "LKE_PROMETHEUS_IMAGE", "LKE_LOKI_IMAGE", "LKE_GRAFANA_IMAGE",
+	"LKE_LOG_COLLECTOR_IMAGE", "LKE_OPENBAO_IMAGE", "LKE_UTILITY_IMAGE", "LKE_ALPINE_IMAGE", "LKE_INGRESS_IMAGE",
+}
+
+func loadEnvironmentCIImages(ctx context.Context, cfg deploymentConfig, run environmentReleaseCommand) (environmentRelease, error) {
+	providers := environmentRelease{Environment: cfg.Environment, Stack: cfg.Values["CLOUD_STACK_NAME"], Images: map[string]environmentReleaseImage{}}
+	values := appendMap(cfg.Values, cfg.AdapterResolved)
+	for _, key := range environmentProviderImageKeys {
+		reference := strings.TrimSpace(values[key])
+		if reference == "" {
+			continue
+		}
+		pinned, err := resolveConfiguredProviderImage(ctx, reference, run)
+		if err != nil {
+			return environmentRelease{}, &deploymentplan.Blocker{ID: "deployment.provider.images", Resource: key, Cause: "configured provider image cannot be pinned to an immutable registry digest", Next: "correct the maintained provider image reference and registry access, then repeat preflight"}
+		}
+		providers.Images[key] = environmentReleaseImage{Reference: pinned}
+	}
+	selected, err := resolveEnvironmentCIImages(ctx, cfg, providers, run)
+	if err != nil {
+		var blocker *deploymentplan.Blocker
+		if errors.As(err, &blocker) {
+			return selected, err
+		}
+		return selected, &deploymentplan.Blocker{ID: "deployment.release", Cause: "the selected workspace service revisions have no complete verifiable formal CI image-manifest.json selection", Next: "check GitHub access and exact-source successful Release publication with unexpired image-manifest artifacts; publish any missing service revision, then repeat preflight"}
+	}
+	return selected, nil
+}
+
+func resolveConfiguredProviderImage(ctx context.Context, reference string, run environmentReleaseCommand) (string, error) {
+	if immutableEnvironmentImage.MatchString(reference) {
+		return reference, nil
+	}
+	if run == nil || reference == "" || strings.ContainsAny(reference, " \t\r\n") || strings.HasPrefix(reference, "-") || strings.HasSuffix(reference, ":latest") || strings.LastIndex(reference, ":") <= strings.LastIndex(reference, "/") {
+		return "", errors.New("explicit configured provider version required")
+	}
+	if _, err := run(ctx, "docker", "pull", "--platform", "linux/amd64", reference); err != nil {
+		return "", errors.New("configured provider image unavailable")
+	}
+	raw, err := run(ctx, "docker", "image", "inspect", reference, "--format", "{{json .RepoDigests}}")
+	var refs []string
+	if err != nil || json.Unmarshal(raw, &refs) != nil {
+		return "", errors.New("provider registry digest unavailable")
+	}
+	selected := ""
+	for _, candidate := range refs {
+		if immutableEnvironmentImage.MatchString(candidate) && environmentImageRepository(candidate) == environmentImageRepository(reference) {
+			if selected != "" && selected != candidate {
+				return "", errors.New("provider registry digest is ambiguous")
+			}
+			selected = candidate
+		}
+	}
+	if selected == "" {
+		return "", errors.New("provider registry digest does not match the configured repository")
+	}
+	return selected, nil
+}
+
+func verifyEnvironmentImageSources(ctx context.Context, cfg deploymentConfig, selected environmentRelease, run environmentReleaseCommand) error {
+	if err := verifyEnvironmentReleaseCheckout(ctx, cfg.Workspace, selected.WorkspaceRevision, run); err != nil {
+		return err
+	}
+	keys := make([]string, 0, len(selected.Images))
+	for key := range selected.Images {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	seen := map[string]bool{}
+	for _, key := range keys {
+		image := selected.Images[key]
+		if image.SourceRevision == "" || !strings.HasPrefix(image.Reference, "ghcr.io/hkt999rtk/") {
+			continue
+		}
+		if strings.Contains(image.Reference, "/rtk_cloud_workspace/postgres-backup@") {
+			continue
+		}
+		source, err := deploymentUpgradeImageSource(image.Reference)
+		if err != nil {
+			return err
+		}
+		if seen[source.RepoPath] {
+			continue
+		}
+		seen[source.RepoPath] = true
+		if err := verifyEnvironmentReleaseCheckout(ctx, filepath.Join(cfg.Workspace, source.RepoPath), image.SourceRevision, run); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type environmentReleaseCommand func(context.Context, string, ...string) ([]byte, error)
 
-// Freeze all source revisions before asking CI for publication. The reviewed
-// provider manifest supplies immutable upstream versions, never application tags.
-func freezeEnvironmentRelease(ctx context.Context, cfg deploymentConfig, providers environmentRelease, run environmentReleaseCommand) (environmentRelease, error) {
+// Resolve the selected workspace service revisions from formal CI image-manifest
+// artifacts. Provider versions come from maintained configuration, not a file.
+func resolveEnvironmentCIImages(ctx context.Context, cfg deploymentConfig, providers environmentRelease, run environmentReleaseCommand) (environmentRelease, error) {
 	result := environmentRelease{Schema: "rtk-cloud.release/v1", Environment: cfg.Environment, Stack: cfg.Values["CLOUD_STACK_NAME"], Images: map[string]environmentReleaseImage{}}
 	if run == nil || providers.Environment != result.Environment || providers.Stack != result.Stack {
 		return result, errors.New("deployment.release: reviewed provider selection must match the environment")
@@ -29,15 +124,8 @@ func freezeEnvironmentRelease(ctx context.Context, cfg deploymentConfig, provide
 	if err := verifyEnvironmentReleaseCheckout(ctx, cfg.Workspace, result.WorkspaceRevision, run); err != nil {
 		return result, err
 	}
-	// Refresh main before describing this as latest. Fetch does not change the
-	// checkout; out-of-date source must be synchronized separately.
-	if _, err := run(ctx, "git", "-C", cfg.Workspace, "fetch", "--prune", "origin", "main"); err != nil {
-		return result, errors.New("deployment.release.source: remote main cannot be refreshed")
-	}
-	raw, err = run(ctx, "git", "-C", cfg.Workspace, "rev-parse", "origin/main")
-	if err != nil || strings.TrimSpace(string(raw)) != result.WorkspaceRevision {
-		return result, errors.New("deployment.release.source: synchronize the workspace to refreshed main before selecting latest")
-	}
+	// The clean selected workspace is the deployment target. Each pinned service
+	// revision must have its own successful formal CI publication below.
 	type frozenSource struct {
 		source   lkeServiceImageSource
 		revision string
@@ -65,9 +153,6 @@ func freezeEnvironmentRelease(ctx context.Context, cfg deploymentConfig, provide
 		}
 		result.Images[key] = image
 	}
-	if result.Images["LKE_POSTGRES_IMAGE"].Reference == "" || result.Images["LKE_INGRESS_IMAGE"].Reference == "" || result.Images["LKE_OPENBAO_IMAGE"].Reference == "" {
-		return result, errors.New("deployment.release: reviewed PostgreSQL, ingress and OpenBao provider selections required")
-	}
 	for _, frozen := range sources {
 		repo := "hkt999rtk/" + frozen.source.RepoName
 		evidence, runID, attempt, err := latestEnvironmentPublication(ctx, repo, "release.yml", frozen.revision, false, run)
@@ -87,6 +172,9 @@ func freezeEnvironmentRelease(ctx context.Context, cfg deploymentConfig, provide
 			}
 			result.Images["LKE_MQTT_PKI_IMAGE"] = image
 		}
+	}
+	if result.Images["LKE_POSTGRES_IMAGE"].Reference == "" || result.Images["LKE_INGRESS_IMAGE"].Reference == "" || result.Images["LKE_OPENBAO_IMAGE"].Reference == "" {
+		return result, &deploymentplan.Blocker{ID: "deployment.provider.images", Cause: "maintained PostgreSQL, ingress or OpenBao image version is not configured", Next: "maintain LKE_POSTGRES_IMAGE, LKE_INGRESS_IMAGE and LKE_OPENBAO_IMAGE in the common architecture or environment overrides; preflight pins their registry digests without a local release.json"}
 	}
 	if cfg.Values["DEPLOYMENT_POSTGRES_BACKUP_ENABLED"] == "true" {
 		repo := "hkt999rtk/rtk_cloud_workspace"
@@ -172,87 +260,28 @@ func selectEnvironmentPublishedImage(raw []byte, repo string, id int64, attempt 
 	return image, nil
 }
 
-func runEnvironmentReleaseFreeze(args []string) error {
-	fs := flag.NewFlagSet("deployment freeze-release", flag.ContinueOnError)
-	environment := fs.String("environment", "", "maintained environment")
-	workspace := fs.String("workspace", "", "workspace root")
-	environmentRoot := fs.String("environment-root", "", "explicit maintained environment root")
-	providerRelease := fs.String("provider-release", "", "reviewed immutable provider release manifest")
-	output := fs.String("output", "", "new absolute JSON manifest under ~/.config/rtk_cloud/<environment>/deployment/releases/; existing files are never overwritten")
-	timeout := fs.Duration("timeout", 10*time.Minute, "source and publication deadline")
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return nil
+func environmentCIImageCommand(cfg deploymentConfig) environmentReleaseCommand {
+	return func(ctx context.Context, command string, args ...string) ([]byte, error) {
+		if command != "gh" {
+			return deploymentUpgradeCommand(ctx, command, args...)
 		}
-		return exitCode(2)
-	}
-	if fs.NArg() != 0 || *environment == "" || *providerRelease == "" || *output == "" || *timeout <= 0 {
-		fmt.Fprintln(os.Stderr, "error: --environment, --provider-release, --output and a positive --timeout are required")
-		return exitCode(2)
-	}
-	cfg, err := resolveDeploymentConfig(*workspace, *environment, *environmentRoot)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "error: maintained configuration unavailable")
-		return exitCode(2)
-	}
-	if err := validateEnvironmentDeploymentJSONPath(cfg.Environment, *output, "releases"); err != nil {
-		fmt.Fprintln(os.Stderr, "error: --output must be a new JSON file in the selected environment deployment/releases directory with private real parent directories")
-		return exitCode(2)
-	}
-	providers, err := loadEnvironmentRelease(cfg, *providerRelease)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "NO-GO deployment.release: reviewed immutable provider selection unavailable")
-		return exitCode(1)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
-	defer cancel()
-	release, err := freezeEnvironmentRelease(ctx, cfg, providers, deploymentUpgradeCommand)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "NO-GO deployment.release: frozen source, exact CI publication or provider compatibility could not be verified; synchronize main and republish the exact source before retrying")
-		return exitCode(1)
-	}
-	raw, err := json.MarshalIndent(release, "", "  ")
-	if err != nil {
-		return exitCode(1)
-	}
-	if err = publishEnvironmentReleaseSelection(cfg.Environment, *output, append(raw, '\n')); err != nil {
-		fmt.Fprintln(os.Stderr, "error: cannot save a new private release manifest; existing selection was preserved")
-		return exitCode(1)
-	}
-	fmt.Fprintf(os.Stdout, "FROZEN environment=%s workspace-revision=%s\nnext: review the manifest and run full preflight with --release; freezing publication is not deployment GO\n", release.Environment, release.WorkspaceRevision)
-	return nil
-}
-
-func publishEnvironmentReleaseSelection(environment, path string, raw []byte) error {
-	if err := validateEnvironmentDeploymentJSONPath(environment, path, "releases"); err != nil {
-		return err
-	}
-	store, err := newSecretStore("", environment)
-	if err != nil {
-		return err
-	}
-	for _, directory := range []string{store.ConfigRoot, store.Root, filepath.Join(store.Root, "deployment"), filepath.Dir(path)} {
-		if err := ensurePrivateDirectory(directory); err != nil {
-			return err
+		store, err := newSecretStore("", cfg.Environment)
+		if err != nil {
+			return nil, errors.New("selected environment credentials unavailable")
 		}
+		operator, err := store.readOperator()
+		if err != nil || operator["GHCR_PULL_TOKEN"] == "" {
+			return nil, errors.New("selected environment GHCR_PULL_TOKEN is required for formal CI artifact access")
+		}
+		readCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(readCtx, command, args...)
+		cmd.WaitDelay = time.Second
+		cmd.Env = append(os.Environ(), "GH_TOKEN="+operator["GHCR_PULL_TOKEN"])
+		raw, err := cmd.Output()
+		if err != nil {
+			return nil, errors.New("formal CI artifact access failed; check environment token permissions and provider availability")
+		}
+		return raw, nil
 	}
-	return writeExclusiveEnvironmentRelease(path, raw)
-}
-
-func writeExclusiveEnvironmentRelease(path string, raw []byte) error {
-	if !filepath.IsAbs(path) || len(raw) == 0 || len(raw) > 4<<20 {
-		return errors.New("bounded absolute release destination required")
-	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-	if err != nil {
-		return err
-	}
-	written, writeErr := file.Write(raw)
-	syncErr := file.Sync()
-	closeErr := file.Close()
-	if writeErr != nil || written != len(raw) || syncErr != nil || closeErr != nil {
-		_ = os.Remove(path)
-		return errors.New("cannot persist complete release selection")
-	}
-	return nil
 }

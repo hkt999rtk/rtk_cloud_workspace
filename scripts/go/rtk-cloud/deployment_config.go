@@ -128,6 +128,9 @@ func architectureKeySet() map[string]bool {
 		"CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM", "CERTIFICATE_APP_CSR_KEY_ALGORITHMS", "CERTIFICATE_DEVICE_CSR_KEY_ALGORITHMS",
 		"EDGE_REPLICAS", "EDGE_MAX_CONNECTIONS", "TURN_REPLICAS", "TURN_MIN_PORT", "TURN_MAX_PORT",
 	)
+	for _, key := range environmentProviderImageKeys {
+		out[key] = true
+	}
 	for _, key := range capacitySourceKeys() {
 		out[key] = true
 	}
@@ -152,7 +155,7 @@ func runDeployment(args []string) error {
 		case "plan", "create", "upgrade", "preflight":
 			return runUnifiedEnvironmentDeployment(args[0], args[1:])
 		case "freeze-release":
-			return runEnvironmentReleaseFreeze(args[1:])
+			return errors.New("freeze-release and local release.json selections are retired; preflight reads formal CI image-manifest.json artifacts directly")
 		case "adopt-managed-state":
 			return runEnvironmentManagedAdoption(args[1:])
 		case "reconcile-execution":
@@ -164,7 +167,7 @@ func runDeployment(args []string) error {
 		case "provider-import-state":
 			return runDeploymentProviderImport(args[1:])
 		case "prepare-upgrade":
-			return errors.New("prepare-upgrade and schema-1 workload plans are retired; select the formal --release, maintain identity bindings, then use deployment plan and full preflight")
+			return errors.New("prepare-upgrade and schema-1 workload plans are retired; use formal CI image manifests, maintain identity bindings, then use deployment plan and full preflight")
 		case "provision", "test":
 			return errors.New("legacy full provision/test is retired; use deployment plan/create/upgrade with the selected formal release and exact --plan-sha256; bootstrap and isolated qualification must pass their required gates")
 		}
@@ -777,13 +780,12 @@ func printDeploymentUsage() {
   rtk-cloud deployment credentials-check --environment NAME --read-only [--checks ghcr,tls,mounts] [--image GHCR_DIGEST] [--manifest WORKLOAD_JSON]
   rtk-cloud deployment credentials-check --environment NAME --create-missing-object-storage-bucket
   rtk-cloud deployment credentials-check --environment NAME --grant-object-storage-bucket-access
-  rtk-cloud deployment preflight --environment NAME [--operation create|upgrade] [--release PATH] [--report PATH]
-  rtk-cloud deployment freeze-release --environment NAME --provider-release PATH --output NEW_PATH
-  rtk-cloud deployment adopt-managed-state --environment NAME [--release PATH] [--output identity-bindings.candidate.json]
-  rtk-cloud deployment plan --environment NAME [--operation create|upgrade] [--release PATH]
+  rtk-cloud deployment preflight --environment NAME [--operation create|upgrade] [--report PATH]
+  rtk-cloud deployment adopt-managed-state --environment NAME [--output identity-bindings.candidate.json]
+  rtk-cloud deployment plan --environment NAME [--operation create|upgrade]
   rtk-cloud deployment console-check --environment NAME --cloud-id UUID [--product-id UUID]
-  rtk-cloud deployment create --environment NAME --confirm STACK --plan-sha256 SHA256 [--release PATH]
-  rtk-cloud deployment upgrade --environment NAME --confirm STACK --plan-sha256 SHA256 [--release PATH]
+  rtk-cloud deployment create --environment NAME --confirm STACK --plan-sha256 SHA256
+  rtk-cloud deployment upgrade --environment NAME --confirm STACK --plan-sha256 SHA256
   rtk-cloud deployment reconcile-execution --environment NAME --confirm STACK --plan-sha256 ORIGINAL_SHA256
   rtk-cloud deployment storage-import-state --environment NAME --purpose media|ota|artifacts --source-runtime ORIGINAL_RUNTIME --confirm STACK
   rtk-cloud deployment dns-import-state --environment NAME --source-runtime ORIGINAL_RUNTIME --confirm STACK
