@@ -13,7 +13,7 @@ import (
 
 func TestDirectCIImagesUseFrozenGitlinksAndExactPublicationForAllEnvironments(t *testing.T) {
 	for _, environment := range []string{"dev", "staging", "prod"} {
-		for _, mode := range []string{"valid", "backups-disabled", "root-dirty", "leaf-dirty", "source-drift", "CI-pending", "MQTT-missing", "old-attempt", "backup-base", "mutable-provider", "legacy-file-invalid", "private-error"} {
+		for _, mode := range []string{"valid", "backups-disabled", "root-dirty", "leaf-dirty", "source-drift", "CI-pending", "MQTT-missing", "host-published", "old-attempt", "backup-base", "mutable-provider", "legacy-file-invalid", "private-error"} {
 			t.Run(environment+"/"+mode, func(t *testing.T) {
 				_, _, providers := completeEnvironmentRenderFixture(environment)
 				legacyRoot := t.TempDir()
@@ -146,13 +146,17 @@ func TestDirectCIImagesUseFrozenGitlinksAndExactPublicationForAllEnvironments(t 
 						if repo == "hkt999rtk/rtk_video_cloud" && mode != "MQTT-missing" {
 							manifest["images"] = map[string]any{"emqx_pki": map[string]any{"image": "ghcr.io/" + repo + "/video-cloud-emqx-pki", "digest": digest}}
 							refs["LKE_MQTT_PKI_IMAGE"] = "ghcr.io/" + repo + "/video-cloud-emqx-pki@" + digest
+							if mode == "host-published" {
+								manifest["images"].(map[string]any)["openbao_pki"] = map[string]any{"image": "ghcr.io/" + repo + "/video-cloud-openbao-pki", "digest": digest}
+								refs["LKE_OPENBAO_PKI_IMAGE"] = "ghcr.io/" + repo + "/video-cloud-openbao-pki@" + digest
+							}
 						}
 					}
 					raw, _ := json.Marshal(manifest)
 					return publicationZIP(t, file, raw), nil
 				}
 				release, err := loadEnvironmentCIImages(context.Background(), cfg, run)
-				if (err == nil) != (mode == "valid" || mode == "backups-disabled" || mode == "legacy-file-invalid") {
+				if (err == nil) != (mode == "valid" || mode == "host-published" || mode == "backups-disabled" || mode == "legacy-file-invalid") {
 					t.Fatal("release decision differs", mode, err)
 				}
 				if err != nil && strings.Contains(err.Error(), "never-public") {
@@ -167,13 +171,17 @@ func TestDirectCIImagesUseFrozenGitlinksAndExactPublicationForAllEnvironments(t 
 					}
 					return
 				}
-				if mode == "valid" {
+				if mode == "valid" || mode == "host-published" {
 					for _, role := range environmentProviderImageKeys {
 						if release.Images[role].Reference != cfg.Values[environmentProviderImageConfigKey(role)] {
 							t.Fatal("neutral configuration did not reach the renderer image role", role)
 						}
 					}
-					if release.WorkspaceRevision != rootSHA || release.Environment != environment || len(refs) != 8 {
+					expectedRefs := 8
+					if mode == "host-published" {
+						expectedRefs++
+					}
+					if release.WorkspaceRevision != rootSHA || release.Environment != environment || len(refs) != expectedRefs {
 						t.Fatal("incomplete frozen release")
 					}
 					for key, reference := range refs {

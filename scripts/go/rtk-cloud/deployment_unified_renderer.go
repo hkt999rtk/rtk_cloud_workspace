@@ -209,10 +209,10 @@ func renderEnvironmentResources(env map[string]string, bindings environmentIdent
 			return nil, fmt.Errorf("deployment.inventory: %s has bindings but no enabled renderer", id)
 		}
 		if binding.Component == "managed-openbao" {
-			if err := validateOpenBaoBindingProfile(binding); err != nil {
+			if err := validateOpenBaoTargetProfile(env, binding); err != nil {
 				return nil, err
 			}
-			for _, dependency := range environmentOpenBaoRaftDependencies(env) {
+			for _, dependency := range environmentOpenBaoDependencies(env) {
 				definitions = append(definitions, deploymentplan.Definition{Object: dependency, Phase: "configuration"})
 			}
 		}
@@ -282,7 +282,7 @@ func renderManagedEnvironmentComponent(env map[string]string, binding environmen
 		return nil, errors.New("deployment.inventory: unknown managed PKI component")
 	}
 	if binding.Name == "openbao" {
-		return renderEnvironmentOpenBaoRaft(env, binding)
+		return renderEnvironmentOpenBao(env, binding)
 	}
 	if binding.Kind != "Deployment" || binding.NamespaceSuffix != "video-cloud" {
 		return nil, errors.New("deployment.bindings: managed service has an invalid resource identity")

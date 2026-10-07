@@ -14,6 +14,7 @@ import (
 func completeEnvironmentRenderFixture(environment string) (map[string]string, environmentIdentityBindings, environmentRelease) {
 	stack := "video-cloud-" + environment
 	env := map[string]string{"CLOUD_STACK_NAME": stack, "CLOUD_ENV_NAME": environment, "OPENBAO_EFFECTIVE_REPLICAS": "3", "OPENBAO_REQUEST_CPU": "500m", "OPENBAO_REQUEST_MEMORY": "512Mi", "OPENBAO_NODE_CLASS": "general", "CLOUD_DNS_ROOT_DOMAIN": "example.invalid", "TEST_LAB_ENABLED": "true", "FRONTEND_DOMAIN": "www." + environment + ".example.invalid", "CONSOLE_DOMAIN": "console." + environment + ".example.invalid"}
+	env["OPENBAO_STORAGE_BACKEND"], env["OPENBAO_DATA_STORAGE"], env["OPENBAO_AUDIT_STORAGE"], env["OPENBAO_POD_MANAGEMENT_POLICY"], env["OPENBAO_UPDATE_STRATEGY"] = "raft", "20Gi", "10Gi", "Parallel", "RollingUpdate"
 	env["PKI_APP_CRL_WORKER_ENABLED"], env["PKI_SERVER_CRL_DOMAIN"], env["PKI_REQUIRE_USER_MFA"] = "true", "service,mqtt,openbao_tls", "true"
 	env["REDIS_DATA_STORAGE"], env["PROMETHEUS_DATA_STORAGE"] = "5Gi", "20Gi"
 	for _, domain := range managedPKIDomains {
@@ -33,6 +34,8 @@ func completeEnvironmentRenderFixture(environment string) (map[string]string, en
 	}
 	release.Images["LKE_MQTT_PKI_IMAGE"] = environmentReleaseImage{Reference: "ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-emqx-pki@sha256:" + strings.Repeat("a", 64), SourceRevision: strings.Repeat("b", 40)}
 	env["LKE_MQTT_PKI_IMAGE"] = release.Images["LKE_MQTT_PKI_IMAGE"].Reference
+	release.Images["LKE_OPENBAO_PKI_IMAGE"] = environmentReleaseImage{Reference: "ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-openbao-pki@sha256:" + strings.Repeat("a", 64), SourceRevision: strings.Repeat("b", 40)}
+	env["LKE_OPENBAO_PKI_IMAGE"] = release.Images["LKE_OPENBAO_PKI_IMAGE"].Reference
 	bindings := environmentIdentityBindings{Version: 1, Environment: environment, Stack: stack, Owners: map[string]string{}}
 	for name, component := range map[string]string{"certissuer": "certissuer", "factoryenroll": "certissuer", "pki-controller": "pki-controller", "video-cloud-api-pki": "managed-api", "mqtt-pki": "managed-mqtt", "openbao": "managed-openbao"} {
 		kind, suffix, imageKey := "Deployment", "video-cloud", "LKE_VIDEO_CLOUD_IMAGE"

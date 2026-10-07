@@ -271,6 +271,9 @@ func compileEnvironmentDeploymentWithImages(ctx context.Context, cfg deploymentC
 			seen[id] = true
 		}
 	}
+	if err := bindOpenBaoAllocations(definitions, live); err != nil {
+		return nil, err
+	}
 	if err := validateEnvironmentPKITransition(definitions, live); err != nil {
 		return nil, err
 	}

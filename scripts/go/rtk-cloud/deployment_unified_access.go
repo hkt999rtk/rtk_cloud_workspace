@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 
@@ -83,6 +84,13 @@ func environmentPlanAccessRequirements(plan *deploymentplan.Plan) ([]environment
 		if resource.Action != "retain" {
 			seen[write] = true
 		}
+		if environmentOnDeleteUpdate(resource) {
+			for ordinal := 0; ordinal < envObjectReplicas(resource.Desired); ordinal++ {
+				for _, verb := range []string{"get", "delete", "watch"} {
+					seen[environmentAccessRequirement{Resource: "pods", Namespace: parts[1], Name: fmt.Sprintf("%s-%d", parts[2], ordinal), Verb: verb}] = true
+				}
+			}
+		}
 		if parts[0] == "PersistentVolumeClaim" && resource.Action != "create" {
 			volume := deploymentplan.String(deploymentplan.Map(resource.Baseline["spec"])["volumeName"])
 			if volume != "" {
@@ -134,7 +142,7 @@ func (b environmentKubernetesBackend) CheckPlanAccess(ctx context.Context, plan 
 			return err
 		}
 	}
-	return nil
+	return b.checkOpenBaoRestartAdmission(ctx, plan)
 }
 
 func (b environmentKubernetesBackend) checkEnvironmentAccess(ctx context.Context, permission environmentAccessRequirement, subresource string) error {

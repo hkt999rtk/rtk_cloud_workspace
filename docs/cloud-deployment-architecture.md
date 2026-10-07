@@ -178,9 +178,36 @@ The resource requests are maintained intent; the observed workloads omit them.
 There are no OpenBao copies in `workloads.env` or environment overrides.
 This initial single-instance baseline does not qualify production HA; the
 production qualification checks remain enforced.
-The current OpenBao renderer remains Raft-only and does not yet consume these
-five inputs; existing-environment qualification remains NO-GO until a compatible
-renderer is implemented.
+Preflight and deployment consume the same five profile inputs. The shared
+renderer supports an existing single-writer `file` installation and the explicit
+`raft` profile. Observation recognizes the mounted configuration and registered
+transport consumers; it does not require every installation to already be Raft
+or to have only one container. A backend, immutable claim-size or pod-management
+policy mismatch remains `deployment.compatibility.openbao`; no automatic storage
+conversion, seal replacement or identity bootstrap occurs.
+
+For `file`, the original mounted HCL ConfigMap is a UID-bound retained dependency,
+including provider and seal configuration. The maintained launch uses its checked
+configuration key; legacy chart substitutions and unknown sidecars/init containers
+are rejected rather than copied as workload behavior. The renderer preserves
+original mount/credential references and permission identities. It pins the main
+container to the common official OpenBao image. When managed transport is already
+enabled, its `openbao-pki` sidecar and `openbao-pki-install` init container use the
+exact-source formal CI `video-cloud-openbao-pki` entry in `image-manifest.json`;
+missing publication blocks that enabled component. Installation reuses existing
+state, with no bootstrap command. The PID file, shared process namespace and
+managed readiness marker remain wired for certificate reload.
+
+The planner preserves the verified immutable StatefulSet selector, headless
+service name and original data/audit claim templates after checking maintained
+sizes and policy. It does not import the live mutable workload spec. For an
+`OnDelete` update, preflight verifies named Pod restart permissions and native
+UID/resourceVersion conditional deletion admission with `dryRun=All`; it does not
+restart Pods. Deployment replaces only the checked controller's old Pod revision,
+one ordinal at a time, and waits for the target containers to be ready. Controller
+or Pod owner drift, admission rejection, an unexpected replacement or an unhealthy
+or sealed replacement stops execution. No PVC is deleted and no unseal credentials
+are generated.
 
 Dev retains a managed TLS installer/sidecar, shared private runtime files and a
 separate 10Gi PKI identity claim. Staging currently projects TLS from a Secret

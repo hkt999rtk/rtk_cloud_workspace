@@ -367,11 +367,13 @@ Secret values, private keys, token values or desired specs in them.
 
 `deployment adopt-managed-state` and manual candidate promotion are retired.
 Observed references cannot prove persistent contents, original issuer/seal state
-or compatibility by themselves. In particular, an existing file-storage or PKI
-sidecar OpenBao installation that differs from the maintained target remains an
-explicit `deployment.compatibility.openbao` blocker; generating JSON cannot make
-that transition safe. Qualify a compatible in-place target or a verified storage
-transition while preserving original data, seal and identity.
+or compatibility by themselves. OpenBao is checked against shared
+`OPENBAO_STORAGE_BACKEND`, data/audit sizes and StatefulSet policies. The current
+`file` profile accepts both the existing static TLS listener and registered managed
+TLS installer/sidecar; their original lifecycle configuration, references and PVCs
+are retained. A backend/immutable allocation mismatch or unknown consumer remains
+`deployment.compatibility.openbao`. A missing formal CI host package blocks an
+enabled managed host. Generated bindings cannot prove a storage transition.
 
 Controller consumer defaults are maintained once in the common
 `cloud_deploy/architectures/kubernetes/architecture.env`, without environment
@@ -428,11 +430,15 @@ journals are retained under the same environment SecretStore. No automatic
 rollback overwrites concurrent changes or restores schema/PKI state blindly.
 Complete post-deploy acceptance is required before recording completion.
 Missing required evidence or an incompatible storage/identity/schema change
-keeps this entry NO-GO with repair instructions. In particular, an existing
-file-storage OpenBao deployment requires its separately reviewed matched storage
-migration before selecting the shared Raft target; ordinary rollout never
-initializes replacement CA or seal state. No environment upgrade has been
-performed by this implementation work.
+keeps this entry NO-GO with repair instructions. A compatible existing `file`
+OpenBao update does not require conversion to Raft. Selecting a different backend
+requires its separately verified storage/seal migration; ordinary rollout never
+initializes replacement CA or seal state. With `OnDelete`, preflight only checks
+named Pod restart permissions and conditional deletion admission in server dry-run.
+Deployment performs the checked revision restart and stops if the replacement
+remains sealed/unhealthy or ownership changes; it never deletes PVCs or generates
+unseal credentials. No environment upgrade has been performed by this implementation
+work.
 
 ## CertIssuer Route Convergence
 

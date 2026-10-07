@@ -8,8 +8,8 @@ import (
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 )
 
-// Raft is a common profile; production capacity and qualification require three
-// distinct nodes. File-storage adoption needs a matched, independent migration.
+// Shared StatefulSet skeleton. The file adapter retains its existing lifecycle
+// configuration; the explicit Raft profile owns its generated configuration.
 func renderEnvironmentOpenBaoRaft(env map[string]string, binding environmentPodBindings) (deploymentplan.Object, error) {
 	if binding.Kind != "StatefulSet" || binding.NamespaceSuffix != "secrets" {
 		return nil, errors.New("deployment.bindings: OpenBao requires its secrets StatefulSet identity")
@@ -17,6 +17,17 @@ func renderEnvironmentOpenBaoRaft(env map[string]string, binding environmentPodB
 	replicas, err := positiveIntValue("OPENBAO_EFFECTIVE_REPLICAS", env["OPENBAO_EFFECTIVE_REPLICAS"])
 	if err != nil || replicas != 1 && replicas != 3 || (env["DEPLOYMENT_PROTECTION_PROFILE"] == "production" || env["CLOUD_ENV_NAME"] == "prod") && replicas != 3 {
 		return nil, &deploymentplan.Blocker{ID: "deployment.target.openbao", Cause: "OpenBao capacity must explicitly select one or three Raft members; production requires three", Next: "maintain OPENBAO_MIN_REPLICAS and the production protection profile, then recompute shared node capacity; no renderer may silently override it"}
+	}
+	for _, key := range []string{"OPENBAO_DATA_STORAGE", "OPENBAO_AUDIT_STORAGE"} {
+		if !environmentDurableSize.MatchString(env[key]) {
+			return nil, errors.New("deployment.target.openbao: explicit data/audit storage sizes are required")
+		}
+	}
+	if env["OPENBAO_POD_MANAGEMENT_POLICY"] != "OrderedReady" && env["OPENBAO_POD_MANAGEMENT_POLICY"] != "Parallel" {
+		return nil, errors.New("deployment.target.openbao: explicit pod management policy is required")
+	}
+	if env["OPENBAO_UPDATE_STRATEGY"] != "OnDelete" && env["OPENBAO_UPDATE_STRATEGY"] != "RollingUpdate" {
+		return nil, errors.New("deployment.target.openbao: explicit update strategy is required")
 	}
 	name, namespace := "openbao", lkeNamespaceName(env, "secrets")
 	labels := map[string]any{"app.kubernetes.io/name": name, "rtk.realtek.com/stack": env["CLOUD_STACK_NAME"]}
@@ -40,7 +51,7 @@ func renderEnvironmentOpenBaoRaft(env map[string]string, binding environmentPodB
 		}
 		container["resources"].(map[string]any)["requests"].(map[string]any)[field] = value
 	}
-	return map[string]any{"apiVersion": "apps/v1", "kind": "StatefulSet", "metadata": map[string]any{"name": name, "namespace": namespace}, "spec": map[string]any{"replicas": float64(replicas), "serviceName": "openbao-internal", "podManagementPolicy": "Parallel", "selector": map[string]any{"matchLabels": match}, "updateStrategy": map[string]any{"type": "RollingUpdate"}, "volumeClaimTemplates": []any{claim("data", "20Gi"), claim("audit", "10Gi")}, "template": map[string]any{"metadata": map[string]any{"labels": labels}, "spec": map[string]any{"serviceAccountName": "openbao", "automountServiceAccountToken": false, "nodeSelector": map[string]any{firstNonEmpty(env["NODE_CLASS_LABEL_KEY"], "rtk.io/node-class"): env["OPENBAO_NODE_CLASS"]}, "securityContext": map[string]any{"runAsNonRoot": true, "runAsUser": float64(100), "runAsGroup": float64(1000), "fsGroup": float64(1000)}, "affinity": map[string]any{"podAntiAffinity": map[string]any{"requiredDuringSchedulingIgnoredDuringExecution": []any{map[string]any{"labelSelector": map[string]any{"matchLabels": match}, "topologyKey": "kubernetes.io/hostname"}}}}, "containers": []any{container}, "volumes": []any{map[string]any{"name": "raft-config", "configMap": map[string]any{"name": "openbao-raft"}}, map[string]any{"name": "transport-tls", "secret": map[string]any{"secretName": "openbao-transport-tls", "defaultMode": float64(288)}}}}}}}, nil
+	return map[string]any{"apiVersion": "apps/v1", "kind": "StatefulSet", "metadata": map[string]any{"name": name, "namespace": namespace}, "spec": map[string]any{"replicas": float64(replicas), "serviceName": "openbao-internal", "podManagementPolicy": env["OPENBAO_POD_MANAGEMENT_POLICY"], "selector": map[string]any{"matchLabels": match}, "updateStrategy": map[string]any{"type": env["OPENBAO_UPDATE_STRATEGY"]}, "volumeClaimTemplates": []any{claim("data", env["OPENBAO_DATA_STORAGE"]), claim("audit", env["OPENBAO_AUDIT_STORAGE"])}, "template": map[string]any{"metadata": map[string]any{"labels": labels}, "spec": map[string]any{"serviceAccountName": "openbao", "automountServiceAccountToken": false, "nodeSelector": map[string]any{firstNonEmpty(env["NODE_CLASS_LABEL_KEY"], "rtk.io/node-class"): env["OPENBAO_NODE_CLASS"]}, "securityContext": map[string]any{"runAsNonRoot": true, "runAsUser": float64(100), "runAsGroup": float64(1000), "fsGroup": float64(1000)}, "affinity": map[string]any{"podAntiAffinity": map[string]any{"requiredDuringSchedulingIgnoredDuringExecution": []any{map[string]any{"labelSelector": map[string]any{"matchLabels": match}, "topologyKey": "kubernetes.io/hostname"}}}}, "containers": []any{container}, "volumes": []any{map[string]any{"name": "raft-config", "configMap": map[string]any{"name": "openbao-raft"}}, map[string]any{"name": "transport-tls", "secret": map[string]any{"secretName": "openbao-transport-tls", "defaultMode": float64(288)}}}}}}}, nil
 }
 
 func environmentOpenBaoRaftDependencies(env map[string]string) []deploymentplan.Object {

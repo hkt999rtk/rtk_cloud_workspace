@@ -312,6 +312,9 @@ func (b environmentKubernetesBackend) Wait(ctx context.Context, resource deploym
 		_, err := b.command(ctx, nil, args...)
 		return err
 	}
+	if environmentOnDeleteUpdate(resource) {
+		return b.waitOnDeleteOpenBao(ctx, resource)
+	}
 	switch parts[0] {
 	case "Deployment", "StatefulSet", "DaemonSet":
 		args = append(args, "rollout", "status", parts[0]+"/"+parts[2], "--timeout=90s")
@@ -377,7 +380,7 @@ func (b environmentKubernetesBackend) retire(ctx context.Context, body deploymen
 	case "Job", "CronJob":
 		api = "apis/batch/v1"
 		plural = strings.ToLower(kind) + "s"
-	case "Service", "ServiceAccount":
+	case "Pod", "Service", "ServiceAccount":
 		api = "api/v1"
 		plural = strings.ToLower(kind) + "s"
 	case "Role", "RoleBinding", "ClusterRole", "ClusterRoleBinding":

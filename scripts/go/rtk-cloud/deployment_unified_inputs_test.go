@@ -63,7 +63,7 @@ func TestManagedOpenBaoCannotReintroduceFileStorage(t *testing.T) {
 		if validateOpenBaoBindingProfile(b) == nil {
 			t.Fatal("file-storage override accepted")
 		}
-		object, err := renderEnvironmentOpenBaoRaft(map[string]string{"CLOUD_STACK_NAME": "video-cloud-" + environment, "OPENBAO_EFFECTIVE_REPLICAS": "3", "OPENBAO_REQUEST_CPU": "500m", "OPENBAO_REQUEST_MEMORY": "512Mi", "OPENBAO_NODE_CLASS": "general", "LKE_OPENBAO_IMAGE": "quay.io/openbao/openbao@sha256:" + strings.Repeat("a", 64)}, b)
+		object, err := renderEnvironmentOpenBaoRaft(map[string]string{"CLOUD_STACK_NAME": "video-cloud-" + environment, "OPENBAO_EFFECTIVE_REPLICAS": "3", "OPENBAO_DATA_STORAGE": "20Gi", "OPENBAO_AUDIT_STORAGE": "10Gi", "OPENBAO_POD_MANAGEMENT_POLICY": "Parallel", "OPENBAO_UPDATE_STRATEGY": "RollingUpdate", "OPENBAO_REQUEST_CPU": "500m", "OPENBAO_REQUEST_MEMORY": "512Mi", "OPENBAO_NODE_CLASS": "general", "LKE_OPENBAO_IMAGE": "quay.io/openbao/openbao@sha256:" + strings.Repeat("a", 64)}, b)
 		if err != nil {
 			t.Fatal(err)
 		}

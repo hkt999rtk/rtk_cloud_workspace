@@ -80,6 +80,8 @@ type environmentPodBindings struct {
 	Component       string                         `json:"component"`
 	PodFields       map[string]any                 `json:"pod_fields"`
 	Containers      []environmentContainerBindings `json:"containers"`
+	InitContainers  []environmentContainerBindings `json:"init_containers,omitempty"`
+	OpenBao         *environmentOpenBaoProfile     `json:"openbao,omitempty"`
 }
 type environmentContainerBindings struct {
 	Name     string         `json:"name"`
@@ -112,13 +114,16 @@ func validateEnvironmentIdentityBindings(b environmentIdentityBindings, environm
 			return errors.New("deployment.bindings: duplicate or empty managed component")
 		}
 		seen[id] = true
+		if pod.Component != "managed-openbao" && (pod.OpenBao != nil || len(pod.InitContainers) != 0) {
+			return errors.New("deployment.bindings: OpenBao lifecycle references require the managed OpenBao component")
+		}
 		for field := range pod.PodFields {
-			if !podFields[field] {
+			if !podFields[field] && !(pod.Component == "managed-openbao" && field == "shareProcessNamespace") {
 				return errors.New("deployment.bindings cannot override workload settings")
 			}
 		}
 		containers := map[string]bool{}
-		for i, container := range pod.Containers {
+		for i, container := range append(append([]environmentContainerBindings{}, pod.Containers...), pod.InitContainers...) {
 			if container.Name == "" || containers[container.Name] || !strings.HasSuffix(container.ImageKey, "_IMAGE") {
 				return errors.New("deployment.bindings: exact container identity and release image key required")
 			}
@@ -156,6 +161,14 @@ func validateEnvironmentIdentityBindings(b environmentIdentityBindings, environm
 }
 
 func environmentManagedImageKey(component, name string, index int) string {
+	if component == "managed-openbao" {
+		if name == "openbao" {
+			return "LKE_OPENBAO_IMAGE"
+		}
+		if name == "openbao-pki" || name == "openbao-pki-install" {
+			return "LKE_OPENBAO_PKI_IMAGE"
+		}
+	}
 	if index > 0 || component == "existing-workload" {
 		if name == "pkibroker" || name == "pkimanagement" {
 			return "LKE_VIDEO_CLOUD_IMAGE"
@@ -250,6 +263,24 @@ func applyEnvironmentPodBindings(object deploymentplan.Object, b environmentIden
 			containers = append(containers, container)
 		}
 		pod["containers"] = containers
+		if binding.Component == "managed-openbao" {
+			for _, bound := range binding.InitContainers {
+				var container map[string]any
+				for _, v := range certIssuerObjectList(pod["initContainers"]) {
+					if c := deploymentplan.Map(v); c["name"] == bound.Name {
+						container = c
+					}
+				}
+				image := release.Images[bound.ImageKey].Reference
+				if container == nil || !immutableEnvironmentImage.MatchString(image) {
+					return errors.New("deployment.release: managed OpenBao installer lacks its formal CI image")
+				}
+				container["image"] = image
+				for field, value := range bound.Fields {
+					container[field] = value
+				}
+			}
+		}
 		return nil
 	}
 	return nil
@@ -257,7 +288,7 @@ func applyEnvironmentPodBindings(object deploymentplan.Object, b environmentIden
 
 func environmentIdentitySetting(name string) bool {
 	switch name {
-	case "CERT_ISSUER_SERVER_CERT", "CERT_ISSUER_SERVER_KEY", "CERT_ISSUER_CLIENT_CA", "CERT_ISSUER_CA_PROVIDER":
+	case "BAO_ADDR", "BAO_API_ADDR", "BAO_CLUSTER_ADDR", "BAO_CACERT", "BAO_TLS_SERVER_NAME", "CERT_ISSUER_SERVER_CERT", "CERT_ISSUER_SERVER_KEY", "CERT_ISSUER_CLIENT_CA", "CERT_ISSUER_CA_PROVIDER":
 		return true
 	}
 	if environmentControllerPolicySetting(name) {

@@ -181,6 +181,14 @@ func resolveEnvironmentCIImages(ctx context.Context, cfg deploymentConfig, provi
 				return result, err
 			}
 			result.Images["LKE_MQTT_PKI_IMAGE"] = image
+			// The host/installer has its own exact-source formal CI package.
+			// Stock OpenBao remains the provider image; no local dev package is reused.
+			if host, hostErr := selectEnvironmentPublishedImage(evidence, repo, runID, attempt, frozen.revision, "ghcr.io/"+repo+"/video-cloud-openbao-pki", false); hostErr == nil {
+				result.Images["LKE_OPENBAO_PKI_IMAGE"] = host
+			}
+			// Missing host publication blocks only a target with the managed host
+			// enabled; an existing static TLS listener does not use this package.
+
 		}
 	}
 	if result.Images["LKE_POSTGRES_IMAGE"].Reference == "" || result.Images["LKE_INGRESS_IMAGE"].Reference == "" || result.Images["LKE_OPENBAO_IMAGE"].Reference == "" {

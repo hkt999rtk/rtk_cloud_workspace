@@ -93,19 +93,6 @@ func observeEnvironmentBindings(environment string, release environmentRelease, 
 		if kind != "Deployment" && kind != "StatefulSet" && kind != "DaemonSet" {
 			continue
 		}
-		if name == "openbao" && kind == "StatefulSet" {
-			pod := deploymentplan.Map(deploymentplan.Map(deploymentplan.Map(object["spec"])["template"])["spec"])
-			raft := false
-			for _, value := range certIssuerObjectList(pod["volumes"]) {
-				volume := deploymentplan.Map(value)
-				if volume["name"] == "raft-config" && deploymentplan.Map(volume["configMap"])["name"] == "openbao-raft" {
-					raft = true
-				}
-			}
-			if !raft || len(certIssuerObjectList(pod["containers"])) != 1 {
-				return b, &deploymentplan.Blocker{ID: "deployment.compatibility.openbao", Resource: id, Cause: "existing OpenBao storage or PKI sidecars differ from the maintained target profile", Next: "qualify an in-place compatible OpenBao target that preserves existing data, seal and PKI references, or a separately verified storage transition; a local bindings file cannot resolve this incompatibility"}
-			}
-		}
 		component := environmentManagedComponents[name]
 		if component == "" {
 			component = "existing-workload"
@@ -117,73 +104,95 @@ func observeEnvironmentBindings(environment string, release environmentRelease, 
 				binding.PodFields[field] = value
 			}
 		}
-		for _, value := range certIssuerObjectList(pod["containers"]) {
-			container := deploymentplan.Map(value)
-			bound := environmentContainerBindings{Name: deploymentplan.String(container["name"]), Fields: map[string]any{}}
-			for key, image := range release.Images {
-				if environmentImageRepository(image.Reference) == environmentImageRepository(deploymentplan.String(container["image"])) {
-					if bound.ImageKey != "" && release.Images[bound.ImageKey].Reference != image.Reference {
-						return b, errors.New("consumer image has ambiguous release roles")
-					}
-					// Identical images may serve multiple catalog roles (Redis/Fleet).
-					// Choose a stable alias; different target digests remain ambiguous.
-					if bound.ImageKey == "" || key < bound.ImageKey {
-						bound.ImageKey = key
-					}
-				}
-			}
-			if bound.ImageKey == "" {
-				return b, &deploymentplan.Blocker{ID: "deployment.inventory.image-role", Resource: id, Cause: "an existing container has no maintained release image role", Next: "maintain this enabled component and its image role in the common catalog; do not copy its live workload spec or hand-edit generated bindings"}
-			}
-			for _, field := range []string{"volumeMounts", "envFrom"} {
-				if value, ok := container[field]; ok {
-					bound.Fields[field] = value
-				}
-			}
-			var settings []any
-			for _, value := range certIssuerObjectList(container["env"]) {
-				setting := deploymentplan.Map(value)
-				if environmentControllerPolicySetting(deploymentplan.String(setting["name"])) {
-					continue
-				}
-				if setting["valueFrom"] != nil || environmentIdentitySetting(deploymentplan.String(setting["name"])) {
-					settings = append(settings, value)
-				}
-			}
-			if len(settings) > 0 {
-				bound.Fields["env"] = settings
-			}
-			binding.Containers = append(binding.Containers, bound)
-		}
-		// An old launch command is never imported over the Raft renderer. The
-		// compiler still requires a separate matched storage/seal migration.
+		groups := []string{"containers"}
 		if component == "managed-openbao" {
-			raft := false
-			for _, resource := range live {
-				if deploymentplan.ID(resource) == "ConfigMap/"+ns+"/openbao-raft" {
-					want := environmentOpenBaoRaftDependencies(map[string]string{"CLOUD_STACK_NAME": b.Stack, "OPENBAO_EFFECTIVE_REPLICAS": fmt.Sprint(deploymentplan.Map(object["spec"])["replicas"])})[0]
-					raft = deploymentplan.Digest(resource["data"]) == deploymentplan.Digest(want["data"])
+			groups = append(groups, "initContainers")
+		}
+		for _, group := range groups {
+			for _, value := range certIssuerObjectList(pod[group]) {
+				container := deploymentplan.Map(value)
+				bound := environmentContainerBindings{Name: deploymentplan.String(container["name"]), Fields: map[string]any{}}
+				for key, image := range release.Images {
+					if environmentImageRepository(image.Reference) == environmentImageRepository(deploymentplan.String(container["image"])) {
+						if bound.ImageKey != "" && release.Images[bound.ImageKey].Reference != image.Reference {
+							return b, errors.New("consumer image has ambiguous release roles")
+						}
+						// Identical images may serve multiple catalog roles (Redis/Fleet).
+						// Choose a stable alias; different target digests remain ambiguous.
+						if bound.ImageKey == "" || key < bound.ImageKey {
+							bound.ImageKey = key
+						}
+					}
+				}
+				if component == "managed-openbao" {
+					switch bound.Name {
+					case "openbao":
+						bound.ImageKey = "LKE_OPENBAO_IMAGE"
+					case "openbao-pki", "openbao-pki-install":
+						bound.ImageKey = "LKE_OPENBAO_PKI_IMAGE"
+					default:
+						return b, openBaoCompatibilityBlocker(id, "existing OpenBao contains an unsupported container")
+					}
+				}
+				if bound.ImageKey == "" {
+					return b, &deploymentplan.Blocker{ID: "deployment.inventory.image-role", Resource: id, Cause: "an existing container has no maintained release image role", Next: "maintain this enabled component and its image role in the common catalog; do not copy its live workload spec or hand-edit generated bindings"}
+				}
+				for _, field := range []string{"volumeMounts", "envFrom"} {
+					if value, ok := container[field]; ok {
+						bound.Fields[field] = value
+					}
+				}
+				var settings []any
+				for _, value := range certIssuerObjectList(container["env"]) {
+					setting := deploymentplan.Map(value)
+					if environmentControllerPolicySetting(deploymentplan.String(setting["name"])) {
+						continue
+					}
+					if setting["valueFrom"] != nil || environmentIdentitySetting(deploymentplan.String(setting["name"])) {
+						settings = append(settings, value)
+					}
+				}
+				if len(settings) > 0 {
+					bound.Fields["env"] = settings
+				}
+				if component == "managed-openbao" {
+					if value, ok := container["securityContext"]; ok {
+						bound.Fields["securityContext"] = value
+					}
+				}
+				if group == "initContainers" {
+					binding.InitContainers = append(binding.InitContainers, bound)
+				} else {
+					binding.Containers = append(binding.Containers, bound)
 				}
 			}
-			var mount deploymentplan.Object
-			for _, value := range certIssuerObjectList(pod["volumes"]) {
-				if item := deploymentplan.Map(value); item["name"] == "raft-config" {
-					mount = item
+		}
+		if component == "managed-openbao" {
+			profile, err := observeOpenBaoProfile(object, live)
+			if err != nil {
+				return b, err
+			}
+			binding.OpenBao = profile
+			if profile.Backend == "raft" {
+				// The maintained Raft renderer owns its launch and mounts.
+				binding.PodFields = map[string]any{}
+				var identity []any
+				for _, value := range certIssuerObjectList(binding.Containers[0].Fields["env"]) {
+					name := deploymentplan.String(deploymentplan.Map(value)["name"])
+					if environmentIdentitySetting(name) && !strings.HasPrefix(name, "BAO_") {
+						identity = append(identity, value)
+					}
 				}
-			}
-			if !raft || deploymentplan.Map(mount["configMap"])["name"] != "openbao-raft" || len(binding.Containers) != 1 || binding.Containers[0].Name != "openbao" {
-				return b, &deploymentplan.Blocker{ID: "deployment.compatibility.openbao", Resource: id, Cause: "existing OpenBao configuration differs from the maintained Raft target", Next: "qualify a compatible in-place target or an explicit matched storage/seal transition; preflight observations cannot prove this migration"}
-			}
-			binding.PodFields = map[string]any{}
-			var identity []any
-			for _, value := range certIssuerObjectList(binding.Containers[0].Fields["env"]) {
-				if environmentIdentitySetting(deploymentplan.String(deploymentplan.Map(value)["name"])) {
-					identity = append(identity, value)
+				binding.Containers[0].Fields = map[string]any{}
+				if len(identity) != 0 {
+					binding.Containers[0].Fields["env"] = identity
 				}
-			}
-			binding.Containers[0].Fields = map[string]any{}
-			if len(identity) != 0 {
-				binding.Containers[0].Fields["env"] = identity
+			} else {
+				for _, field := range []string{"securityContext", "shareProcessNamespace"} {
+					if value, ok := pod[field]; ok {
+						binding.PodFields[field] = value
+					}
+				}
 			}
 		}
 		b.Pods = append(b.Pods, binding)
