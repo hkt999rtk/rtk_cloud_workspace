@@ -171,6 +171,13 @@ Staging baseline observed on 2026-10-07: `OPENBAO_STORAGE_BACKEND=file`,
 `OPENBAO_POD_MANAGEMENT_POLICY=OrderedReady` and
 `OPENBAO_UPDATE_STRATEGY=OnDelete`. These maintained inputs are resolved and hashed
 with the deployment configuration. They are not a completed storage migration.
+OpenBao image and scheduling settings also live only in this same file:
+`OPENBAO_MIN_REPLICAS=1`, `OPENBAO_NODE_CLASS=general`,
+`OPENBAO_REQUEST_CPU=250m` and `OPENBAO_REQUEST_MEMORY=256Mi`.
+The resource requests are maintained intent; the observed workloads omit them.
+There are no OpenBao copies in `workloads.env` or environment overrides.
+This initial single-instance baseline does not qualify production HA; the
+production qualification checks remain enforced.
 The current OpenBao renderer remains Raft-only and does not yet consume these
 five inputs; existing-environment qualification remains NO-GO until a compatible
 renderer is implemented.

@@ -1551,10 +1551,28 @@ func TestObservedOpenBaoBaselineResolvesFromSharedArchitecture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	keys := []string{"OPENBAO_STORAGE_BACKEND", "OPENBAO_DATA_STORAGE", "OPENBAO_AUDIT_STORAGE", "OPENBAO_POD_MANAGEMENT_POLICY", "OPENBAO_UPDATE_STRATEGY"}
+	keys := []string{"OPENBAO_STORAGE_BACKEND", "OPENBAO_DATA_STORAGE", "OPENBAO_AUDIT_STORAGE", "OPENBAO_POD_MANAGEMENT_POLICY", "OPENBAO_UPDATE_STRATEGY", "OPENBAO_MIN_REPLICAS", "OPENBAO_NODE_CLASS", "OPENBAO_REQUEST_CPU", "OPENBAO_REQUEST_MEMORY"}
 	for _, environment := range []string{"dev", "staging", "prod"} {
 		t.Run(environment, func(t *testing.T) {
+			overrides, err := readOptionalStrictEnv(filepath.Join(root, "cloud_env", environment, "overrides", "architecture.env"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for key := range overrides {
+				if strings.HasPrefix(key, "OPENBAO_") {
+					t.Fatal("environment duplicates the common OpenBao baseline", key)
+				}
+			}
 			workspace := writeDeploymentFixture(t, environment, "lke")
+			workloadsPath := filepath.Join(workspace, "cloud_deploy", "architectures", "kubernetes", "workloads.env")
+			workloads, err := readStrictEnv(workloadsPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, key := range keys {
+				delete(workloads, key)
+			}
+			writeTestFile(t, workloadsPath, sortedEnvContents(workloads))
 			path := filepath.Join(workspace, "cloud_deploy", "architectures", "kubernetes", "architecture.env")
 			body := readTestFile(t, path)
 			for _, key := range keys {
