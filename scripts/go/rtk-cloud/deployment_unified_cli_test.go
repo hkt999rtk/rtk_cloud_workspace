@@ -86,7 +86,7 @@ func TestUnifiedPublicFlowUsesSamePlanAndRequiredGatesForAllEnvironments(t *test
 				if info.Mode().Perm() != 0600 {
 					t.Fatal("public report permissions")
 				}
-				if action == "plan" && report.Decision != "PLANNED" || action != "plan" && report.Decision != "GO" || report.Completed != (action == "upgrade") {
+				if report.Scope != "existing-environment-update" || action == "plan" && report.Decision != "PLANNED" || action != "plan" && report.Decision != "GO" || report.Completed != (action == "upgrade") {
 					t.Fatal("scope or completion changed")
 				}
 			}
@@ -94,6 +94,22 @@ func TestUnifiedPublicFlowUsesSamePlanAndRequiredGatesForAllEnvironments(t *test
 				t.Fatal("planning/preflight wrote resources")
 			}
 		})
+	}
+}
+
+func TestPublicUpdateHasEveryRuntimeGateAndAcceptanceAdapter(t *testing.T) {
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		c, _, _ := unifiedCLIProfile(t, environment)
+		deps := defaultUnifiedDeploymentDependencies()
+		checks := deps.Checks(c)
+		for _, id := range []string{"deployment.target", "deployment.release", "deployment.execution", "deployment.pki", "deployment.compatibility", "deployment.network"} {
+			if checks[id] == nil {
+				t.Fatal("required public update adapter absent", environment, id)
+			}
+		}
+		if deps.Accept == nil || deps.Execute == nil {
+			t.Fatal("public update cannot execute or accept")
+		}
 	}
 }
 
@@ -184,7 +200,7 @@ func TestUnifiedPublicFlowNeverExecutesIncompleteEvidenceOrUnreviewedPlan(t *tes
 						delete(checks, "deployment.pki")
 					}
 					if mode == "failed-gate" {
-						checks["deployment.recovery"] = func(context.Context, *deploymentplan.Plan) (deploymentplan.GateEvidence, error) {
+						checks["deployment.compatibility"] = func(context.Context, *deploymentplan.Plan) (deploymentplan.GateEvidence, error) {
 							return deploymentplan.GateEvidence{}, errors.New("private failure=never-public")
 						}
 					}

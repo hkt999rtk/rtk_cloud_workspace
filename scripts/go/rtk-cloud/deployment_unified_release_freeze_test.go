@@ -14,14 +14,17 @@ import (
 
 func TestFreezeLatestReleaseUsesFrozenGitlinksAndExactPublicationForAllEnvironments(t *testing.T) {
 	for _, environment := range []string{"dev", "staging", "prod"} {
-		for _, mode := range []string{"valid", "root-dirty", "old-main", "leaf-dirty", "source-drift", "CI-pending", "MQTT-missing", "old-attempt", "backup-base", "mutable-provider", "fetch-failed", "private-error"} {
+		for _, mode := range []string{"valid", "backups-disabled", "root-dirty", "old-main", "leaf-dirty", "source-drift", "CI-pending", "MQTT-missing", "old-attempt", "backup-base", "mutable-provider", "fetch-failed", "private-error"} {
 			t.Run(environment+"/"+mode, func(t *testing.T) {
 				_, _, providers := completeEnvironmentRenderFixture(environment)
 				rootSHA, leafSHA := strings.Repeat("a", 40), strings.Repeat("b", 40)
 				if mode == "mutable-provider" {
 					providers.Images["LKE_POSTGRES_IMAGE"] = environmentReleaseImage{Reference: "postgres:16-alpine"}
 				}
-				cfg := deploymentConfig{Workspace: "/frozen", Environment: environment, Values: map[string]string{"CLOUD_STACK_NAME": "video-cloud-" + environment}}
+				cfg := deploymentConfig{Workspace: "/frozen", Environment: environment, Values: map[string]string{"CLOUD_STACK_NAME": "video-cloud-" + environment, "DEPLOYMENT_POSTGRES_BACKUP_ENABLED": "true"}}
+				if mode == "backups-disabled" {
+					cfg.Values["DEPLOYMENT_POSTGRES_BACKUP_ENABLED"] = "false"
+				}
 				sourceChecks := map[string]int{}
 				gitlinks := 0
 				networkStarted := false
@@ -71,6 +74,9 @@ func TestFreezeLatestReleaseUsesFrozenGitlinksAndExactPublicationForAllEnvironme
 					parts := strings.Split(endpoint, "/")
 					repo := parts[1] + "/" + parts[2]
 					backup := repo == "hkt999rtk/rtk_cloud_workspace"
+					if backup && mode == "backups-disabled" {
+						t.Fatal("ordinary release selection requested backup publication")
+					}
 					sha := leafSHA
 					if backup {
 						sha = rootSHA
@@ -127,11 +133,20 @@ func TestFreezeLatestReleaseUsesFrozenGitlinksAndExactPublicationForAllEnvironme
 					return publicationZIP(t, file, raw), nil
 				}
 				release, err := freezeEnvironmentRelease(context.Background(), cfg, providers, run)
-				if (err == nil) != (mode == "valid") {
+				if (err == nil) != (mode == "valid" || mode == "backups-disabled") {
 					t.Fatal("release decision differs", mode, err)
 				}
 				if err != nil && strings.Contains(err.Error(), "never-public") {
 					t.Fatal("private source error escaped")
+				}
+				if mode == "backups-disabled" {
+					if err != nil {
+						t.Fatal(err)
+					}
+					if _, ok := release.Images["LKE_POSTGRES_BACKUP_RUNNER_IMAGE"]; ok {
+						t.Fatal("disabled backup image included")
+					}
+					return
 				}
 				if mode == "valid" {
 					if release.WorkspaceRevision != rootSHA || release.Environment != environment || len(refs) != 8 {

@@ -44,7 +44,44 @@ Necessary safeguards for the selected update remain in force. Existing prototype
 gates still need alignment with this scope; this scope record does not itself
 make the implementation usable or establish environment GO.
 
-## Meaning of GO
+## GO for an existing environment update
+
+The current scripts report `scope=existing-environment-update`. GO authorizes
+execution of that exact checked release/configuration/resource plan; it does not
+declare deployment complete. Required update gates are the same in all three
+environments:
+
+| Gate | Current update evidence |
+| --- | --- |
+| `deployment.target` | Complete maintained target, original owners, unchanged configuration/release/bindings and durable-volume identities. |
+| `deployment.release` | Immutable images, exact clean workspace/service revisions, successful formal CI/publication and available images. |
+| `deployment.execution` | Provider quota, native node-class capacity, original storage, effective access, execution prerequisites and server dry-run of the exact resource bodies. |
+| `deployment.pki` | Original synchronized runtime Secret bindings and the maintained runtime PKI checks at the start and end of the configured rollout window; identity/mount changes require explicit migration. |
+| `deployment.compatibility` | Selected AM/Billing schema prerequisites, required restricted payment-simulator startup and migration setting, with candidate source/CI checked by the release gate. |
+| `deployment.network` | Configured public CertIssuer ingress, authenticated mTLS and anonymous TLS denial; planned Kubernetes network objects also pass exact-body admission. |
+
+Missing or failed update evidence, changed inputs/owners, cancellation or `--fast`
+is NO-GO. Actual scheduling/startup and endpoint health are verified after rollout
+before completion is recorded. Ordinary update does not mutate bootstrap
+credentials or initialize new backup/identity state. Managed issuer lifecycle,
+fresh bootstrap and activation/restore qualification remain separate operations;
+the later native inspection tools are not prerequisites imposed on older running
+images merely to update their Pods.
+
+`DEPLOYMENT_POSTGRES_BACKUP_ENABLED=false` is the common baseline. A maintained
+backup component must explicitly select `true`; then its original configuration,
+dedicated credentials and selected runner image remain required. Missing optional
+backup configuration never creates a backup project during normal preflight.
+Existing undeclared workloads still block planning; the flag cannot silently
+remove or reset an already enabled component.
+
+## Broader qualification roadmap (outside current script scope)
+
+The following sections retain the earlier activation/recovery design and its
+partial implementation evidence. They describe those separate operations, not
+additional prerequisites for the existing-environment update scope above.
+
+### Meaning of full qualification GO
 
 **GO permits execution of one specified release's complete environment plan after
 all required pre-deploy gates pass.** It records the environment, operation, release

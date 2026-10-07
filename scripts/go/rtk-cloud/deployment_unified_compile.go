@@ -137,9 +137,14 @@ func readEnvironmentDeploymentSnapshot(cfg deploymentConfig, store secretStore) 
 	if err != nil {
 		return snapshot, err
 	}
-	protection, err := readPostgresBackupDeployment(filepath.Join(cfg.EnvironmentRoot, "postgres-backup.json"), cfg.Environment)
-	if err != nil {
-		return snapshot, errors.New("deployment.inputs: maintained PostgreSQL protection configuration unavailable")
+	var protection postgresBackupDeployment
+	if cfg.Values["DEPLOYMENT_POSTGRES_BACKUP_ENABLED"] == "true" {
+		protection, err = readPostgresBackupDeployment(filepath.Join(cfg.EnvironmentRoot, "postgres-backup.json"), cfg.Environment)
+		if err != nil {
+			return snapshot, errors.New("deployment.inputs: enabled PostgreSQL backup configuration unavailable")
+		}
+	} else if cfg.Values["DEPLOYMENT_POSTGRES_BACKUP_ENABLED"] != "false" {
+		return snapshot, errors.New("deployment.inputs: DEPLOYMENT_POSTGRES_BACKUP_ENABLED must be explicitly true or false")
 	}
 	storageEvidence, err := deploymentStorageEvidenceDigest(cfg)
 	if err != nil {
@@ -197,16 +202,19 @@ func compileEnvironmentDeployment(ctx context.Context, cfg deploymentConfig, ope
 	if operation == "upgrade" && (snapshot.ProviderState["LKE_CLUSTER_ID"] == "" || snapshot.ProviderAccount["LKE_ACTIVE_SERVICE_LIMIT"] == "") {
 		return nil, lkeProviderStateBlocker("complete upgrade requires the original cluster owner and confirmed account quota in the selected environment store")
 	}
-	protection, err := environmentPostgresProtectionFromSnapshot(snapshot)
-	if err != nil {
-		return nil, &deploymentplan.Blocker{ID: "deployment.recovery", Cause: "maintained PostgreSQL protection configuration or dedicated credentials are incomplete", Next: "configure the original cluster identity, immutable runner/source images, explicit schedule, dedicated backup role and storage credentials before full qualification"}
+	var protection environmentPostgresProtection
+	if cfg.Values["DEPLOYMENT_POSTGRES_BACKUP_ENABLED"] == "true" {
+		protection, err = environmentPostgresProtectionFromSnapshot(snapshot)
+		if err != nil {
+			return nil, &deploymentplan.Blocker{ID: "deployment.configuration.postgres-backup", Cause: "enabled PostgreSQL backup configuration or credentials are incomplete", Next: "restore the existing enabled backup component's maintained configuration and dedicated credentials; do not enable backups merely to run an ordinary update"}
+		}
 	}
 	configurationDigest := snapshot.Digest(cfg)
 	var definitions []deploymentplan.Definition
 	err = withEnvironmentRenderInputs(cfg, store, release, snapshot, func(values map[string]string) error {
 		var err error
 		definitions, err = renderEnvironmentResources(values, bindings, release)
-		if err == nil {
+		if err == nil && cfg.Values["DEPLOYMENT_POSTGRES_BACKUP_ENABLED"] == "true" {
 			definitions, err = renderEnvironmentPostgresProtection(definitions, protection, release)
 		}
 		return err
@@ -248,10 +256,8 @@ func compileEnvironmentDeployment(ctx context.Context, cfg deploymentConfig, ope
 	if err := validateEnvironmentDurableStorageTransition(definitions, live); err != nil {
 		return nil, err
 	}
-	definitions, err = bindAccountManagerBootstrapRetirement(ctx, backend, definitions, live, bindings, protection.Configuration, operation)
-	if err != nil {
-		return nil, err
-	}
+	// Normal updates preserve existing bootstrap credentials and their lifecycle.
+	// Bootstrap retirement is a separate explicit operation, not an upgrade side effect.
 	definitions, err = bindRetainedEnvironmentDependencies(definitions, live, bindings)
 	if err != nil {
 		return nil, err
@@ -290,9 +296,6 @@ func (c *compiledEnvironmentDeployment) Fence(ctx context.Context, plan *deploym
 		return errors.New("deployment.inputs: selected execution plan changed")
 	}
 	if err := c.Backend.CheckStorageBindings(ctx, plan); err != nil {
-		return err
-	}
-	if err := c.verifyAccountManagerBootstrapSeal(ctx); err != nil {
 		return err
 	}
 	fresh, err := resolveDeploymentConfig(c.Configuration.Workspace, c.Configuration.Environment, c.Configuration.EnvironmentRoot)

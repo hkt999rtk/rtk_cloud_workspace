@@ -62,7 +62,7 @@ func defaultUnifiedDeploymentDependencies() unifiedDeploymentDependencies {
 					if err := p.Admit(ctx, c.Backend); err != nil {
 						return deploymentplan.GateEvidence{}, err
 					}
-					return deploymentplan.GateEvidence{}, &deploymentplan.Blocker{ID: "deployment.execution", Cause: "complete provider inventory/quota, native node-class capacity lower bounds, original durable-volume identity, execution lease and exact server admission passed; provider migration, candidate scheduling/rollout capacity and new-volume provisioning qualification are incomplete", Next: "complete actual execution capability checks for the selected plan; node capacity lower bounds, quota, existing-volume identity and server dry-run alone cannot authorize a full update"}
+					return deploymentplan.GateEvidence{SHA256: p.SHA256()}, nil
 				},
 				"deployment.pki": func(ctx context.Context, p *deploymentplan.Plan) (deploymentplan.GateEvidence, error) {
 					if err := c.Fence(ctx, p); err != nil {
@@ -72,22 +72,75 @@ func defaultUnifiedDeploymentDependencies() unifiedDeploymentDependencies {
 					if err != nil {
 						return deploymentplan.GateEvidence{}, err
 					}
-					if err := c.Backend.CheckManagedServerRegistry(ctx, p, window); err != nil {
+					store := c.Store
+					store.checkRuntime = newDeploymentCheckRuntime(ctx, p.Environment)
+					if err := verifySecretStoreK8SBindings(store); err != nil {
+						return deploymentplan.GateEvidence{}, &deploymentplan.Blocker{ID: "deployment.pki.bindings", Cause: "original runtime Secret bindings cannot be verified", Next: "restore the selected environment's original synchronized credentials and bindings; never generate replacement identity to pass"}
+					}
+					now := time.Now().UTC()
+					for _, at := range []time.Time{now, now.Add(time.Duration(window) * time.Second)} {
+						if err := verifySecretStoreK8SRuntime(store, at); err != nil {
+							return deploymentplan.GateEvidence{}, &deploymentplan.Blocker{ID: "deployment.pki", Cause: "retained runtime PKI is invalid or will not remain valid through the checked rollout window", Next: "run check-deployment-health.sh for the selected environment; repair its original certificate, trust or runtime configuration through the managed lifecycle, then repeat preflight"}
+						}
+					}
+					if err := c.Fence(ctx, p); err != nil {
 						return deploymentplan.GateEvidence{}, err
 					}
-					if err := c.Backend.CheckManagedClientRegistry(ctx, p, window); err != nil {
+					return deploymentplan.GateEvidence{SHA256: p.SHA256()}, nil
+				},
+				"deployment.compatibility": func(ctx context.Context, p *deploymentplan.Plan) (deploymentplan.GateEvidence, error) {
+					if err := c.Fence(ctx, p); err != nil {
 						return deploymentplan.GateEvidence{}, err
 					}
-					if err := c.Backend.CheckInstalledCRLs(ctx, p, c.Configuration.Values); err != nil {
+					var images []string
+					for _, image := range c.Release.Images {
+						if strings.HasPrefix(image.Reference, "ghcr.io/hkt999rtk/") && !strings.Contains(image.Reference, "/rtk_cloud_workspace/postgres-backup@") {
+							images = append(images, image.Reference)
+						}
+					}
+					store := c.Store
+					store.checkRuntime = newDeploymentCheckRuntime(ctx, p.Environment)
+					if err := verifyDeploymentUpgradeSchemas(store, c.Configuration.Workspace, images); err != nil {
+						return deploymentplan.GateEvidence{}, &deploymentplan.Blocker{ID: "deployment.compatibility", Cause: "selected release schema prerequisites are unavailable or unapplied", Next: "complete the service owner's explicit schema migration against the original database, then repeat preflight; deployment does not reset or migrate data implicitly"}
+					}
+					for _, resource := range p.Resources {
+						if resource.Action == "retire" || deploymentplan.Map(resource.Desired["metadata"])["name"] != "payment-simulator" {
+							continue
+						}
+						var target deploymentUpgradeTarget
+						raw, _ := json.Marshal(resource.Desired)
+						if json.Unmarshal(raw, &target) != nil {
+							return deploymentplan.GateEvidence{}, errors.New("simulator target unavailable")
+						}
+						container, err := deploymentUpgradeSimulatorContainer(target)
+						if err != nil {
+							return deploymentplan.GateEvidence{}, err
+						}
+						if err := verifyDeploymentSimulatorMigrationSetting(store, target); err != nil {
+							return deploymentplan.GateEvidence{}, err
+						}
+						if err := verifyDeploymentSimulatorStartup(ctx, deploymentplan.String(container["image"])); err != nil {
+							return deploymentplan.GateEvidence{}, err
+						}
+					}
+					if err := c.Fence(ctx, p); err != nil {
 						return deploymentplan.GateEvidence{}, err
 					}
-					if err := c.Backend.CheckInstalledRootTrust(ctx, p, c.Configuration.Values); err != nil {
+					return deploymentplan.GateEvidence{SHA256: p.SHA256()}, nil
+				},
+				"deployment.network": func(ctx context.Context, p *deploymentplan.Plan) (deploymentplan.GateEvidence, error) {
+					if err := c.Fence(ctx, p); err != nil {
 						return deploymentplan.GateEvidence{}, err
 					}
-					if err := c.Backend.CheckSecretServerIdentities(ctx, p, c.Bindings.SecretServers, window); err != nil {
+					store := c.Store
+					store.checkRuntime = newDeploymentCheckRuntime(ctx, p.Environment)
+					if err := verifyDeploymentPublicCertIssuer(ctx, c.Configuration, store); err != nil {
+						return deploymentplan.GateEvidence{}, &deploymentplan.Blocker{ID: "deployment.network", Cause: "required public CertIssuer route or authenticated mTLS path is unavailable", Next: "repair the selected environment's owned DNS/ingress/Service and required mTLS path; verify with check-deployment-health.sh, then repeat preflight"}
+					}
+					if err := c.Fence(ctx, p); err != nil {
 						return deploymentplan.GateEvidence{}, err
 					}
-					return deploymentplan.GateEvidence{}, &deploymentplan.Blocker{ID: "deployment.pki", Cause: "original managed server and Service client key/chain/subject/purpose/upgrade-window validity and registry/issuer admission and installed CRL/Root-policy/pool inventories and current consumer receipts passed; remaining Secret consumer contracts, live-consumer evidence and dynamic/terminal trust qualification remain incomplete", Next: "complete Secret-backed identity and live-consumer verification plus any required dynamic/terminal authority qualification for the same target before authorizing deployment"}
+					return deploymentplan.GateEvidence{SHA256: p.SHA256()}, nil
 				},
 				"deployment.release": func(ctx context.Context, p *deploymentplan.Plan) (deploymentplan.GateEvidence, error) {
 					if err := c.Fence(ctx, p); err != nil {
@@ -121,7 +174,7 @@ func defaultUnifiedDeploymentDependencies() unifiedDeploymentDependencies {
 			}); err != nil {
 				return err
 			}
-			return retireLocalAccountBootstrapSeed(ctx, c)
+			return nil
 		},
 	}
 }
@@ -205,6 +258,7 @@ func parseUnifiedDeploymentOptions(action string, args []string, out io.Writer) 
 
 type unifiedDeploymentReport struct {
 	Schema                string                      `json:"schema"`
+	Scope                 string                      `json:"scope"`
 	Environment           string                      `json:"environment"`
 	Operation             string                      `json:"operation"`
 	Decision              string                      `json:"decision"`
@@ -249,6 +303,10 @@ func runUnifiedEnvironmentDeploymentWithDependencies(parent context.Context, act
 	ctx, cancel := context.WithTimeout(parent, o.Timeout)
 	defer cancel()
 	report := unifiedDeploymentReport{Schema: "rtk-cloud.deployment-report/v2", Environment: cfg.Environment, Operation: o.Operation, Decision: "NO-GO"}
+	report.Scope = "existing-environment-update"
+	if o.Operation != "upgrade" {
+		report.Scope = "environment-bootstrap"
+	}
 	c, err := deps.Compile(ctx, cfg, o.Operation, o.Release)
 	if err != nil {
 		// Never print compiler/provider output: it can contain private payloads.
@@ -286,7 +344,7 @@ func runUnifiedEnvironmentDeploymentWithDependencies(parent context.Context, act
 			return deploymentplan.GateEvidence{}, &deploymentplan.Blocker{ID: "deployment.execution", Cause: "complete post-deploy acceptance is unavailable", Next: "restore the required workload, PKI and endpoint rollout health checks before execution"}
 		}
 	}
-	options := deploymentplan.QualificationOptions{Fast: o.Fast, Production: cfg.Values["DEPLOYMENT_PROTECTION_PROFILE"] == "production"}
+	options := deploymentplan.QualificationOptions{Fast: o.Fast, Production: cfg.Values["DEPLOYMENT_PROTECTION_PROFILE"] == "production", ExistingUpdate: o.Operation == "upgrade"}
 	qualification, err := c.Plan.Qualify(ctx, options, checks)
 	report.Decision, report.Gates = qualification.Decision, qualification.Gates
 	if err != nil {
@@ -336,7 +394,7 @@ func emitUnifiedDeploymentReport(out, diagnostics io.Writer, path string, report
 			fmt.Fprintf(out, "  cause: %s\n  next: %s\n  impact: %s\n  recheck: %s\n", row.Cause, row.Next, row.Impact, row.Recheck)
 		}
 	}
-	fmt.Fprintf(out, "%s environment=%s operation=%s completed=%t\n", report.Decision, report.Environment, report.Operation, report.Completed)
+	fmt.Fprintf(out, "%s environment=%s operation=%s scope=%s completed=%t\n", report.Decision, report.Environment, report.Operation, report.Scope, report.Completed)
 	if path != "" {
 		if err := writeUnifiedDeploymentReport(path, report); err != nil {
 			fmt.Fprintln(diagnostics, "error: cannot publish sanitized deployment report")

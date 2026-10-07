@@ -32,9 +32,10 @@ LKE/Kubernetes; the legacy VM runtime is not an active deployment path.
 
 Complete-environment GO/NO-GO is defined by the accepted
 [Unified Deployment Readiness Standard](deployment-readiness-standard.md).
-The public complete plan/preflight/create/upgrade entries now select the shared
-v2 engine. Required capability adapters are still being completed and missing
-adapters remain BLOCKED / NO-GO in every environment. Legacy schema-1 preparation
+The public plan/preflight/upgrade entries select the shared v2 engine and report
+`scope=existing-environment-update` for routine updates. All six required update
+gates must pass; Production activation and restore qualification are separate
+operations. Fresh bootstrap remains outside the current delivery. Legacy schema-1 preparation
 and complete provision entries are retired. The narrower image-only and current
 health checks do not replace complete qualification. No production activation
 qualification has been completed by these documentation/code changes.

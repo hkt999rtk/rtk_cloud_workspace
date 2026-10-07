@@ -88,22 +88,24 @@ func freezeEnvironmentRelease(ctx context.Context, cfg deploymentConfig, provide
 			result.Images["LKE_MQTT_PKI_IMAGE"] = image
 		}
 	}
-	repo := "hkt999rtk/rtk_cloud_workspace"
-	evidence, runID, attempt, err := latestEnvironmentPublication(ctx, repo, "postgres-backup-image.yml", result.WorkspaceRevision, true, run)
-	if err != nil {
-		return result, err
+	if cfg.Values["DEPLOYMENT_POSTGRES_BACKUP_ENABLED"] == "true" {
+		repo := "hkt999rtk/rtk_cloud_workspace"
+		evidence, runID, attempt, err := latestEnvironmentPublication(ctx, repo, "postgres-backup-image.yml", result.WorkspaceRevision, true, run)
+		if err != nil {
+			return result, err
+		}
+		var backup struct {
+			Postgres string `json:"source_postgres_image"`
+		}
+		if json.Unmarshal(evidence, &backup) != nil || backup.Postgres != result.Images["LKE_POSTGRES_IMAGE"].Reference {
+			return result, errors.New("deployment.release.backup: published runner PostgreSQL base differs from reviewed provider digest")
+		}
+		image, err := selectEnvironmentPublishedImage(evidence, repo, runID, attempt, result.WorkspaceRevision, "ghcr.io/"+repo+"/postgres-backup", true)
+		if err != nil {
+			return result, err
+		}
+		result.Images["LKE_POSTGRES_BACKUP_RUNNER_IMAGE"] = image
 	}
-	var backup struct {
-		Postgres string `json:"source_postgres_image"`
-	}
-	if json.Unmarshal(evidence, &backup) != nil || backup.Postgres != result.Images["LKE_POSTGRES_IMAGE"].Reference {
-		return result, errors.New("deployment.release.backup: published runner PostgreSQL base differs from reviewed provider digest")
-	}
-	image, err := selectEnvironmentPublishedImage(evidence, repo, runID, attempt, result.WorkspaceRevision, "ghcr.io/"+repo+"/postgres-backup", true)
-	if err != nil {
-		return result, err
-	}
-	result.Images["LKE_POSTGRES_BACKUP_RUNNER_IMAGE"] = image
 	// Repeat source checks after network requests. A changed source must not be
 	// silently frozen as a different release midway through evidence collection.
 	if err := verifyEnvironmentReleaseCheckout(ctx, cfg.Workspace, result.WorkspaceRevision, run); err != nil {

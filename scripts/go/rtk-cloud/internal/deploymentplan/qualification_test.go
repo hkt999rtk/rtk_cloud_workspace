@@ -103,3 +103,44 @@ func TestQualificationReportsActionableTypedBlockers(t *testing.T) {
 		}
 	}
 }
+
+func TestExistingUpdateRequiresEveryUpdateGateWithoutActivationOrRestoreProjects(t *testing.T) {
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		t.Run(environment, func(t *testing.T) {
+			in, definition, live := fixture(t, environment, "Deployment")
+			plan, err := Compile(in, []Definition{definition}, []Object{live})
+			if err != nil {
+				t.Fatal(err)
+			}
+			checks := map[string]GateCheck{}
+			for _, gate := range fullEnvironmentGates[:6] {
+				checks[gate.id] = func(context.Context, *Plan) (GateEvidence, error) {
+					return GateEvidence{Digest("fixture update evidence")}, nil
+				}
+			}
+			for _, id := range []string{"deployment.recovery", "deployment.production"} {
+				checks[id] = func(context.Context, *Plan) (GateEvidence, error) {
+					t.Fatal("update started an activation/restore project")
+					return GateEvidence{}, nil
+				}
+			}
+			options := QualificationOptions{Production: environment == "prod", ExistingUpdate: true}
+			result, err := plan.Qualify(context.Background(), options, checks)
+			if err != nil || result.Decision != "GO" || len(result.Gates) != 6 {
+				t.Fatal("wrong update scope", err, result)
+			}
+			for _, gate := range fullEnvironmentGates[:6] {
+				original := checks[gate.id]
+				delete(checks, gate.id)
+				if result, err := plan.Qualify(context.Background(), options, checks); err == nil || result.Decision != "NO-GO" {
+					t.Fatal("required update gate omitted", gate.id)
+				}
+				checks[gate.id] = original
+			}
+			options.Fast = true
+			if result, err := plan.Qualify(context.Background(), options, checks); err == nil || result.Decision != "NO-GO" {
+				t.Fatal("fast mode authorized update")
+			}
+		})
+	}
+}

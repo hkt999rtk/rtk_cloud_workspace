@@ -123,3 +123,38 @@ func TestMaintainedSnapshotAndNativeFenceRejectInputDriftAcrossEnvironments(t *t
 		}
 	}
 }
+
+func TestOrdinarySnapshotDoesNotRequireOrCreateDisabledBackupState(t *testing.T) {
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		t.Run(environment, func(t *testing.T) {
+			cfg, store, _, _ := maintainedDeploymentSnapshotFixture(t, environment)
+			path := filepath.Join(cfg.EnvironmentRoot, "postgres-backup.json")
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadFile(filepath.Join(store.RuntimeDir(), "platform-admin"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			snapshot, err := readEnvironmentDeploymentSnapshot(cfg, store)
+			if err != nil || snapshot.PostgresProtection.Environment != "" {
+				t.Fatal("ordinary update requires a backup project", err)
+			}
+			if _, err := os.Stat(path); !os.IsNotExist(err) {
+				t.Fatal("snapshot generated backup configuration")
+			}
+			after, err := os.ReadFile(filepath.Join(store.RuntimeDir(), "platform-admin"))
+			if err != nil || string(after) != string(before) {
+				t.Fatal("snapshot changed existing credentials")
+			}
+			cfg.Values["DEPLOYMENT_POSTGRES_BACKUP_ENABLED"] = "true"
+			if _, err := readEnvironmentDeploymentSnapshot(cfg, store); err == nil {
+				t.Fatal("enabled backup lacks required maintained configuration")
+			}
+			cfg.Values["DEPLOYMENT_POSTGRES_BACKUP_ENABLED"] = "invalid"
+			if _, err := readEnvironmentDeploymentSnapshot(cfg, store); err == nil {
+				t.Fatal("invalid backup selection ignored")
+			}
+		})
+	}
+}

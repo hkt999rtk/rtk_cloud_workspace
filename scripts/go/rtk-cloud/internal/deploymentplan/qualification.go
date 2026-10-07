@@ -11,8 +11,9 @@ import (
 // environment. A callback supplies a digest only after checking real evidence;
 // operator-authored JSON success flags are never a qualification adapter.
 type QualificationOptions struct {
-	Fast       bool
-	Production bool
+	Fast           bool
+	Production     bool
+	ExistingUpdate bool
 }
 
 type GateEvidence struct {
@@ -57,7 +58,11 @@ func (p *Plan) Qualify(ctx context.Context, options QualificationOptions, checks
 	}
 	result := Qualification{PlanSHA256: p.SHA256(), Decision: "NO-GO"}
 	gates := append([]qualificationGate{}, fullEnvironmentGates...)
-	if options.Production {
+	if options.ExistingUpdate {
+		// Ordinary updates retain identity and durable data. Activation and
+		// restore qualification belong to their separate lifecycle operations.
+		gates = gates[:6]
+	} else if options.Production {
 		gates = append(gates, productionQualificationGate)
 	}
 	passed := true

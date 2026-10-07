@@ -22,7 +22,7 @@ func TestCompleteCompilerUsesMaintainedCatalogAndFencesNativeSnapshot(t *testing
 			if environment == "prod" {
 				profile = "production"
 			}
-			architecture := "DEPLOYMENT_RUNTIME=kubernetes\nNODE_CLASS_LABEL_KEY=rtk.io/node-class\nDEFAULT_WORKLOAD_NODE_CLASS=general\nDEPLOYMENT_PROTECTION_PROFILE=" + profile + "\nREDIS_DATA_STORAGE=5Gi\nPROMETHEUS_DATA_STORAGE=20Gi\n"
+			architecture := "DEPLOYMENT_RUNTIME=kubernetes\nNODE_CLASS_LABEL_KEY=rtk.io/node-class\nDEFAULT_WORKLOAD_NODE_CLASS=general\nDEPLOYMENT_PROTECTION_PROFILE=" + profile + "\nDEPLOYMENT_POSTGRES_BACKUP_ENABLED=true\nREDIS_DATA_STORAGE=5Gi\nPROMETHEUS_DATA_STORAGE=20Gi\n"
 			for key, value := range settings {
 				if environmentControllerPolicySetting(key) {
 					architecture += key + "=" + value + "\n"
