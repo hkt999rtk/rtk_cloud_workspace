@@ -8,6 +8,14 @@ Last reviewed: 2026-10-07
 
 Audience: internal deployment operators and new maintainers
 
+Current implementation delivery is the two-script existing-environment update
+workflow in [the fixed scope](deployment-readiness-standard.md#fixed-script-delivery-scope--2026-10-07):
+preflight, deployment of that same checked target, and required rollout health
+verification. Actual environment checks and deployment are run by the operator.
+Fresh bootstrap and Production custody/backup/restore activation work are separate
+from this delivery. The incomplete prototype entries described below are not yet
+a completed two-script handoff.
+
 This document is the deployment entry point for internal operators. It covers
 creating a new environment, taking over an existing environment from another
 controller, and accepting an existing deployment. Linode staging uses only

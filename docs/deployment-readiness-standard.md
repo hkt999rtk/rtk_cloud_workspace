@@ -12,6 +12,38 @@ owns identity, signing and recovery policy. [ADR 0003](adr/0003-unified-environm
 records the replacement decision. Dated observations and local fixtures are evidence,
 not permission to relax this policy.
 
+## Fixed script delivery scope — 2026-10-07
+
+The current delivery is limited to `scripts/check-deployment-preflight.sh` and
+`scripts/deploy-environment.sh`, their necessary existing Go implementation,
+local regression tests and operator instructions. The operator runs the actual
+environment checks and deployment. Implementation work does not deploy or run
+live qualification on the operator's behalf.
+
+- All environments use one workflow for updating an existing environment's
+  enabled workloads and maintained configuration. This is not an image-only
+  restriction and does not select an environment-specific renderer.
+- Preflight resolves one release and target, checks required configuration,
+  images, tools/access, capacity/admission, PKI/Secret bindings and dependencies,
+  then reports GO or NO-GO with the plan digest and actionable failures.
+- Deployment rechecks that same target and ownership, executes the checked
+  resource bodies, waits for rollout and verifies required workload, PKI and
+  endpoint health before reporting completion. Partial failure is not success.
+- Existing identity, keys, CRLs, Secrets and persistent data are retained.
+  A required incompatible identity/schema/storage change is an explicit migration
+  blocker, not an automatic reset or an additional recovery project.
+- Output/help remain English with exit codes 0/1/2. Environment operational data
+  remains under `~/.config/rtk_cloud/<environment>/` using common path helpers
+  and private permissions; `cloud_env/` contains configuration only.
+
+Fresh-environment bootstrap, Production activation, new custody/escrow systems,
+backup/PITR implementation and restore/RPO/RTO qualification are outside this
+delivery. The broader qualification design below remains a separate roadmap;
+building those capabilities is not a dependency of finishing these two scripts.
+Necessary safeguards for the selected update remain in force. Existing prototype
+gates still need alignment with this scope; this scope record does not itself
+make the implementation usable or establish environment GO.
+
 ## Meaning of GO
 
 **GO permits execution of one specified release's complete environment plan after
