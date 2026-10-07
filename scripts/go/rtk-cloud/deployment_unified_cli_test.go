@@ -377,3 +377,25 @@ func TestUnifiedPreflightPreparesBucketBeforeCompilationAndStopsOnFailure(t *tes
 		}
 	}
 }
+
+func TestPublicDeploymentHasNoLegacyPKIRenderer(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	forbidden := []string{"lkeCertIssuerDeploymentManifest", "lkeFactoryEnrollDeploymentManifest", "lkePlanCertIssuerIngressMigrationForStaticRenderWithContext", "lkePlanCertIssuerIngressMigrationForStaticRenderWithIO", "deploymentCertIssuerIngressReadiness", "loadManagedUpgradePlan"}
+	for _, path := range files {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		source, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range forbidden {
+			if bytes.Contains(source, []byte("func "+name+"(")) {
+				t.Fatalf("retired runtime renderer %s exists in %s", name, path)
+			}
+		}
+	}
+}

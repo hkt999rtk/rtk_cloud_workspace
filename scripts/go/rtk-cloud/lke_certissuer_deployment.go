@@ -5,9 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-
-	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/envroot"
 )
 
 // Readiness is about the desired change. Current mirrors and PKI health are
@@ -16,77 +13,14 @@ func defaultDeploymentCheckPreflight(ctx context.Context, cfg deploymentConfig, 
 	return runDeploymentPreflightWithChecksContext(ctx, cfg, "provision", defaultDeploymentPreflightChecksContext(ctx), out)
 }
 
-func deploymentCertIssuerIngressReadiness(ctx context.Context, cfg deploymentConfig, out io.Writer) error {
-	return deploymentCertIssuerIngressReadinessWithClusterState(ctx, cfg, out, false)
-}
-
-func deploymentCertIssuerIngressReadinessWithClusterState(ctx context.Context, cfg deploymentConfig, out io.Writer, clusterAbsent bool) error {
-	if cfg.Adapter != "lke" {
-		return nil
-	}
-	env := appendMap(cfg.Values, cfg.AdapterResolved)
-	env = appendMap(env, deploymentLegacyLKEValues(env, cfg.Environment))
-	env["CLOUD_ENV_NAME"] = cfg.Environment
-	env = envroot.Derive(env)
-	policy := lkeResolveCertIssuerTLSConfig(env)
-	if err := policy.Validate(); err != nil {
-		return err
-	}
-	if policy.PublicHost == "" {
-
-		return nil
-	}
-	store, err := newSecretStore("", cfg.Environment)
-	if err != nil {
-		return err
-	}
-	previousSecretRoot := activeSecretEnvironmentRoot
-	activeSecretEnvironmentRoot = store.Root
-	defer func() { activeSecretEnvironmentRoot = previousSecretRoot }()
-	paths := provisionPaths{Workspace: cfg.Workspace, EnvRoot: cfg.RuntimeRoot}
-	if clusterAbsent {
-		if err := lkeRequireCertIssuerInitialMaterialWithContext(ctx, paths, env); err != nil {
-			return err
-		}
-		fmt.Fprintln(out, "PASS certissuer-route-plan     provider confirmed selected cluster absent; new deployment will create the resolved direct-mTLS route")
-		return nil
-	}
-	if _, err := os.Stat(store.KubeconfigPath()); errors.Is(err, os.ErrNotExist) {
-		return errors.New("selected cluster is not confirmed absent and its kubeconfig is missing; restore read-only Kubernetes access before qualifying CertIssuer migration")
-	} else if err != nil {
-		return fmt.Errorf("inspect selected environment kubeconfig: %w", err)
-	}
-	operator, err := store.readOperator()
-	if err != nil {
-		return err
-	}
-	operator["RTK_CLOUD_KUBECONFIG"] = store.KubeconfigPath()
-	operator["RTK_CLOUD_LKE_KUBECONFIG"] = store.KubeconfigPath()
-	restore := installAllCredentialEnvironment(operator)
-	defer restore()
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if _, err := lkePlanCertIssuerIngressMigrationForStaticRenderWithContext(ctx, paths, env); err != nil {
-		return fmt.Errorf("CertIssuer route migration prerequisites: %w", err)
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	fmt.Fprintln(out, "PASS certissuer-route-plan     resolved direct mTLS and owned legacy route migration are deployable; no live resources changed")
-	return nil
-}
-
 func lkeCertIssuerRoutingSelected(ctx provisionContext) bool {
 	return lkeResolveCertIssuerTLSConfig(ctx.Env).PublicHost != "" &&
 		(ctx.Opts.mode.dns || (ctx.Opts.mode.deploy && lkeWorkloadSelected(ctx.Env, ctx.Opts, "video-cloud")))
 }
 
 func lkeCertIssuerIngressPreflight(ctx provisionContext) error {
-	if ctx.Opts.mode.deploy && len(ctx.Opts.workloads) == 0 {
-
-		_, err := lkePlanCertIssuerIngressMigrationForStaticRenderWithContext(context.Background(), ctx.Paths, ctx.Env)
-		return err
+	if ctx.Opts.mode.deploy && lkeWorkloadSelected(ctx.Env, ctx.Opts, "video-cloud") {
+		return errors.New("legacy static PKI templates are retired; use deployment upgrade with the exact --plan-sha256")
 	}
 	_, err := lkePlanCertIssuerIngressMigration(ctx.Paths, ctx.Env)
 	return err
