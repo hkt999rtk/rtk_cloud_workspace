@@ -25,7 +25,7 @@ func completeEnvironmentRenderFixture(environment string) (map[string]string, en
 		release.Images[source.EnvKey] = image
 		env[source.EnvKey] = image.Reference
 	}
-	for key, repository := range map[string]string{"POSTGRES": "postgres", "REDIS": "redis", "FLEET_VALKEY": "valkey/valkey", "REDIS_EXPORTER": "oliver006/redis_exporter", "MQTT": "emqx/emqx", "PROMETHEUS": "prom/prometheus", "LOKI": "grafana/loki", "GRAFANA": "grafana/grafana", "LOG_COLLECTOR": "fluent/fluent-bit", "OPENBAO": "quay.io/openbao/openbao", "UTILITY": "busybox", "ALPINE": "alpine", "INGRESS": "registry.k8s.io/ingress-nginx/controller"} {
+	for key, repository := range map[string]string{"POSTGRES": "postgres", "REDIS": "redis", "FLEET_VALKEY": "valkey/valkey", "REDIS_EXPORTER": "oliver006/redis_exporter", "MQTT": "emqx/emqx", "PROMETHEUS": "prom/prometheus", "LOKI": "grafana/loki", "GRAFANA": "grafana/grafana", "LOG_COLLECTOR": "fluent/fluent-bit", "OPENBAO": "quay.io/openbao/openbao", "ALPINE": "alpine", "INGRESS": "registry.k8s.io/ingress-nginx/controller"} {
 		key = "LKE_" + key + "_IMAGE"
 		image := environmentReleaseImage{Reference: repository + "@sha256:" + strings.Repeat("c", 64)}
 		release.Images[key] = image
