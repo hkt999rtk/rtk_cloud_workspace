@@ -8,7 +8,7 @@ CHECK_READ_ONLY="${RTK_CLOUD_CHECK_SCRIPT_READ_ONLY:-false}"
 case "$CHECK_PHASE" in
   pre-deploy)
     printf '%s\n' 'Pre-deploy deployability check (pre-deploy): Validate prerequisites for the selected deployment operation. Use --operation image-upgrade to qualify existing Pod image updates. Run before deployment.'
-    printf '%s\n' 'No cloud resources are persisted by this check. Complete preflight compiles the shared target plan from maintained settings, managed identity bindings and --release (default: ~/.config/rtk_cloud/<environment>/deployment/release.json). Every required gate must pass; missing capability or evidence is NO-GO. Private schema-1 plans are retired. --fast cannot qualify a complete update.'
+    printf '%s\n' 'Preflight checks the configured media bucket and creates it if missing when storage cutover is not required. Other provider probes remain read-only; no data migration or credential replacement is performed. Complete preflight compiles the shared target plan from maintained settings, managed identity bindings and --release (default: ~/.config/rtk_cloud/<environment>/deployment/release.json). Every required gate must pass; missing capability or evidence is NO-GO. Private schema-1 plans are retired. --fast cannot qualify a complete update.'
     ;;
   post-deploy)
     printf '%s\n' 'Post-deploy environment health check (post-deploy): Verify deployed Secret bindings, PKI, required public mTLS and environment workload readiness. Run after deployment or when diagnosing the current environment.'

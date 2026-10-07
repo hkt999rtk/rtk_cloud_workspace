@@ -23,17 +23,19 @@ type unifiedDeploymentOptions struct {
 	Timeout                                                                                          time.Duration
 }
 type unifiedDeploymentDependencies struct {
-	Resolve func(string, string, string) (deploymentConfig, error)
-	Compile func(context.Context, deploymentConfig, string, string) (*compiledEnvironmentDeployment, error)
-	Checks  func(*compiledEnvironmentDeployment) map[string]deploymentplan.GateCheck
-	Execute func(context.Context, *compiledEnvironmentDeployment, string, func(context.Context, *deploymentplan.Plan) error, func(context.Context, *compiledEnvironmentDeployment) error) error
-	Accept  func(context.Context, *compiledEnvironmentDeployment) error
-	Guard   func([]string) error
+	PrepareStorage func(context.Context, deploymentConfig, io.Writer) error
+	Resolve        func(string, string, string) (deploymentConfig, error)
+	Compile        func(context.Context, deploymentConfig, string, string) (*compiledEnvironmentDeployment, error)
+	Checks         func(*compiledEnvironmentDeployment) map[string]deploymentplan.GateCheck
+	Execute        func(context.Context, *compiledEnvironmentDeployment, string, func(context.Context, *deploymentplan.Plan) error, func(context.Context, *compiledEnvironmentDeployment) error) error
+	Accept         func(context.Context, *compiledEnvironmentDeployment) error
+	Guard          func([]string) error
 }
 
 func defaultUnifiedDeploymentDependencies() unifiedDeploymentDependencies {
 	return unifiedDeploymentDependencies{
-		Resolve: resolveDeploymentConfig, Compile: compileEnvironmentDeployment,
+		PrepareStorage: prepareDeploymentMediaBucket,
+		Resolve:        resolveDeploymentConfig, Compile: compileEnvironmentDeployment,
 		Guard: recoveryMutationGuard,
 		Checks: func(c *compiledEnvironmentDeployment) map[string]deploymentplan.GateCheck {
 			return map[string]deploymentplan.GateCheck{
@@ -222,7 +224,7 @@ func parseUnifiedDeploymentOptions(action string, args []string, out io.Writer) 
 	fs.BoolVar(&o.Fast, "fast", false, "reduced evidence; always NO-GO for complete updates")
 	fs.DurationVar(&o.Timeout, "timeout", o.Timeout, "complete planning and qualification deadline")
 	var readOnly bool
-	fs.BoolVar(&readOnly, "read-only", false, "preflight is always read-only")
+	fs.BoolVar(&readOnly, "read-only", false, "other preflight probes are read-only; a missing configured media bucket may be created")
 	if err := fs.Parse(args); err != nil {
 		return o, err
 	}
@@ -306,6 +308,12 @@ func runUnifiedEnvironmentDeploymentWithDependencies(parent context.Context, act
 	report.Scope = "existing-environment-update"
 	if o.Operation != "upgrade" {
 		report.Scope = "environment-bootstrap"
+	}
+	if action == "preflight" && deps.PrepareStorage != nil {
+		if err := deps.PrepareStorage(ctx, cfg, out); err != nil {
+			report.Gates = []deploymentplan.GateResult{{ID: "provider.storage.media.bucket", Status: "FAIL", Required: true, Cause: "configured media bucket could not be verified or created", Next: "check the environment Linode credentials, bucket creation permission, configured name/region and provider availability; repeat preflight"}}
+			return emitUnifiedDeploymentReport(out, diagnostics, o.Report, report, exitCode(1))
+		}
 	}
 	c, err := deps.Compile(ctx, cfg, o.Operation, o.Release)
 	if err != nil {

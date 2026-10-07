@@ -1,6 +1,6 @@
 # Unified Deployment Readiness Standard
 
-Status: accepted deployment policy; unified implementation and environment qualification in progress.
+Status: accepted deployment policy; existing-update script implementation delivered locally; environment qualification is operator-run.
 
 Owner: `rtk_cloud_workspace`; service owners supply candidate and recovery checks.
 
@@ -23,7 +23,9 @@ live qualification on the operator's behalf.
 - All environments use one workflow for updating an existing environment's
   enabled workloads and maintained configuration. This is not an image-only
   restriction and does not select an environment-specific renderer.
-- Preflight resolves one release and target, checks required configuration,
+- Preflight verifies and may create a missing configured media bucket when no
+  storage cutover is requested; other provider probes remain read-only. It
+  resolves one release and target, checks required configuration,
   images, tools/access, capacity/admission, PKI/Secret bindings and dependencies,
   then reports GO or NO-GO with the plan digest and actionable failures.
 - Deployment rechecks that same target and ownership, executes the checked
@@ -74,3 +76,12 @@ dedicated credentials and selected runner image remain required. Missing optiona
 backup configuration never creates a backup project during normal preflight.
 Existing undeclared workloads still block planning; the flag cannot silently
 remove or reset an already enabled component.
+
+## Retired static PKI templates
+
+The production binary no longer contains the static CertIssuer or FactoryEnroll
+Deployment templates or their PKI initialization/reconciliation block. Historical
+Kubernetes samples are test fixtures only. Public plan/preflight/create/upgrade
+entries use the maintained managed-PKI engine, with no private-file detection or
+static renderer fallback. Scoped legacy video-cloud deployment is rejected
+before mutation rather than rebuilding identities through deleted templates.

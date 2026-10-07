@@ -2688,7 +2688,7 @@ func TestLKECertificateBundleStagingConfiguration(t *testing.T) {
 		t.Fatalf("account-manager test issuance flag missing:\n%s", account)
 	}
 
-	factory := lkeFactoryEnrollDeploymentManifest(env, lkeCertIssuerMaterial{})
+	factory := historicalLkeFactoryEnrollDeploymentManifest(env, lkeCertIssuerMaterial{})
 	if !strings.Contains(factory, "name: VIDEO_CLOUD_ENV\n              value: \"staging\"") {
 		t.Fatalf("factory enrollment staging environment missing:\n%s", factory)
 	}
@@ -5311,13 +5311,13 @@ func TestFactoryProductionJWTSharedAcrossLKEWorkloadsAndChecksums(t *testing.T) 
 		ServiceCA:   "service-ca",
 	}
 	accountDeployment := lkeDeploymentManifest(env, accountWorkload, &material)
-	factoryDeployment := lkeFactoryEnrollDeploymentManifest(env, material)
+	factoryDeployment := historicalLkeFactoryEnrollDeploymentManifest(env, material)
 
 	t.Setenv("FACTORY_PRODUCTION_JWT_SECRET", "factory-production-secret-two")
 	if changed := lkeDeploymentManifest(env, accountWorkload, &material); changed == accountDeployment {
 		t.Fatal("production JWT secret change must update the account-manager pod template checksum")
 	}
-	if changed := lkeFactoryEnrollDeploymentManifest(env, material); changed == factoryDeployment {
+	if changed := historicalLkeFactoryEnrollDeploymentManifest(env, material); changed == factoryDeployment {
 		t.Fatal("production JWT secret change must update the factory-enroll pod template checksum")
 	}
 }
@@ -7516,7 +7516,7 @@ func fakeKubectlCertIssuerServing(t *testing.T) lkeCertIssuerMaterial {
 	}
 	for _, fixture := range []struct{ variable, manifest string }{
 		{"FAKE_CERTISSUER_SERVICE_JSON", lkeCertIssuerServiceManifest(env)},
-		{"FAKE_CERTISSUER_DEPLOYMENT_JSON", lkeCertIssuerDeploymentManifest(env, material, lkeOpenBaoBootstrapResult{})},
+		{"FAKE_CERTISSUER_DEPLOYMENT_JSON", historicalLkeCertIssuerDeploymentManifest(env, material, lkeOpenBaoBootstrapResult{})},
 	} {
 		var object map[string]any
 		if err := yaml.Unmarshal([]byte(fixture.manifest), &object); err != nil {

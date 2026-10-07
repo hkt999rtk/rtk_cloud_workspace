@@ -84,13 +84,13 @@ func TestLKEWebRTCServiceRequiresOwnIdentitySecret(t *testing.T) {
 	}
 }
 
-func TestLKEDeployRejectsWebRTCWithoutFoundationBeforeMutation(t *testing.T) {
+func TestRetiredLKEDeployRejectsWebRTCWithoutFoundationBeforeMutation(t *testing.T) {
 	logPath := fakeKubectl(t)
 	t.Setenv("LKE_WEBRTC_SERVICE_REGISTRATION_ENABLED", "true")
 	t.Setenv("LKE_MQTT_FOUNDATION_REGISTRATION_ENABLED", "false")
 	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "LKE_VIDEO_CLOUD_IMAGE": "example.test/video-cloud:reviewed", "VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED": "false"}
 	err := lkeDeployWorkloads(provisionPaths{}, env, provisionOptions{workloads: []string{"video-cloud"}})
-	if err == nil || !strings.Contains(err.Error(), "requires the MQTT foundation") {
+	if err == nil || !strings.Contains(err.Error(), "static PKI templates are retired") {
 		t.Fatalf("WebRTC dependency gate did not reject rollout: %v", err)
 	}
 	log, readErr := os.ReadFile(logPath)

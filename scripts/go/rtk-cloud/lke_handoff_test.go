@@ -199,7 +199,7 @@ func TestLKEHandoffWorkerAndConsumersUseRuntimeSecrets(t *testing.T) {
 
 	material := lkeCertIssuerMaterial{}
 	consumers := strings.Join([]string{
-		lkeFactoryEnrollDeploymentManifest(env, material),
+		historicalLkeFactoryEnrollDeploymentManifest(env, material),
 		lkeDeploymentManifest(env, lkeWorkload{Key: "video-cloud", Name: "video-cloud-api", Image: env["LKE_VIDEO_CLOUD_IMAGE"]}, nil),
 		lkeVideoCloudAuxiliaryDeploymentManifest(env, lkeVideoCloudAuxiliaryService{Name: "video-cloud-mqttusage", Binary: "mqttusage", Port: 19400}),
 		lkeBillingSettlementCollectorManifest(env),
@@ -302,7 +302,7 @@ func TestLKEHandoffGeneratedManifestsAreValidYAML(t *testing.T) {
 	manifests := map[string]string{
 		"account-manager-secret":  lkeAccountManagerSecretManifest(env),
 		"factory-secret":          lkeFactoryEnrollRuntimeSecretManifest(env),
-		"factory-deployment":      lkeFactoryEnrollDeploymentManifest(env, lkeCertIssuerMaterial{}),
+		"factory-deployment":      historicalLkeFactoryEnrollDeploymentManifest(env, lkeCertIssuerMaterial{}),
 		"handoff-worker":          lkeAccountManagerHandoffWorkerManifest(env),
 		"cloud-deletion-worker":   lkeAccountManagerCloudDeletionWorkerManifest(env),
 		"cloud-logger-deployment": lkeCloudLoggerDeploymentManifest(env),

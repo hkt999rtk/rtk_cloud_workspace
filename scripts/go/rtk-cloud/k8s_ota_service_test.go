@@ -588,23 +588,23 @@ func TestLKEOTADeviceEdgeApplyRequiresRegistrationAndReadyEndpoint(t *testing.T)
 	}
 }
 
-func TestLKEOTACoreRestorationWaitsForLiveEdgeRemoval(t *testing.T) {
+func TestRetiredLKEOTACoreRestorationWaitsForLiveEdgeRemoval(t *testing.T) {
 	fakeKubectl(t)
 	t.Setenv("LKE_OTA_CORE_CUTOVER_ENABLED", "false")
 	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "VIDEO_CLOUD_DEVICE_DOMAIN": "device.example.test", "LKE_VIDEO_CLOUD_IMAGE": "example.test/video-cloud:reviewed", "VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED": "false"}
 	opts := provisionOptions{workloads: []string{"video-cloud"}}
 	t.Setenv("LKE_OTA_SERVICE_EDGE_ENABLED", "true")
-	if err := lkeDeployWorkloads(provisionPaths{}, env, opts); err == nil || !strings.Contains(err.Error(), "after disabling the device edge") {
+	if err := lkeDeployWorkloads(provisionPaths{}, env, opts); err == nil || !strings.Contains(err.Error(), "static PKI templates are retired") {
 		t.Fatalf("core restoration accepted desired device edge: %v", err)
 	}
 	t.Setenv("LKE_OTA_SERVICE_EDGE_ENABLED", "false")
 	t.Setenv("FAKE_WEBRTC_DEVICE_INGRESS_JSON", `{"spec":{"rules":[{"http":{"paths":[{"path":"/v1/device/ota/"}]}}]}}`)
-	if err := lkeDeployWorkloads(provisionPaths{}, env, opts); err == nil || !strings.Contains(err.Error(), "before restoring core") {
+	if err := lkeDeployWorkloads(provisionPaths{}, env, opts); err == nil || !strings.Contains(err.Error(), "static PKI templates are retired") {
 		t.Fatalf("core restoration accepted a live OTA device edge: %v", err)
 	}
 	t.Setenv("FAKE_WEBRTC_DEVICE_INGRESS_JSON", otaRollbackCoreIngressJSON)
 	t.Setenv("FAKE_WEBRTC_CORE_DEPLOYMENT_JSON", otaRollbackCoreDeploymentJSON)
-	if err := lkeDeployWorkloads(provisionPaths{}, env, opts); err == nil || !strings.Contains(err.Error(), "mTLS certificate") {
+	if err := lkeDeployWorkloads(provisionPaths{}, env, opts); err == nil || !strings.Contains(err.Error(), "static PKI templates are retired") {
 		t.Fatalf("core restoration skipped the post-ingress data-plane proof: %v", err)
 	}
 }

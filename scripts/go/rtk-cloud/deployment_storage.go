@@ -985,7 +985,7 @@ func (c deploymentCredentialChecker) resolveStorageBucket(token string, target d
 		}
 		return bucket, nil
 	}
-	return linodeStorageBucket{}, fmt.Errorf("bucket %s was not found in Linode inventory", target.Bucket)
+	return linodeStorageBucket{}, fmt.Errorf("%w: bucket %s was not found in Linode inventory", errStorageBucketMissing, target.Bucket)
 }
 
 func (c deploymentCredentialChecker) resolveAuthorizedStorageKey(token, access string, target deploymentStorageTarget) (linodeStorageKey, error) {

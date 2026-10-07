@@ -2579,13 +2579,8 @@ func lkeWaitForIngressExternalIP(env map[string]string) (string, error) {
 
 func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provisionOptions) error {
 
-	if len(opts.workloads) == 0 && lkeWorkloadSelected(env, opts, "video-cloud") {
-		if err := lkeRequireCertIssuerRendererCompatibility(env); err != nil {
-			return err
-		}
-		if err := lkeRequireCertIssuerDesiredMaterial(context.Background(), paths, env); err != nil {
-			return err
-		}
+	if lkeWorkloadSelected(env, opts, "video-cloud") {
+		return errors.New("legacy static PKI templates are retired; use deployment plan and preflight, then deployment upgrade with the exact --plan-sha256")
 	}
 	if opts.loggerOnly {
 		if err := ensureLKEDeployImages(env, opts); err != nil {
@@ -4013,6 +4008,9 @@ func lkeSeedRuntimeSecretCacheFromK8SSecretJSONWithOptional(raw []byte, required
 }
 
 func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, opts provisionOptions) error {
+	if lkeWorkloadSelected(env, opts, "video-cloud") {
+		return errors.New("legacy static PKI templates are retired; use deployment upgrade with the exact --plan-sha256")
+	}
 	if err := kubectlApply(lkePostgresSecretManifest(env)); err != nil {
 		return err
 	}
@@ -4054,126 +4052,6 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 			}
 		}
 	}
-	var material lkeCertIssuerMaterial
-	materialReady := false
-	if lkeWorkloadSelected(env, opts, "video-cloud") {
-		var err error
-		material, err = loadOrCreateLKECertIssuerMaterial(paths, env)
-		if err != nil {
-			return err
-		}
-		openBaoTLS, err := loadOrCreateLKEOpenBaoTLSMaterial(paths, env)
-		if err != nil {
-			return err
-		}
-		openBao, err := lkeEnsureOpenBao(paths, env, openBaoTLS)
-		if err != nil {
-			return err
-		}
-		material.RootCACert = openBao.RootCACert
-		material.DeviceCACert = openBao.DeviceCACert
-		material.AppCACert = openBao.AppCACert
-		if err := writeLKEDeviceClientCABundle(paths, material.RootCACert, material.DeviceCACert, material.AppCACert); err != nil {
-			return err
-		}
-		materialReady = true
-		if err := writeLKEVideoCloudRuntimeEnv(paths, env); err != nil {
-			return err
-		}
-		if err := kubectlApply(lkeVideoCloudRuntimeSecretManifestWithFleetReadTokens(env, lkeStagedFleetReadToken(opts), lkeStagedFleetReadPreviousToken(opts))); err != nil {
-			return err
-		}
-		if err := kubectlDeleteSecret(lkeNamespaceName(env, "video-cloud"), "certissuer-runtime"); err != nil {
-			return err
-		}
-		if err := kubectlApply(lkeCertIssuerRuntimeSecretManifest(env, material)); err != nil {
-			return err
-		}
-		if err := kubectlApply(lkeDeviceMTLSAppCASecretManifest(env, lkeClientCABundle(material.RootCACert, material.DeviceCACert, material.AppCACert))); err != nil {
-			return err
-		}
-		if err := kubectlApply(lkeCertIssuerOpenBaoAuthSecretManifest(env, openBao)); err != nil {
-			return err
-		}
-		if err := kubectlApply(lkeCertIssuerServiceManifest(env)); err != nil {
-			return err
-		}
-		if err := kubectlApply(lkeCertIssuerDeploymentManifest(env, material, openBao)); err != nil {
-			return err
-		}
-		if err := runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "rollout", "status", "deployment/certissuer", "--timeout", firstNonEmpty(os.Getenv("LKE_CERTISSUER_ROLLOUT_TIMEOUT"), "5m")); err != nil {
-			return err
-		}
-		if err := kubectlApply(lkeFactoryEnrollRuntimeSecretManifest(env)); err != nil {
-			return err
-		}
-		if err := kubectlApply(lkeFactoryEnrollCertIssuerClientSecretManifest(env, material)); err != nil {
-			return err
-		}
-		if err := kubectlApply(lkeFactoryEnrollServiceManifest(env)); err != nil {
-			return err
-		}
-		if err := kubectlApply(lkeFactoryEnrollDeploymentManifest(env, material)); err != nil {
-			return err
-		}
-		if err := runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "rollout", "status", "deployment/factoryenroll", "--timeout", firstNonEmpty(os.Getenv("LKE_FACTORYENROLL_ROLLOUT_TIMEOUT"), "5m")); err != nil {
-			return err
-		}
-		mqttMaterial, err := loadOrCreateLKEMQTTMaterial(paths, env)
-		if err != nil {
-			return err
-		}
-		if err := kubectlApply(lkeMQTTRuntimeSecretManifest(env, mqttMaterial)); err != nil {
-			return err
-		}
-		if err := kubectlApply(lkeMQTTConfigManifest(env)); err != nil {
-			return err
-		}
-		if err := kubectlApply(lkeMQTTServiceManifest(env)); err != nil {
-			return err
-		}
-		if err := kubectlApply(lkeMQTTHeadlessServiceManifest(env)); err != nil {
-			return err
-		}
-		if err := kubectlApply(lkeAllowEMQXClusterNetworkPolicyManifest(env)); err != nil {
-			return err
-		}
-		// API and worker MQTT clients start before public HTTPS/ACME setup.
-		// Apply their ingress grant here so a later public-edge failure cannot
-		// leave the internal MQTT data plane disconnected.
-		if err := kubectlApply(lkeAllowVideoCloudMQTTClientsNetworkPolicyManifest(env)); err != nil {
-			return err
-		}
-		if err := kubectlApply(lkeAllowVideoCloudAPIInternalNetworkPolicyManifest(env)); err != nil {
-			return err
-		}
-		if lkeEnvBool("LKE_PUBLIC_MQTT_LOADBALANCER") {
-			if err := lkeApplyPublicMQTTNodePort(env); err != nil {
-				return err
-			}
-		}
-		if err := runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "delete", "deployment/mqtt", "--ignore-not-found=true"); err != nil {
-			return err
-		}
-		if err := kubectlApply(lkeMQTTStatefulSetManifest(env, mqttMaterial)); err != nil {
-			return err
-		}
-		if err := runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "rollout", "status", "statefulset/mqtt", "--timeout", firstNonEmpty(os.Getenv("LKE_MQTT_ROLLOUT_TIMEOUT"), "5m")); err != nil {
-			return err
-		}
-		if err := lkeEnsureEMQXCluster(env); err != nil {
-			return err
-		}
-		if err := lkeRemoveK8sCoturnRuntime(env); err != nil {
-			return err
-		}
-		if err := lkeApplyVideoCloudAuxiliaryServices(env, opts); err != nil {
-			return err
-		}
-		if err := lkeConfigureEMQXBilling(paths, env); err != nil {
-			return err
-		}
-	}
 	if lkeWorkloadSelected(env, opts, "billing") {
 		if err := kubectlApply(lkeBillingSecretManifest(env)); err != nil {
 			return err
@@ -4197,12 +4075,9 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 	if !lkeWorkloadSelected(env, opts, "account-manager") {
 		return nil
 	}
-	if !materialReady {
-		var err error
-		material, err = loadOrCreateLKECertIssuerMaterial(paths, env)
-		if err != nil {
-			return err
-		}
+	material, err := loadOrCreateLKECertIssuerMaterial(paths, env)
+	if err != nil {
+		return err
 	}
 	if err := kubectlApply(lkeAccountManagerCertIssuerClientSecretManifest(env, material)); err != nil {
 		return err
@@ -8613,226 +8488,6 @@ stringData:
   client.key: %q
   ca.crt: %q
 `, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], material.FactoryCert, material.FactoryKey, material.ServiceCA)
-}
-
-func lkeCertIssuerDeploymentManifest(env map[string]string, material lkeCertIssuerMaterial, openBao lkeOpenBaoBootstrapResult) string {
-	tlsConfig := lkeResolveCertIssuerTLSConfig(env)
-	checksum := lkeConfigChecksum(
-		material.ServerCert,
-		material.ServiceCA,
-		material.RootCACert,
-		material.DeviceCACert,
-		material.AppCACert,
-		openBao.RoleID,
-		openBao.SecretID,
-		openBao.TLSCACert,
-		lkeRuntimeSecretValue("postgres"),
-	)
-	return fmt.Sprintf(`apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: certissuer
-  namespace: %s
-  labels:
-    app.kubernetes.io/name: certissuer
-    app.kubernetes.io/part-of: rtk-cloud
-    rtk.realtek.com/provider: lke
-    rtk.realtek.com/stack: %s
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: certissuer
-  template:
-    metadata:
-      annotations:
-        rtk.realtek.com/runtime-checksum: %q
-      labels:
-        app.kubernetes.io/name: certissuer
-        app.kubernetes.io/part-of: rtk-cloud
-        rtk.realtek.com/provider: lke
-        rtk.realtek.com/stack: %s
-    spec:
-      imagePullSecrets:
-        - name: %s
-      containers:
-        - name: certissuer
-          image: %s
-          imagePullPolicy: IfNotPresent
-          command: ["/app/certissuer"]
-          ports:
-            - name: https
-              containerPort: %d
-          env:
-            - name: POSTGRES_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: certissuer-runtime
-                  key: POSTGRES_PASSWORD
-            - name: CERT_ISSUER_LISTEN_ADDR
-              value: ":%d"
-            - name: CERT_ISSUER_SERVER_CERT
-              value: /etc/video-cloud/certissuer/tls.crt
-            - name: CERT_ISSUER_SERVER_KEY
-              value: /etc/video-cloud/certissuer/tls.key
-            - name: CERT_ISSUER_CLIENT_CA
-              value: /etc/video-cloud/certissuer/client-ca.crt
-            - name: CERT_ISSUER_CA_CERT_PATH
-              value: /etc/video-cloud/certissuer/device-ca.crt
-            - name: CERT_ISSUER_APP_CA_CERT_PATH
-              value: /etc/video-cloud/certissuer/app-ca.crt
-            - name: CERT_ISSUER_SIGNER_PROVIDER
-              value: openbao
-            - name: CERT_ISSUER_OPENBAO_PKI_MOUNT
-              value: pki/device
-            - name: CERT_ISSUER_OPENBAO_PKI_ROLE
-              value: factory-device
-            - name: CERT_ISSUER_OPENBAO_GATEWAY_ROLE
-              value: gateway-server
-            - name: CERT_ISSUER_APP_SIGNER_PROVIDER
-              value: openbao
-            - name: CERT_ISSUER_APP_OPENBAO_PKI_MOUNT
-              value: pki/app
-            - name: CERT_ISSUER_APP_OPENBAO_PKI_ROLE
-              value: app-user
-            # Existing LKE environments can still hold the pre-managed-PKI
-            # account-manager client certificate. New material uses the
-            # service:account-manager identity from the PKI design.
-            - name: CERT_ISSUER_APP_CLIENT_CN_PATTERN
-              value: "^(account-manager|service:account-manager)$"
-            - name: OPENBAO_ADDR
-              value: %q
-            - name: OPENBAO_CACERT
-              value: /etc/video-cloud/openbao/ca.crt
-            - name: OPENBAO_AUTH_METHOD
-              value: approle
-            - name: OPENBAO_ROLE_ID_FILE
-              value: /etc/video-cloud/openbao/role_id
-            - name: OPENBAO_SECRET_ID_FILE
-              value: /etc/video-cloud/openbao/secret_id
-            - name: CERT_ISSUER_DB_DSN
-              value: "postgres://postgres:$(POSTGRES_PASSWORD)@postgresql.%s.svc.cluster.local:5432/video_cloud?sslmode=disable"
-          volumeMounts:
-            - name: certissuer-runtime
-              mountPath: /etc/video-cloud/certissuer
-              readOnly: true
-            - name: certissuer-openbao-auth
-              mountPath: /etc/video-cloud/openbao
-              readOnly: true
-      volumes:
-        - name: certissuer-runtime
-          secret:
-            secretName: certissuer-runtime
-        - name: certissuer-openbao-auth
-          secret:
-            secretName: certissuer-openbao-auth
-`, tlsConfig.Namespace, env["CLOUD_STACK_NAME"], checksum, env["CLOUD_STACK_NAME"], lkeImagePullSecretName(env), lkeVideoCloudImage(env), tlsConfig.HTTPSPort, tlsConfig.HTTPSPort, lkeOpenBaoAddr(env), lkeNamespaceName(env, "platform"))
-}
-
-func lkeFactoryEnrollDeploymentManifest(env map[string]string, material lkeCertIssuerMaterial) string {
-	checksum := lkeConfigChecksum(
-		lkeRuntimeSecretValue("postgres"),
-		lkeRuntimeSecretValue("factory-enroll-auth"),
-		lkeFactoryProductionJWTSecret(env),
-		lkeFactoryProductionJWTAudience(env),
-		lkeRuntimeSecretValue("factory-admission"),
-		lkeFactoryAdmissionBaseURL(env),
-		lkeHandoffRuntimeValue(env, lkeFactoryHandoffToken()),
-		lkeCertIssuerBaseURL(env),
-		material.FactoryCert,
-		material.ServiceCA,
-	)
-	return fmt.Sprintf(`apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: factoryenroll
-  namespace: %s
-  labels:
-    app.kubernetes.io/name: factoryenroll
-    app.kubernetes.io/part-of: rtk-cloud
-    rtk.realtek.com/provider: lke
-    rtk.realtek.com/stack: %s
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: factoryenroll
-  template:
-    metadata:
-      annotations:
-        rtk.realtek.com/runtime-checksum: %q
-      labels:
-        app.kubernetes.io/name: factoryenroll
-        app.kubernetes.io/part-of: rtk-cloud
-        rtk.realtek.com/provider: lke
-        rtk.realtek.com/stack: %s
-    spec:
-      imagePullSecrets:
-        - name: %s
-      containers:
-        - name: factoryenroll
-          image: %s
-          imagePullPolicy: IfNotPresent
-          command: ["/app/factoryenroll"]
-          ports:
-            - name: http
-              containerPort: 18443
-          env:
-            - name: POSTGRES_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: factoryenroll-runtime
-                  key: POSTGRES_PASSWORD
-            - name: FACTORY_ENROLL_AUTH_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: factoryenroll-runtime
-                  key: FACTORY_ENROLL_AUTH_KEY
-            - name: FACTORY_ENROLL_PRODUCTION_JWT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: factoryenroll-runtime
-                  key: FACTORY_ENROLL_PRODUCTION_JWT_SECRET
-            - name: FACTORY_ENROLL_PRODUCTION_JWT_AUDIENCE
-              valueFrom:
-                secretKeyRef:
-                  name: factoryenroll-runtime
-                  key: FACTORY_ENROLL_PRODUCTION_JWT_AUDIENCE
-            - name: FACTORY_ENROLL_ACCOUNT_MANAGER_URL
-              value: %q
-            - name: FACTORY_ENROLL_ACCOUNT_MANAGER_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: factoryenroll-runtime
-                  key: FACTORY_ENROLL_ACCOUNT_MANAGER_TOKEN
-            - name: FACTORY_ENROLL_RECOVERY_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: factoryenroll-runtime
-                  key: FACTORY_ENROLL_RECOVERY_TOKEN
-            - name: FACTORY_ENROLL_ADDR
-              value: ":18443"
-            - name: VIDEO_CLOUD_ENV
-              value: "staging"
-            - name: FACTORY_ENROLL_CERT_ISSUER_URL
-              value: %q
-            - name: FACTORY_ENROLL_CERT_ISSUER_CLIENT_CERT
-              value: /etc/video-cloud/factoryenroll/client.crt
-            - name: FACTORY_ENROLL_CERT_ISSUER_CLIENT_KEY
-              value: /etc/video-cloud/factoryenroll/client.key
-            - name: FACTORY_ENROLL_CERT_ISSUER_CA
-              value: /etc/video-cloud/factoryenroll/ca.crt
-            - name: VIDEO_CLOUD_DB_DSN
-              value: "postgres://postgres:$(POSTGRES_PASSWORD)@postgresql.%s.svc.cluster.local:5432/video_cloud?sslmode=disable"
-          volumeMounts:
-            - name: factoryenroll-certissuer-client
-              mountPath: /etc/video-cloud/factoryenroll
-              readOnly: true
-      volumes:
-        - name: factoryenroll-certissuer-client
-          secret:
-            secretName: factoryenroll-certissuer-client
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], checksum, env["CLOUD_STACK_NAME"], lkeImagePullSecretName(env), lkeVideoCloudImage(env), lkeFactoryAdmissionBaseURL(env), lkeCertIssuerBaseURL(env), lkeNamespaceName(env, "platform"))
 }
 
 func lkeFactoryAdmissionBaseURL(env map[string]string) string {

@@ -54,8 +54,13 @@ encrypted environment backup. `cloud_env/<environment>/runtime/state/` is no
 longer the authority for these files. Normal reads never search old worktrees.
 
 Preflight and deployment use the same storage activation verifier. Missing,
-wrong-environment or mismatched receipt/proof/journal is NO-GO. Preflight is
-read-only: it neither performs a cutover nor produces a completion receipt.
+wrong-environment or mismatched receipt/proof/journal is NO-GO. When `RUNTIME_MEDIA_STORAGE_CUTOVER_REQUIRED=false`, preflight checks the
+configured media bucket and creates that exact name/region if it is absent, then
+verifies fresh inventory. Inventory/authentication errors never imply absence;
+creation or readback failure is NO-GO. This is the only permitted provisioning
+exception: preflight does not migrate objects, replace credentials, perform a
+cutover or produce a cutover completion receipt. Other provider probes remain
+read-only.
 Explicit storage qualification can produce a preparation receipt, which alone
 does not prove cutover. Full deployment binds the current storage evidence into
 its plan input digest and repeats checks before execution stages.

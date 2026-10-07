@@ -48,7 +48,7 @@ func TestLKEOTARegistrarDeploymentUsesCoreReadinessAndSeparateIdentity(t *testin
 	}
 }
 
-func TestLKEOTARegistrarRequiresIndependentIdentityAndMQTT(t *testing.T) {
+func TestRetiredLKEOTARegistrarRequiresIndependentIdentityAndMQTT(t *testing.T) {
 	fakeKubectl(t)
 	env := map[string]string{
 		"CLOUD_STACK_NAME":                       "video-cloud-dev",
@@ -63,11 +63,11 @@ func TestLKEOTARegistrarRequiresIndependentIdentityAndMQTT(t *testing.T) {
 	if err := lkeRequireOTARegistrarIdentitySecret(env); err != nil {
 		t.Fatal(err)
 	}
-	if err := lkeDeployWorkloads(provisionPaths{}, env, provisionOptions{workloads: []string{"video-cloud"}}); err == nil || !strings.Contains(err.Error(), "requires strict OTA entitlements") {
+	if err := lkeDeployWorkloads(provisionPaths{}, env, provisionOptions{workloads: []string{"video-cloud"}}); err == nil || !strings.Contains(err.Error(), "static PKI templates are retired") {
 		t.Fatalf("OTA registrar before strict authorization was accepted: %v", err)
 	}
 	env["VIDEO_CLOUD_OTA_ENTITLEMENTS_REQUIRED"] = "true"
-	if err := lkeDeployWorkloads(provisionPaths{}, env, provisionOptions{workloads: []string{"video-cloud"}}); err == nil || !strings.Contains(err.Error(), "requires the MQTT foundation") {
+	if err := lkeDeployWorkloads(provisionPaths{}, env, provisionOptions{workloads: []string{"video-cloud"}}); err == nil || !strings.Contains(err.Error(), "static PKI templates are retired") {
 		t.Fatalf("OTA registrar without MQTT was accepted: %v", err)
 	}
 }

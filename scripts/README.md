@@ -124,7 +124,9 @@ separate. The default update uses the same maintained v2 renderer in dev,
 staging and prod. A private schema-1 plan cannot select another renderer or
 bypass a required gate.
 
-Both named shell entries enforce read-only mode. `--fast` reduces check depth
+Health is read-only. Preflight permits only creation of a missing configured
+media bucket when `RUNTIME_MEDIA_STORAGE_CUTOVER_REQUIRED=false`, followed by
+fresh inventory verification; its remaining provider probes are read-only. `--fast` reduces check depth
 within the selected phase; it does not select a phase. The JSON report records
 `phase`, `read_only` and scope. Each fixed-purpose wrapper rejects contrary
 `--phase` arguments and any false spelling of `--read-only`; it cannot silently

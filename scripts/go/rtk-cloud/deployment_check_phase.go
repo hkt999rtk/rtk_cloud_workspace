@@ -46,7 +46,7 @@ func printDeploymentCheckPurpose(out io.Writer, phase string) {
 	switch phase {
 	case deploymentCheckPreDeploy:
 		fmt.Fprintln(out, "Pre-deploy deployability check (pre-deploy): Validate prerequisites for the selected deployment operation. Use --operation image-upgrade to qualify existing Pod image updates. Run before deployment.")
-		fmt.Fprintln(out, "No cloud resources are persisted by this check. Complete updates use the common release-bound planner and required qualification gates. Image-upgrade additionally requires live health, exact CI images and local startup fixtures; --fast cannot qualify it.")
+		fmt.Fprintln(out, "Preflight checks the configured media bucket and creates it if missing when storage cutover is not required. Other provider probes remain read-only; no data migration or credential replacement is performed. Complete updates use the common release-bound planner and required qualification gates. Image-upgrade additionally requires live health, exact CI images and local startup fixtures; --fast cannot qualify it.")
 	case deploymentCheckPostDeploy:
 		fmt.Fprintln(out, "Post-deploy environment health check (post-deploy): Verify deployed Secret bindings, PKI, required public mTLS and environment workload readiness. Run after deployment or when diagnosing the current environment.")
 		fmt.Fprintln(out, "This checks current health, not pre-deploy deployability or full application acceptance. Default provider validation may use temporary DNS or storage writes. Use --read-only for read-only checks; --fast only reduces validation depth.")
@@ -57,7 +57,7 @@ func printDeploymentCheckPurpose(out io.Writer, phase string) {
 
 func deploymentCheckScope(phase string) string {
 	if phase == deploymentCheckPreDeploy {
-		return "read-only full create/upgrade deployability: desired configuration, provision prerequisites, local SecretStore, safe route migration and selected provider/input checks; current runtime health and write permissions unverified; not release approval"
+		return "full create/upgrade deployability with configured media bucket creation when missing: desired configuration, provision prerequisites, local SecretStore, safe route migration and selected provider/input checks; current runtime health and write permissions unverified; not release approval"
 	}
 	return "existing deployment health: live SecretStore bindings, PKI, required public CertIssuer mTLS, all environment workload readiness and selected provider/input checks; not full application acceptance or release approval"
 }
@@ -88,6 +88,15 @@ func executeDeploymentPreDeployCheck(ctx context.Context, o deploymentCheckOptio
 			}
 			return deps.preflight(ctx, cfg, reporter.out)
 		}},
+	}
+	if deps.bucket != nil && cfg.Adapter == "lke" && cfg.Storage.RuntimeMedia.Bucket != "" && !cfg.Storage.RuntimeMediaCutoverRequired {
+		tasks = append(tasks, struct {
+			id  string
+			run func() error
+		}{
+			id:  "provider.storage.media.bucket",
+			run: func() error { return deps.bucket(ctx, cfg, reporter.out) },
+		})
 	}
 	for _, t := range tasks {
 		reporter.emit(deploymentCredentialCheck{ID: t.id, Status: "PENDING", Required: true, Resource: cfg.Environment})

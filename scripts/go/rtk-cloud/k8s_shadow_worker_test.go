@@ -110,13 +110,13 @@ func TestLKEShadowWorkerRollbackRequiresExplicitDrain(t *testing.T) {
 	}
 }
 
-func TestLKEDeployRejectsShadowRollbackBeforeMutatingWorkloads(t *testing.T) {
+func TestRetiredLKEDeployRejectsShadowRollbackBeforeMutatingWorkloads(t *testing.T) {
 	logPath := fakeKubectl(t)
 	t.Setenv("LKE_SHADOW_WORKER_REGISTRATION_ENABLED", "false")
 	t.Setenv("FAKE_SHADOW_WORKER_DEPLOYMENT_PRESENT", "1")
 	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "LKE_VIDEO_CLOUD_IMAGE": "example.test/video-cloud:reviewed", "VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED": "false"}
 	err := lkeDeployWorkloads(provisionPaths{}, env, provisionOptions{workloads: []string{"video-cloud"}})
-	if err == nil || !strings.Contains(err.Error(), "drain and remove") {
+	if err == nil || !strings.Contains(err.Error(), "static PKI templates are retired") {
 		t.Fatalf("Shadow rollback was not rejected: %v", err)
 	}
 	log, readErr := os.ReadFile(logPath)

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -107,7 +108,7 @@ func TestPublicUpdateHasEveryRuntimeGateAndAcceptanceAdapter(t *testing.T) {
 				t.Fatal("required public update adapter absent", environment, id)
 			}
 		}
-		if deps.Accept == nil || deps.Execute == nil {
+		if deps.Accept == nil || deps.Execute == nil || deps.PrepareStorage == nil {
 			t.Fatal("public update cannot execute or accept")
 		}
 	}
@@ -346,6 +347,33 @@ func TestDefaultUnifiedExecutionUsesReviewedValidityWindowAndCallerDeadline(t *t
 					t.Fatal("fenced qualification not reached", err)
 				}
 			})
+		}
+	}
+}
+
+func TestUnifiedPreflightPreparesBucketBeforeCompilationAndStopsOnFailure(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		_, deps, _ := unifiedCLIProfile(t, "dev")
+		calls, compiled := 0, 0
+		compile := deps.Compile
+		deps.PrepareStorage = func(context.Context, deploymentConfig, io.Writer) error {
+			calls++
+			if fail {
+				return errors.New("fixture failure")
+			}
+			return nil
+		}
+		deps.Compile = func(ctx context.Context, cfg deploymentConfig, operation, release string) (*compiledEnvironmentDeployment, error) {
+			compiled++
+			return compile(ctx, cfg, operation, release)
+		}
+		var out bytes.Buffer
+		err := runUnifiedEnvironmentDeploymentWithDependencies(context.Background(), "preflight", []string{"--environment", "dev", "--release", "/reviewed/release.json"}, &out, &out, deps)
+		if calls != 1 || (err != nil) != fail || (compiled == 0) != fail {
+			t.Fatalf("prepare=%d compile=%d err=%v", calls, compiled, err)
+		}
+		if fail && !strings.Contains(out.String(), "provider.storage.media.bucket") {
+			t.Fatal("bucket failure not reported")
 		}
 	}
 }

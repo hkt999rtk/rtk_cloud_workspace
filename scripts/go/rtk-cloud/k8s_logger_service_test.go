@@ -489,7 +489,7 @@ func TestLKELoggerCutoverRequiresReadyPrivateEndpoint(t *testing.T) {
 	}
 }
 
-func TestLKELoggerIdentityAndCutoverPrerequisites(t *testing.T) {
+func TestRetiredLKELoggerIdentityAndCutoverPrerequisites(t *testing.T) {
 	fakeKubectl(t)
 	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "LKE_VIDEO_CLOUD_IMAGE": "example.test/video-cloud:reviewed", "VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED": "false"}
 	setFakeLKEPlatformIdentitySecrets(t, env)
@@ -498,24 +498,24 @@ func TestLKELoggerIdentityAndCutoverPrerequisites(t *testing.T) {
 	}
 	t.Setenv("LKE_LOGGER_HTTP_CORE_CUTOVER_ENABLED", "true")
 	err := lkeDeployWorkloads(provisionPaths{}, env, provisionOptions{workloads: []string{"video-cloud"}})
-	if err == nil || !strings.Contains(err.Error(), "requires the registered Logger") {
+	if err == nil || !strings.Contains(err.Error(), "static PKI templates are retired") {
 		t.Fatalf("unregistered Logger cutover was accepted: %v", err)
 	}
 	t.Setenv("LKE_LOGGER_SERVICE_REGISTRATION_ENABLED", "true")
 	err = lkeDeployWorkloads(provisionPaths{}, env, provisionOptions{workloads: []string{"video-cloud"}})
-	if err == nil || !strings.Contains(err.Error(), "requires the MQTT foundation") {
+	if err == nil || !strings.Contains(err.Error(), "static PKI templates are retired") {
 		t.Fatalf("Logger registration without MQTT was accepted: %v", err)
 	}
 	t.Setenv("LKE_MQTT_FOUNDATION_REGISTRATION_ENABLED", "true")
 	t.Setenv("LKE_ACCOUNT_MANAGER_SERVICE_REGISTRATION_ENABLED", "true")
 	t.Setenv("FAKE_ACCOUNT_MANAGER_REGISTRATION_SERVICE_JSON", `{"spec":{"type":"ClusterIP","selector":{"app.kubernetes.io/name":"account-manager"},"ports":[{"name":"service-reg","port":8443,"targetPort":"service-reg"}]}}`)
 	err = lkeDeployWorkloads(provisionPaths{}, env, provisionOptions{workloads: []string{"video-cloud"}})
-	if err == nil || !strings.Contains(err.Error(), "requires verified Loki retention storage") {
+	if err == nil || !strings.Contains(err.Error(), "static PKI templates are retired") {
 		t.Fatalf("Logger cutover without retention was accepted: %v", err)
 	}
 	t.Setenv("LKE_LOGGER_RETENTION_STORAGE_ENABLED", "true")
 	err = lkeDeployWorkloads(provisionPaths{}, env, provisionOptions{workloads: []string{"video-cloud"}})
-	if err == nil || !strings.Contains(err.Error(), "Logger Service is not private") {
+	if err == nil || !strings.Contains(err.Error(), "static PKI templates are retired") {
 		t.Fatalf("Logger cutover without private ready endpoint was accepted: %v", err)
 	}
 }

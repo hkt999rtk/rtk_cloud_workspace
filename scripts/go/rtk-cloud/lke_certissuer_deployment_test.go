@@ -119,7 +119,7 @@ func TestLKEFullDeploymentRefusesManagedPKIBeforeResourceMutation(t *testing.T) 
 	}
 	t.Setenv("FAKE_CERTISSUER_DEPLOYMENT_JSON", string(raw))
 	env := map[string]string{"CLOUD_ENV_NAME": "staging", "CLOUD_STACK_NAME": "video-cloud-staging", "VIDEO_CLOUD_CERTISSUER_DOMAIN": "certissuer.video-cloud-staging.realtekconnect.com"}
-	if err := lkeDeployWorkloads(provisionPaths{}, env, provisionOptions{}); err == nil || !strings.Contains(err.Error(), "reconciliation is retired for managed PKI") || !strings.Contains(err.Error(), "--plan-sha256") {
+	if err := lkeDeployWorkloads(provisionPaths{}, env, provisionOptions{}); err == nil || !strings.Contains(err.Error(), "static PKI templates are retired") || !strings.Contains(err.Error(), "--plan-sha256") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if raw, _ := os.ReadFile(logPath); len(raw) != 0 {

@@ -29,6 +29,7 @@ type deploymentCheckOptions struct {
 }
 
 type deploymentCheckDependencies struct {
+	bucket                                         func(context.Context, deploymentConfig, io.Writer) error
 	guard                                          func([]string) error
 	resolve                                        func(string, string, string) (deploymentConfig, error)
 	store                                          func(string) (secretStore, error)
@@ -47,6 +48,7 @@ func defaultDeploymentCheckDependencies() deploymentCheckDependencies {
 		resolve:   resolveDeploymentConfig,
 		store:     func(environment string) (secretStore, error) { return newSecretStore("", environment) },
 		preflight: defaultDeploymentCheckPreflight,
+		bucket:    prepareDeploymentMediaBucket,
 		local:     verifySecretStoreContents, bindings: verifySecretStoreK8SBindings,
 		runtime: verifySecretStoreK8SRuntime, migration: verifyPKIMigrationDatabaseSecret,
 		product: verifyProductPKIReadiness, workloads: verifyDeploymentWorkloadHealth,
@@ -87,7 +89,7 @@ func parseDeploymentCheckOptions(args []string, out io.Writer) (deploymentCheckO
 	fs.BoolVar(&o.requireProduct, "require-product-pki", false, "require active pinned Product Device Root")
 	q := &o.qualification
 	fs.BoolVar(&q.fast, "fast", false, "reduced evidence; complete updates and image upgrades cannot receive GO")
-	fs.BoolVar(&q.readOnly, "read-only", false, "suppress DNS/storage writes and receipts; --image still pulls")
+	fs.BoolVar(&q.readOnly, "read-only", false, "suppress provider canaries and receipts; pre-deploy may create a missing configured media bucket; --image still pulls")
 	fs.StringVar(&selected, "checks", "", "linode,ghcr,dns,storage,tls,mounts; selected phase prerequisites always apply")
 	fs.Func("image", "repeatable GHCR digest-pinned image for linux/amd64", func(v string) error { q.images = append(q.images, v); return nil })
 	fs.Func("manifest", "repeatable complete rendered workload JSON", func(v string) error { q.manifests = append(q.manifests, v); return nil })
@@ -670,6 +672,10 @@ func runDeploymentCheckWithDependencies(parent context.Context, args []string, o
 	report := reporter.snapshot(cfg.Environment, o.phase, o.qualification.fast, o.qualification.readOnly)
 	if reporter.scope != "" {
 		report.Scope = reporter.scope
+	}
+	if o.phase == deploymentCheckPreDeploy && deps.bucket != nil && cfg.Adapter == "lke" && cfg.Storage.RuntimeMedia.Bucket != "" && !cfg.Storage.RuntimeMediaCutoverRequired {
+		report.ReadOnly = false // A missing configured bucket may be created.
+		report.Scope = strings.TrimSuffix(report.Scope, "; read-only: write permissions unverified") + "; configured media bucket creation permitted when missing; other provider probes remain read-only"
 	}
 	if o.operation == "full-deployment" && o.phase == deploymentCheckPreDeploy {
 		verdict := "NO-GO"

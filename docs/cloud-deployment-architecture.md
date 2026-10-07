@@ -2,6 +2,16 @@
 
 ## Contract
 
+### Preflight bucket preparation
+
+For `RUNTIME_MEDIA_STORAGE_CUTOVER_REQUIRED=false`, preflight verifies the
+configured media bucket's existence, region and endpoint. Only a successful
+complete inventory proving absence permits creation of that exact name/region;
+fresh inventory must confirm creation. Failed inventory, permission, creation or
+readback is NO-GO. This bounded provisioning step does not migrate objects,
+replace credentials or create cutover receipts. Other provider probes remain
+read-only. Explicit cutover configurations retain their separate lifecycle gates.
+
 ### Local configuration and deployment state ownership
 
 `cloud_env/` contains configuration only. All local deployment-generated data,

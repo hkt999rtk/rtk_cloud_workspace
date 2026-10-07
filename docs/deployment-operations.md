@@ -270,7 +270,10 @@ go run ./scripts/go/rtk-cloud -- deployment credentials-check --environment stag
 ```
 
 The shell builds the checker once and preserves its 0/1/2 exit status.
-Both named scripts are read-only. Complete preflight uses the same compiler and
+Health is read-only. Preflight checks and creates a missing configured media
+bucket when `RUNTIME_MEDIA_STORAGE_CUTOVER_REQUIRED=false`; other provider
+probes remain read-only. Creation is followed by fresh inventory verification.
+It does not migrate objects, replace credentials or fabricate cutover evidence. Complete preflight uses the same compiler and
 resource bodies as create/upgrade; no schema-1 file selects a different renderer.
 Existing-environment upgrades use the same six update gates for dev, staging and
 prod, as defined in [the readiness standard](deployment-readiness-standard.md).
@@ -291,7 +294,7 @@ named health entry for routine read-only inspection.
 | --- | --- | --- |
 | Legacy/direct post-deploy default | Selected DNS/storage canaries and validation receipts remain enabled | Full controller-host `linux/amd64` pull |
 | Named preflight/health wrappers, or `--read-only` | No canaries or new receipts | Full pull remains enabled |
-| `--fast` | Implies read-only | Manifest/config and platform metadata; full pull reported as skipped |
+| `--fast` | Suppresses canaries; preflight retains its missing configured media bucket creation step | Manifest/config and platform metadata; full pull reported as skipped |
 
 Without `--image`, GHCR checks repository access. Metadata access, a controller
 pull that may reuse cached layers, and a cluster rollout provide different

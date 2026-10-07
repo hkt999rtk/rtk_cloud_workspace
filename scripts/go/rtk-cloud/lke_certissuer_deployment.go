@@ -13,25 +13,7 @@ import (
 // Readiness is about the desired change. Current mirrors and PKI health are
 // deliberately checked by post-deploy/acceptance, rather than this preflight.
 func defaultDeploymentCheckPreflight(ctx context.Context, cfg deploymentConfig, out io.Writer) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	clusterAbsent := false
-	checks := defaultDeploymentPreflightChecksContext(ctx)
-	checks.validateLKEState = func(cfg deploymentConfig) error {
-		return validateLKEEnvironmentStateBeforeMutationWithDiscovery(cfg, func(token string, paths provisionPaths, env map[string]string, allowCreate bool) (lkeCluster, error) {
-			cluster, err := discoverDeploymentPreflightLKECluster(ctx, token, paths, env, allowCreate)
-			clusterAbsent = errors.Is(err, errLKEMissingCluster)
-			return cluster, err
-		})
-	}
-	if err := runDeploymentPreflightWithChecksContext(ctx, cfg, "provision", checks, out); err != nil {
-		return err
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return deploymentCertIssuerIngressReadinessWithClusterState(ctx, cfg, out, clusterAbsent)
+	return runDeploymentPreflightWithChecksContext(ctx, cfg, "provision", defaultDeploymentPreflightChecksContext(ctx), out)
 }
 
 func deploymentCertIssuerIngressReadiness(ctx context.Context, cfg deploymentConfig, out io.Writer) error {

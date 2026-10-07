@@ -66,7 +66,7 @@ func TestLKEShadowHTTPCoreCutoverManifestAndPolicyAreOptIn(t *testing.T) {
 	}
 }
 
-func TestLKEShadowHTTPCutoverFailsBeforeMutationWithoutReadyEndpoint(t *testing.T) {
+func TestRetiredLKEShadowHTTPCutoverFailsBeforeMutationWithoutReadyEndpoint(t *testing.T) {
 	logPath := fakeKubectl(t)
 	t.Setenv("LKE_SHADOW_HTTP_CORE_CUTOVER_ENABLED", "true")
 	t.Setenv("LKE_SHADOW_WORKER_REGISTRATION_ENABLED", "true")
@@ -76,7 +76,7 @@ func TestLKEShadowHTTPCutoverFailsBeforeMutationWithoutReadyEndpoint(t *testing.
 	t.Setenv("FAKE_ACCOUNT_MANAGER_REGISTRATION_SERVICE_JSON", `{"spec":{"type":"ClusterIP","selector":{"app.kubernetes.io/name":"account-manager"},"ports":[{"name":"service-reg","port":8443,"targetPort":"service-reg"}]}}`)
 	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "LKE_VIDEO_CLOUD_IMAGE": "example.test/video-cloud:reviewed", "VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED": "false"}
 	err := lkeDeployWorkloads(provisionPaths{}, env, provisionOptions{workloads: []string{"video-cloud"}})
-	if err == nil || !strings.Contains(err.Error(), "Shadow worker Service is not private") {
+	if err == nil || !strings.Contains(err.Error(), "static PKI templates are retired") {
 		t.Fatalf("missing Shadow endpoint did not stop cutover: %v", err)
 	}
 	log, readErr := os.ReadFile(logPath)
