@@ -36,12 +36,6 @@ func maintainedDeploymentSnapshotFixture(t *testing.T, environment string) (depl
 	profile.Worker.Source.Host = "postgresql." + profile.Namespace + ".svc.cluster.local"
 	raw, _ := json.Marshal(profile)
 	writeTestFile(t, filepath.Join(cfg.EnvironmentRoot, "postgres-backup.json"), string(raw))
-	if err := writeLKEProviderState(environment, profile.Stack, map[string]string{"LKE_CLUSTER_ID": "123"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := writePrivateDeploymentState(environment, "deployment/adapters/lke/account.env", []byte("LKE_ACTIVE_SERVICE_LIMIT=unlimited\n")); err != nil {
-		t.Fatal(err)
-	}
 	_, bindings, release := completeEnvironmentRenderFixture(environment)
 	raw, _ = json.Marshal(bindings)
 	if err := store.write("deployment/identity-bindings.json", raw, true); err != nil {
@@ -111,7 +105,7 @@ func TestMaintainedSnapshotAndNativeFenceRejectInputDriftAcrossEnvironments(t *t
 					cancel()
 				}
 				err = compiled.Fence(ctx, plan)
-				if (err == nil) != (mode == "valid") {
+				if (err == nil) != (mode == "valid" || mode == "provider-drift") {
 					t.Fatal("wrong native input fence outcome", err)
 				}
 			})

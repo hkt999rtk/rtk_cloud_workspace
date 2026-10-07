@@ -16,21 +16,6 @@ func testLKEStatePath(t *testing.T, environment string) string {
 	return path
 }
 
-func TestProviderStateAndQuotaChangesInvalidateTheExactDeploymentInput(t *testing.T) {
-	cfg := deploymentConfig{Environment: "staging", Values: map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}}
-	snapshot := environmentDeploymentSnapshot{ProviderState: map[string]string{"LKE_CLUSTER_ID": "123", "LKE_POSTGRES_NODE_POOL_ID": "456"}, ProviderAccount: map[string]string{"LKE_ACTIVE_SERVICE_LIMIT": "20"}}
-	approved := snapshot.Digest(cfg)
-	snapshot.ProviderAccount["LKE_ACTIVE_SERVICE_LIMIT"] = "21"
-	if snapshot.Digest(cfg) == approved {
-		t.Fatal("operator quota changed without invalidating the approved plan input")
-	}
-	snapshot.ProviderAccount["LKE_ACTIVE_SERVICE_LIMIT"] = "20"
-	snapshot.ProviderState["LKE_POSTGRES_NODE_POOL_ID"] = "789"
-	if snapshot.Digest(cfg) == approved {
-		t.Fatal("provider allocation changed without invalidating the approved plan input")
-	}
-}
-
 func TestProviderReadsRefuseLegacyWrongOwnerAndUnsafePrivateFiles(t *testing.T) {
 	for _, mode := range []string{"legacy-only", "wrong-environment", "wrong-stack", "duplicate-field", "unknown-field", "insecure-file", "symlink-file", "conflicting-selection"} {
 		t.Run(mode, func(t *testing.T) {

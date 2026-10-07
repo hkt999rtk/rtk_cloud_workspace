@@ -53,8 +53,10 @@ func defaultUnifiedDeploymentDependencies() unifiedDeploymentDependencies {
 					return deploymentplan.GateEvidence{SHA256: p.SHA256()}, nil
 				},
 				"deployment.execution": func(ctx context.Context, p *deploymentplan.Plan) (deploymentplan.GateEvidence, error) {
-					if err := c.CheckProviderQuota(ctx, p); err != nil {
-						return deploymentplan.GateEvidence{}, err
+					if p.Operation != "upgrade" {
+						if err := c.CheckProviderQuota(ctx, p); err != nil {
+							return deploymentplan.GateEvidence{}, err
+						}
 					}
 					if err := c.CheckNodeCapacity(ctx, p); err != nil {
 						return deploymentplan.GateEvidence{}, err

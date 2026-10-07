@@ -147,6 +147,18 @@ Billing server before its payment worker so the new migration is applied first.
 | `~/.config/rtk_cloud/<env>/deployment/adapters/lke/account.env` | Operator-confirmed active-service limit | No |
 | `~/.config/rtk_cloud/<env>/deployment/adapters/lke/state.env` | Environment/stack-bound original cluster and node-pool IDs | No |
 
+For an existing Kubernetes workload update, both preflight and deployment select
+the cluster through the canonical kubeconfig and check live ownership, access,
+node capacity, storage and exact admission. Local Linode `state.env` and
+`account.env` are not required, read or included in the update input hash.
+Their absence, obsolete content or provider-quota changes cannot block that scope.
+Infrastructure creation/node-pool changes remain separate provider operations;
+those operations retain their provider identity and account-quota requirements.
+Historical unused provider metadata can be preserved as unverified source bytes
+under `migration-backup/provider-state/<source-sha256>/` before removing old
+copies and quota fields from generated legacy configuration. Such an archive is
+not active provider state, successful ownership migration or GO evidence.
+
 Maintain the confirmed quota in the selected private environment store. Use
 `0700` directories and a `0600` `account.env`; the only allowed assignment is
 `LKE_ACTIVE_SERVICE_LIMIT`. Existing legacy provider state is migrated explicitly:

@@ -57,7 +57,7 @@ environments:
 | --- | --- |
 | `deployment.target` | Complete maintained target, original owners, unchanged configuration/release/bindings and durable-volume identities. |
 | `deployment.release` | Immutable images, exact clean workspace/service revisions, successful formal CI/publication and available images. |
-| `deployment.execution` | Provider quota, native node-class capacity, original storage, effective access, execution prerequisites and server dry-run of the exact resource bodies. |
+| `deployment.execution` | Selected Kubernetes API access, native node-class capacity, original storage, execution prerequisites and server dry-run of the exact resource bodies. Existing K8s upgrades do not require local Linode cluster ID or account-quota files; provider quota belongs to explicit infrastructure operations. |
 | `deployment.pki` | Original synchronized runtime Secret bindings and the maintained runtime PKI checks at the start and end of the configured rollout window; identity/mount changes require explicit migration. |
 | `deployment.compatibility` | Selected AM/Billing schema prerequisites, required restricted payment-simulator startup and migration setting, with candidate source/CI checked by the release gate. |
 | `deployment.network` | Configured public CertIssuer ingress, authenticated mTLS and anonymous TLS denial; planned Kubernetes network objects also pass exact-body admission. |

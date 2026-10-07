@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -93,5 +94,43 @@ func TestCompleteQuotaCountsCandidateClaimsAndNeverCreditsUnexecutedDeletion(t *
 				}
 			})
 		}
+	}
+}
+
+func TestKubernetesUpgradeIgnoresProviderStateAndQuotaFiles(t *testing.T) {
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		t.Run(environment, func(t *testing.T) {
+			cfg, store, _, _ := maintainedDeploymentSnapshotFixture(t, environment)
+			before, err := readEnvironmentDeploymentSnapshot(cfg, store)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(filepath.Join(store.Root, "deployment", "adapters", "lke", "state.env")); !os.IsNotExist(err) {
+				t.Fatal("snapshot required provider state")
+			}
+			for name, content := range map[string]string{"state.env": "invalid obsolete cluster metadata", "account.env": "invalid obsolete quota metadata"} {
+				if err := store.write(filepath.Join("deployment", "adapters", "lke", name), []byte(content), true); err != nil {
+					t.Fatal(err)
+				}
+			}
+			after, err := readEnvironmentDeploymentSnapshot(cfg, store)
+			if err != nil || before.Digest(cfg) != after.Digest(cfg) {
+				t.Fatal("Kubernetes inputs depend on unrelated provider metadata", err)
+			}
+			plan := &deploymentplan.Plan{Inputs: deploymentplan.Inputs{Environment: environment, Operation: "upgrade"}}
+			c := &compiledEnvironmentDeployment{Plan: plan, Store: store}
+			log := fakeDeploymentPreflightLKERead(t, map[string]string{})
+			if err := c.CheckProviderQuota(context.Background(), plan); err != nil {
+				t.Fatal("Kubernetes upgrade required Linode quota", err)
+			}
+			if data, _ := os.ReadFile(log); len(data) != 0 {
+				t.Fatal("Kubernetes update contacted provider inventory")
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			if c.CheckProviderQuota(ctx, plan) == nil {
+				t.Fatal("cancelled qualification passed")
+			}
+		})
 	}
 }

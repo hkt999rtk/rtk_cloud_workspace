@@ -26,8 +26,10 @@ See the [canonical path table and migration boundary](deployment-secrets-governa
 Only deterministic secret-free resolved configuration may remain under
 `cloud_env/<environment>/runtime/`. Legacy operational files there require an
 explicit validated migration. Missing evidence never authorizes identity/data
-reinitialization or an automatic fallback. LKE cluster/node-pool state and quota now use the private environment store, including
-preflight, execution input hashing and controlled teardown archives. Remaining
+reinitialization or an automatic fallback. Explicit infrastructure operations use
+private LKE cluster/node-pool state and account quota with controlled teardown
+archives. Existing Kubernetes workload upgrades select the API through the
+canonical kubeconfig; they do not require or hash local Linode state/account files. Remaining
 legacy edge/TURN, service and artifact state writers still require migration; their old
 locations are implementation gaps, not policy exceptions.
 DNS ownership, ACME challenge cleanup, zone evidence and synchronization metadata
@@ -98,7 +100,9 @@ resolve -> immutable release -> complete versioned plan -> qualification
 
 The normalized runtime contract is `cloud_env/<environment>/runtime`. Shared commands never inspect adapter-private state. A resolved plan is sanitized and contains no credentials, kubeconfig content, private keys, tokens, or generated service secrets.
 
-Provider account quota is mutable operator/account state, not architecture, environment, or adapter default. If the provider API cannot return the active-service limit, LKE requires `~/.config/rtk_cloud/<environment>/deployment/adapters/lke/account.env` with `LKE_ACTIVE_SERVICE_LIMIT` before mutation. Missing account state fails before infrastructure changes.
+Provider account quota is mutable operator/account state, not architecture, environment, or adapter default. If the provider API cannot return the active-service limit, LKE requires `~/.config/rtk_cloud/<environment>/deployment/adapters/lke/account.env` with `LKE_ACTIVE_SERVICE_LIMIT` before mutation. Missing account state fails before explicit infrastructure changes. It is not an
+existing Kubernetes workload upgrade prerequisite. Cluster creation records its
+provider ID after allocation; pre-create checks cannot require a future cluster ID.
 
 ## Logical topology
 

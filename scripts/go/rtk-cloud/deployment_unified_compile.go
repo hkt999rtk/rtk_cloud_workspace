@@ -33,8 +33,6 @@ type environmentDeploymentSnapshot struct {
 	Kubeconfig            string
 	PostgresProtection    postgresBackupDeployment
 	StorageEvidenceSHA256 string
-	ProviderState         map[string]string
-	ProviderAccount       map[string]string
 	DNSStateSHA256        string
 }
 
@@ -150,19 +148,11 @@ func readEnvironmentDeploymentSnapshot(cfg deploymentConfig, store secretStore) 
 	if err != nil {
 		return snapshot, err
 	}
-	providerState, err := readLKEProviderState(cfg.Environment, cfg.Values["CLOUD_STACK_NAME"])
-	if err != nil {
-		return snapshot, err
-	}
-	account, err := readLKEAccountState(cfg.Environment, false)
-	if err != nil {
-		return snapshot, lkeProviderStateBlocker("private provider account profile cannot be verified")
-	}
 	dnsDigest, err := environmentDNSStateDigest(cfg)
 	if err != nil {
 		return snapshot, err
 	}
-	return environmentDeploymentSnapshot{DNSStateSHA256: dnsDigest, Operator: operator, Secrets: secrets, Kubeconfig: kubeconfig, PostgresProtection: protection, StorageEvidenceSHA256: storageEvidence, ProviderState: providerState, ProviderAccount: account}, nil
+	return environmentDeploymentSnapshot{DNSStateSHA256: dnsDigest, Operator: operator, Secrets: secrets, Kubeconfig: kubeconfig, PostgresProtection: protection, StorageEvidenceSHA256: storageEvidence}, nil
 }
 
 func compileEnvironmentDeployment(ctx context.Context, cfg deploymentConfig, operation string) (*compiledEnvironmentDeployment, error) {
@@ -199,9 +189,6 @@ func compileEnvironmentDeploymentWithImages(ctx context.Context, cfg deploymentC
 			return nil, blocker
 		}
 		return nil, &deploymentplan.Blocker{ID: "deployment.inputs", Cause: "complete private configuration and credential snapshot cannot be verified", Next: "restore environment-local operator, runtime, kubeconfig and backup configuration with private directory/file permissions"}
-	}
-	if operation == "upgrade" && (snapshot.ProviderState["LKE_CLUSTER_ID"] == "" || snapshot.ProviderAccount["LKE_ACTIVE_SERVICE_LIMIT"] == "") {
-		return nil, lkeProviderStateBlocker("complete upgrade requires the original cluster owner and confirmed account quota in the selected environment store")
 	}
 	var protection environmentPostgresProtection
 	if cfg.Values["DEPLOYMENT_POSTGRES_BACKUP_ENABLED"] == "true" {

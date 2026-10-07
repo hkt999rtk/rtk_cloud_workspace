@@ -57,6 +57,14 @@ func (c *compiledEnvironmentDeployment) CheckProviderQuota(ctx context.Context, 
 	if c == nil || plan == nil || c.Plan == nil || c.Plan.SHA256() != plan.SHA256() || c.Store.Environment != plan.Environment {
 		return errors.New("exact selected plan and environment required for quota qualification")
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// Existing Kubernetes updates use API ownership, node capacity, storage
+	// and admission checks. They do not provision Linode clusters or pools.
+	if plan.Operation == "upgrade" {
+		return nil
+	}
 	account, err := readLKEAccountState(plan.Environment, true)
 	if err != nil {
 		return quotaQualificationBlocker("operator-confirmed account quota cannot be verified")
