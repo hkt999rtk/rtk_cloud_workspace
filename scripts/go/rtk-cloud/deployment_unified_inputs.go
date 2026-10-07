@@ -83,6 +83,7 @@ type environmentPodBindings struct {
 	Containers      []environmentContainerBindings `json:"containers"`
 	InitContainers  []environmentContainerBindings `json:"init_containers,omitempty"`
 	OpenBao         *environmentOpenBaoProfile     `json:"openbao,omitempty"`
+	Turn            *environmentTurnProfile        `json:"turn,omitempty"`
 }
 type environmentContainerBindings struct {
 	Name     string         `json:"name"`
@@ -107,7 +108,7 @@ func validateEnvironmentIdentityBindings(b environmentIdentityBindings, environm
 	podFields := keySet("volumes", "securityContext", "serviceAccountName", "automountServiceAccountToken", "imagePullSecrets")
 	containerFields := keySet("volumeMounts", "securityContext", "envFrom", "env")
 	for _, pod := range b.Pods {
-		if (pod.Kind != "Deployment" && pod.Kind != "StatefulSet" && pod.Kind != "DaemonSet") || !secretEnvironmentPattern.MatchString(pod.NamespaceSuffix) || !secretEnvironmentPattern.MatchString(pod.Name) || !keySet("existing-workload", "certissuer", "pki-controller", "managed-api", "managed-mqtt", "managed-openbao", "service-issuer")[pod.Component] {
+		if (pod.Kind != "Deployment" && pod.Kind != "StatefulSet" && pod.Kind != "DaemonSet") || !secretEnvironmentPattern.MatchString(pod.NamespaceSuffix) || !secretEnvironmentPattern.MatchString(pod.Name) || !keySet("existing-workload", "certissuer", "pki-controller", "managed-api", "managed-mqtt", "managed-openbao", "managed-turn", "service-issuer")[pod.Component] {
 			return errors.New("deployment.bindings: unsupported managed component")
 		}
 		id := pod.Kind + "/" + b.Stack + "-" + pod.NamespaceSuffix + "/" + pod.Name
@@ -115,8 +116,15 @@ func validateEnvironmentIdentityBindings(b environmentIdentityBindings, environm
 			return errors.New("deployment.bindings: duplicate or empty managed component")
 		}
 		seen[id] = true
-		if pod.Component != "managed-openbao" && (pod.OpenBao != nil || len(pod.InitContainers) != 0) {
+		if pod.Component != "managed-openbao" && pod.OpenBao != nil || pod.Component != "managed-openbao" && pod.Component != "managed-turn" && len(pod.InitContainers) != 0 {
 			return errors.New("deployment.bindings: OpenBao lifecycle references require the managed OpenBao component")
+		}
+		if pod.Component == "managed-turn" {
+			if err := validateEnvironmentTurnBinding(pod); err != nil {
+				return err
+			}
+		} else if pod.Turn != nil {
+			return errors.New("deployment.bindings: TURN endpoint references require the managed TURN component")
 		}
 		for field := range pod.PodFields {
 			if !podFields[field] && !(pod.Component == "managed-openbao" && field == "shareProcessNamespace") {
@@ -196,6 +204,9 @@ func environmentPrivateFileMount(pod environmentPodBindings, container environme
 }
 
 func environmentManagedImageKey(component, name string, index int) string {
+	if component == "managed-turn" {
+		return "LKE_VIDEO_CLOUD_IMAGE"
+	}
 	if component == "managed-openbao" {
 		if name == "openbao" {
 			return "LKE_OPENBAO_IMAGE"
@@ -298,7 +309,7 @@ func applyEnvironmentPodBindings(object deploymentplan.Object, b environmentIden
 			containers = append(containers, container)
 		}
 		pod["containers"] = containers
-		if binding.Component == "managed-openbao" {
+		if binding.Component == "managed-openbao" || binding.Component == "managed-turn" {
 			for _, bound := range binding.InitContainers {
 				var container map[string]any
 				for _, v := range certIssuerObjectList(pod["initContainers"]) {
@@ -308,6 +319,9 @@ func applyEnvironmentPodBindings(object deploymentplan.Object, b environmentIden
 				}
 				image := release.Images[bound.ImageKey].Reference
 				if container == nil || !immutableEnvironmentImage.MatchString(image) {
+					if binding.Component == "managed-turn" {
+						return turnDeploymentBlocker(id, "private-file initializer lacks its selected formal CI image")
+					}
 					return errors.New("deployment.release: managed OpenBao installer lacks its formal CI image")
 				}
 				container["image"] = image

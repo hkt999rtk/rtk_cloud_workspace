@@ -97,6 +97,23 @@ controller paths. This installer does not replace the consumer's existing
 Kubernetes Secret; introducing a new pkiturn consumer must separately bind the
 same credential through its managed Secret initialization stage.
 
+Existing Kubernetes `pkiturn` consumers now use the common managed TURN
+renderer in all environments. It renders `/app/pkiturn watch`, the restricted
+SSH sidecar and private-file initializer; all three use the selected formal
+Video Cloud CI image. The former local-dev initializer image is recognized only
+as an existing compatible source and is replaced by that formal image. Desired
+commands, non-root UID/GID 10001, health probes and resource requests come from
+the renderer. Observation retains the original public SSH destination, PKI
+settings, verifier Secret reference, private mounts and App trust PVC; it never
+imports arbitrary commands or generates replacement credentials. Strict SSH
+host checking and the loopback-only forwarding contract remain enforced, with
+no Service exposing the CLI. The initializer can retry copying the same Secret
+into ephemeral 0400 files without resetting persistent trust/revocation state.
+Unsupported shapes report `deployment.compatibility.pkiturn` with the resource
+and repair guidance. A missing consumer remains separate managed initialization,
+and rendering does not waive service-level production qualification or complete
+environment readiness gates.
+
 RTK Cloud uses one reusable architecture description, many environment instances, and replaceable deployment adapters. Environments such as `dev`, `staging`, and `prod` select an architecture and adapter; they do not own copies of the architecture or adapter implementation.
 
 The Kubernetes architecture owns workloads, namespaces, logical node classes, resource intent, capacity rules, placement, edge requirements, and TURN requirements. It uses `rtk.io/node-class` and standard Kubernetes topology labels. It must not contain cloud resource IDs or provider-specific labels.

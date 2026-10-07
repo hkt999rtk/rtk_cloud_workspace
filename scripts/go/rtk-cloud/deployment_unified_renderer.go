@@ -15,6 +15,7 @@ import (
 var environmentManagedComponents = map[string]string{
 	"certissuer": "certissuer", "factoryenroll": "certissuer", "certissuer-service-pki": "service-issuer",
 	"pki-controller": "pki-controller", "video-cloud-api-pki": "managed-api", "mqtt-pki": "managed-mqtt", "openbao": "managed-openbao",
+	"pkiturn": "managed-turn",
 }
 
 // The catalog describes desired configuration, not copies of live workloads.
@@ -28,6 +29,11 @@ func renderEnvironmentResources(env map[string]string, bindings environmentIdent
 		needed["certissuer-service-pki"] = true
 	}
 	for _, binding := range bindings.Pods {
+		// Existing TURN consumers use the same maintained renderer in every
+		// environment. Installing a new identity is a separate bootstrap stage.
+		if binding.Component == "managed-turn" {
+			needed["pkiturn"] = true
+		}
 		if binding.Component != "existing-workload" {
 			if !needed[binding.Name] {
 				return nil, fmt.Errorf("deployment.inventory: %s is not enabled by maintained environment configuration", binding.Name)
@@ -292,6 +298,9 @@ func renderManagedEnvironmentComponent(env map[string]string, binding environmen
 	}
 	if binding.Component == "managed-api" {
 		return renderManagedEnvironmentAPI(env, binding)
+	}
+	if binding.Component == "managed-turn" {
+		return renderEnvironmentTurn(env, binding)
 	}
 	labels := map[string]any{"app.kubernetes.io/name": binding.Name, "rtk.realtek.com/stack": env["CLOUD_STACK_NAME"]}
 	containers := []any{}

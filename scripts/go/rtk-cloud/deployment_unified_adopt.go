@@ -111,7 +111,7 @@ func observeEnvironmentBindings(environment string, release environmentRelease, 
 			}
 		}
 		groups := []string{"containers"}
-		if component == "managed-openbao" {
+		if component == "managed-openbao" || component == "managed-turn" {
 			groups = append(groups, "initContainers")
 		}
 		for _, group := range groups {
@@ -142,6 +142,9 @@ func observeEnvironmentBindings(environment string, release environmentRelease, 
 					default:
 						return b, openBaoCompatibilityBlocker(id, "existing OpenBao contains an unsupported container")
 					}
+				}
+				if component == "managed-turn" {
+					bound.ImageKey = "LKE_VIDEO_CLOUD_IMAGE"
 				}
 				if bound.ImageKey == "" {
 					return b, &deploymentplan.Blocker{ID: "deployment.inventory.image-role", Resource: id, Cause: "an existing container has no maintained release image role", Next: "maintain this enabled component and its image role in the common catalog; do not copy its live workload spec or hand-edit generated bindings"}
@@ -175,6 +178,13 @@ func observeEnvironmentBindings(environment string, release environmentRelease, 
 					binding.Containers = append(binding.Containers, bound)
 				}
 			}
+		}
+		if component == "managed-turn" {
+			profile, err := observeEnvironmentTurnProfile(object, release)
+			if err != nil {
+				return b, err
+			}
+			binding.Turn = profile
 		}
 		if component == "managed-openbao" {
 			profile, err := observeOpenBaoProfile(object, live)
