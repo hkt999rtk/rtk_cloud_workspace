@@ -51,6 +51,13 @@ safeguards for the selected update remain in force. Local regression results do
 not establish environment GO; the operator must run the scripts against the
 selected environment and release.
 
+Preflight and deployment stream `[RUNNING]` stage IDs while resolving provider
+and formal CI images, observing Kubernetes, compiling the target and qualifying
+required gates. A running stage repeats its elapsed time every 10 seconds.
+Progress lines are not PASS/GO evidence and do not enter the plan hash or JSON
+report. Errors, cancellation and completion stop the heartbeat before results
+are printed; private provider output and credentials are never progress text.
+
 ## GO for an existing environment update
 
 The current scripts report `scope=existing-environment-update`. GO authorizes

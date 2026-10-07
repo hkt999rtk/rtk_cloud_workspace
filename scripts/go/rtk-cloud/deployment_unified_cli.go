@@ -330,7 +330,12 @@ func runUnifiedEnvironmentDeploymentWithDependencies(parent context.Context, act
 			return emitUnifiedDeploymentReport(out, diagnostics, o.Report, report, exitCode(1))
 		}
 	}
-	c, err := deps.Compile(ctx, cfg, o.Operation)
+	var c *compiledEnvironmentDeployment
+	err = runEnvironmentProgress(ctx, out, "deployment.compile", func(progressCtx context.Context) error {
+		var compileErr error
+		c, compileErr = deps.Compile(progressCtx, cfg, o.Operation)
+		return compileErr
+	})
 	if err != nil {
 		// Never print compiler/provider output: it can contain private payloads.
 		row := deploymentplan.GateResult{ID: "deployment.compilation.internal", Status: "BLOCKED", Required: true, Cause: "deployment compiler returned an unclassified internal error", Next: "report the selected environment and workspace revision so the failing compiler boundary can provide a safe stage/resource diagnosis and be repaired", Impact: "the complete environment update has no executable reviewed plan", Recheck: "repeat full preflight for the same release"}
@@ -380,7 +385,21 @@ func runUnifiedEnvironmentDeploymentWithDependencies(parent context.Context, act
 		}
 	}
 	options := deploymentplan.QualificationOptions{Fast: o.Fast, Production: cfg.Values["DEPLOYMENT_PROTECTION_PROFILE"] == "production", ExistingUpdate: o.Operation == "upgrade"}
-	qualification, err := c.Plan.Qualify(ctx, options, checks)
+	for id, check := range checks {
+		if check == nil {
+			continue
+		}
+		checks[id] = func(checkCtx context.Context, plan *deploymentplan.Plan) (deploymentplan.GateEvidence, error) {
+			environmentDeploymentProgress(checkCtx, id)
+			return check(checkCtx, plan)
+		}
+	}
+	var qualification deploymentplan.Qualification
+	err = runEnvironmentProgress(ctx, out, "deployment.qualification", func(progressCtx context.Context) error {
+		var qualifyErr error
+		qualification, qualifyErr = c.Plan.Qualify(progressCtx, options, checks)
+		return qualifyErr
+	})
 	report.Decision, report.Gates = qualification.Decision, qualification.Gates
 	if err != nil {
 		return emitUnifiedDeploymentReport(out, diagnostics, o.Report, report, exitCode(1))

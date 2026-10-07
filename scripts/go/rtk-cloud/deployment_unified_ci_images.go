@@ -42,12 +42,14 @@ func loadEnvironmentCIImages(ctx context.Context, cfg deploymentConfig, run envi
 		if reference == "" {
 			continue
 		}
+		environmentDeploymentProgress(ctx, "deployment.release.provider."+configKey)
 		pinned, err := resolveConfiguredProviderImage(ctx, reference, run)
 		if err != nil {
 			return environmentRelease{}, &deploymentplan.Blocker{ID: "deployment.provider.images", Resource: configKey, Cause: "configured provider image cannot be pinned to an immutable registry digest", Next: "correct the maintained provider image reference and registry access, then repeat preflight"}
 		}
 		providers.Images[key] = environmentReleaseImage{Reference: pinned}
 	}
+	environmentDeploymentProgress(ctx, "deployment.release.sources")
 	selected, err := resolveEnvironmentCIImages(ctx, cfg, providers, run)
 	if err != nil {
 		var blocker *deploymentplan.Blocker
@@ -169,6 +171,7 @@ func resolveEnvironmentCIImages(ctx context.Context, cfg deploymentConfig, provi
 		result.Images[key] = image
 	}
 	for _, frozen := range sources {
+		environmentDeploymentProgress(ctx, "deployment.release.ci."+frozen.source.Name)
 		repo := "hkt999rtk/" + frozen.source.RepoName
 		evidence, runID, attempt, err := latestEnvironmentPublication(ctx, repo, "release.yml", frozen.revision, false, run)
 		if err != nil {
@@ -200,6 +203,7 @@ func resolveEnvironmentCIImages(ctx context.Context, cfg deploymentConfig, provi
 		return result, &deploymentplan.Blocker{ID: "deployment.provider.images", Cause: "maintained PostgreSQL, ingress or OpenBao image version is not configured", Next: "maintain POSTGRES_IMAGE, INGRESS_CONTROLLER_IMAGE and OPENBAO_IMAGE in cloud_deploy/architectures/kubernetes/architecture.env or cloud_env/<environment>/overrides/architecture.env; preflight pins their registry digests without a local release.json"}
 	}
 	if cfg.Values["DEPLOYMENT_POSTGRES_BACKUP_ENABLED"] == "true" {
+		environmentDeploymentProgress(ctx, "deployment.release.ci.postgres-backup")
 		repo := "hkt999rtk/rtk_cloud_workspace"
 		evidence, runID, attempt, err := latestEnvironmentPublication(ctx, repo, "postgres-backup-image.yml", result.WorkspaceRevision, true, run)
 		if err != nil {
