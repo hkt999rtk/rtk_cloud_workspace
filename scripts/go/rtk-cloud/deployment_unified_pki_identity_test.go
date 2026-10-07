@@ -104,7 +104,7 @@ func TestNativeManagedServerInspectionUsesRealCryptoAndOriginalOwners(t *testing
 		t.Fatalf("build maintained native inspector: %v\n%s", e, output)
 	}
 	for _, environment := range []string{"dev", "staging", "prod"} {
-		for _, mode := range []string{"valid", "expired", "wrong-san", "wrong-key", "wrong-root", "wrong-purpose", "pending", "partial-report", "bad-fingerprint", "private-report", "owner-replaced", "pod-drift", "controller-drift", "missing-pod", "foreign-parent", "wrong-claim", "missing-replica", "denied-exec", "inspector-unavailable", "ephemeral-state", "incomplete-policy", "stateful", "daemon", "mqtt", "openbao", "client", "client-expired", "client-wrong-key", "client-wrong-purpose", "client-pending", "cancelled"} {
+		for _, mode := range []string{"valid", "expired", "wrong-san", "wrong-key", "wrong-root", "wrong-purpose", "pending", "partial-report", "bad-fingerprint", "private-report", "owner-replaced", "pod-drift", "controller-drift", "missing-pod", "foreign-parent", "wrong-claim", "missing-replica", "denied-exec", "inspector-unavailable", "ephemeral-state", "incomplete-policy", "stateful", "daemon", "mqtt", "openbao", "client", "client-expired", "client-wrong-key", "client-wrong-purpose", "client-pending", "registry-unavailable", "client-registry-unavailable", "cancelled"} {
 			t.Run(environment+"/"+mode, func(t *testing.T) {
 				store := makeIsolatedTestSecretStore(t, environment)
 				raw, e := json.Marshal(frozenKubernetesFixture(t))
@@ -217,7 +217,9 @@ else:
  elif 'exec' in args:
   open(os.environ['RTK_NATIVE_IDENTITY_EXECUTED'],'a').write('inspect-server\n')
   if mode=='inspector-unavailable': print('private-diagnostic-canary',file=sys.stderr);sys.exit(1)
-  cmd=args[args.index('--')+1:]; cmd[0]=os.environ['RTK_NATIVE_IDENTITY_INSPECTOR']; result=subprocess.run(cmd,capture_output=True)
+  cmd=args[args.index('--')+1:]
+  if mode in ['registry-unavailable','client-registry-unavailable']: assert cmd[1] in ['inspect-registry','inspect-server-registry'] and cmd[2]==os.environ['RTK_NATIVE_IDENTITY_ENV']
+  cmd[0]=os.environ['RTK_NATIVE_IDENTITY_INSPECTOR']; result=subprocess.run(cmd,capture_output=True)
   if result.returncode: sys.stderr.buffer.write(result.stderr);sys.exit(result.returncode)
   report=json.loads(result.stdout)
   if mode=='partial-report': report.pop('pending')
@@ -237,6 +239,7 @@ else:
 				t.Setenv("RTK_NATIVE_IDENTITY_OBJECTS", filepath.Join(directory, "objects.json"))
 				t.Setenv("RTK_NATIVE_IDENTITY_MODE", mode)
 				t.Setenv("RTK_NATIVE_IDENTITY_NS", namespace)
+				t.Setenv("RTK_NATIVE_IDENTITY_ENV", environment)
 				t.Setenv("RTK_NATIVE_IDENTITY_INSPECTOR", inspector)
 				bindings, e := backend.storageBindings(context.Background(), plan)
 				if e != nil {
@@ -250,7 +253,13 @@ else:
 				if mode == "cancelled" {
 					cancel()
 				}
-				if clients {
+				if mode == "registry-unavailable" {
+					t.Setenv("PKI_DATABASE_URL", "")
+					e = backend.CheckManagedServerRegistry(ctx, plan)
+				} else if mode == "client-registry-unavailable" {
+					t.Setenv("PKI_DATABASE_URL", "")
+					e = backend.CheckManagedClientRegistry(ctx, plan)
+				} else if clients {
 					e = backend.CheckManagedClientIdentities(ctx, plan)
 				} else {
 					e = backend.CheckManagedServerIdentities(ctx, plan)
@@ -264,8 +273,11 @@ else:
 					if !errors.As(e, &b) || b.Next == "" || strings.Contains(e.Error(), "private-diagnostic-canary") || strings.Contains(e.Error(), "do-not-report-private-state") {
 						t.Fatal("unsanitized or unactionable failure", e)
 					}
+					if mode == "registry-unavailable" && b.ID != "deployment.pki.server-registry" || mode == "client-registry-unavailable" && b.ID != "deployment.pki.client-registry" {
+						t.Fatal("registry failure lost its stable check ID", b.ID)
+					}
 				}
-				if keySet("expired", "wrong-san", "wrong-key", "wrong-root", "wrong-purpose", "pending", "partial-report", "bad-fingerprint", "private-report", "client-expired", "client-wrong-key", "client-wrong-purpose", "client-pending")[mode] {
+				if keySet("expired", "wrong-san", "wrong-key", "wrong-root", "wrong-purpose", "pending", "partial-report", "bad-fingerprint", "private-report", "client-expired", "client-wrong-key", "client-wrong-purpose", "client-pending", "registry-unavailable", "client-registry-unavailable")[mode] {
 					if _, err := os.Stat(filepath.Join(directory, "executed")); err != nil {
 						t.Fatal("failure did not exercise the native inspector", err)
 					}

@@ -17,16 +17,33 @@ type environmentServerIdentityPolicy struct{ State, Domain, Subject, Root, Names
 // exporting a private key or creating identity/lock files. Registry admission,
 // CRLs, client identities and candidate startup remain separate qualifications.
 func (b environmentKubernetesBackend) CheckManagedServerIdentities(ctx context.Context, plan *deploymentplan.Plan) error {
-	return b.checkManagedIdentityStates(ctx, plan, false)
+	return b.checkManagedIdentityStates(ctx, plan, false, false)
 }
 func (b environmentKubernetesBackend) CheckManagedClientIdentities(ctx context.Context, plan *deploymentplan.Plan) error {
-	return b.checkManagedIdentityStates(ctx, plan, true)
+	return b.checkManagedIdentityStates(ctx, plan, true, false)
 }
 
-func (b environmentKubernetesBackend) checkManagedIdentityStates(ctx context.Context, plan *deploymentplan.Plan, clients bool) error {
+func (b environmentKubernetesBackend) CheckManagedServerRegistry(ctx context.Context, plan *deploymentplan.Plan) error {
+	return b.checkManagedIdentityStates(ctx, plan, false, true)
+}
+
+func (b environmentKubernetesBackend) CheckManagedClientRegistry(ctx context.Context, plan *deploymentplan.Plan) error {
+	return b.checkManagedIdentityStates(ctx, plan, true, true)
+}
+
+func (b environmentKubernetesBackend) checkManagedIdentityStates(ctx context.Context, plan *deploymentplan.Plan, clients, registry bool) error {
 	block := serverIdentityBlocker
 	if clients {
 		block = clientIdentityBlocker
+	}
+	if registry {
+		block = func(resource, cause string) error {
+			id := "deployment.pki.server-registry"
+			if clients {
+				id = "deployment.pki.client-registry"
+			}
+			return &deploymentplan.Blocker{ID: id, Resource: resource, Cause: cause, Next: "verify the selected environment's original registry connection and read permissions, recorded issuance receipt and admitted issuer policy; use a qualified image with the shipped read-only registry inspector on the original owned state, then repeat complete preflight; never enroll a replacement identity or fall back to basic inspection"}
+		}
 	}
 
 	if plan == nil || plan.Environment != b.Store.Environment || plan.Stack != "video-cloud-"+b.Store.Environment || plan.Operation != "upgrade" {
@@ -105,7 +122,11 @@ func (b environmentKubernetesBackend) checkManagedIdentityStates(ctx context.Con
 						return block(resource.ID, "owned Pod does not mount the original planned state claim")
 					}
 					args := []string{"exec", "--namespace", namespace, name, "--container", deploymentplan.String(container["name"]), "--", "/app/serviceidentity-bootstrap"}
-					if clients {
+					if registry && clients {
+						args = append(args, "inspect-registry", plan.Environment, policy.State, policy.Subject, policy.Root)
+					} else if registry {
+						args = append(args, "inspect-server-registry", plan.Environment, policy.State, policy.Domain, policy.Subject, policy.Root, policy.Names)
+					} else if clients {
 						args = append(args, "inspect", policy.State, policy.Subject, policy.Root)
 					} else {
 						args = append(args, "inspect-server", policy.State, policy.Domain, policy.Subject, policy.Root, policy.Names)
@@ -118,8 +139,9 @@ func (b environmentKubernetesBackend) checkManagedIdentityStates(ctx context.Con
 						Root        string `json:"root_sha256"`
 						State       string `json:"state_sha256"`
 						Pending     *bool  `json:"pending"`
+						Registry    *bool  `json:"registry_verified,omitempty"`
 					}
-					if err != nil || decodeEnvironmentJSON(raw, &state) != nil || state.Subject != policy.Subject || state.Root != policy.Root || !deploymentImageDigestPattern.MatchString("sha256:"+state.Fingerprint) || !deploymentImageDigestPattern.MatchString("sha256:"+state.PublicKey) || !deploymentImageDigestPattern.MatchString("sha256:"+state.State) || state.Pending == nil || *state.Pending {
+					if err != nil || decodeEnvironmentJSON(raw, &state) != nil || state.Subject != policy.Subject || state.Root != policy.Root || !deploymentImageDigestPattern.MatchString("sha256:"+state.Fingerprint) || !deploymentImageDigestPattern.MatchString("sha256:"+state.PublicKey) || !deploymentImageDigestPattern.MatchString("sha256:"+state.State) || state.Pending == nil || *state.Pending || (registry && (state.Registry == nil || !*state.Registry)) {
 						return block(resource.ID, "original server identity inspection failed or reports incomplete/currently pending state")
 					}
 					checked++

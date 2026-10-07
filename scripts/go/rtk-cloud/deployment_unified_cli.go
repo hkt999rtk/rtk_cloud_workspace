@@ -68,13 +68,13 @@ func defaultUnifiedDeploymentDependencies() unifiedDeploymentDependencies {
 					if err := c.Fence(ctx, p); err != nil {
 						return deploymentplan.GateEvidence{}, err
 					}
-					if err := c.Backend.CheckManagedServerIdentities(ctx, p); err != nil {
+					if err := c.Backend.CheckManagedServerRegistry(ctx, p); err != nil {
 						return deploymentplan.GateEvidence{}, err
 					}
-					if err := c.Backend.CheckManagedClientIdentities(ctx, p); err != nil {
+					if err := c.Backend.CheckManagedClientRegistry(ctx, p); err != nil {
 						return deploymentplan.GateEvidence{}, err
 					}
-					return deploymentplan.GateEvidence{}, &deploymentplan.Blocker{ID: "deployment.pki", Cause: "original managed server and Service client key/chain/subject/purpose/current-validity inspection passed; registry/issuer admission, Secret identities, CRLs, consumer acknowledgments and rollout validity margin remain incomplete", Next: "complete native registry, remaining identity, revocation and consumer qualification for the same target before authorizing deployment"}
+					return deploymentplan.GateEvidence{}, &deploymentplan.Blocker{ID: "deployment.pki", Cause: "original managed server and Service client key/chain/subject/purpose/current-validity and registry/issuer admission passed; Secret identities, installed CRLs, consumer acknowledgments and rollout validity margin remain incomplete", Next: "connect reviewed CRL paths, complete domain consumer policies and upgrade window to native deployment inspection; complete remaining identity qualification for the same target before authorizing deployment"}
 				},
 				"deployment.release": func(ctx context.Context, p *deploymentplan.Plan) (deploymentplan.GateEvidence, error) {
 					if err := c.Fence(ctx, p); err != nil {

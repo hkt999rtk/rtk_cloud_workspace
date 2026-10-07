@@ -114,7 +114,7 @@ or acknowledgments, and cannot independently pass the complete PKI gate. Fresh
 create still requires the separate one-time bootstrap lifecycle and qualification.
 
 The PKI adapter now uses the shipped read-only `serviceidentity-bootstrap
-inspect-server` command for explicitly configured managed host states. It checks
+inspect-server-registry` command for explicitly configured managed host states. It checks
 every original owned replica using the frozen Kubernetes identity, verifies
 name-scoped Pod get/exec authorization, original PVC/PV bindings and actual Pod
 mounts, and rechecks Pod/controller ownership after inspection. The inspector
@@ -123,20 +123,24 @@ current validity without exporting private keys or creating state/lock files.
 Pending state, missing/invalid public summary or owner drift is
 `deployment.pki.server-identity`. A new state, unavailable original inspector or
 unresolved policy needs bootstrap/candidate qualification; no state is initialized
-by preflight. Client identities, Secret-backed leaves, registry admission,
+by preflight. Registry inspection additionally requires the original configured
+registry and formal issuance/issuer admission. Secret-backed leaves, installed
 revocation/CRL acknowledgments and rollout validity margin still require their
 own checks. These remaining gaps keep the complete PKI gate NO-GO even when
 server-state inspection succeeds.
 
 Managed Service client states now use the same original-owner/PVC/Pod observer
-with the shipped read-only `inspect` command. Subject mappings follow maintained
+with the shipped read-only `inspect-registry` command. Subject mappings follow maintained
 consumer contracts; a different workload cannot borrow a Service subject. API
 and log-ingester root aliases follow their real config loaders. The client
 inspector checks the three-certificate pinned chain, key pair, Service CN,
 client-only purpose, absent SAN and current validity. Missing/unresolved policy,
 pending state or failed inspection is `deployment.pki.client-identity`; it does
-not enroll, renew or replace state. Registry/issuer admission, Secret-backed
-identities, CRLs/acknowledgments and rollout validity margin remain required gaps,
+not enroll, renew or replace state. Registry failures use stable
+`deployment.pki.server-registry`/`deployment.pki.client-registry` IDs and require
+explicit positive registry evidence; there is no basic-inspection fallback.
+Secret-backed identities, installed CRLs/acknowledgments and rollout validity
+margin remain required gaps,
 so these observations do not pass the complete PKI gate.
 
 An old fault that blocks a necessary dependency blocks the plan. When the plan
@@ -463,3 +467,23 @@ inventory, and legacy/malformed reports require exact-source republication rathe
 than a fallback. These checks repair necessary Service-domain evidence; complete
 PKI bindings, mounted identities, other trust domains and lifecycle/restore
 qualification remain separate required work. No environment GO is claimed here.
+
+### Registry-backed original workload inspection
+
+Complete upgrade qualification now calls the shipped `inspect-registry` and
+`inspect-server-registry` commands on every original owned managed identity Pod.
+It requires the selected environment, exact subject/Root, complete original
+snapshot hashes, no pending request and explicit `registry_verified: true`.
+A missing registry connection, missing interface or unverified basic inspection
+cannot satisfy this stage. The service reuses its formal read-only receipt and
+issuer-policy verifier on the same atomic identity-state snapshot.
+
+The service also provides `inspect-deployment` and `inspect-server-deployment`:
+these verify the explicit upgrade window, original installed Root/intermediate
+CRLs, exact current-digest domain consumer receipts and Root distrust in one
+read-only registry snapshot. Their native isolated tests cover dev/staging/prod
+and Service client plus Service/MQTT/OpenBao server domains. Connecting the full
+reviewed consumer inventory, original CRL mounts and configured upgrade window
+to the complete deployment adapter is still required; the adapter continues to
+report NO-GO for those missing qualifications. These local fixtures and commands
+do not prove actual environment readiness or production qualification.
