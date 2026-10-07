@@ -373,8 +373,10 @@ explicit `deployment.compatibility.openbao` blocker; generating JSON cannot make
 that transition safe. Qualify a compatible in-place target or a verified storage
 transition while preserving original data, seal and identity.
 
-Controller consumer, authentication and worker policies belong in maintained
-architecture/environment overrides. Adoption excludes them even when an old Pod
+Controller consumer defaults are maintained once in the common
+`cloud_deploy/architectures/kubernetes/architecture.env`, without environment
+copies. Authentication and worker policies remain maintained configuration.
+Adoption excludes these policies even when an old Pod
 used a Secret reference. Set exact unprefixed receipt IDs in
 `PKI_REQUIRED_CONSUMERS_DEVICE`, `PKI_REQUIRED_CONSUMERS_APP`,
 `PKI_REQUIRED_CONSUMERS_SERVICE`, `PKI_REQUIRED_CONSUMERS_MQTT` and
@@ -384,6 +386,20 @@ an absent setting uses that domain's native consumer list. Empty, duplicated or
 `service:`-prefixed IDs block planning. The retired global
 `PKI_REQUIRED_CONSUMERS` cannot supply these domain policies.
 
+The initial shared consumer and bundle-consumer defaults are identical:
+
+| Domain | Initial common consumer IDs |
+| --- | --- |
+| Device | `video-cloud-api,pkibroker` |
+| App | `video-cloud-api,pkibroker` |
+| Service | `certissuer,pki-controller` |
+| MQTT | `video-cloud-api` |
+| OpenBao TLS | `certissuer,pki-controller` |
+
+This is the common starting configuration for membership review, not verified
+environment consumer completeness or acknowledgment evidence. Review enabled
+consumer integrations and actual receipts before PKI activation/rotation.
+
 Full managed deployment requires `PKI_APP_CRL_WORKER_ENABLED=true` and
 `PKI_SERVER_CRL_DOMAIN=service,mqtt,openbao_tls` (order is immaterial).
 Maintain `PKI_REQUIRE_USER_MFA=true|false` explicitly; production requires `true`.
@@ -392,11 +408,10 @@ imports cannot reactivate them. These settings do not establish live consumer
 acknowledgments or production qualification. A missing consumer integration needs
 its actual lifecycle implementation and qualification, not a placeholder name.
 The standard profile explicitly preserves the existing non-MFA controller policy;
-production selects MFA in its protection overrides. The 2026-10-06 staging
-configuration migration preserves the original private plan's Device, Service,
-MQTT and MQTT-bundle receipt IDs only. Its absent App/OpenBao transport policies
-remain blockers until their actual consumers and bindings are qualified. These
-dated settings are migration inputs, not live acknowledgment evidence.
+production selects MFA in its protection overrides. The former staging-only
+consumer overrides have been removed; all three environments now resolve the
+initial shared defaults above. This configuration change does not produce live
+acknowledgment evidence.
 
 Execution requires the exact plan SHA-256 from complete preflight:
 

@@ -19,7 +19,7 @@ func environmentControllerPolicySetting(name string) bool {
 // These existing runtime settings keep all managed trust domains refreshable.
 func applyEnvironmentControllerPolicy(env map[string]string, object deploymentplan.Object) error {
 	block := func(cause string) error {
-		return &deploymentplan.Blocker{ID: "deployment.pki.controller-policy", Resource: deploymentplan.ID(object), Cause: cause, Next: "maintain exact PKI_REQUIRED_CONSUMERS_<DOMAIN> receipt IDs for device, app, service, mqtt and openbao_tls, PKI_REQUIRE_USER_MFA=true|false and the CRL worker settings in architecture/environment overrides; validate actual consumer acknowledgments before full preflight"}
+		return &deploymentplan.Blocker{ID: "deployment.pki.controller-policy", Resource: deploymentplan.ID(object), Cause: cause, Next: "maintain exact domain consumer and bundle-consumer receipt IDs in cloud_deploy/architectures/kubernetes/architecture.env; maintain explicit MFA and CRL worker policies, then validate actual consumer acknowledgments before full preflight"}
 	}
 	if env["PKI_REQUIRED_CONSUMERS"] != "" {
 		return block("global controller consumer policy is retired for complete deployment; explicit domain policies are required")

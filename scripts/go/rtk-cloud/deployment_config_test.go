@@ -1488,3 +1488,50 @@ func TestSharedWorkloadImagesUseArchitectureForEveryEnvironment(t *testing.T) {
 		})
 	}
 }
+
+func TestSharedPKIConsumerDefaultsResolveAndRenderAcrossEnvironments(t *testing.T) {
+	root := mustWorkspaceRoot(t)
+	baseline, err := readStrictEnv(filepath.Join(root, "cloud_deploy", "architectures", "kubernetes", "architecture.env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		t.Run(environment, func(t *testing.T) {
+			overrides, err := readOptionalStrictEnv(filepath.Join(root, "cloud_env", environment, "overrides", "architecture.env"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			workspace := writeDeploymentFixture(t, environment, "lke")
+			path := filepath.Join(workspace, "cloud_deploy", "architectures", "kubernetes", "architecture.env")
+			body := readTestFile(t, path)
+			var keys []string
+			for _, domain := range managedPKIDomains {
+				for _, prefix := range []string{"PKI_REQUIRED_CONSUMERS_", "PKI_REQUIRED_BUNDLE_CONSUMERS_"} {
+					key := prefix + strings.ToUpper(domain)
+					if baseline[key] == "" || overrides[key] != "" {
+						t.Fatalf("%s must consume the shared nonempty %s", environment, key)
+					}
+					keys = append(keys, key)
+					body += key + "=" + baseline[key] + "\n"
+				}
+			}
+			writeTestFile(t, path, body)
+			cfg, err := resolveDeploymentConfig(workspace, environment, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			env, _, _ := completeEnvironmentRenderFixture(environment)
+			for _, key := range keys {
+				if cfg.Values[key] != baseline[key] {
+					t.Fatalf("%s did not resolve from the common architecture", key)
+				}
+				env[key] = cfg.Values[key]
+			}
+			env["PKI_REQUIRE_USER_MFA"] = "true"
+			controller := map[string]any{"kind": "Deployment", "metadata": map[string]any{"name": "pki-controller", "namespace": "video-cloud-" + environment + "-video-cloud"}, "spec": map[string]any{"template": map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"name": "pki-controller"}}}}}}
+			if err := applyEnvironmentControllerPolicy(env, controller); err != nil {
+				t.Fatal("shared consumer defaults cannot render controller policy", err)
+			}
+		})
+	}
+}
