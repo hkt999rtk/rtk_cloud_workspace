@@ -94,3 +94,19 @@ memory and included in the plan digest. Deployment repeats selection and require
 the approved plan SHA-256. Missing or invalid CI publication is NO-GO. Local
 `release.json` selection and freeze-release file generation are retired. Provider
 image versions remain maintained configuration and are registry-digest pinned.
+
+### Preflight-produced identity observations
+
+An existing-environment preflight does not require a pre-existing private
+`identity-bindings.json`. It obtains actual owners and existing identity references
+from the selected API and compiles the maintained target in memory. It records
+existing UIDs only; newly planned resources have no UID until creation. Target
+mounts/configuration are renderer output, and persistent contents or seal state
+cannot be inferred from a Pod volume reference.
+
+Preflight publishes the current result beneath the canonical environment store
+as `deployment/identity-bindings.json`; complete GO is bound to the exact plan and
+observed-bindings hashes. Failed/fast preflight invalidates previous GO. Deployment
+must freshly compile the same plan, verify the matching GO record and fence
+ownership during execution. An unsupported existing OpenBao profile remains a
+compatibility blocker, not an instruction to manufacture a bindings file.

@@ -781,7 +781,7 @@ func printDeploymentUsage() {
   rtk-cloud deployment credentials-check --environment NAME --create-missing-object-storage-bucket
   rtk-cloud deployment credentials-check --environment NAME --grant-object-storage-bucket-access
   rtk-cloud deployment preflight --environment NAME [--operation create|upgrade] [--report PATH]
-  rtk-cloud deployment adopt-managed-state --environment NAME [--output identity-bindings.candidate.json]
+  rtk-cloud deployment preflight --environment NAME (produces checked existing-owner bindings)
   rtk-cloud deployment plan --environment NAME [--operation create|upgrade]
   rtk-cloud deployment console-check --environment NAME --cloud-id UUID [--product-id UUID]
   rtk-cloud deployment create --environment NAME --confirm STACK --plan-sha256 SHA256

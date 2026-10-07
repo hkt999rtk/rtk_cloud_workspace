@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -86,32 +85,6 @@ type environmentContainerBindings struct {
 	Name     string         `json:"name"`
 	ImageKey string         `json:"image_key"`
 	Fields   map[string]any `json:"fields"`
-}
-
-func loadEnvironmentIdentityBindings(store secretStore) (environmentIdentityBindings, error) {
-	var bindings environmentIdentityBindings
-	path := filepath.Join(store.Root, "deployment", "identity-bindings.json")
-	for _, directory := range []string{store.Root, filepath.Dir(path)} {
-		info, err := os.Lstat(directory)
-		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0700 {
-			return bindings, errors.New("deployment.bindings: real private 0700 directories required")
-		}
-	}
-	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0600 {
-		return bindings, errors.New("deployment.bindings: private managed identity bindings are unavailable; next: complete bootstrap or deployment adopt-managed-state; no static PKI fallback is supported")
-	}
-	raw, err := readBoundedEnvironmentFile(path, true)
-	if err != nil {
-		return bindings, errors.New("cannot read managed identity bindings")
-	}
-	if err = decodeEnvironmentJSON(raw, &bindings); err != nil {
-		return bindings, err
-	}
-	if err = validateEnvironmentIdentityBindings(bindings, store.Environment); err != nil {
-		return bindings, err
-	}
-	return bindings, nil
 }
 
 func validateEnvironmentIdentityBindings(b environmentIdentityBindings, environment string) error {

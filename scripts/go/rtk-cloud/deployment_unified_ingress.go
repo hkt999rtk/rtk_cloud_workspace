@@ -17,7 +17,7 @@ import (
 // a full upgrade never generates a replacement admission key or disables it.
 func renderEnvironmentIngress(env map[string]string, binding *environmentAdmissionBinding, release environmentRelease) ([]deploymentplan.Definition, error) {
 	if binding == nil || !secretEnvironmentPattern.MatchString(binding.SecretName) {
-		return nil, errors.New("deployment.bindings.ingress: admission transport binding missing; next: bootstrap or adopt the existing admission Secret and its public CA")
+		return nil, errors.New("deployment.bindings.ingress: existing admission Secret reference or authoritative webhook CA could not be observed; next: verify the selected ingress controller mounts and webhook configuration, or qualify the new admission identity initialization")
 	}
 	raw, err := base64.StdEncoding.DecodeString(binding.CABundle)
 	if err != nil {

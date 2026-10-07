@@ -34,17 +34,29 @@ DNS ownership, ACME challenge cleanup, zone evidence and synchronization metadat
 now share `deployment/dns/<adapter>/` in the environment store. Their input digest
 is fenced by the unified compiler. See [the explicit DNS state migration](dns-adapter-architecture.md#migration).
 
-Lifecycle bindings use `deployment/identity-bindings.json` beneath the selected
-environment store. Bootstrap or reviewed adoption owns this record; compiler,
-preflight and execution hash the same active file. Read-only adoption writes
-`deployment/identity-bindings.candidate.json` for review, never active state.
-Secret server records bind independent Root/DNS policy and original mounted
-references, without importing a workload spec. Their automatic lifecycle
-population remains an implementation gap. Native Secret inspection reads only
-original owned Pod files and its original registry; controller observation binds
-their exact synchronized Secret bytes and resource versions. Neither operation
-writes credential material locally or creates receipts. See the
-[original Secret server subgate](deployment-readiness-standard.md#original-secret-backed-server-identity).
+Preflight owns `deployment/identity-bindings.json` beneath the selected private
+environment store. It is generated observation/qualification evidence, not
+configuration or a prerequisite for the first check. The shared compiler reads
+the selected Kubernetes API first and extracts existing owner UIDs and validated
+identity/mount references in memory. Workload images, commands, replicas, policy
+and target configuration continue to come from the maintained catalog and CI.
+Only resources actually observed in the selected environment have recorded UIDs;
+new target resources have no UID until deployment creates them. Volume references
+do not establish PVC contents, issuer lineage, storage backend or seal health.
+Those facts require their own authoritative source/check and remain explicit
+blockers when unavailable; preflight never fabricates them.
+
+At the beginning of preflight, any previous GO bindings record is replaced with
+NO-GO. Successfully compiled observations are saved privately, and only complete
+qualification promotes the record to GO with its exact plan and bindings hashes.
+A failed/fast check cannot leave old evidence eligible for execution. Plan alone
+never publishes GO. Deployment re-observes the same environment through the same
+compiler, requires the matching preflight record and approved plan SHA-256, and
+fences the record plus live ownership at execution stages. Kubernetes resource
+versions remain in the planner baseline for conditional writes, rather than being
+invented for future resources. The generated file uses a 0700 parent directory
+and 0600 permissions. `adopt-managed-state` is retired; operators must not
+hand-produce or promote a candidate JSON to pass preflight.
 
 RTK Cloud uses one reusable architecture description, many environment instances, and replaceable deployment adapters. Environments such as `dev`, `staging`, and `prod` select an architecture and adapter; they do not own copies of the architecture or adapter implementation.
 

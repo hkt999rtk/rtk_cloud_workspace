@@ -17,13 +17,14 @@ var environmentRenderMutex sync.Mutex
 var activeRuntimeSecretSnapshot map[string]string
 
 type compiledEnvironmentDeployment struct {
-	Plan          *deploymentplan.Plan
-	Release       environmentRelease
-	Bindings      environmentIdentityBindings
-	Store         secretStore
-	Backend       environmentKubernetesBackend
-	Configuration deploymentConfig
-	SourceCommand environmentReleaseCommand
+	Plan                     *deploymentplan.Plan
+	Release                  environmentRelease
+	Bindings                 environmentIdentityBindings
+	Store                    secretStore
+	Backend                  environmentKubernetesBackend
+	Configuration            deploymentConfig
+	SourceCommand            environmentReleaseCommand
+	RequirePreflightBindings bool
 }
 
 type environmentDeploymentSnapshot struct {
@@ -191,10 +192,6 @@ func compileEnvironmentDeploymentWithImages(ctx context.Context, cfg deploymentC
 	if err != nil {
 		return nil, err
 	}
-	bindings, err := loadEnvironmentIdentityBindings(store)
-	if err != nil {
-		return nil, &deploymentplan.Blocker{ID: "deployment.pki", Cause: "private managed identity and exact ownership bindings are absent or invalid", Next: "complete managed bootstrap or the reviewed existing-owner migration; maintain deployment/identity-bindings.json in the environment SecretStore, without copying workload specs"}
-	}
 	snapshot, err := readEnvironmentDeploymentSnapshot(cfg, store)
 	if err != nil {
 		var blocker *deploymentplan.Blocker
@@ -213,6 +210,38 @@ func compileEnvironmentDeploymentWithImages(ctx context.Context, cfg deploymentC
 			return nil, &deploymentplan.Blocker{ID: "deployment.configuration.postgres-backup", Cause: "enabled PostgreSQL backup configuration or credentials are incomplete", Next: "restore the existing enabled backup component's maintained configuration and dedicated credentials; do not enable backups merely to run an ordinary update"}
 		}
 	}
+	backend, err := newEnvironmentKubernetesBackend(snapshot.Kubeconfig, cfg.Environment)
+	if err != nil {
+		return nil, err
+	}
+	live, err := backend.Inventory(ctx, cfg.Values["CLOUD_STACK_NAME"])
+	if err != nil {
+		return nil, err
+	}
+	admissionID := "ValidatingWebhookConfiguration//" + cfg.Values["CLOUD_STACK_NAME"] + "-ingress-admission"
+	admissionSeen := false
+	for _, object := range live {
+		if deploymentplan.ID(object) == admissionID {
+			admissionSeen = true
+		}
+	}
+	if !admissionSeen {
+		admission, err := backend.Read(ctx, admissionID)
+		if err != nil {
+			return nil, err
+		}
+		if admission != nil {
+			live = append(live, admission)
+		}
+	}
+	bindings, err := observeEnvironmentBindings(cfg.Environment, release, live)
+	if err != nil {
+		var blocker *deploymentplan.Blocker
+		if errors.As(err, &blocker) {
+			return nil, blocker
+		}
+		return nil, &deploymentplan.Blocker{ID: "deployment.pki.observation", Cause: "existing environment identity references or ownership cannot be verified", Next: "verify the selected Kubernetes inventory and existing identity references; preflight generates bindings without a pre-existing local file"}
+	}
 	configurationDigest := snapshot.Digest(cfg)
 	var definitions []deploymentplan.Definition
 	err = withEnvironmentRenderInputs(cfg, store, release, snapshot, func(values map[string]string) error {
@@ -223,14 +252,6 @@ func compileEnvironmentDeploymentWithImages(ctx context.Context, cfg deploymentC
 		}
 		return err
 	})
-	if err != nil {
-		return nil, err
-	}
-	backend, err := newEnvironmentKubernetesBackend(snapshot.Kubeconfig, cfg.Environment)
-	if err != nil {
-		return nil, err
-	}
-	live, err := backend.Inventory(ctx, cfg.Values["CLOUD_STACK_NAME"])
 	if err != nil {
 		return nil, err
 	}
@@ -250,6 +271,15 @@ func compileEnvironmentDeploymentWithImages(ctx context.Context, cfg deploymentC
 			return nil, err
 		}
 		if current != nil {
+			meta := deploymentplan.Map(current["metadata"])
+			label := deploymentplan.String(deploymentplan.Map(meta["labels"])["rtk.realtek.com/stack"])
+			if deploymentplan.String(meta["namespace"]) == "" && strings.HasPrefix(deploymentplan.String(meta["name"]), bindings.Stack+"-") && (label == "" || label == bindings.Stack) && meta["deletionTimestamp"] == nil {
+				uid := deploymentplan.String(meta["uid"])
+				if uid == "" {
+					return nil, errors.New("observed cluster resource has no owner UID")
+				}
+				bindings.Owners[id] = uid
+			}
 			live = append(live, current)
 			seen[id] = true
 		}
@@ -315,13 +345,44 @@ func (c *compiledEnvironmentDeployment) Fence(ctx context.Context, plan *deploym
 			return err
 		}
 	}
-	bindings, err := loadEnvironmentIdentityBindings(c.Store)
-	if err != nil || deploymentplan.Digest(bindings) != plan.BindingsSHA256 {
-		return errors.New("deployment.inputs: managed identity or ownership bindings changed")
+	if deploymentplan.Digest(c.Bindings) != plan.BindingsSHA256 {
+		return errors.New("deployment.inputs: observed identity or ownership bindings changed")
+	}
+	if c.RequirePreflightBindings {
+		if err := verifyEnvironmentPreflightBindings(c); err != nil {
+			return err
+		}
 	}
 	live, err := c.Backend.Inventory(ctx, plan.Stack)
 	if err != nil {
 		return errors.New("deployment.inventory: complete runtime owners cannot be re-enumerated")
+	}
+	currentOwners := map[string]string{}
+	for _, object := range live {
+		currentOwners[deploymentplan.ID(object)] = deploymentplan.String(deploymentplan.Map(object["metadata"])["uid"])
+	}
+	retired := map[string]bool{}
+	for _, resource := range plan.Resources {
+		if resource.Action == "retire" {
+			retired[resource.ID] = true
+		}
+	}
+	for id, uid := range c.Bindings.Owners {
+		if retired[id] && currentOwners[id] == "" {
+			continue
+		}
+		if currentOwners[id] == "" {
+			object, err := c.Backend.Read(ctx, id)
+			if err != nil {
+				return err
+			}
+			if object != nil {
+				currentOwners[id] = deploymentplan.String(deploymentplan.Map(object["metadata"])["uid"])
+			}
+		}
+		if currentOwners[id] != uid {
+			return &deploymentplan.Blocker{ID: "deployment.ownership.drift", Resource: id, Cause: "observed original resource owner changed or disappeared", Next: "repeat preflight against the current environment; deployment must not overwrite a replacement owner"}
+		}
 	}
 	if err := plan.CheckWorkloadInventory(live); err != nil {
 		return err
@@ -374,7 +435,7 @@ func bindRetainedEnvironmentDependencies(definitions []deploymentplan.Definition
 		// Retained assets do not require label mutations merely to pass planning.
 		labels := deploymentplan.Map(deploymentplan.Map(current["metadata"])["labels"])
 		if deploymentplan.String(labels["rtk.realtek.com/stack"]) != bindings.Stack && bindings.Owners[ref.ID] != deploymentplan.String(deploymentplan.Map(current["metadata"])["uid"]) {
-			return nil, &deploymentplan.Blocker{ID: "deployment.ownership.dependency", Resource: ref.ID, Cause: "required lifecycle dependency lacks exact recorded ownership", Next: "verify the environment owner and record its exact UID in maintained identity bindings before repeating preflight"}
+			return nil, &deploymentplan.Blocker{ID: "deployment.ownership.dependency", Resource: ref.ID, Cause: "required lifecycle dependency lacks exact recorded ownership", Next: "verify the exact environment owner and repeat preflight to observe its UID; do not hand-edit generated bindings"}
 		}
 		object := deploymentplan.Object{"apiVersion": current["apiVersion"], "kind": ref.Kind, "metadata": metadata}
 		definitions = append(definitions, deploymentplan.Definition{Object: object, Phase: environmentResourcePhase(ref.Kind), Retain: true})

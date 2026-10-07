@@ -105,7 +105,7 @@ func TestCompleteCompilerUsesMaintainedCatalogAndFencesNativeSnapshot(t *testing
 			// compiler test also exercises lifecycle preservation during upgrade.
 			for _, d := range definitions {
 				name := deploymentplan.String(deploymentplan.Map(d.Object["metadata"])["name"])
-				if environmentManagedComponents[name] == "" || d.Object["kind"] != "Deployment" && d.Object["kind"] != "StatefulSet" {
+				if environmentManagedComponents[name] == "" && name != "openbao-raft" && name != "ingress-nginx-controller" && d.Object["kind"] != "ValidatingWebhookConfiguration" || d.Object["kind"] != "Deployment" && d.Object["kind"] != "StatefulSet" && d.Object["kind"] != "ConfigMap" && d.Object["kind"] != "ValidatingWebhookConfiguration" {
 					continue
 				}
 				object := deploymentplan.Clone(d.Object)
@@ -142,9 +142,13 @@ func TestCompleteCompilerUsesMaintainedCatalogAndFencesNativeSnapshot(t *testing
 			namespaces := []any{}
 			for _, d := range definitions {
 				if d.Object["kind"] == "Namespace" {
-					namespaces = append(namespaces, map[string]any{"metadata": map[string]any{"name": deploymentplan.Map(d.Object["metadata"])["name"]}})
+					namespace := deploymentplan.Object{"apiVersion": "v1", "kind": "Namespace", "metadata": map[string]any{"name": deploymentplan.Map(d.Object["metadata"])["name"], "uid": "namespace-" + deploymentplan.String(deploymentplan.Map(d.Object["metadata"])["name"]), "resourceVersion": "1"}}
+					namespaces = append(namespaces, namespace)
+					dependencies[deploymentplan.ID(namespace)] = namespace
 				}
 			}
+			raw, _ = json.Marshal(dependencies)
+			writeTestFile(t, filepath.Join(directory, "dependencies.json"), string(raw))
 			raw, _ = json.Marshal(map[string]any{"items": namespaces})
 			writeTestFile(t, filepath.Join(directory, "namespaces.json"), string(raw))
 
@@ -155,8 +159,8 @@ if os.environ.get("RTK_COMPILE_MUTATE_ADMISSION")=="1" and body["kind"]=="Deploy
 print(json.dumps(body))';;
  *' exec '*) printf '{"system_identifier":"123456789","sealed":true}';;
  *'get namespace '*) cat "$RTK_COMPILE_NAMESPACES";;
- *'get deployment,'*) python3 -c 'import json,sys; args=sys.argv[1:]; ns=args[args.index("--namespace")+1]; values=json.load(open(sys.argv[-1])); print(json.dumps({"items":[o for o in values.values() if o["metadata"]["namespace"]==ns]}))' "$@" "$RTK_COMPILE_DEPENDENCIES";;
- *'get clusterrole,'*) printf '{"items":[]}' ;;
+ *'get deployment,'*) python3 -c 'import json,sys; args=sys.argv[1:]; ns=args[args.index("--namespace")+1]; values=json.load(open(sys.argv[-1])); print(json.dumps({"items":[o for o in values.values() if o["metadata"].get("namespace","")==ns]}))' "$@" "$RTK_COMPILE_DEPENDENCIES";;
+ *'get clusterrole,'*) python3 -c 'import json,sys; values=json.load(open(sys.argv[-1])); print(json.dumps({"items":[o for o in values.values() if o["kind"]=="ValidatingWebhookConfiguration"]}))' "$RTK_COMPILE_DEPENDENCIES" ;;
  *' get '*) python3 -c 'import json,sys; args=sys.argv[1:]; i=args.index("get"); ns=args[args.index("--namespace")+1] if "--namespace" in args else ""; obj=json.load(open(sys.argv[-1])).get(args[i+1]+"/"+ns+"/"+args[i+2]); print(json.dumps(obj) if obj else "",end="")' "$@" "$RTK_COMPILE_DEPENDENCIES";;
  *) exit 1;;
 esac
@@ -170,6 +174,20 @@ esac
 			admissionPath := filepath.Join(directory, "admission.jsonl")
 			t.Setenv("RTK_COMPILE_ADMISSION", admissionPath)
 			t.Setenv("RTK_COMPILE_MUTATE_ADMISSION", "0")
+			if err := os.Remove(filepath.Join(store.Root, "deployment", "identity-bindings.json")); err != nil {
+				t.Fatal(err)
+			}
+			fixtureBackend, err := newEnvironmentKubernetesBackend(snapshot.Kubeconfig, environment)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fixtureLive, err := fixtureBackend.Inventory(context.Background(), bindings.Stack)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := observeEnvironmentBindings(environment, release, fixtureLive); err != nil {
+				t.Fatal("fixture observations", err)
+			}
 			compiled, err := compileEnvironmentDeploymentWithImages(context.Background(), cfg, "upgrade", release, nil)
 			if err != nil {
 				t.Fatal("complete compiler failed", err)
@@ -181,6 +199,11 @@ esac
 			for id := range declared {
 				if _, present := planned[id]; !present {
 					t.Fatal("maintained component omitted from the complete plan", id)
+				}
+			}
+			for _, resource := range compiled.Plan.Resources {
+				if resource.Action == "create" && (resource.UID != "" || compiled.Bindings.Owners[resource.ID] != "") {
+					t.Fatal("preflight invented an owner UID for a new resource", resource.ID)
 				}
 			}
 			approved := compiled.Plan.SHA256()
@@ -225,17 +248,17 @@ esac
 			if compiled.Plan.SHA256() != approved {
 				t.Fatal("fence mutated plan")
 			}
-			// A target that drops an existing trust pin is rejected by the public
-			// compiler before admission or execution, even with the same owner UID.
+			// Foreign observed identity is rejected before admission or execution,
+			// even when its owner UID is unchanged.
 			originalID := "Deployment/" + bindings.Stack + "-video-cloud/certissuer"
 			original := dependencies[originalID]
 			pod := environmentPKIPod(original)
 			consumer := deploymentplan.Map(pod["containers"].([]any)[0])
-			consumer["env"] = append(certIssuerObjectList(consumer["env"]), deploymentplan.Object{"name": "CERT_ISSUER_SERVICE_PKI_ROOT_FINGERPRINT", "value": "private-pin-canary"})
+			consumer["env"] = append(certIssuerObjectList(consumer["env"]), deploymentplan.Object{"name": "PKI_ENVIRONMENT", "value": "private-pin-canary"})
 			raw, _ = json.Marshal(dependencies)
 			writeTestFile(t, filepath.Join(directory, "dependencies.json"), string(raw))
 			admittedBefore := readTestFile(t, admissionPath)
-			if _, err := compileEnvironmentDeploymentWithImages(context.Background(), cfg, "upgrade", release, nil); !errors.As(err, &blocker) || blocker.ID != "deployment.pki.bindings" || strings.Contains(err.Error(), "private-pin-canary") {
+			if _, err := compileEnvironmentDeploymentWithImages(context.Background(), cfg, "upgrade", release, nil); !errors.As(err, &blocker) || blocker.ID != "deployment.pki.observation" || strings.Contains(err.Error(), "private-pin-canary") {
 				t.Fatal("complete compiler ignored original PKI bindings", err)
 			}
 			if readTestFile(t, admissionPath) != admittedBefore {

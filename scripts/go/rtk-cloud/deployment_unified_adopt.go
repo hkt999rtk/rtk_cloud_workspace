@@ -1,25 +1,22 @@
 package main
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 )
 
-// Adoption extracts lifecycle references and exact owners, never a desired spec.
-// The result is reviewable input to the common renderer, not readiness evidence.
-func adoptEnvironmentBindings(environment string, release environmentRelease, live []deploymentplan.Object) (environmentIdentityBindings, error) {
+// Observe only existing lifecycle references and owners. Target workload settings
+// and UIDs for resources that have not been created are never inferred.
+func observeEnvironmentBindings(environment string, release environmentRelease, live []deploymentplan.Object) (environmentIdentityBindings, error) {
 	b := environmentIdentityBindings{Version: 1, Environment: environment, Stack: "video-cloud-" + environment, Owners: map[string]string{}}
 	if release.Environment != environment || release.Stack != b.Stack {
 		return b, errors.New("selected release and adoption environment differ")
@@ -55,8 +52,59 @@ func adoptEnvironmentBindings(environment string, release environmentRelease, li
 			}
 			b.BootstrapCleanup = &recorded
 		}
+		if kind == "ValidatingWebhookConfiguration" && name == b.Stack+"-ingress-admission" {
+			for _, value := range certIssuerObjectList(object["webhooks"]) {
+				client := deploymentplan.Map(deploymentplan.Map(value)["clientConfig"])
+				service := deploymentplan.Map(client["service"])
+				if service["namespace"] == b.Stack+"-ingress" && service["name"] == "ingress-nginx-controller-admission" {
+					if b.IngressAdmission == nil {
+						b.IngressAdmission = &environmentAdmissionBinding{}
+					}
+					ca := deploymentplan.String(client["caBundle"])
+					if ca == "" || b.IngressAdmission.CABundle != "" && b.IngressAdmission.CABundle != ca {
+						return b, errors.New("existing ingress admission trust is missing or ambiguous")
+					}
+					b.IngressAdmission.CABundle = ca
+				}
+			}
+		}
+		if kind == "Deployment" && ns == b.Stack+"-ingress" && name == "ingress-nginx-controller" {
+			pod := deploymentplan.Map(deploymentplan.Map(deploymentplan.Map(object["spec"])["template"])["spec"])
+			mounted := map[string]bool{}
+			for _, item := range certIssuerObjectList(pod["containers"]) {
+				for _, value := range certIssuerObjectList(deploymentplan.Map(item)["volumeMounts"]) {
+					mount := deploymentplan.Map(value)
+					if mount["mountPath"] == "/usr/local/certificates" {
+						mounted[deploymentplan.String(mount["name"])] = true
+					}
+				}
+			}
+			for _, value := range certIssuerObjectList(pod["volumes"]) {
+				volume := deploymentplan.Map(value)
+				if mounted[deploymentplan.String(volume["name"])] {
+					if b.IngressAdmission == nil {
+						b.IngressAdmission = &environmentAdmissionBinding{}
+					}
+					b.IngressAdmission.SecretName = deploymentplan.String(deploymentplan.Map(volume["secret"])["secretName"])
+				}
+			}
+			continue
+		}
 		if kind != "Deployment" && kind != "StatefulSet" && kind != "DaemonSet" {
 			continue
+		}
+		if name == "openbao" && kind == "StatefulSet" {
+			pod := deploymentplan.Map(deploymentplan.Map(deploymentplan.Map(object["spec"])["template"])["spec"])
+			raft := false
+			for _, value := range certIssuerObjectList(pod["volumes"]) {
+				volume := deploymentplan.Map(value)
+				if volume["name"] == "raft-config" && deploymentplan.Map(volume["configMap"])["name"] == "openbao-raft" {
+					raft = true
+				}
+			}
+			if !raft || len(certIssuerObjectList(pod["containers"])) != 1 {
+				return b, &deploymentplan.Blocker{ID: "deployment.compatibility.openbao", Resource: id, Cause: "existing OpenBao storage or PKI sidecars differ from the maintained target profile", Next: "qualify an in-place compatible OpenBao target that preserves existing data, seal and PKI references, or a separately verified storage transition; a local bindings file cannot resolve this incompatibility"}
+			}
 		}
 		component := environmentManagedComponents[name]
 		if component == "" {
@@ -64,7 +112,7 @@ func adoptEnvironmentBindings(environment string, release environmentRelease, li
 		}
 		binding := environmentPodBindings{Kind: kind, NamespaceSuffix: strings.TrimPrefix(ns, b.Stack+"-"), Name: name, Component: component, PodFields: map[string]any{}}
 		pod := deploymentplan.Map(deploymentplan.Map(deploymentplan.Map(object["spec"])["template"])["spec"])
-		for _, field := range []string{"volumes", "securityContext", "serviceAccountName", "automountServiceAccountToken", "imagePullSecrets"} {
+		for _, field := range []string{"volumes", "serviceAccountName", "imagePullSecrets"} {
 			if value, ok := pod[field]; ok {
 				binding.PodFields[field] = value
 			}
@@ -81,9 +129,9 @@ func adoptEnvironmentBindings(environment string, release environmentRelease, li
 				}
 			}
 			if bound.ImageKey == "" {
-				return b, errors.New("consumer has no maintained immutable release image role")
+				return b, &deploymentplan.Blocker{ID: "deployment.inventory.image-role", Resource: id, Cause: "an existing container has no maintained release image role", Next: "maintain this enabled component and its image role in the common catalog; do not copy its live workload spec or hand-edit generated bindings"}
 			}
-			for _, field := range []string{"volumeMounts", "securityContext", "envFrom"} {
+			for _, field := range []string{"volumeMounts", "envFrom"} {
 				if value, ok := container[field]; ok {
 					bound.Fields[field] = value
 				}
@@ -120,10 +168,19 @@ func adoptEnvironmentBindings(environment string, release environmentRelease, li
 				}
 			}
 			if !raft || deploymentplan.Map(mount["configMap"])["name"] != "openbao-raft" || len(binding.Containers) != 1 || binding.Containers[0].Name != "openbao" {
-				return b, errors.New("OpenBao adoption requires existing shared Raft configuration; file storage needs a separate matched migration and original-seal qualification")
+				return b, &deploymentplan.Blocker{ID: "deployment.compatibility.openbao", Resource: id, Cause: "existing OpenBao configuration differs from the maintained Raft target", Next: "qualify a compatible in-place target or an explicit matched storage/seal transition; preflight observations cannot prove this migration"}
 			}
 			binding.PodFields = map[string]any{}
+			var identity []any
+			for _, value := range certIssuerObjectList(binding.Containers[0].Fields["env"]) {
+				if environmentIdentitySetting(deploymentplan.String(deploymentplan.Map(value)["name"])) {
+					identity = append(identity, value)
+				}
+			}
 			binding.Containers[0].Fields = map[string]any{}
+			if len(identity) != 0 {
+				binding.Containers[0].Fields["env"] = identity
+			}
 		}
 		b.Pods = append(b.Pods, binding)
 	}
@@ -177,89 +234,8 @@ func archiveLegacyEnvironmentPlan(store secretStore) error {
 }
 
 func runEnvironmentManagedAdoption(args []string) error {
-	fs := flag.NewFlagSet("deployment adopt-managed-state", flag.ContinueOnError)
-	environment := fs.String("environment", "", "maintained environment")
-	workspace := fs.String("workspace", "", "workspace root")
-	root := fs.String("environment-root", "", "explicit maintained environment root")
-	output := fs.String("output", "identity-bindings.candidate.json", "new basename in the environment SecretStore deployment directory")
-	timeout := fs.Duration("timeout", 10*time.Minute, "read-only inventory deadline")
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return nil
-		}
-		return exitCode(2)
-	}
-	if fs.NArg() != 0 || *environment == "" || *timeout <= 0 || filepath.Base(*output) != *output || !strings.HasSuffix(*output, ".json") {
-		fmt.Fprintln(os.Stderr, "error: environment, positive timeout and a JSON output basename are required")
-		return exitCode(2)
-	}
-	cfg, err := resolveDeploymentConfig(*workspace, *environment, *root)
-	if err != nil {
-		return exitCode(2)
-	}
-	store, err := newSecretStore("", cfg.Environment)
-	if err != nil {
-		return exitCode(2)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
-	defer cancel()
-	release, err := loadEnvironmentCIImages(ctx, cfg, environmentCIImageCommand(cfg))
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "error: selected immutable release unavailable")
-		return exitCode(1)
-	}
-	kubeconfig, err := readSensitiveFile(store.KubeconfigPath(), "selected environment kubeconfig")
-	if err != nil {
-		return exitCode(1)
-	}
-	backend, err := newEnvironmentKubernetesBackend(kubeconfig, cfg.Environment)
-	if err != nil {
-		return exitCode(1)
-	}
-	live, err := backend.Inventory(ctx, cfg.Values["CLOUD_STACK_NAME"])
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "error: exact environment inventory unavailable")
-		return exitCode(1)
-	}
-	bindings, err := adoptEnvironmentBindings(cfg.Environment, release, live)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		return exitCode(1)
-	}
-	// Confirm all recorded owners and lifecycle content immediately before
-	// publication; a concurrently changed installation is not adoption evidence.
-	fresh, err := backend.Inventory(ctx, cfg.Values["CLOUD_STACK_NAME"])
-	if err != nil {
-		return exitCode(1)
-	}
-	verified, err := adoptEnvironmentBindings(cfg.Environment, release, fresh)
-	if err != nil || deploymentplan.Digest(verified) != deploymentplan.Digest(bindings) {
-		fmt.Fprintln(os.Stderr, "error: ownership or lifecycle bindings changed; repeat adoption")
-		return exitCode(1)
-	}
-	directory := filepath.Join(store.Root, "deployment")
-	info, err := os.Lstat(store.Root)
-	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0700 {
-		return exitCode(1)
-	}
-	if err := os.Mkdir(directory, 0700); err != nil && !errors.Is(err, os.ErrExist) {
-		return exitCode(1)
-	}
-	info, err = os.Lstat(directory)
-	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0700 {
-		return exitCode(1)
-	}
-	raw, _ := json.MarshalIndent(bindings, "", "  ")
-	if err := archiveLegacyEnvironmentPlan(store); err != nil {
-		fmt.Fprintln(os.Stderr, "error: legacy plan cannot be preserved in the private environment archive")
-		return exitCode(1)
-	}
-	if err := writeExclusivePrivateDeploymentJSON(filepath.Join(directory, *output), raw); err != nil {
-		fmt.Fprintln(os.Stderr, "error: cannot publish new private bindings; existing files are never overwritten")
-		return exitCode(1)
-	}
-	fmt.Fprintf(os.Stdout, "ADOPTION CANDIDATE environment=%s bindings_sha256=%s; review lifecycle references and maintained configuration differences, then run full preflight; this is not GO\n", cfg.Environment, deploymentplan.Digest(bindings))
-	return nil
+	fmt.Fprintln(os.Stderr, "error: adopt-managed-state is retired; run check-deployment-preflight.sh --environment NAME to observe existing ownership and identity references and produce checked bindings")
+	return exitCode(2)
 }
 
 func writeExclusivePrivateDeploymentJSON(path string, raw []byte) error {
@@ -276,6 +252,54 @@ func writeExclusivePrivateDeploymentJSON(path string, raw []byte) error {
 	if writeErr != nil || written != len(raw) || syncErr != nil || closeErr != nil {
 		_ = os.Remove(path)
 		return errors.New("cannot persist complete private JSON")
+	}
+	return nil
+}
+
+// Preflight evidence is generated output. It is never a target configuration input.
+type environmentPreflightBindingsRecord struct {
+	Schema         string                       `json:"schema"`
+	Environment    string                       `json:"environment"`
+	Operation      string                       `json:"operation"`
+	Decision       string                       `json:"decision"`
+	PlanSHA256     string                       `json:"plan_sha256,omitempty"`
+	BindingsSHA256 string                       `json:"bindings_sha256,omitempty"`
+	Observed       *environmentIdentityBindings `json:"observed,omitempty"`
+}
+
+func publishEnvironmentPreflightBindings(cfg deploymentConfig, c *compiledEnvironmentDeployment, decision string) error {
+	store, err := newSecretStore("", cfg.Environment)
+	if err != nil {
+		return err
+	}
+	record := environmentPreflightBindingsRecord{Schema: "rtk-cloud.preflight-bindings/v1", Environment: cfg.Environment, Decision: "NO-GO"}
+	if c != nil && c.Plan != nil {
+		record.Operation = c.Plan.Operation
+		record.PlanSHA256 = c.Plan.SHA256()
+		record.BindingsSHA256 = deploymentplan.Digest(c.Bindings)
+		record.Observed = &c.Bindings
+		if decision == "GO" {
+			if record.BindingsSHA256 != c.Plan.BindingsSHA256 || validateEnvironmentIdentityBindings(c.Bindings, cfg.Environment) != nil {
+				return errors.New("checked observations differ from the qualified plan")
+			}
+			record.Decision = "GO"
+		}
+	}
+	raw, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		return err
+	}
+	return store.write("deployment/identity-bindings.json", raw, true)
+}
+
+func verifyEnvironmentPreflightBindings(c *compiledEnvironmentDeployment) error {
+	if c == nil || c.Plan == nil {
+		return errors.New("checked deployment plan unavailable")
+	}
+	raw, err := readBoundedEnvironmentFile(filepath.Join(c.Store.Root, "deployment", "identity-bindings.json"), true)
+	var record environmentPreflightBindingsRecord
+	if err != nil || decodeEnvironmentJSON(raw, &record) != nil || record.Schema != "rtk-cloud.preflight-bindings/v1" || record.Environment != c.Plan.Environment || record.Operation != c.Plan.Operation || record.Decision != "GO" || record.PlanSHA256 != c.Plan.SHA256() || record.Observed == nil || record.BindingsSHA256 != c.Plan.BindingsSHA256 || deploymentplan.Digest(*record.Observed) != c.Plan.BindingsSHA256 {
+		return &deploymentplan.Blocker{ID: "deployment.preflight.bindings", Cause: "no successful preflight bindings match the freshly observed deployment plan", Next: "run full preflight for this environment and review its plan SHA-256; deployment does not produce or reuse stale GO evidence"}
 	}
 	return nil
 }

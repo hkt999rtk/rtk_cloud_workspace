@@ -47,7 +47,7 @@ func TestBootstrapCleanupAdoptionPreservesImmutableOriginalOwners(t *testing.T) 
 					{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": map[string]any{"name": "video-cloud-api-pki", "namespace": namespace, "uid": "api-owner"}, "spec": map[string]any{"template": map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"name": "app", "image": release.Images["LKE_VIDEO_CLOUD_IMAGE"].Reference}}}}}},
 				}
 				before := deploymentplan.Digest(live)
-				adopted, err := adoptEnvironmentBindings(environment, release, live)
+				adopted, err := observeEnvironmentBindings(environment, release, live)
 				if (err == nil) != (mode == "valid") {
 					t.Fatal("bootstrap owner adoption result incorrect", err)
 				}
@@ -94,7 +94,7 @@ func TestEnvironmentAdoptionPreservesReferencesWithoutImportingWorkloadBehavior(
 					meta["name"], meta["namespace"] = "openbao", env["CLOUD_STACK_NAME"]+"-secrets"
 				}
 				before := deploymentplan.Digest(live)
-				binding, err := adoptEnvironmentBindings(environment, release, live)
+				binding, err := observeEnvironmentBindings(environment, release, live)
 				if (err == nil) != (mode == "valid") {
 					t.Fatal("incorrect adoption decision", mode, err)
 				}

@@ -175,12 +175,15 @@ Read-only checks still verify advertised required Linode/key scopes.
 
 Complete pre-deploy qualification uses one maintained renderer for dev, staging
 and prod: resolved configuration, a selected immutable release, and typed
-identity/ownership bindings produce the same plan used by execution. Preflight
-compiles in memory and reports its SHA-256. Missing capability or evidence is
+identity/ownership observations produce the same plan used by execution. Preflight
+reads the selected Kubernetes inventory, compiles in memory and reports its SHA-256.
+It produces `~/.config/rtk_cloud/<environment>/deployment/identity-bindings.json`
+as private qualification output; no pre-existing bindings file is required.
+Deployment requires a matching successful preflight record and rechecks live ownership. Missing capability or evidence is
 NO-GO; `--fast` and scoped provider checks cannot approve a complete update.
 See the [readiness standard](../docs/deployment-readiness-standard.md) for the
 required gates and the [deployment runbook](../docs/deployment-operations.md#retired-schema-1-managed-workload-upgrade)
-for existing-owner adoption. The presence of `managed-upgrade.json` never selects
+for preflight-produced existing-owner observations. The presence of `managed-upgrade.json` never selects
 another renderer. `deployment prepare-upgrade` is retired.
 
 Targeted `provision --deploy --workloads ...` and route-only `provision --dns`

@@ -23,17 +23,24 @@ type unifiedDeploymentOptions struct {
 	Timeout                                                                                 time.Duration
 }
 type unifiedDeploymentDependencies struct {
-	PrepareStorage func(context.Context, deploymentConfig, io.Writer) error
-	Resolve        func(string, string, string) (deploymentConfig, error)
-	Compile        func(context.Context, deploymentConfig, string) (*compiledEnvironmentDeployment, error)
-	Checks         func(*compiledEnvironmentDeployment) map[string]deploymentplan.GateCheck
-	Execute        func(context.Context, *compiledEnvironmentDeployment, string, func(context.Context, *deploymentplan.Plan) error, func(context.Context, *compiledEnvironmentDeployment) error) error
-	Accept         func(context.Context, *compiledEnvironmentDeployment) error
-	Guard          func([]string) error
+	PublishBindings func(deploymentConfig, *compiledEnvironmentDeployment, string) error
+	RequireBindings func(*compiledEnvironmentDeployment) error
+	PrepareStorage  func(context.Context, deploymentConfig, io.Writer) error
+	Resolve         func(string, string, string) (deploymentConfig, error)
+	Compile         func(context.Context, deploymentConfig, string) (*compiledEnvironmentDeployment, error)
+	Checks          func(*compiledEnvironmentDeployment) map[string]deploymentplan.GateCheck
+	Execute         func(context.Context, *compiledEnvironmentDeployment, string, func(context.Context, *deploymentplan.Plan) error, func(context.Context, *compiledEnvironmentDeployment) error) error
+	Accept          func(context.Context, *compiledEnvironmentDeployment) error
+	Guard           func([]string) error
 }
 
 func defaultUnifiedDeploymentDependencies() unifiedDeploymentDependencies {
 	return unifiedDeploymentDependencies{
+		PublishBindings: publishEnvironmentPreflightBindings,
+		RequireBindings: func(c *compiledEnvironmentDeployment) error {
+			c.RequirePreflightBindings = true
+			return verifyEnvironmentPreflightBindings(c)
+		},
 		PrepareStorage: prepareDeploymentMediaBucket,
 		Resolve:        resolveDeploymentConfig, Compile: compileEnvironmentDeployment,
 		Guard: recoveryMutationGuard,
@@ -308,6 +315,13 @@ func runUnifiedEnvironmentDeploymentWithDependencies(parent context.Context, act
 	if o.Operation != "upgrade" {
 		report.Scope = "environment-bootstrap"
 	}
+	if action == "preflight" && deps.PublishBindings != nil {
+		// Invalidate older GO before any new checks, including compiler failures.
+		if err := deps.PublishBindings(cfg, nil, "NO-GO"); err != nil {
+			fmt.Fprintln(diagnostics, "error: cannot initialize private preflight bindings output")
+			return exitCode(1)
+		}
+	}
 	if action == "preflight" && deps.PrepareStorage != nil {
 		if err := deps.PrepareStorage(ctx, cfg, out); err != nil {
 			report.Gates = []deploymentplan.GateResult{{ID: "provider.storage.media.bucket", Status: "FAIL", Required: true, Cause: "configured media bucket could not be verified or created", Next: "check the environment Linode credentials, bucket creation permission, configured name/region and provider availability; repeat preflight"}}
@@ -327,6 +341,18 @@ func runUnifiedEnvironmentDeploymentWithDependencies(parent context.Context, act
 		}
 		report.Gates = []deploymentplan.GateResult{row}
 		return emitUnifiedDeploymentReport(out, diagnostics, o.Report, report, exitCode(1))
+	}
+	if action == "preflight" && deps.PublishBindings != nil {
+		if err := deps.PublishBindings(cfg, c, "NO-GO"); err != nil {
+			fmt.Fprintln(diagnostics, "error: cannot publish observed preflight bindings")
+			return exitCode(1)
+		}
+	}
+	if (action == "create" || action == "upgrade") && deps.RequireBindings != nil {
+		if err := deps.RequireBindings(c); err != nil {
+			report.Gates = []deploymentplan.GateResult{{ID: "deployment.preflight.bindings", Status: "BLOCKED", Required: true, Cause: "successful preflight evidence does not match current observed bindings and target plan", Next: "repeat full preflight and use its reviewed plan SHA-256", Impact: "deployment cannot consume stale or incomplete preflight evidence", Recheck: "repeat full preflight for this environment"}}
+			return emitUnifiedDeploymentReport(out, diagnostics, o.Report, report, exitCode(1))
+		}
 	}
 	if window, err := environmentPKIValidityWindow(c.Configuration.Values); err == nil {
 		report.ValidityWindowSeconds = window
@@ -356,6 +382,13 @@ func runUnifiedEnvironmentDeploymentWithDependencies(parent context.Context, act
 	report.Decision, report.Gates = qualification.Decision, qualification.Gates
 	if err != nil {
 		return emitUnifiedDeploymentReport(out, diagnostics, o.Report, report, exitCode(1))
+	}
+	if action == "preflight" && deps.PublishBindings != nil {
+		if err := deps.PublishBindings(cfg, c, "GO"); err != nil {
+			report.Decision = "NO-GO"
+			report.Gates = append(report.Gates, deploymentplan.GateResult{ID: "deployment.preflight.bindings", Status: "ERROR", Required: true, Cause: "qualified bindings could not be saved privately", Next: "repair the selected environment store and repeat full preflight", Impact: "deployment has no consumable preflight evidence", Recheck: "repeat full preflight"})
+			return emitUnifiedDeploymentReport(out, diagnostics, o.Report, report, exitCode(1))
+		}
 	}
 	if action == "create" || action == "upgrade" {
 		if deps.Accept == nil {

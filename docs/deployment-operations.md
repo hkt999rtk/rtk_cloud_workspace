@@ -165,7 +165,7 @@ still queried and reported.
 ## Read-Only Preflight
 
 Complete preflight derives the entire target in memory from maintained settings,
-managed lifecycle bindings and an immutable formal release. It does not require
+live observed lifecycle references and an immutable formal release. It does not require
 or discover a private workload-spec plan. Preflight reads the successful exact-source `image-manifest.json` artifacts
 directly from each service's formal CI Release workflow. It builds the image
 selection in memory from the current clean workspace and its service gitlinks.
@@ -333,33 +333,33 @@ for TLS/mount qualification, optional PKI checks and explicit credential repairs
 `deployment prepare-upgrade` and private `deployment/managed-upgrade.json`
 workload-spec selection are retired at the public complete deployment entry.
 Their presence or absence cannot change the v2 renderer, qualification or plan.
-Preserve any original private file for reviewed migration evidence in the same
-environment's private archive; never commit it. Necessary differences belong in
-maintained configuration or typed lifecycle/ownership bindings, not copied live
-workload specs. Use the explicit migration utility to create a review candidate:
+Existing environment upgrades do not require a private bindings file in advance.
+The compiler observes actual ownership and identity references from the selected
+Kubernetes API. Desired workload configuration comes from maintained settings
+and CI images, not copied live specifications. New resources have no observed
+UID and are planned as creates; required new identities must have a qualified
+initialization stage rather than an invented existing binding.
 
-```sh
-go run ./scripts/go/rtk-cloud -- deployment adopt-managed-state \
-  --environment staging
-```
+`check-deployment-preflight.sh` writes
+`~/.config/rtk_cloud/<environment>/deployment/identity-bindings.json` as private
+preflight output (0700 directory, 0600 file). Its schema is
+`rtk-cloud.preflight-bindings/v1`; it records the current decision, exact plan and
+bindings hashes, and observed lifecycle references when compilation succeeds.
+Preflight invalidates previous GO before checking and publishes GO only when all
+required gates pass. Failed/fast checks cannot preserve an earlier usable GO.
+`deployment plan` observes in memory without publishing qualification evidence.
+Deployment recompiles from live observations, requires matching successful
+preflight evidence and the reviewed `--plan-sha256`, and rechecks the evidence and
+ownership during execution. Do not hand-edit generated observations or include
+Secret values, private keys, token values or desired specs in them.
 
-This read-only cluster inventory writes a new 0600
-`~/.config/rtk_cloud/<environment>/deployment/identity-bindings.candidate.json`
-inside 0700 directories; it never overwrites active bindings or updates workloads.
-It records exact owner UIDs and typed mount/credential/identity references, without
-copying commands, application flags, probes, replicas or live desired specs.
-Review against maintained configuration before selecting the active
-`identity-bindings.json`. Review admission bindings and all consumers separately;
-a candidate is not a complete bootstrap bundle or a GO receipt.
-
-When a matching private schema-1 plan exists, the utility preserves its original
-bytes at `deployment/archive/managed-upgrade-<sha256>.json`, idempotently and
-without exposing contents. The original remains available until migration is
-verified. Necessary configuration differences must move into maintained overrides;
-do not import its workload specs. Foreign/deleting owners, unknown image roles,
-inline private identity settings or an unverified file-storage OpenBao deployment
-block adoption. Matched Raft storage/seal migration remains a separate required
-operation; importing references never proves issuer lineage.
+`deployment adopt-managed-state` and manual candidate promotion are retired.
+Observed references cannot prove persistent contents, original issuer/seal state
+or compatibility by themselves. In particular, an existing file-storage or PKI
+sidecar OpenBao installation that differs from the maintained target remains an
+explicit `deployment.compatibility.openbao` blocker; generating JSON cannot make
+that transition safe. Qualify a compatible in-place target or a verified storage
+transition while preserving original data, seal and identity.
 
 Controller consumer, authentication and worker policies belong in maintained
 architecture/environment overrides. Adoption excludes them even when an old Pod

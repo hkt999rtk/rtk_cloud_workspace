@@ -146,7 +146,7 @@ func TestCertIssuerAdoptionPreservesServingAndSigningProviderReferences(t *testi
 				values = append(values, deploymentplan.Object{"name": name, "value": settings[name]})
 			}
 			current := deploymentplan.Object{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": deploymentplan.Object{"name": "certissuer", "namespace": env["CLOUD_STACK_NAME"] + "-video-cloud", "uid": "original-certissuer"}, "spec": deploymentplan.Object{"replicas": float64(999), "template": deploymentplan.Object{"spec": deploymentplan.Object{"containers": []any{deploymentplan.Object{"name": "certissuer", "image": release.Images["LKE_VIDEO_CLOUD_IMAGE"].Reference, "env": values, "command": []any{"legacy-do-not-import"}}}}}}}
-			adopted, err := adoptEnvironmentBindings(environment, release, []deploymentplan.Object{current})
+			adopted, err := observeEnvironmentBindings(environment, release, []deploymentplan.Object{current})
 			if err != nil {
 				t.Fatal("serving identity references could not be adopted", err)
 			}

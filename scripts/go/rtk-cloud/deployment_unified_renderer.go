@@ -41,7 +41,7 @@ func renderEnvironmentResources(env map[string]string, bindings environmentIdent
 			names = append(names, name)
 		}
 		sort.Strings(names)
-		return nil, fmt.Errorf("deployment.bindings: required managed consumers have no lifecycle bindings: %s", strings.Join(names, ","))
+		return nil, &deploymentplan.Blocker{ID: "deployment.target.identity", Cause: "target managed consumers have no existing verifiable identity references: " + strings.Join(names, ","), Next: "qualify the required new managed identity initialization as a deployment stage; preflight cannot invent future identity or resource UIDs"}
 	}
 	var definitions []deploymentplan.Definition
 	seen := map[string]bool{}

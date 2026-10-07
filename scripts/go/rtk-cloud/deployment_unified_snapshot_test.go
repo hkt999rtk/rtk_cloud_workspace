@@ -97,7 +97,7 @@ func TestMaintainedSnapshotAndNativeFenceRejectInputDriftAcrossEnvironments(t *t
 					release.WorkspaceRevision = strings.Repeat("c", 40)
 					compiled.Release = release
 				case "binding-drift":
-					bindings.Owners["Service/"+bindings.Stack+"-platform/unchanged"] = "changed"
+					compiled.Bindings.Owners["Service/"+bindings.Stack+"-platform/unchanged"] = "changed"
 					raw, _ = json.Marshal(bindings)
 					store.write("deployment/identity-bindings.json", raw, true)
 				case "provider-drift":

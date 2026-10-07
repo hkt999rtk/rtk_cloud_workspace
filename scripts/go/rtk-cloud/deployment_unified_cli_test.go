@@ -108,7 +108,7 @@ func TestPublicUpdateHasEveryRuntimeGateAndAcceptanceAdapter(t *testing.T) {
 				t.Fatal("required public update adapter absent", environment, id)
 			}
 		}
-		if deps.Accept == nil || deps.Execute == nil || deps.PrepareStorage == nil {
+		if deps.Accept == nil || deps.Execute == nil || deps.PrepareStorage == nil || deps.PublishBindings == nil || deps.RequireBindings == nil {
 			t.Fatal("public update cannot execute or accept")
 		}
 	}
@@ -396,6 +396,88 @@ func TestPublicDeploymentHasNoLegacyPKIRenderer(t *testing.T) {
 			if bytes.Contains(source, []byte("func "+name+"(")) {
 				t.Fatalf("retired runtime renderer %s exists in %s", name, path)
 			}
+		}
+	}
+}
+
+func TestPreflightProducesBindingsAndDeploymentConsumesExactEvidence(t *testing.T) {
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		for _, mode := range []string{"valid", "missing", "failed-recheck", "compiler-failure", "fast", "tampered", "plan-drift"} {
+			t.Run(environment+"/"+mode, func(t *testing.T) {
+				c, deps, writes := unifiedCLIProfile(t, environment)
+				c.Store, _ = newSecretStore("", environment)
+				c.Bindings = environmentIdentityBindings{Version: 1, Environment: environment, Stack: c.Plan.Stack, Owners: map[string]string{}}
+				c.Plan.BindingsSHA256 = deploymentplan.Digest(c.Bindings)
+				defaults := defaultUnifiedDeploymentDependencies()
+				deps.PublishBindings, deps.RequireBindings = defaults.PublishBindings, defaults.RequireBindings
+				path := filepath.Join(c.Store.Root, "deployment", "identity-bindings.json")
+				if _, err := os.Stat(path); !os.IsNotExist(err) {
+					t.Fatal("fixture already had bindings")
+				}
+				var out, diagnostics bytes.Buffer
+				if mode != "missing" {
+					if err := runUnifiedEnvironmentDeploymentWithDependencies(context.Background(), "preflight", []string{"--environment", environment}, &out, &diagnostics, deps); err != nil {
+						t.Fatal("first preflight required prior deployment", err, out.String(), diagnostics.String())
+					}
+					info, err := os.Stat(path)
+					if err != nil || info.Mode().Perm() != 0600 {
+						t.Fatal("preflight did not publish private bindings", err)
+					}
+					dir, _ := os.Stat(filepath.Dir(path))
+					if dir.Mode().Perm() != 0700 {
+						t.Fatal("bindings directory not private")
+					}
+					raw, _ := os.ReadFile(path)
+					if strings.Contains(string(raw), "never-public") || strings.Contains(string(raw), "stringData") {
+						t.Fatal("target Secret leaked into observed bindings")
+					}
+				}
+				switch mode {
+				case "failed-recheck", "fast", "compiler-failure":
+					args := []string{"--environment", environment}
+					if mode == "fast" {
+						args = append(args, "--fast")
+					}
+					if mode == "failed-recheck" {
+						deps.Checks = func(*compiledEnvironmentDeployment) map[string]deploymentplan.GateCheck {
+							return map[string]deploymentplan.GateCheck{}
+						}
+					}
+					if mode == "compiler-failure" {
+						deps.Compile = func(context.Context, deploymentConfig, string) (*compiledEnvironmentDeployment, error) {
+							return nil, errors.New("private-error")
+						}
+					}
+					if err := runUnifiedEnvironmentDeploymentWithDependencies(context.Background(), "preflight", args, &out, &diagnostics, deps); err != exitCode(1) {
+						t.Fatal("incomplete preflight passed", err)
+					}
+					if verifyEnvironmentPreflightBindings(c) == nil {
+						t.Fatal("failed preflight retained old GO")
+					}
+				case "tampered":
+					if err := c.Store.write("deployment/identity-bindings.json", []byte(`{"schema":"caller-supplied","decision":"GO"}`), true); err != nil {
+						t.Fatal(err)
+					}
+				case "plan-drift":
+					c.Plan.ConfigurationSHA256 = "changed"
+				}
+				// Restore compilation/checks after deliberately failed requalification.
+				cleanChecks := func(*compiledEnvironmentDeployment) map[string]deploymentplan.GateCheck {
+					checks := map[string]deploymentplan.GateCheck{}
+					for _, id := range deploymentplan.RequiredGateIDs(environment == "prod") {
+						checks[id] = func(context.Context, *deploymentplan.Plan) (deploymentplan.GateEvidence, error) {
+							return deploymentplan.GateEvidence{SHA256: deploymentplan.Digest("fixture")}, nil
+						}
+					}
+					return checks
+				}
+				deps.Compile = func(context.Context, deploymentConfig, string) (*compiledEnvironmentDeployment, error) { return c, nil }
+				deps.Checks = cleanChecks
+				err := runUnifiedEnvironmentDeploymentWithDependencies(context.Background(), "upgrade", []string{"--environment", environment, "--confirm", c.Plan.Stack, "--plan-sha256", c.Plan.SHA256()}, &out, &diagnostics, deps)
+				if (err == nil) != (mode == "valid") || *writes != map[bool]int{true: 1, false: 0}[mode == "valid"] {
+					t.Fatal("deployment consumed invalid evidence", err, *writes, out.String())
+				}
+			})
 		}
 	}
 }

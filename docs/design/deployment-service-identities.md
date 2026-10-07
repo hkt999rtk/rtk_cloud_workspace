@@ -138,11 +138,14 @@ explicit configuration, not environment-specific deployment branches.
 Normal upgrades retain original issuers, identity/private-key state, trust pins,
 CRLs, Secrets and persistent owners through typed lifecycle references and exact
 UID bindings. Live workload specs are not desired-state templates. Existing
-owners may be extracted into a private review candidate with
-`deployment adopt-managed-state`; the original old plan is archived under the
-same environment directory for configuration comparison. Adoption does not
-prove readiness or authorize replacing a Root. File-storage OpenBao requires a
-separately verified matched Raft migration before adoption.
+owners and identity references are observed in memory by the shared compiler.
+Preflight produces private `deployment/identity-bindings.json` evidence only from
+actual observations, and complete qualification binds it to the exact plan.
+No bindings file or manual adoption command is required before the first check.
+New target resources receive UIDs only when created. Volume references do not
+prove persistent contents or seal state. An incompatible OpenBao storage/PKI
+profile requires a qualified compatible target or explicit verified transition;
+observations never authorize replacing an issuer, seal or Root.
 
 Nonidentity workload settings come from maintained configuration and the exact
 selected release. Incompatible identity/storage/schema changes remain explicit

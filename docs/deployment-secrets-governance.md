@@ -51,9 +51,9 @@ not invent another workspace, worktree, external-disk or OS-specific location.
 | Kubernetes identity | `kube/` |
 | PKI identities/certificates | `pki/` |
 | OpenBao controller material | `openbao/` |
-| Plans, releases, reviewed identity bindings and execution evidence | `deployment/` |
-| Lifecycle owner/identity bindings, including independent Secret server pins | `deployment/identity-bindings.json` (bootstrap or reviewed adoption; compiler/preflight/executor read and hash the same file) |
-| Read-only adoption review candidate | `deployment/identity-bindings.candidate.json` (`deployment adopt-managed-state` writes; reviewed migration selects active bindings) |
+| Plans, generated preflight observations and execution evidence | `deployment/` |
+| Generated preflight owner/identity observations and qualification | `deployment/identity-bindings.json` (preflight writes NO-GO before checking; complete qualification writes GO with plan/bindings hashes; deployment verifies the matching record and fresh live observations) |
+| Historical adoption candidates | `deployment/identity-bindings.candidate.json` (retired input; never automatically promoted or consumed) |
 | Account Manager bootstrap retirement guard | `deployment/account-bootstrap-retired.json` |
 | Storage preparation/completion receipts and migration proofs | `deployment/storage/` |
 | Provider operational state | `deployment/adapters/<adapter>/` (LKE uses `state.env` and `account.env`) |
