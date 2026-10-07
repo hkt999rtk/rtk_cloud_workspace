@@ -122,10 +122,14 @@ func observeEnvironmentBindings(environment string, release environmentRelease, 
 			bound := environmentContainerBindings{Name: deploymentplan.String(container["name"]), Fields: map[string]any{}}
 			for key, image := range release.Images {
 				if environmentImageRepository(image.Reference) == environmentImageRepository(deploymentplan.String(container["image"])) {
-					if bound.ImageKey != "" {
+					if bound.ImageKey != "" && release.Images[bound.ImageKey].Reference != image.Reference {
 						return b, errors.New("consumer image has ambiguous release roles")
 					}
-					bound.ImageKey = key
+					// Identical images may serve multiple catalog roles (Redis/Fleet).
+					// Choose a stable alias; different target digests remain ambiguous.
+					if bound.ImageKey == "" || key < bound.ImageKey {
+						bound.ImageKey = key
+					}
 				}
 			}
 			if bound.ImageKey == "" {

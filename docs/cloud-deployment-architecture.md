@@ -181,8 +181,11 @@ artifacts. The compiler holds their verified immutable selection in memory; a
 local release file is not a configuration input or deployment prerequisite.
 Workload image versions use provider-neutral keys in
 `cloud_deploy/architectures/kubernetes/architecture.env`: `POSTGRES_IMAGE`,
-`INGRESS_CONTROLLER_IMAGE`, `OPENBAO_IMAGE`, `GRAFANA_IMAGE`, and optional catalog image settings.
-Environment differences belong in `cloud_env/<environment>/overrides/architecture.env`.
+`INGRESS_CONTROLLER_IMAGE`, `OPENBAO_IMAGE`, `REDIS_IMAGE`, `FLEET_VALKEY_IMAGE`,
+`REDIS_EXPORTER_IMAGE`, `MQTT_IMAGE`, `PROMETHEUS_IMAGE`, `LOKI_IMAGE`,
+`GRAFANA_IMAGE`, `LOG_COLLECTOR_IMAGE` and `ALPINE_IMAGE`.
+Dev, staging and prod use this common official registry baseline; do not maintain
+duplicate image versions in environment overrides or adapter defaults.
 Preflight resolves their registry digests and includes the complete selected images
 in the approved plan SHA-256. The compiler maps these settings to existing internal
 `LKE_*_IMAGE` renderer/binding roles; these legacy role names are not maintained

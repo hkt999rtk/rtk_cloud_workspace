@@ -118,6 +118,47 @@ func TestCommonEnvironmentRendererHasCompletePinnedInventoryWithoutPrivatePlanSe
 	}
 }
 
+func TestCommonOfficialImageBaselinePinsAllTargetContainersAcrossEnvironments(t *testing.T) {
+	baseline, err := readStrictEnv(filepath.Join(mustWorkspaceRoot(t), "cloud_deploy", "architectures", "kubernetes", "architecture.env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		t.Run(environment, func(t *testing.T) {
+			env, bindings, release := completeEnvironmentRenderFixture(environment)
+			bindings.IngressAdmission = &environmentAdmissionBinding{SecretName: "ingress-nginx-admission", CABundle: base64.StdEncoding.EncodeToString(testOpenBaoCAPEM(t))}
+			for _, role := range environmentProviderImageKeys {
+				env[role] = baseline[environmentProviderImageConfigKey(role)]
+				release.Images[role] = environmentReleaseImage{Reference: env[role]}
+			}
+			restore := installAllCredentialEnvironment(env)
+			defer restore()
+			resources, err := renderEnvironmentResources(env, bindings, release)
+			if err != nil {
+				t.Fatal("common official images cannot render the target", err)
+			}
+			selected := map[string]bool{}
+			for _, image := range release.Images {
+				selected[image.Reference] = true
+			}
+			for _, resource := range resources {
+				spec := deploymentplan.Map(resource.Object["spec"])
+				if resource.Object["kind"] == "CronJob" {
+					spec = deploymentplan.Map(deploymentplan.Map(spec["jobTemplate"])["spec"])
+				}
+				pod := deploymentplan.Map(deploymentplan.Map(spec["template"])["spec"])
+				for _, field := range []string{"containers", "initContainers"} {
+					for _, value := range certIssuerObjectList(pod[field]) {
+						if !selected[deploymentplan.String(deploymentplan.Map(value)["image"])] {
+							t.Fatal("target container bypassed the selected common/CI image", deploymentplan.ID(resource.Object))
+						}
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestImageRepositoryNormalizationPreservesRegistryPort(t *testing.T) {
 	for input, want := range map[string]string{"postgres:16-alpine": "library/postgres", "docker.io/library/postgres@sha256:abc": "library/postgres", "localhost:5000/project/provider:release": "localhost:5000/project/provider", "ghcr.io/org/api@sha256:abc": "ghcr.io/org/api"} {
 		if got := environmentImageRepository(input); got != want {

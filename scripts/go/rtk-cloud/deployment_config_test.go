@@ -1455,7 +1455,10 @@ func TestSharedWorkloadImagesUseArchitectureForEveryEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	keys := []string{"POSTGRES_IMAGE", "INGRESS_CONTROLLER_IMAGE", "OPENBAO_IMAGE", "GRAFANA_IMAGE"}
+	var keys []string
+	for _, role := range environmentProviderImageKeys {
+		keys = append(keys, environmentProviderImageConfigKey(role))
+	}
 	for _, environment := range []string{"dev", "staging", "prod"} {
 		t.Run(environment, func(t *testing.T) {
 			actualOverrides, err := readOptionalStrictEnv(filepath.Join(root, "cloud_env", environment, "overrides", "architecture.env"))
@@ -1479,6 +1482,12 @@ func TestSharedWorkloadImagesUseArchitectureForEveryEnvironment(t *testing.T) {
 			for _, key := range keys {
 				if cfg.Values[key] != baseline[key] || cfg.AdapterResolved[key] != "" {
 					t.Fatalf("%s did not resolve from shared architecture", key)
+				}
+			}
+			compat := deploymentLegacyLKEValues(appendMap(cfg.Values, cfg.AdapterResolved), environment)
+			for _, role := range environmentProviderImageKeys {
+				if compat[role] != baseline[environmentProviderImageConfigKey(role)] {
+					t.Fatalf("%s renderer image differs from the maintained common setting", role)
 				}
 			}
 			writeTestFile(t, path, body+"LKE_POSTGRES_IMAGE=postgres:16-alpine\n")

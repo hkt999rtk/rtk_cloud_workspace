@@ -11,6 +11,34 @@ import (
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 )
 
+func TestEnvironmentObservationAllowsIdenticalSharedImageRoles(t *testing.T) {
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		for _, differentDigest := range []bool{false, true} {
+			env, _, release := completeEnvironmentRenderFixture(environment)
+			shared := release.Images["LKE_FLEET_VALKEY_IMAGE"]
+			release.Images["LKE_REDIS_IMAGE"] = shared
+			if differentDigest {
+				other := shared
+				other.Reference = strings.Replace(shared.Reference, strings.Repeat("c", 64), strings.Repeat("d", 64), 1)
+				release.Images["LKE_REDIS_IMAGE"] = other
+			}
+			object := deploymentplan.Object{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": map[string]any{"name": "redis", "namespace": env["CLOUD_STACK_NAME"] + "-platform", "uid": "original-owner"}, "spec": map[string]any{"template": map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"name": "redis", "image": shared.Reference}}}}}}
+			for i := 0; i < 10; i++ {
+				bindings, err := observeEnvironmentBindings(environment, release, []deploymentplan.Object{object})
+				if differentDigest {
+					if err == nil {
+						t.Fatal("different target digests for the same repository were accepted")
+					}
+					continue
+				}
+				if err != nil || bindings.Pods[0].Containers[0].ImageKey != "LKE_FLEET_VALKEY_IMAGE" {
+					t.Fatal("identical shared images did not select a stable role", err)
+				}
+			}
+		}
+	}
+}
+
 func TestSharedGrafanaImageRecognizesExistingConsumerAcrossEnvironments(t *testing.T) {
 	baseline, err := readStrictEnv(filepath.Join(mustWorkspaceRoot(t), "cloud_deploy", "architectures", "kubernetes", "architecture.env"))
 	if err != nil {
