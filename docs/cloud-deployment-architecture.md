@@ -181,7 +181,7 @@ artifacts. The compiler holds their verified immutable selection in memory; a
 local release file is not a configuration input or deployment prerequisite.
 Workload image versions use provider-neutral keys in
 `cloud_deploy/architectures/kubernetes/architecture.env`: `POSTGRES_IMAGE`,
-`INGRESS_CONTROLLER_IMAGE`, `OPENBAO_IMAGE`, and optional catalog image settings.
+`INGRESS_CONTROLLER_IMAGE`, `OPENBAO_IMAGE`, `GRAFANA_IMAGE`, and optional catalog image settings.
 Environment differences belong in `cloud_env/<environment>/overrides/architecture.env`.
 Preflight resolves their registry digests and includes the complete selected images
 in the approved plan SHA-256. The compiler maps these settings to existing internal
@@ -195,3 +195,6 @@ baseline. An image setting does not prove CI provenance, managed identity
 adoption, sidecar completeness or storage
 compatibility; those gates still apply. Image configuration is tracked intent,
 not generated deployment state, and never belongs in a private `release.json`.
+Grafana uses the common official `grafana/grafana:13.0.2` digest across all
+environments. Its renderer has no built-in version fallback; preflight and
+deployment consume the same maintained setting.

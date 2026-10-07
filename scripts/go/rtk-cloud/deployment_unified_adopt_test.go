@@ -11,6 +11,29 @@ import (
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 )
 
+func TestSharedGrafanaImageRecognizesExistingConsumerAcrossEnvironments(t *testing.T) {
+	baseline, err := readStrictEnv(filepath.Join(mustWorkspaceRoot(t), "cloud_deploy", "architectures", "kubernetes", "architecture.env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		t.Run(environment, func(t *testing.T) {
+			stack := "video-cloud-" + environment
+			release := environmentRelease{Environment: environment, Stack: stack, Images: map[string]environmentReleaseImage{"LKE_GRAFANA_IMAGE": {Reference: baseline["GRAFANA_IMAGE"]}}}
+			live := deploymentplan.Object{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": map[string]any{"name": "video-cloud-grafana", "namespace": stack + "-observability", "uid": "original-owner"}, "spec": map[string]any{"template": map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"name": "grafana", "image": "grafana/grafana:13.0.2"}}}}}}
+			bindings, err := observeEnvironmentBindings(environment, release, []deploymentplan.Object{live})
+			if err != nil || bindings.Pods[0].Containers[0].ImageKey != "LKE_GRAFANA_IMAGE" {
+				t.Fatal("common image did not recognize the existing Grafana container", err)
+			}
+			t.Setenv("LKE_GRAFANA_IMAGE", "ambient.example/grafana:unreviewed")
+			env := map[string]string{"CLOUD_STACK_NAME": stack, "LKE_GRAFANA_IMAGE": baseline["GRAFANA_IMAGE"]}
+			if !strings.Contains(lkeGrafanaDeploymentManifest(env), "image: "+baseline["GRAFANA_IMAGE"]) {
+				t.Fatal("renderer did not consume the same maintained Grafana image")
+			}
+		})
+	}
+}
+
 func TestBootstrapCleanupAdoptionPreservesImmutableOriginalOwners(t *testing.T) {
 	for _, environment := range []string{"dev", "staging", "prod"} {
 		for _, mode := range []string{"valid", "mutable", "namespace-drift", "secret-drift", "foreign-environment", "invalid-record", "invalid-ca"} {

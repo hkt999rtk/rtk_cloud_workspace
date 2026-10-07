@@ -8351,7 +8351,7 @@ spec:
         - name: dashboards
           configMap:
             name: video-cloud-grafana-dashboards
-`, lkeNamespaceName(env, "observability"), env["CLOUD_STACK_NAME"], checksum, env["CLOUD_STACK_NAME"], firstNonEmpty(os.Getenv("LKE_GRAFANA_IMAGE"), env["LKE_GRAFANA_IMAGE"], "grafana/grafana:13.0.2"), lkeGrafanaDataVolumeManifest(env))
+`, lkeNamespaceName(env, "observability"), env["CLOUD_STACK_NAME"], checksum, env["CLOUD_STACK_NAME"], firstNonEmpty(env["LKE_GRAFANA_IMAGE"], os.Getenv("LKE_GRAFANA_IMAGE")), lkeGrafanaDataVolumeManifest(env))
 }
 
 func lkeGrafanaDatasourceURL(env map[string]string) string {

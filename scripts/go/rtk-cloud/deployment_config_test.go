@@ -1455,7 +1455,7 @@ func TestSharedWorkloadImagesUseArchitectureForEveryEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	keys := []string{"POSTGRES_IMAGE", "INGRESS_CONTROLLER_IMAGE", "OPENBAO_IMAGE"}
+	keys := []string{"POSTGRES_IMAGE", "INGRESS_CONTROLLER_IMAGE", "OPENBAO_IMAGE", "GRAFANA_IMAGE"}
 	for _, environment := range []string{"dev", "staging", "prod"} {
 		t.Run(environment, func(t *testing.T) {
 			actualOverrides, err := readOptionalStrictEnv(filepath.Join(root, "cloud_env", environment, "overrides", "architecture.env"))

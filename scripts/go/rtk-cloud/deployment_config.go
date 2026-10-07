@@ -1568,6 +1568,7 @@ func deploymentLegacyLKEValues(v map[string]string, environment string) map[stri
 		out["LKE_"+prefix+"_REQUEST_CPU"] = v[prefix+"_REQUEST_CPU"]
 		out["LKE_"+prefix+"_REQUEST_MEMORY"] = v[prefix+"_REQUEST_MEMORY"]
 	}
+	out["LKE_GRAFANA_IMAGE"] = v["GRAFANA_IMAGE"]
 	return out
 }
 
