@@ -81,7 +81,10 @@ func defaultUnifiedDeploymentDependencies() unifiedDeploymentDependencies {
 					if err := c.Backend.CheckInstalledCRLs(ctx, p, c.Configuration.Values); err != nil {
 						return deploymentplan.GateEvidence{}, err
 					}
-					return deploymentplan.GateEvidence{}, &deploymentplan.Blocker{ID: "deployment.pki", Cause: "original managed server and Service client key/chain/subject/purpose/upgrade-window validity and registry/issuer admission and installed CRL inventory/current consumer receipts passed; Secret identities, Root-policy/live-consumer evidence and dynamic/terminal trust qualification remain incomplete", Next: "complete Secret-backed identity, installed Root-policy and live-consumer verification plus any required dynamic/terminal authority qualification for the same target before authorizing deployment"}
+					if err := c.Backend.CheckInstalledRootTrust(ctx, p, c.Configuration.Values); err != nil {
+						return deploymentplan.GateEvidence{}, err
+					}
+					return deploymentplan.GateEvidence{}, &deploymentplan.Blocker{ID: "deployment.pki", Cause: "original managed server and Service client key/chain/subject/purpose/upgrade-window validity and registry/issuer admission and installed CRL/Root-policy/pool inventories and current consumer receipts passed; Secret identities, live-consumer evidence and dynamic/terminal trust qualification remain incomplete", Next: "complete Secret-backed identity and live-consumer verification plus any required dynamic/terminal authority qualification for the same target before authorizing deployment"}
 				},
 				"deployment.release": func(ctx context.Context, p *deploymentplan.Plan) (deploymentplan.GateEvidence, error) {
 					if err := c.Fence(ctx, p); err != nil {

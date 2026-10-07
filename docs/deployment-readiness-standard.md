@@ -566,3 +566,31 @@ fixtures are not actual environment qualification. Installed Root policy and
 live consumer proof, dynamic/terminal authority state and Secret-backed leaves
 remain independently required gaps, so this stage alone cannot make the complete
 PKI gate GO.
+
+### Original installed Root-removal policy and pool
+
+The same original-Pod observer now calls the shipped `inspect-roots` probe for
+every maintained domain consumer. Root authority/state/provisioned-file settings
+follow each actual runtime loader contract; they are not guessed from an
+arbitrary path or environment name. Public setting references use their planned
+original Secret/ConfigMap owners. The Root ID must occur as a Root in the reviewed
+CRL manifest. Private policy state must use the original durable claim; the
+provisioned public file must resolve to its exact planned file projection and
+match the original Pod mount. Its raw-byte SHA-256 and source owner/version are
+fenced before and after inspection. The configured upgrade window is unchanged.
+
+The native service verifies current cumulative Root distrust, a canonical
+Root-only installed pool matching independently provisioned roots, registered
+CA lifetime/custody and the exact policy/loaded-pool consumer receipt in one
+read-only snapshot. It neither writes policy nor creates a receipt. Missing,
+old, noncanonical, distrusted-key or unregistered-root evidence is NO-GO with
+stable `deployment.pki.roots`; unsupported private/public mounts cannot be
+substituted with a controller-local copy. Native PostgreSQL/crypto fixtures
+cover all three environments and five domains; adapter protocol fixtures
+separately cover original mount/source/Pod ownership and report binding.
+
+This completes the installed Root-state/receipt subgate. It does not attest a
+running consumer's in-memory state, its connection eviction or the repaired
+candidate's behavior. Those live checks, Secret-backed identity and required
+dynamic/terminal authority qualification remain independently required; the
+complete PKI gate continues to reject missing evidence.

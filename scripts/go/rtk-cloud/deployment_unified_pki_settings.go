@@ -166,5 +166,5 @@ func (b environmentKubernetesBackend) resolveIdentitySettings(ctx context.Contex
 }
 
 func publicIdentitySetting(name string) bool {
-	return name == "VIDEO_CLOUD_AUTH_PRODUCT_PKI_ENABLED" || name == "VIDEO_CLOUD_AUTH_APP_PKI_ENABLED" || strings.HasSuffix(name, "_CRL_MANIFEST") || strings.HasSuffix(name, "_IDENTITY_STATE") || strings.HasSuffix(name, "_ROOT_SHA256") || strings.HasSuffix(name, "_HOST_NAME") || strings.HasSuffix(name, "_HOST_DNS_NAMES")
+	return name == "VIDEO_CLOUD_AUTH_DEVICE_CA_CERT" || strings.HasSuffix(name, "_ROOT_ID") || strings.HasSuffix(name, "_ROOT_STATE") || strings.HasSuffix(name, "_ROOTS") || strings.HasSuffix(name, "_ROOT_TRUST_STATE") || name == "VIDEO_CLOUD_AUTH_PRODUCT_PKI_ENABLED" || name == "VIDEO_CLOUD_AUTH_APP_PKI_ENABLED" || strings.HasSuffix(name, "_CRL_MANIFEST") || strings.HasSuffix(name, "_IDENTITY_STATE") || strings.HasSuffix(name, "_ROOT_SHA256") || strings.HasSuffix(name, "_HOST_NAME") || strings.HasSuffix(name, "_HOST_DNS_NAMES")
 }

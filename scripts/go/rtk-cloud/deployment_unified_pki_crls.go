@@ -24,6 +24,16 @@ func crlInspectionBlocker(resource, cause string) error {
 // fences as managed identity inspection. A required receipt ID cannot be dropped
 // because its workload or manifest is missing.
 func (b environmentKubernetesBackend) CheckInstalledCRLs(ctx context.Context, plan *deploymentplan.Plan, values map[string]string) error {
+	return b.checkInstalledConsumerTrust(ctx, plan, values, false)
+}
+func (b environmentKubernetesBackend) CheckInstalledRootTrust(ctx context.Context, plan *deploymentplan.Plan, values map[string]string) error {
+	return b.checkInstalledConsumerTrust(ctx, plan, values, true)
+}
+func (b environmentKubernetesBackend) checkInstalledConsumerTrust(ctx context.Context, plan *deploymentplan.Plan, values map[string]string, rootTrust bool) error {
+	block := crlInspectionBlocker
+	if rootTrust {
+		block = rootInspectionBlocker
+	}
 	window, err := environmentPKIValidityWindow(values)
 	if err != nil {
 		return err
@@ -32,18 +42,18 @@ func (b environmentKubernetesBackend) CheckInstalledCRLs(ctx context.Context, pl
 	for _, domain := range managedPKIDomains {
 		ids := strings.Split(values["PKI_REQUIRED_CONSUMERS_"+strings.ToUpper(domain)], ",")
 		if len(ids) == 0 || len(ids) > 128 {
-			return crlInspectionBlocker("", "complete domain consumer policy is unavailable")
+			return block("", "complete domain consumer policy is unavailable")
 		}
 		for _, id := range ids {
 			id = strings.TrimSpace(id)
 			key := domain + ":" + id
 			if id == "" || len(id) > 128 || required[key] || strings.HasPrefix(id, "service:") || strings.ContainsAny(id, ",/\\") || strings.IndexFunc(id, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
-				return crlInspectionBlocker("", "complete domain consumer policy is invalid")
+				return block("", "complete domain consumer policy is invalid")
 			}
 			required[key] = true
 		}
 	}
-	err = b.inspectOriginalManagedStatePods(ctx, plan, crlInspectionBlocker, func(object, container deploymentplan.Object) ([]originalManagedStateProbe, error) {
+	err = b.inspectOriginalManagedStatePods(ctx, plan, block, func(object, container deploymentplan.Object) ([]originalManagedStateProbe, error) {
 		settings, err := environmentPKINamedFields(container["env"])
 		if err != nil {
 			return nil, err
@@ -60,7 +70,7 @@ func (b environmentKubernetesBackend) CheckInstalledCRLs(ctx context.Context, pl
 			}
 			domains, consumer, database := environmentCRLConsumerContract(object, container, name)
 			if len(domains) == 0 {
-				return nil, crlInspectionBlocker(deploymentplan.ID(object), "configured CRL consumer has no maintained workload/domain contract")
+				return nil, block(deploymentplan.ID(object), "configured CRL consumer has no maintained workload/domain contract")
 			}
 			path := deploymentplan.String(settings[name]["value"])
 			manifest, reference, fence, err := b.bindOriginalPublicManifest(ctx, plan, object, container, path)
@@ -72,17 +82,17 @@ func (b environmentKubernetesBackend) CheckInstalledCRLs(ctx context.Context, pl
 				State  string         `json:"state_path"`
 			}
 			if json.Unmarshal(manifest, &entries) != nil || len(entries) == 0 || len(entries) > 128 {
-				return nil, crlInspectionBlocker(reference.Name, "planned CRL manifest is invalid")
+				return nil, block(reference.Name, "planned CRL manifest is invalid")
 			}
 			for _, domain := range domains {
 				key := domain + ":" + consumer
 				if !required[key] {
-					return nil, crlInspectionBlocker(deploymentplan.ID(object), "enabled CRL consumer is absent from the maintained required domain policy")
+					return nil, block(deploymentplan.ID(object), "enabled CRL consumer is absent from the maintained required domain policy")
 				}
 				paths := []string{}
 				for _, entry := range entries {
 					if deploymentplan.String(entry.Issuer["environment"]) != plan.Environment {
-						return nil, crlInspectionBlocker(deploymentplan.ID(object), "CRL manifest belongs to another environment")
+						return nil, block(deploymentplan.ID(object), "CRL manifest belongs to another environment")
 					}
 					entryDomain := deploymentplan.String(entry.Issuer["domain"])
 					if entryDomain == "" {
@@ -92,19 +102,52 @@ func (b environmentKubernetesBackend) CheckInstalledCRLs(ctx context.Context, pl
 						continue
 					}
 					if !filepath.IsAbs(entry.State) || filepath.Clean(entry.State) != entry.State {
-						return nil, crlInspectionBlocker(deploymentplan.ID(object), "CRL state requires a canonical original durable path")
+						return nil, block(deploymentplan.ID(object), "CRL state requires a canonical original durable path")
 					}
 					paths = append(paths, entry.State)
 				}
 				if len(paths) == 0 {
-					return nil, crlInspectionBlocker(deploymentplan.ID(object), "required domain has no installed CRL authority inventory")
+					return nil, block(deploymentplan.ID(object), "required domain has no installed CRL authority inventory")
 				}
 				sort.Strings(paths)
+				rootID, rootState, provisioned := "", "", ""
+				var rootsData []byte
+				var rootReference environmentPublicFileRef
+				var rootFence func(context.Context) error
+				crlCount := len(paths)
+				if rootTrust {
+					idSetting, stateSetting, rootsSetting := environmentRootTrustSettings(name, domain)
+					rootID = deploymentplan.String(settings[idSetting]["value"])
+					rootState = deploymentplan.String(settings[stateSetting]["value"])
+					provisioned = deploymentplan.String(settings[rootsSetting]["value"])
+					found := false
+					for _, entry := range entries {
+						if entry.Issuer["issuer_id"] == rootID && entry.Issuer["kind"] == "root" {
+							found = true
+						}
+					}
+					if rootID == "" || !found || !filepath.IsAbs(rootState) || filepath.Clean(rootState) != rootState || rootState == provisioned {
+						return nil, block(deploymentplan.ID(object), "Root policy authority/state/provisioned roots binding is incomplete or absent from the reviewed manifest")
+					}
+					rootsData, rootReference, rootFence, err = b.bindOriginalPublicManifest(ctx, plan, object, container, provisioned)
+					if err != nil {
+						return nil, block(deploymentplan.ID(object), "original provisioned Root file is not bound to its planned owner")
+					}
+					paths = append(paths, rootState)
+				}
 				command := "inspect-crls"
 				if name == "VIDEO_CLOUD_AUTH_CRL_MANIFEST" {
 					command = "inspect-auth-crls"
 				}
-				probes = append(probes, originalManagedStateProbe{Paths: paths, Fence: fence, CheckPod: func(pod deploymentplan.Object) error {
+				probes = append(probes, originalManagedStateProbe{Paths: paths, Fence: func(ctx context.Context) error {
+					if err := fence(ctx); err != nil {
+						return err
+					}
+					if rootFence != nil {
+						return rootFence(ctx)
+					}
+					return nil
+				}, CheckPod: func(pod deploymentplan.Object) error {
 					actualContainer := deploymentplan.Object(nil)
 					for _, item := range certIssuerObjectList(deploymentplan.Map(pod["spec"])["containers"]) {
 						if deploymentplan.Map(item)["name"] == container["name"] {
@@ -115,8 +158,37 @@ func (b environmentKubernetesBackend) CheckInstalledCRLs(ctx context.Context, pl
 					if err != nil || actual != reference {
 						return errors.New("original Pod manifest source differs from planned owner")
 					}
+					if rootTrust {
+						rootActual, err := environmentPublicFileReference(deploymentplan.Map(pod["spec"]), actualContainer, provisioned)
+						if err != nil || rootActual != rootReference {
+							return errors.New("original Pod Root file differs from planned owner")
+						}
+					}
 					return nil
 				}, Inspect: func(ctx context.Context, args []string) error {
+					if rootTrust {
+						args = append(args, "inspect-roots", plan.Environment, domain, consumer, rootID, rootState, provisioned, strconv.FormatInt(window, 10), database)
+						raw, err := b.command(ctx, nil, args...)
+						var report struct {
+							Environment string `json:"environment"`
+							Domain      string `json:"domain"`
+							Consumer    string `json:"consumer"`
+							RootID      string `json:"root_id"`
+							State       string `json:"state_sha256"`
+							Policy      string `json:"policy_sha256"`
+							Roots       string `json:"loaded_roots_sha256"`
+							Provisioned string `json:"provisioned_roots_sha256"`
+							Verified    bool   `json:"roots_verified"`
+							Consumers   bool   `json:"consumers_verified"`
+							Window      int64  `json:"minimum_validity_seconds"`
+						}
+						hash := sha256.Sum256(rootsData)
+						if err != nil || decodeEnvironmentJSON(raw, &report) != nil || report.Environment != plan.Environment || report.Domain != domain || report.Consumer != consumer || report.RootID != rootID || !deploymentImageDigestPattern.MatchString("sha256:"+report.State) || !deploymentImageDigestPattern.MatchString("sha256:"+report.Policy) || !deploymentImageDigestPattern.MatchString("sha256:"+report.Roots) || report.Provisioned != hex.EncodeToString(hash[:]) || !report.Verified || !report.Consumers || report.Window != window {
+							return errors.New("native Root policy/pool/receipt qualification incomplete")
+						}
+						seen[key] = true
+						return nil
+					}
 					args = append(args, command, plan.Environment, domain, consumer, path, strconv.FormatInt(window, 10), database)
 					raw, err := b.command(ctx, nil, args...)
 					var report struct {
@@ -129,7 +201,7 @@ func (b environmentKubernetesBackend) CheckInstalledCRLs(ctx context.Context, pl
 						Consumers   bool   `json:"consumers_verified"`
 						Window      int64  `json:"minimum_validity_seconds"`
 					}
-					if err != nil || decodeEnvironmentJSON(raw, &report) != nil || report.Environment != plan.Environment || report.Domain != domain || report.Consumer != consumer || report.Manifest != func() string { hash := sha256.Sum256(manifest); return hex.EncodeToString(hash[:]) }() || report.Authorities != len(paths) || !report.CRLs || !report.Consumers || report.Window != window {
+					if err != nil || decodeEnvironmentJSON(raw, &report) != nil || report.Environment != plan.Environment || report.Domain != domain || report.Consumer != consumer || report.Manifest != func() string { hash := sha256.Sum256(manifest); return hex.EncodeToString(hash[:]) }() || report.Authorities != crlCount || !report.CRLs || !report.Consumers || report.Window != window {
 						return errors.New("native CRL inventory/receipt qualification incomplete")
 					}
 					seen[key] = true
@@ -144,7 +216,7 @@ func (b environmentKubernetesBackend) CheckInstalledCRLs(ctx context.Context, pl
 	}
 	for key := range required {
 		if !seen[key] {
-			return crlInspectionBlocker("", "a required domain consumer has no qualified original owned workload/manifest")
+			return block("", "a required domain consumer has no qualified original owned workload/manifest")
 		}
 	}
 	return nil
@@ -351,4 +423,33 @@ func (b environmentKubernetesBackend) bindOriginalPublicManifest(ctx context.Con
 		}, nil
 	}
 	return nil, ref, nil, crlInspectionBlocker(id, "original owned CRL manifest is unavailable, changed or differs from the target plan")
+}
+
+func rootInspectionBlocker(resource, cause string) error {
+	return &deploymentplan.Blocker{ID: "deployment.pki.roots", Resource: resource, Cause: cause, Next: "restore the original durable Root-removal state, reviewed provisioned Root-only bundle and configured Root authority; reconcile the current authenticated policy and actual consumer receipt through managed lifecycle, then repeat complete preflight; do not add trust anchors or create receipts to pass"}
+}
+
+func environmentRootTrustSettings(manifest, domain string) (string, string, string) {
+	if manifest == "VIDEO_CLOUD_AUTH_CRL_MANIFEST" {
+		prefix := "VIDEO_CLOUD_AUTH_" + strings.ToUpper(domain) + "_ROOT_TRUST"
+		roots := prefix + "_ROOTS"
+		if domain == "device" {
+			roots = "VIDEO_CLOUD_AUTH_DEVICE_CA_CERT"
+		}
+		return prefix + "_ROOT_ID", prefix + "_STATE", roots
+	}
+	prefix := strings.TrimSuffix(manifest, "_SERVER_CRL_MANIFEST")
+	switch domain {
+	case "device", "app":
+		prefix = "PKI_BROKER_" + strings.ToUpper(domain) + "_ROOT"
+	case "service":
+		prefix += "_SERVICE_ROOT"
+	case "mqtt":
+		prefix += "_ROOT"
+	case "openbao_tls":
+		prefix += "_SERVER_ROOT"
+	default:
+		return "", "", ""
+	}
+	return prefix + "_ID", prefix + "_STATE", prefix + "S"
 }

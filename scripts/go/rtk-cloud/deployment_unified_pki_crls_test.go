@@ -18,6 +18,12 @@ import (
 // in Video Cloud. Here the remote command is a protocol mock: test exact planned
 // mounts, source/Pod ownership and coverage without claiming live crypto proof.
 func TestOriginalCRLProbeBindsManifestClaimsReportsAndAllRequiredConsumers(t *testing.T) {
+	testOriginalConsumerTrustProbe(t, false)
+}
+func TestOriginalRootProbeBindsPolicyStateProvisionedOwnerAndReceiptCoverage(t *testing.T) {
+	testOriginalConsumerTrustProbe(t, true)
+}
+func testOriginalConsumerTrustProbe(t *testing.T, roots bool) {
 	for _, environment := range []string{"dev", "staging", "prod"} {
 		for _, mode := range []string{"valid", "wrong-manifest", "wrong-window", "missing-consumer", "source-drift", "wrong-pod-mount", "wrong-claim", "private-extra"} {
 			t.Run(environment+"/"+mode, func(t *testing.T) {
@@ -45,12 +51,22 @@ func TestOriginalCRLProbeBindsManifestClaimsReportsAndAllRequiredConsumers(t *te
 						entries := []any{}
 						for _, domain := range ds {
 							for _, kind := range []string{"root", "issuer"} {
-								entries = append(entries, map[string]any{"issuer": map[string]any{"environment": environment, "domain": domain}, "state_path": "/run/state/" + domain + "-" + kind + ".json"})
+								entries = append(entries, map[string]any{"issuer": map[string]any{"environment": environment, "domain": domain, "issuer_id": domain + "-" + kind, "kind": kind}, "state_path": "/run/state/" + domain + "-" + kind + ".json"})
 							}
 						}
 						raw, _ := json.Marshal(entries)
 						data[setting+".json"] = string(raw)
 						manifests[path] = string(raw)
+						if roots {
+							for _, domain := range ds {
+								idSetting, stateSetting, rootsSetting := environmentRootTrustSettings(setting, domain)
+								rootPath := "/run/manifests/" + domain + ".roots.pem"
+								env = append(env, deploymentplan.Object{"name": idSetting, "value": domain + "-root"}, deploymentplan.Object{"name": stateSetting, "value": "/run/state/" + domain + "-policy.json"}, deploymentplan.Object{"name": rootsSetting, "value": rootPath})
+								data[domain+".roots.pem"] = "fixture-roots-" + domain + "\n"
+								manifests[rootPath] = data[domain+".roots.pem"].(string)
+							}
+						}
+
 					}
 					container := deploymentplan.Object{"name": workload, "env": env, "image": "fixture@sha256:" + strings.Repeat("a", 64), "volumeMounts": []any{deploymentplan.Object{"name": "state", "mountPath": "/run/state"}, deploymentplan.Object{"name": "manifests", "mountPath": "/run/manifests", "readOnly": true}}}
 					spec := deploymentplan.Object{"containers": []any{container}, "volumes": []any{deploymentplan.Object{"name": "state", "persistentVolumeClaim": deploymentplan.Object{"claimName": workload + "-state"}}, deploymentplan.Object{"name": "manifests", "configMap": deploymentplan.Object{"name": workload + "-manifests"}}}}
@@ -103,12 +119,19 @@ if 'get' in args:
   print(json.dumps(obj) if obj else '',end='')
 elif 'selfsubjectaccessreviews' in ' '.join(args):print(json.dumps({'status':{'allowed':True,'denied':False}}))
 elif 'exec' in args:
- command=args[args.index('--')+1:];assert command[0]=='/app/serviceidentity-bootstrap';assert command[1] in ['inspect-crls','inspect-auth-crls']
- env,domain,consumer,path,window,database=command[2:];assert window=='1800';assert database==('PKI_DATABASE_URL' if consumer=='pki-controller' else 'VIDEO_CLOUD_DB_DSN')
+ command=args[args.index('--')+1:];assert command[0]=='/app/serviceidentity-bootstrap';assert command[1] in ['inspect-crls','inspect-auth-crls','inspect-roots']
+ if command[1]=='inspect-roots':
+  env,domain,consumer,root,state,path,window,database=command[2:]
+ else:env,domain,consumer,path,window,database=command[2:]
+ assert window=='1800';assert database==('PKI_DATABASE_URL' if consumer=='pki-controller' else 'VIDEO_CLOUD_DB_DSN')
  open(os.environ['RTK_CRL_EXECUTED'],'a').write(domain+':'+consumer+'\n')
- manifest=json.load(open(os.environ['RTK_CRL_MANIFESTS']))[path];count=sum(1 for e in json.loads(manifest) if e['issuer']['domain']==domain)
- report={'environment':env,'domain':domain,'consumer':consumer,'manifest_sha256':hashlib.sha256(manifest.encode()).hexdigest(),'authorities':count,'crls_verified':True,'consumers_verified':True,'minimum_validity_seconds':1800}
- if mode=='wrong-manifest':report['manifest_sha256']='f'*64
+ manifest=json.load(open(os.environ['RTK_CRL_MANIFESTS']))[path]
+ if command[1]=='inspect-roots':
+  report={'environment':env,'domain':domain,'consumer':consumer,'root_id':root,'state_sha256':'b'*64,'policy_sha256':'b'*64,'loaded_roots_sha256':'b'*64,'provisioned_roots_sha256':hashlib.sha256(manifest.encode()).hexdigest(),'roots_verified':True,'consumers_verified':True,'minimum_validity_seconds':1800}
+ else:
+  count=sum(1 for e in json.loads(manifest) if e['issuer']['domain']==domain)
+  report={'environment':env,'domain':domain,'consumer':consumer,'manifest_sha256':hashlib.sha256(manifest.encode()).hexdigest(),'authorities':count,'crls_verified':True,'consumers_verified':True,'minimum_validity_seconds':1800}
+ if mode=='wrong-manifest':report['provisioned_roots_sha256' if command[1]=='inspect-roots' else 'manifest_sha256']='f'*64
  if mode=='wrong-window':report['minimum_validity_seconds']=600
  if mode=='private-extra':report['private_key_pem']='private-diagnostic-canary'
  print(json.dumps(report))
@@ -129,7 +152,11 @@ else:sys.exit(2)
 				}
 				plan.StorageSHA256 = deploymentplan.Digest(bindings)
 				approved := plan.SHA256()
-				err = backend.CheckInstalledCRLs(context.Background(), plan, values)
+				if roots {
+					err = backend.CheckInstalledRootTrust(context.Background(), plan, values)
+				} else {
+					err = backend.CheckInstalledCRLs(context.Background(), plan, values)
+				}
 				if (err == nil) != (mode == "valid") {
 					t.Fatalf("wrong original CRL probe qualification: %v", err)
 				}
