@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"regexp"
 	"strings"
 
@@ -148,8 +149,16 @@ func validateEnvironmentIdentityBindings(b environmentIdentityBindings, environm
 				if _, literal := setting["value"]; literal && !environmentIdentitySetting(name) {
 					return errors.New("deployment.bindings: ordinary environment settings belong in maintained configuration, not private identity bindings")
 				}
+				if literal, ok := setting["value"].(string); ok && name == "PKI_TURN_CLI_PASSWORD_FILE" {
+					// This is a container file reference, never the CLI password or
+					// a controller-local file. Do not open it during preflight.
+					if !environmentPrivateFileMount(pod, container, literal) {
+						return environmentCredentialBindingBlocker(id, container.Name, name, "password file must be an absolute path on a read-only Secret or private staging volume")
+					}
+					continue
+				}
 				if literal, ok := setting["value"].(string); ok && literal != "" && (strings.Contains(name, "PASSWORD") || strings.Contains(name, "DSN") || strings.Contains(name, "DATABASE_URL") || strings.HasSuffix(name, "_TOKEN") || strings.HasSuffix(name, "_SECRET")) {
-					return errors.New("deployment.bindings: credentials require Secret references, not inline values")
+					return environmentCredentialBindingBlocker(id, container.Name, name, "credentials require Secret references, not inline values")
 				}
 				if name == "PKI_ENVIRONMENT" && setting["value"] != environment {
 					return errors.New("deployment.bindings: managed identity belongs to another environment")
@@ -158,6 +167,32 @@ func validateEnvironmentIdentityBindings(b environmentIdentityBindings, environm
 		}
 	}
 	return nil
+}
+
+func environmentCredentialBindingBlocker(id, container, setting, cause string) error {
+	return &deploymentplan.Blocker{ID: "deployment.pki.credential-reference", Resource: id, Cause: container + "/" + setting + ": " + cause, Next: "retain the original credential Secret and its private file mount; configuration contains references only; deployment initializes new credentials, while upgrades preserve existing credentials"}
+}
+
+func environmentPrivateFileMount(pod environmentPodBindings, container environmentContainerBindings, file string) bool {
+	if !path.IsAbs(file) || path.Clean(file) != file || strings.ContainsAny(file, "\x00\r\n") {
+		return false
+	}
+	for _, value := range certIssuerObjectList(container.Fields["volumeMounts"]) {
+		mount := deploymentplan.Map(value)
+		root := deploymentplan.String(mount["mountPath"])
+		if mount["readOnly"] != true || !path.IsAbs(root) || path.Clean(root) != root || (file != root && !strings.HasPrefix(file, strings.TrimSuffix(root, "/")+"/")) {
+			continue
+		}
+		for _, value := range certIssuerObjectList(pod.PodFields["volumes"]) {
+			volume := deploymentplan.Map(value)
+			if volume["name"] == mount["name"] && (volume["secret"] != nil || volume["emptyDir"] != nil) {
+				// emptyDir is a runtime private copy made by the init container
+				// to enforce 0600; source Secret/admission checks remain separate.
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func environmentManagedImageKey(component, name string, index int) string {

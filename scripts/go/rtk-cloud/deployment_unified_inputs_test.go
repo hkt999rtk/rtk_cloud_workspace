@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -8,6 +9,47 @@ import (
 
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 )
+
+func TestPasswordFileBindingsAreReferencesNotGeneratedCredentials(t *testing.T) {
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		for _, mode := range []string{"private-copy", "secret", "relative", "traversal", "unmounted", "writable", "plaintext", "unknown-password-file"} {
+			t.Run(environment+"/"+mode, func(t *testing.T) {
+				mount := map[string]any{"name": "cli-private", "mountPath": "/run/pkiturn-cli", "readOnly": true}
+				volume := map[string]any{"name": "cli-private", "emptyDir": map[string]any{}}
+				setting := map[string]any{"name": "PKI_TURN_CLI_PASSWORD_FILE", "value": "/run/pkiturn-cli/password"}
+				switch mode {
+				case "secret":
+					delete(volume, "emptyDir")
+					volume["secret"] = map[string]any{"secretName": "pkiturn-cli"}
+				case "relative":
+					setting["value"] = "private-secret-marker"
+				case "traversal":
+					setting["value"] = "/run/pkiturn-cli/../private-secret-marker"
+				case "unmounted":
+					setting["value"] = "/other/private-secret-marker"
+				case "writable":
+					mount["readOnly"] = false
+				case "plaintext":
+					setting["name"], setting["value"] = "PKI_TURN_CLI_PASSWORD", "private-secret-marker"
+				case "unknown-password-file":
+					setting["name"] = "PKI_OTHER_PASSWORD_FILE"
+				}
+				bindings := environmentIdentityBindings{Version: 1, Environment: environment, Stack: "video-cloud-" + environment, Pods: []environmentPodBindings{{Kind: "Deployment", NamespaceSuffix: "video-cloud", Name: "pkiturn", Component: "existing-workload", PodFields: map[string]any{"volumes": []any{volume}}, Containers: []environmentContainerBindings{{Name: "pkiturn", ImageKey: "LKE_VIDEO_CLOUD_IMAGE", Fields: map[string]any{"env": []any{setting}, "volumeMounts": []any{mount}}}}}}}
+				err := validateEnvironmentIdentityBindings(bindings, environment)
+				if mode == "private-copy" || mode == "secret" {
+					if err != nil {
+						t.Fatal("reference required a future controller-local password", err)
+					}
+					return
+				}
+				var blocker *deploymentplan.Blocker
+				if !errors.As(err, &blocker) || blocker.ID != "deployment.pki.credential-reference" || !strings.Contains(blocker.Resource, "/pkiturn") || !strings.Contains(blocker.Cause, setting["name"].(string)) || strings.Contains(err.Error(), "private-secret-marker") {
+					t.Fatal("missing safe credential reference diagnostic", err)
+				}
+			})
+		}
+	}
+}
 
 func TestManagedBindingsCannotOverrideReleaseOrRemoveConsumer(t *testing.T) {
 	for _, environment := range []string{"dev", "staging", "prod"} {

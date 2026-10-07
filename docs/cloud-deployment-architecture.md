@@ -60,6 +60,34 @@ invented for future resources. The generated file uses a 0700 parent directory
 and 0600 permissions. `adopt-managed-state` is retired; operators must not
 hand-produce or promote a candidate JSON to pass preflight.
 
+### TURN CLI credential lifecycle
+
+`PKI_TURN_CLI_PASSWORD_FILE` names a **container-runtime file**, not a password
+value or a controller-local prerequisite. Existing-environment observation
+validates its absolute, normalized path and read-only Secret/private-copy mount;
+the original Kubernetes `pkiturn-cli` Secret remains lifecycle-owned. A private
+`emptyDir` copy is distinct from its source Secret: validating the file reference
+does not prove initialization, file permissions, CLI connectivity or candidate
+startup. Those remain independent admission/runtime qualification gates.
+Create preflight must not demand a future generated password or create one.
+Missing existing source credentials remain a recovery blocker, never permission
+to rotate them. No password-file configuration override is required in
+`architecture.env` or environment settings.
+
+The Coturn VM deployment installer produces/consumes
+`~/.config/rtk_cloud/<environment>/deployment/turn/<relay-name>/cli-password`
+through the common environment SecretStore resolver (0700 directories, 0600
+file). After selecting the environment-owned relay, deployment verifies the
+original runtime credential and retains it locally if not yet recorded. Only a
+newly allocated relay permits initial random generation. Installation retries
+reuse the saved value; upgrades reuse the original value. Conflicting saved,
+`/etc/turnserver.conf` or `/etc/video-cloud-coturn-cli.env` values block before
+package/config updates. Credentials travel over SSH stdin, not arguments,
+generated scripts or reports. The VM copies are online runtime files, not local
+controller paths. This installer does not replace the consumer's existing
+Kubernetes Secret; introducing a new pkiturn consumer must separately bind the
+same credential through its managed Secret initialization stage.
+
 RTK Cloud uses one reusable architecture description, many environment instances, and replaceable deployment adapters. Environments such as `dev`, `staging`, and `prod` select an architecture and adapter; they do not own copies of the architecture or adapter implementation.
 
 The Kubernetes architecture owns workloads, namespaces, logical node classes, resource intent, capacity rules, placement, edge requirements, and TURN requirements. It uses `rtk.io/node-class` and standard Kubernetes topology labels. It must not contain cloud resource IDs or provider-specific labels.
