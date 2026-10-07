@@ -163,6 +163,38 @@ a legacy execution path, regenerate managed PKI, copy a live desired spec, or
 weaken a required readiness gate. See the readiness standard's replacement
 status for capabilities that still require implementation and qualification.
 
+## Shared Zammad target
+
+The fixed official Zammad chart and its bundled dependencies are maintained in
+`cloud_deploy/architectures/kubernetes/charts/`, with version and archive SHA-256
+in the common `architecture.env`. Seven `ZAMMAD_*_IMAGE` settings pin application,
+Memcached, Redis, dedicated PostgreSQL, Elasticsearch and both init image families.
+The common `zammad-values.yaml` owns topology, storage and credential references.
+All environments use these same inputs when support is enabled; Dev remains enabled.
+
+The compiler hashes chart/values with the selected configuration snapshot, uses
+Helm only for local rendering, then adds its resource definitions to the normal
+plan, exact-body server admission, execution and post-deploy verification.
+Support images are scoped to the support namespace; shared repository names do
+not exchange core PostgreSQL/Alpine versions with Zammad's versions. Observation
+records support resource owner UIDs without importing live workload specs into
+PKI bindings. Existing credential Secrets and durable PVCs remain retained
+lifecycle dependencies. Immutable state and PostgreSQL major-version changes
+require separate migration qualification.
+
+Support data controllers run in the configuration phase, followed by the
+chart/values/spec-bound initialization Job in migration, then application workloads.
+The Job has no automatic TTL so its owner/completion remains verifiable through
+acceptance. Superseded completed init Jobs may be explicitly retired in the plan;
+pending/failed originals block. CronJob target configuration is verified without
+pretending a future scheduled execution has completed.
+
+The native renderer produces/consumes only environment-local private copies under
+`deployment/tmp/zammad-*` (0700 directory, 0600 chart/values/client files), deleting
+scratch on all exits. It does not update Helm release history or run Helm upgrade;
+the deployment script is the single write entry. See the
+[Zammad runbook](deployment/support-ticket-zammad.md) for operator steps.
+
 ## Existing OpenBao configuration baseline
 
 The shared `architecture.env` explicitly records the non-secret common Dev and

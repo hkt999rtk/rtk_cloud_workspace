@@ -67,6 +67,7 @@ not invent another workspace, worktree, external-disk or OS-specific location.
 | CertIssuer route migration restore journal | `deployment/journals/certissuer-ingress/certissuer-<operation-id>.json` |
 | LKE provision operational summary | `deployment/artifacts/lke-provision/<operation-timestamp>/summary.json` |
 | Temporary deployment material | `deployment/tmp/` |
+| Zammad native renderer copies/client state | `deployment/tmp/zammad-*` (common compiler produces/consumes frozen chart and values copies; removed on success/failure, 0700 directories and 0600 files) |
 | Protected original migration/rollback snapshots | `migration-backup/` |
 
 Every producer and consumer must agree on one documented location. An explicit

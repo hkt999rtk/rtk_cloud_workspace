@@ -19,9 +19,9 @@ var environmentManagedComponents = map[string]string{
 
 // The catalog describes desired configuration, not copies of live workloads.
 // Identity references are owned by the independent managed PKI lifecycle.
-func renderEnvironmentResources(env map[string]string, bindings environmentIdentityBindings, release environmentRelease) ([]deploymentplan.Definition, error) {
-	if strings.EqualFold(env["SUPPORT_TICKETS_ENABLED"], "true") {
-		return nil, &deploymentplan.Blocker{ID: "deployment.target.support", Cause: "enabled Zammad support workloads have no complete common renderer and recovery rules", Next: "maintain the complete enabled support chart resources, immutable provider images and persistent-data recovery in the common catalog before qualification"}
+func renderEnvironmentResources(env map[string]string, bindings environmentIdentityBindings, release environmentRelease, support ...[]deploymentplan.Definition) ([]deploymentplan.Definition, error) {
+	if env["SUPPORT_TICKETS_ENABLED"] == "true" && (len(support) != 1 || len(support[0]) == 0) {
+		return nil, zammadBlocker("deployment.target.support", "", "enabled Zammad chart target is unavailable")
 	}
 	needed := map[string]bool{"certissuer": true, "factoryenroll": true, "pki-controller": true, "video-cloud-api-pki": true, "mqtt-pki": true, "openbao": true}
 	if strings.EqualFold(env["PKI_SERVICE_ISSUER_ENABLED"], "true") {
@@ -245,6 +245,9 @@ func renderEnvironmentResources(env map[string]string, bindings environmentIdent
 		return nil, err
 	}
 	definitions = append(definitions, ingress...)
+	if len(support) == 1 {
+		definitions = append(definitions, support[0]...)
+	}
 	definitions, err = applyEnvironmentDurableStorage(definitions, env)
 	if err != nil {
 		return nil, err
@@ -340,10 +343,16 @@ func renderManagedEnvironmentComponent(env map[string]string, binding environmen
 // Every container, including provider and init containers, must be release pinned.
 func pinEnvironmentResourceImages(definitions []deploymentplan.Definition, release environmentRelease) error {
 	refs := map[string]string{}
-	for _, image := range release.Images {
+	ambiguous := map[string]bool{}
+	selectedRefs := map[string]bool{}
+	for key, image := range release.Images {
+		selectedRefs[image.Reference] = true
+		if strings.HasPrefix(key, "LKE_ZAMMAD_") {
+			continue
+		}
 		name := environmentImageRepository(image.Reference)
 		if previous := refs[name]; previous != "" && previous != image.Reference {
-			return errors.New("deployment.release: ambiguous image repository")
+			ambiguous[name] = true
 		}
 		refs[name] = image.Reference
 	}
@@ -359,6 +368,13 @@ func pinEnvironmentResourceImages(definitions []deploymentplan.Definition, relea
 				image := deploymentplan.String(container["image"])
 				name := environmentImageRepository(image)
 				selected := refs[name]
+				if deploymentplan.Map(definition.Object["metadata"])["namespace"] == release.Stack+"-support" {
+					selected = release.Images[zammadImageRole(image)].Reference
+				} else if selectedRefs[image] {
+					selected = image
+				} else if ambiguous[name] {
+					return errors.New("deployment.release: ambiguous image repository")
+				}
 				if selected == "" {
 					return fmt.Errorf("deployment.release: %s container %s lacks an immutable selected image", deploymentplan.ID(definition.Object), deploymentplan.String(container["name"]))
 				}

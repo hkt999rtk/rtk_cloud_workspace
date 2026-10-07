@@ -17,6 +17,8 @@ var environmentProviderImageKeys = []string{
 	"LKE_POSTGRES_IMAGE", "LKE_REDIS_IMAGE", "LKE_FLEET_VALKEY_IMAGE", "LKE_REDIS_EXPORTER_IMAGE",
 	"LKE_MQTT_IMAGE", "LKE_PROMETHEUS_IMAGE", "LKE_LOKI_IMAGE", "LKE_GRAFANA_IMAGE",
 	"LKE_LOG_COLLECTOR_IMAGE", "LKE_OPENBAO_IMAGE", "LKE_ALPINE_IMAGE", "LKE_INGRESS_IMAGE",
+	"LKE_ZAMMAD_IMAGE", "LKE_ZAMMAD_MEMCACHED_IMAGE", "LKE_ZAMMAD_REDIS_IMAGE", "LKE_ZAMMAD_POSTGRES_IMAGE",
+	"LKE_ZAMMAD_ELASTICSEARCH_IMAGE", "LKE_ZAMMAD_OS_SHELL_IMAGE", "LKE_ZAMMAD_ALPINE_IMAGE",
 }
 
 // Maintained workload images are provider-neutral. Legacy image role names
@@ -32,6 +34,9 @@ func loadEnvironmentCIImages(ctx context.Context, cfg deploymentConfig, run envi
 	providers := environmentRelease{Environment: cfg.Environment, Stack: cfg.Values["CLOUD_STACK_NAME"], Images: map[string]environmentReleaseImage{}}
 	values := appendMap(cfg.Values, cfg.AdapterResolved)
 	for _, key := range environmentProviderImageKeys {
+		if strings.HasPrefix(key, "LKE_ZAMMAD_") && cfg.Values["SUPPORT_TICKETS_ENABLED"] != "true" {
+			continue
+		}
 		configKey := environmentProviderImageConfigKey(key)
 		reference := strings.TrimSpace(values[configKey])
 		if reference == "" {

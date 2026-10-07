@@ -32,6 +32,8 @@ type environmentDeploymentSnapshot struct {
 	Secrets               map[string]string
 	Kubeconfig            string
 	PostgresProtection    postgresBackupDeployment
+	ZammadValues          []byte
+	ZammadChart           []byte
 	StorageEvidenceSHA256 string
 	DNSStateSHA256        string
 }
@@ -135,6 +137,12 @@ func readEnvironmentDeploymentSnapshot(cfg deploymentConfig, store secretStore) 
 	if err != nil {
 		return snapshot, err
 	}
+	if cfg.Values["SUPPORT_TICKETS_ENABLED"] == "true" {
+		snapshot.ZammadValues, snapshot.ZammadChart, err = readEnvironmentZammadInputs(cfg)
+		if err != nil {
+			return snapshot, err
+		}
+	}
 	var protection postgresBackupDeployment
 	if cfg.Values["DEPLOYMENT_POSTGRES_BACKUP_ENABLED"] == "true" {
 		protection, err = readPostgresBackupDeployment(filepath.Join(cfg.EnvironmentRoot, "postgres-backup.json"), cfg.Environment)
@@ -152,7 +160,7 @@ func readEnvironmentDeploymentSnapshot(cfg deploymentConfig, store secretStore) 
 	if err != nil {
 		return snapshot, err
 	}
-	return environmentDeploymentSnapshot{DNSStateSHA256: dnsDigest, Operator: operator, Secrets: secrets, Kubeconfig: kubeconfig, PostgresProtection: protection, StorageEvidenceSHA256: storageEvidence}, nil
+	return environmentDeploymentSnapshot{ZammadValues: snapshot.ZammadValues, ZammadChart: snapshot.ZammadChart, DNSStateSHA256: dnsDigest, Operator: operator, Secrets: secrets, Kubeconfig: kubeconfig, PostgresProtection: protection, StorageEvidenceSHA256: storageEvidence}, nil
 }
 
 func compileEnvironmentDeployment(ctx context.Context, cfg deploymentConfig, operation string) (*compiledEnvironmentDeployment, error) {
@@ -229,11 +237,22 @@ func compileEnvironmentDeploymentWithImages(ctx context.Context, cfg deploymentC
 		}
 		return nil, &deploymentplan.Blocker{ID: "deployment.pki.observation", Cause: "existing environment identity references or ownership cannot be verified", Next: "verify the selected Kubernetes inventory and existing identity references; preflight generates bindings without a pre-existing local file"}
 	}
+	support, err := renderEnvironmentZammad(ctx, cfg, store, release, operation, snapshot.ZammadValues, snapshot.ZammadChart)
+	if err != nil {
+		return nil, err
+	}
+	if err := bindZammadLifecycle(support, live); err != nil {
+		return nil, err
+	}
+	support, err = retireCompletedZammadInitJobs(support, live, release)
+	if err != nil {
+		return nil, err
+	}
 	configurationDigest := snapshot.Digest(cfg)
 	var definitions []deploymentplan.Definition
 	err = withEnvironmentRenderInputs(cfg, store, release, snapshot, func(values map[string]string) error {
 		var err error
-		definitions, err = renderEnvironmentResources(values, bindings, release)
+		definitions, err = renderEnvironmentResources(values, bindings, release, support)
 		if err == nil && cfg.Values["DEPLOYMENT_POSTGRES_BACKUP_ENABLED"] == "true" {
 			definitions, err = renderEnvironmentPostgresProtection(definitions, protection, release)
 		}

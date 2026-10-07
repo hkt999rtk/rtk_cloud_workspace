@@ -93,6 +93,12 @@ func observeEnvironmentBindings(environment string, release environmentRelease, 
 		if kind != "Deployment" && kind != "StatefulSet" && kind != "DaemonSet" {
 			continue
 		}
+		if ns == b.Stack+"-support" {
+			if err := validateZammadInventoryImages(object, release); err != nil {
+				return b, err
+			}
+			continue // Chart owns support settings; observation records owners only.
+		}
 		component := environmentManagedComponents[name]
 		if component == "" {
 			component = "existing-workload"
@@ -113,6 +119,9 @@ func observeEnvironmentBindings(environment string, release environmentRelease, 
 				container := deploymentplan.Map(value)
 				bound := environmentContainerBindings{Name: deploymentplan.String(container["name"]), Fields: map[string]any{}}
 				for key, image := range release.Images {
+					if strings.HasPrefix(key, "LKE_ZAMMAD_") {
+						continue
+					}
 					if environmentImageRepository(image.Reference) == environmentImageRepository(deploymentplan.String(container["image"])) {
 						if bound.ImageKey != "" && release.Images[bound.ImageKey].Reference != image.Reference {
 							return b, errors.New("consumer image has ambiguous release roles")

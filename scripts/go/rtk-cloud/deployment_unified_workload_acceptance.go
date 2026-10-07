@@ -48,10 +48,11 @@ func verifyEnvironmentTargetWorkloads(ctx context.Context, plan *deploymentplan.
 		live[deploymentplan.ID(object)] = object
 	}
 	controllers, counts := map[string]deploymentplan.Object{}, map[string]int{}
+	completedJobs, verifiedJobs := map[string]deploymentplan.Object{}, map[string]bool{}
 	var health []deploymentplan.Object
 	for _, resource := range plan.Resources {
 		kind := deploymentplan.String(resource.Desired["kind"])
-		if resource.Action == "retire" || !keySet("Deployment", "StatefulSet", "DaemonSet", "Pod", "Job")[kind] {
+		if resource.Action == "retire" || !keySet("Deployment", "StatefulSet", "DaemonSet", "Pod", "Job", "CronJob")[kind] {
 			continue
 		}
 		actual := live[resource.ID]
@@ -59,6 +60,9 @@ func verifyEnvironmentTargetWorkloads(ctx context.Context, plan *deploymentplan.
 		if actual == nil || !deploymentplan.Matches(resource.Desired, actual) || deploymentplan.String(meta["uid"]) == "" || meta["deletionTimestamp"] != nil || resource.UID != "" && resource.UID != meta["uid"] {
 			return targetWorkloadBlocker(resource.ID, "actual workload does not match its planned owner and target")
 		}
+		if kind == "CronJob" {
+			continue
+		} // Scheduled templates must match; no future execution is invented.
 		if kind == "Job" {
 			complete := false
 			for _, value := range certIssuerObjectList(deploymentplan.Map(actual["status"])["conditions"]) {
@@ -73,6 +77,7 @@ func verifyEnvironmentTargetWorkloads(ctx context.Context, plan *deploymentplan.
 			if !complete {
 				return targetWorkloadBlocker(resource.ID, "planned one-time Job has not completed")
 			}
+			completedJobs[resource.ID] = actual
 			continue
 		}
 		controllers[resource.ID] = actual
@@ -99,6 +104,16 @@ func verifyEnvironmentTargetWorkloads(ctx context.Context, plan *deploymentplan.
 			return targetWorkloadBlocker("", "Pod controller UID lineage cannot be verified")
 		}
 		controller := controllers[owner]
+		if job := completedJobs[owner]; job != nil {
+			if deploymentplan.Map(pod["status"])["phase"] != "Succeeded" {
+				continue
+			}
+			if err := verifyEnvironmentPodContainers(ctx, job, pod, cache, imageDigests); err != nil {
+				return targetWorkloadBlocker(owner, "completed Job startup and immutable image evidence could not be verified")
+			}
+			verifiedJobs[owner] = true
+			continue
+		}
 		if controller == nil {
 			continue
 		} // Completed/periodic Job Pods are not application replicas.
@@ -110,6 +125,11 @@ func verifyEnvironmentTargetWorkloads(ctx context.Context, plan *deploymentplan.
 		}
 		counts[owner]++
 		health = append(health, pod)
+	}
+	for id := range completedJobs {
+		if !verifiedJobs[id] {
+			return targetWorkloadBlocker(id, "completed Job has no successful Pod runtime image evidence")
+		}
 	}
 	for id, controller := range controllers {
 		spec, status := deploymentplan.Map(controller["spec"]), deploymentplan.Map(controller["status"])
@@ -213,7 +233,7 @@ func verifyEnvironmentPodContainers(ctx context.Context, controller, pod deploym
 				return errors.New("missing current container")
 			}
 			state := deploymentplan.Map(running["state"])
-			if field == "initContainers" && container["restartPolicy"] != "Always" {
+			if field == "initContainers" && container["restartPolicy"] != "Always" || controller["kind"] == "Job" {
 				terminated := deploymentplan.Map(state["terminated"])
 				if len(terminated) == 0 || terminated["exitCode"] != float64(0) || state["waiting"] != nil || state["running"] != nil {
 					return errors.New("init not successfully completed")

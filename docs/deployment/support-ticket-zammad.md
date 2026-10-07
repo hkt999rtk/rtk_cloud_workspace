@@ -2,6 +2,39 @@
 
 Status: dev deployed and enabled on 2026-09-28; staging and production remain disabled.
 
+## Existing environment updates
+
+Zammad remains enabled in Dev. Its complete resources now enter the same
+preflight and deployment plan as the rest of the environment:
+
+```sh
+./scripts/check-deployment-preflight.sh --environment dev
+./scripts/deploy-environment.sh upgrade --environment dev --confirm video-cloud-dev --plan-sha256 <preflight-plan-sha256>
+```
+
+The common `architecture.env` maintains `ZAMMAD_CHART_VERSION`,
+`ZAMMAD_CHART_SHA256` and the seven `ZAMMAD_*_IMAGE` versions/digests.
+`zammad-values.yaml` maintains topology, storage sizes and existing Secret
+references. The official chart archive, including pinned subcharts, is maintained
+under `cloud_deploy/architectures/kubernetes/charts/`; preflight verifies its hash.
+Helm renders locally. The common executor admits and applies that exact target;
+use the deployment script for updates instead of running a parallel Helm upgrade.
+
+The support PostgreSQL and Redis image roles are independent of core PostgreSQL
+and Valkey. All application, provider, init and scheduled containers are pinned.
+Existing credential Secrets and bound PVCs retain their owners and data; a
+PostgreSQL major-version, immutable selector/service or claim-size change is an
+explicit migration blocker. The chart initialization Job runs after its data
+services and before application workloads. Its name binds the checked chart, values and Job spec hash;
+it is retained for acceptance. A later plan may retire only completed superseded
+initialization Jobs with checked UID/resourceVersion; pending or failed Jobs block.
+The scheduled reindex template is included and remains suspended by chart default.
+
+Renderer scratch lives only in the selected environment's
+`~/.config/rtk_cloud/<environment>/deployment/tmp/zammad-*`, with private directory
+and file permissions, and is removed on success/failure. Chart/values contents
+are part of the deployment input fence. Preflight writes no Kubernetes resources.
+
 ## Release and topology
 
 Use the official `zammad/zammad` Helm chart version **17.0.2**, with image
@@ -178,14 +211,14 @@ staging restore with this complete inventory and these checks has passed.
    feature is enabled, LKE applies policies that deny incoming traffic by
    default, permit pod traffic within the support namespace, and permit only
    Cloud Admin pods to reach `zammad-nginx:8080` across namespaces.
-4. Render then install with the repository values, using the official chart
-   repository URL `https://zammad.github.io/zammad-helm`:
+4. Use the common deployment workflow with the fixed official chart and
+   repository values after environment bootstrap prerequisites are complete.
+   For a fresh environment, select the same `--operation create` in preflight;
+   missing original Secrets or managed identities remain explicit stage blockers:
 
    ```sh
-   helm repo add zammad https://zammad.github.io/zammad-helm
-   helm repo update zammad
-   helm template zammad zammad/zammad --version 17.0.2 --namespace "$SUPPORT_NAMESPACE" -f cloud_deploy/architectures/kubernetes/zammad-values.yaml
-   helm upgrade --install zammad zammad/zammad --version 17.0.2 --namespace "$SUPPORT_NAMESPACE" -f cloud_deploy/architectures/kubernetes/zammad-values.yaml --wait
+   ./scripts/check-deployment-preflight.sh --environment <environment> --operation create
+   ./scripts/deploy-environment.sh create --environment <environment> --confirm <stack> --plan-sha256 <preflight-plan-sha256>
    ```
 
    `SUPPORT_NAMESPACE` is the environment's `${CLOUD_STACK_NAME}-support`.
