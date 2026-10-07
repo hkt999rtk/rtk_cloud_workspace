@@ -378,6 +378,23 @@ func TestUnifiedPreflightPreparesBucketBeforeCompilationAndStopsOnFailure(t *tes
 	}
 }
 
+func TestUnifiedPreflightReportsUnsupportedKubeconfigWithoutPrivatePayload(t *testing.T) {
+	_, deps, writes := unifiedCLIProfile(t, "dev")
+	kube := frozenKubernetesFixture(t)
+	user := kube["users"].([]any)[0].(map[string]any)["user"].(map[string]any)
+	user["as-user-extra"] = map[string]any{"private-extra": []any{"never-public-impersonation"}}
+	raw, _ := json.Marshal(kube)
+	deps.Compile = func(context.Context, deploymentConfig, string) (*compiledEnvironmentDeployment, error) {
+		_, err := newEnvironmentKubernetesBackend(string(raw), "dev")
+		return nil, err
+	}
+	var out bytes.Buffer
+	err := runUnifiedEnvironmentDeploymentWithDependencies(context.Background(), "preflight", []string{"--environment", "dev"}, &out, &out, deps)
+	if err != exitCode(1) || *writes != 0 || !strings.Contains(out.String(), "deployment.access.kubeconfig") || strings.Contains(out.String(), "never-public-impersonation") || strings.Contains(out.String(), "private-frozen-token") {
+		t.Fatal("preflight lost the safe authentication cause or leaked private data", err)
+	}
+}
+
 func TestPublicDeploymentHasNoLegacyPKIRenderer(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	if err != nil {

@@ -102,9 +102,14 @@ func newEnvironmentKubernetesBackend(raw, environment string) (environmentKubern
 			return environmentKubernetesBackend{}, errors.New("deployment.access: external or insecure Kubernetes transport inputs cannot be frozen")
 		}
 	}
+	// Provider kubeconfigs can serialize an unused impersonation map. An empty
+	// map adds no authentication input; nonempty impersonation stays unsupported.
+	if extra, ok := user["as-user-extra"].(map[string]any); ok && len(extra) == 0 {
+		delete(user, "as-user-extra")
+	}
 	for field := range user {
 		if !keySet("token", "client-certificate-data", "client-key-data")[field] {
-			return environmentKubernetesBackend{}, errors.New("deployment.access: embed selected credentials; external files, refresh commands and authentication providers are not qualified inputs")
+			return environmentKubernetesBackend{}, &deploymentplan.Blocker{ID: "deployment.access.kubeconfig", Cause: "selected kubeconfig contains unsupported authentication or impersonation fields", Next: "use embedded token or client certificate/key credentials; external credential files, refresh commands, authentication providers and nonempty impersonation settings cannot be frozen for this plan"}
 		}
 	}
 	token := deploymentplan.String(user["token"])

@@ -59,7 +59,7 @@ func TestEnvironmentKubernetesIdentityUsesPrivateFrozenSelectedContext(t *testin
 }
 
 func TestEnvironmentKubernetesIdentityRejectsUnfencedOrAmbiguousInputs(t *testing.T) {
-	for _, mode := range []string{"http", "no-context", "no-ca", "external-ca", "proxy", "insecure", "external-token", "exec", "partial-client-key", "two-methods", "duplicate-context", "duplicate-cluster", "duplicate-user"} {
+	for _, mode := range []string{"http", "no-context", "no-ca", "external-ca", "proxy", "insecure", "external-token", "exec", "impersonation-extra", "impersonation-user", "malformed-extra", "partial-client-key", "two-methods", "duplicate-context", "duplicate-cluster", "duplicate-user"} {
 		t.Run(mode, func(t *testing.T) {
 			c := frozenKubernetesFixture(t)
 			cluster := c["clusters"].([]any)[0].(map[string]any)["cluster"].(map[string]any)
@@ -81,6 +81,12 @@ func TestEnvironmentKubernetesIdentityRejectsUnfencedOrAmbiguousInputs(t *testin
 				user["tokenFile"] = "/private/other-token"
 			case "exec":
 				user["exec"] = map[string]any{"command": "must-not-execute"}
+			case "impersonation-extra":
+				user["as-user-extra"] = map[string]any{"scope": []any{"other-identity"}}
+			case "impersonation-user":
+				user["as"] = "other-identity"
+			case "malformed-extra":
+				user["as-user-extra"] = "invalid"
 			case "partial-client-key":
 				user["client-certificate-data"] = "partial"
 			case "two-methods":
@@ -108,6 +114,25 @@ func TestEnvironmentKubernetesIdentityRejectsUnfencedOrAmbiguousInputs(t *testin
 	raw, _ := yaml.Marshal(c)
 	if _, err := newEnvironmentKubernetesBackend(string(raw), "dev"); err != nil {
 		t.Fatal("embedded client identity denied", err)
+	}
+}
+
+func TestEnvironmentKubernetesIdentityNormalizesEmptyProviderImpersonationMap(t *testing.T) {
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		t.Run(environment, func(t *testing.T) {
+			c := frozenKubernetesFixture(t)
+			raw, _ := yaml.Marshal(c)
+			baseline, err := newEnvironmentKubernetesBackend(string(raw), environment)
+			if err != nil {
+				t.Fatal(err)
+			}
+			c["users"].([]any)[0].(map[string]any)["user"].(map[string]any)["as-user-extra"] = map[string]any{}
+			raw, _ = yaml.Marshal(c)
+			backend, err := newEnvironmentKubernetesBackend(string(raw), environment)
+			if err != nil || string(backend.KubeconfigContent) != string(baseline.KubeconfigContent) {
+				t.Fatal("empty provider field changed the selected API identity", err)
+			}
+		})
 	}
 }
 
