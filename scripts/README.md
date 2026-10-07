@@ -34,7 +34,12 @@ scripts/deploy-environment.sh test \
 
 Replace `dev` and the confirmation stack with `staging` or `prod`; do not copy or fork the script. `test` removes cloud and DNS resources owned by the stack after success or failure and retains sanitized evidence.
 
-Non-secret generated state lives under Git-ignored `cloud_env/<environment>/runtime/`.
+Deterministic secret-free resolved configuration lives under Git-ignored
+`cloud_env/<environment>/runtime/`. Deployment-generated operational state,
+including receipts, provider allocations, reports, tokens, keys and certificates,
+uses `~/.config/rtk_cloud/<environment>/` with 0700 directories and 0600 files.
+Use common environment path helpers; configuration directories are not an
+operational state fallback.
 Kubeconfigs, service secrets, private keys and Device credentials live in the
 environment [SecretStore](../docs/secret-store.md), not the workspace runtime.
 LKE cluster, pool, and resource IDs are adapter-private runtime state. Shared
@@ -101,7 +106,7 @@ the Go checker once, preserving its exit status.
 
 | Entry | Purpose and timing |
 | --- | --- |
-| `check-deployment-preflight.sh` / `deployment check --phase pre-deploy` | Before default whole-environment create/upgrade: desired configuration, tools, canonical local credentials, selected provider/input checks and safe CertIssuer ingress migration prerequisites. Does not require the old deployment's Secret mirrors or PKI health to pass. |
+| `check-deployment-preflight.sh` / `deployment check --phase pre-deploy` | Before an existing-environment update: one immutable release and complete maintained target, configuration/ownership, release provenance, access/capacity/admission, retained runtime Secret/PKI bindings, schema prerequisites and required network paths. All six required update gates must pass. |
 | `check-deployment-health.sh` / `deployment check --phase post-deploy` | After deployment: current local credentials, Kubernetes Secret mirrors, all environment workload health, live PKI and required public mTLS/ingress consistency, plus selected provider/input checks. Use application acceptance separately. |
 
 For existing Pod image updates, add `--operation image-upgrade` and supply all
@@ -115,15 +120,17 @@ data or credentials; they are part of read-only **cloud** qualification. The sam
 operation on the health entry verifies that selected images actually reached the
 Pods. See [Pod image-upgrade criteria](../docs/deployment-operations.md#existing-pod-image-upgrade-go--no-go)
 for scope, required access and commands. Feature activation/data acceptance remain
-separate. The default full-deployment path uses the reviewed private managed plan when configured for Dev/Staging; otherwise it retains the legacy renderer boundary.
+separate. The default update uses the same maintained v2 renderer in dev,
+staging and prod. A private schema-1 plan cannot select another renderer or
+bypass a required gate.
 
 Both named shell entries enforce read-only mode. `--fast` reduces check depth
 within the selected phase; it does not select a phase. The JSON report records
 `phase`, `read_only` and scope. Each fixed-purpose wrapper rejects contrary
 `--phase` arguments and any false spelling of `--read-only`; it cannot silently
-become the other checker. A default full-deployment pre-deploy PASS does not certify live health or provider
-write ability, and a post-deploy PASS does not perform complete release
-qualification. Neither entry deploys, bootstraps or repairs the environment.
+become the other checker. Complete pre-deploy GO applies to the exact checked plan. Runtime PKI and
+required dependencies must pass, while final target health is verified after
+rollout. A standalone post-deploy PASS does not approve a future release plan. Neither entry deploys, bootstraps or repairs the environment.
 
 For compatibility, `check-deployment-credentials.sh` and `deployment check`
 without `--phase` remain **post-deploy** checks. Their standard mode retains the
@@ -134,9 +141,9 @@ select post-deploy live health gates and are rejected in the pre-deploy phase.
 
 ```sh
 scripts/check-deployment-preflight.sh --environment staging --fast \
-  --report /tmp/staging-pre-deploy-check.json
+  --report "$HOME/.config/rtk_cloud/staging/deployment/reports/staging-pre-deploy-check.json"
 scripts/check-deployment-health.sh --environment staging --fast \
-  --report /tmp/staging-post-deploy-check.json
+  --report "$HOME/.config/rtk_cloud/staging/deployment/reports/staging-post-deploy-check.json"
 # Select the phase explicitly when invoking Go directly:
 go run ./scripts/go/rtk-cloud -- deployment check --phase pre-deploy --environment staging --fast
 # Registry checks for an affected image; use an actual reviewed CI digest:

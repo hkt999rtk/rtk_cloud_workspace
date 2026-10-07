@@ -13,8 +13,8 @@ workflow in [the fixed scope](deployment-readiness-standard.md#fixed-script-deli
 preflight, deployment of that same checked target, and required rollout health
 verification. Actual environment checks and deployment are run by the operator.
 Fresh bootstrap and Production custody/backup/restore activation work are separate
-from this delivery. The incomplete prototype entries described below are not yet
-a completed two-script handoff.
+from this delivery. Use the existing-environment update instructions below for
+the two-script handoff; fresh-create material is a separate runbook.
 
 The deployment wrapper builds and runs the native CLI so exit codes 0/1/2 are
 preserved, including when called outside the workspace. Its temporary directory
@@ -61,7 +61,7 @@ qualification has been completed by these documentation/code changes.
 | One-time environment rehearsal | `deployment test` | Creates resources and removes the owned resources at the end |
 | Remove an environment | `deployment remove` | Deletes resources owned by that stack |
 
-Non-secret generated controller runtime is located at:
+Deterministically resolved, secret-free configuration is located at:
 
 ```text
 cloud_env/<environment>/runtime
@@ -172,10 +172,10 @@ another explicit manifest. `deployment plan` prints a sanitized plan, not GO.
 
 ```sh
 go run ./scripts/go/rtk-cloud -- deployment plan \
-  --environment staging --operation upgrade --release /reviewed/release.json
+  --environment staging --operation upgrade --release "$HOME/.config/rtk_cloud/staging/deployment/release.json"
 scripts/check-deployment-preflight.sh \
-  --environment staging --release /reviewed/release.json \
-  --report /private/controller/staging-preflight.json
+  --environment staging --release "$HOME/.config/rtk_cloud/staging/deployment/release.json" \
+  --report "$HOME/.config/rtk_cloud/staging/deployment/reports/staging-preflight.json"
 ```
 
 Review the reported plan SHA-256. Every required gate must PASS; FAIL, ERROR,
@@ -233,12 +233,12 @@ does not replace a separately required PKI schema migration qualification.
 scripts/check-deployment-preflight.sh --environment staging \
   --operation image-upgrade --checks ghcr,mounts \
   --manifest "$HOME/.config/rtk_cloud/staging/deployment-readiness-candidates/current/plan.json" \
-  --image "$RELEASE_IMAGE" --report /tmp/staging-image-upgrade.json
+  --image "$RELEASE_IMAGE" --report "$HOME/.config/rtk_cloud/staging/deployment/reports/staging-image-upgrade.json"
 # After the authorized rollout, require the same exact candidate images:
 scripts/check-deployment-health.sh --environment staging \
   --operation image-upgrade --checks ghcr,mounts \
   --manifest "$HOME/.config/rtk_cloud/staging/deployment-readiness-candidates/current/plan.json" \
-  --image "$RELEASE_IMAGE" --report /tmp/staging-image-upgrade-health.json
+  --image "$RELEASE_IMAGE" --report "$HOME/.config/rtk_cloud/staging/deployment/reports/staging-image-upgrade-health.json"
 ```
 
 Keep plans containing runtime configuration private (0700 directories/0600 files)
@@ -257,10 +257,10 @@ and when to use it before building or contacting external systems:
 ```sh
 # Before a whole-environment create/upgrade: desired inputs and safe migration prerequisites.
 scripts/check-deployment-preflight.sh --environment staging --fast \
-  --report /tmp/staging-pre-deploy-check.json
+  --report "$HOME/.config/rtk_cloud/staging/deployment/reports/staging-pre-deploy-check.json"
 # After deployment: current Kubernetes mirrors, live PKI and deployed routing.
 scripts/check-deployment-health.sh --environment staging --fast \
-  --report /tmp/staging-post-deploy-check.json
+  --report "$HOME/.config/rtk_cloud/staging/deployment/reports/staging-post-deploy-check.json"
 # Direct Go entry points:
 go run ./scripts/go/rtk-cloud -- deployment check --phase pre-deploy --environment staging --fast
 go run ./scripts/go/rtk-cloud -- deployment check --phase post-deploy --environment staging --fast
@@ -272,9 +272,11 @@ go run ./scripts/go/rtk-cloud -- deployment credentials-check --environment stag
 The shell builds the checker once and preserves its 0/1/2 exit status.
 Both named scripts are read-only. Complete preflight uses the same compiler and
 resource bodies as create/upgrade; no schema-1 file selects a different renderer.
-A production protection profile adds HA, custody/escrow and recovery/lifecycle
-qualification to the same required-gate engine. Missing implementation or evidence
-blocks every environment consistently. `--fast` reports required gates SKIPPED.
+Existing-environment upgrades use the same six update gates for dev, staging and
+prod, as defined in [the readiness standard](deployment-readiness-standard.md).
+Fresh bootstrap and Production activation are separate operations. Missing update
+evidence blocks execution. `--fast` reports required gates SKIPPED and cannot
+produce full upgrade GO.
 
 Use `deployment credentials-check` for a scoped provider/image/TLS check; full
 preflight does not accept `--checks`, ad hoc `--image` or `--manifest` inputs in
@@ -304,8 +306,10 @@ Temporary read failures retry once within the remaining budget. On cancellation,
 created canaries receive up to 30s of additional cleanup time, with cleanup
 failure reported separately. See the [checker reference](../scripts/README.md#existing-environment-deployment-checks)
 for exact limits and retry conditions.
-`--report PATH` writes sanitized JSON with mode 0600 to an existing parent
-directory. Schema version 1 records `phase`, `read_only`, scope, coverage and per-check status/code,
+Complete preflight accepts reports only under
+`~/.config/rtk_cloud/<environment>/deployment/reports/`; it creates private 0700
+directories and writes sanitized JSON with mode 0600. Use the same environment
+store for health reports. The scoped health report schema records `phase`, `read_only`, scope, coverage and per-check status/code,
 resource, required flag, duration, attempts, dependencies, message, next action
 and evidence time/level. Final statuses are `PASS`, `FAIL`, `ERROR`, `BLOCKED`,
 and `SKIPPED`; required incomplete checks prevent success.
@@ -330,7 +334,7 @@ workload specs. Use the explicit migration utility to create a review candidate:
 
 ```sh
 go run ./scripts/go/rtk-cloud -- deployment adopt-managed-state \
-  --environment staging --release /reviewed/release.json
+  --environment staging --release "$HOME/.config/rtk_cloud/staging/deployment/release.json"
 ```
 
 This read-only cluster inventory writes a new 0600
@@ -379,8 +383,8 @@ dated settings are migration inputs, not live acknowledgment evidence.
 Execution requires the exact plan SHA-256 from complete preflight:
 
 ```sh
-go run ./scripts/go/rtk-cloud -- deployment upgrade \
-  --environment staging --release /reviewed/release.json \
+./scripts/deploy-environment.sh upgrade \
+  --environment staging --release "$HOME/.config/rtk_cloud/staging/deployment/release.json" \
   --confirm video-cloud-staging --plan-sha256 REVIEWED_SHA256
 ```
 
@@ -390,7 +394,11 @@ server-dry-run body is the write body. Private rollback and partial execution
 journals are retained under the same environment SecretStore. No automatic
 rollback overwrites concurrent changes or restores schema/PKI state blindly.
 Complete post-deploy acceptance is required before recording completion.
-Current missing capability adapters keep this entry NO-GO; no upgrade has been
+Missing required evidence or an incompatible storage/identity/schema change
+keeps this entry NO-GO with repair instructions. In particular, an existing
+file-storage OpenBao deployment requires its separately reviewed matched storage
+migration before selecting the shared Raft target; ordinary rollout never
+initializes replacement CA or seal state. No environment upgrade has been
 performed by this implementation work.
 
 ## CertIssuer Route Convergence
@@ -509,9 +517,9 @@ bootstrap lineage. Use the shared create operation:
 
 ```sh
 go run ./scripts/go/rtk-cloud -- deployment plan \
-  --environment staging --operation create --release /reviewed/release.json
+  --environment staging --operation create --release "$HOME/.config/rtk_cloud/staging/deployment/release.json"
 scripts/check-deployment-preflight.sh \
-  --environment staging --operation create --release /reviewed/release.json
+  --environment staging --operation create --release "$HOME/.config/rtk_cloud/staging/deployment/release.json"
 ```
 
 Fresh creation requires staged infrastructure qualification, then Kubernetes
