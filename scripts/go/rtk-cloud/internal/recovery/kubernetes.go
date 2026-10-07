@@ -27,10 +27,7 @@ func QuietExec(ctx context.Context, argv []string, in io.Reader, out io.Writer) 
 	}
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Stdin = in
-	// Keep io.Copy from bypassing bounded Write implementations through an
-	// embedded bytes.Buffer's ReaderFrom optimization.
-	cmd.Stdout = struct{ io.Writer }{out}
-	cmd.WaitDelay = time.Second
+	cmd.Stdout = out
 	cmd.Stderr = io.Discard
 	if err := cmd.Run(); err != nil {
 		return errors.New("subprocess failed (output suppressed)")

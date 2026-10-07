@@ -67,7 +67,7 @@ func TestCompleteCompilerUsesMaintainedCatalogAndFencesNativeSnapshot(t *testing
 				}
 			}
 			// Original Account Manager state is a retained dependency, not a template.
-			secret := accountBootstrapRetirementFixture(environment)
+			secret := deploymentplan.Object{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": "account-manager-runtime", "namespace": bindings.Stack + "-account-manager", "uid": "original-runtime", "resourceVersion": "1", "labels": map[string]any{"rtk.realtek.com/stack": bindings.Stack}}, "data": map[string]any{"DATABASE_URL": base64.StdEncoding.EncodeToString([]byte("postgres://runtime@postgresql." + bindings.Stack + "-platform.svc.cluster.local/rtk_account_manager"))}}
 			for key := range deploymentplan.Map(secret["data"]) {
 				if strings.HasPrefix(key, "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_") {
 					delete(deploymentplan.Map(secret["data"]), key)

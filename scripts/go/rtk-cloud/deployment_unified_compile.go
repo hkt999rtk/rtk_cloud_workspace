@@ -17,14 +17,13 @@ var environmentRenderMutex sync.Mutex
 var activeRuntimeSecretSnapshot map[string]string
 
 type compiledEnvironmentDeployment struct {
-	Plan                *deploymentplan.Plan
-	Release             environmentRelease
-	Bindings            environmentIdentityBindings
-	Store               secretStore
-	Backend             environmentKubernetesBackend
-	Configuration       deploymentConfig
-	ReleasePath         string
-	BootstrapSeedSHA256 string
+	Plan          *deploymentplan.Plan
+	Release       environmentRelease
+	Bindings      environmentIdentityBindings
+	Store         secretStore
+	Backend       environmentKubernetesBackend
+	Configuration deploymentConfig
+	ReleasePath   string
 }
 
 type environmentDeploymentSnapshot struct {
@@ -277,9 +276,6 @@ func compileEnvironmentDeployment(ctx context.Context, cfg deploymentConfig, ope
 	}
 	plan.StorageSHA256 = deploymentplan.Digest(storage)
 	compiled := &compiledEnvironmentDeployment{Plan: plan, Release: release, Bindings: bindings, Store: store, Backend: backend, Configuration: cfg, ReleasePath: releasePath}
-	if seed := snapshot.Secrets["platform-admin"]; seed != "" {
-		compiled.BootstrapSeedSHA256 = deploymentplan.Digest(strings.TrimSpace(seed))
-	}
 	if err := compiled.Fence(ctx, plan); err != nil {
 		return nil, err
 	}

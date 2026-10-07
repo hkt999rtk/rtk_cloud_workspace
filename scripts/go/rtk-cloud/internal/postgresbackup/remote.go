@@ -33,16 +33,15 @@ type Attempt struct {
 }
 
 type Drill struct {
-	Version          int              `json:"version"`
-	Environment      string           `json:"environment"`
-	Stack            string           `json:"stack"`
-	ClusterID        string           `json:"cluster_id"`
-	BackupID         string           `json:"backup_id"`
-	SystemIdentifier string           `json:"system_identifier"`
-	PostgresImage    string           `json:"postgres_image"`
-	FinishedAt       time.Time        `json:"finished_at"`
-	Success          bool             `json:"success"`
-	PITR             *PITRObservation `json:"pitr,omitempty"`
+	Version          int       `json:"version"`
+	Environment      string    `json:"environment"`
+	Stack            string    `json:"stack"`
+	ClusterID        string    `json:"cluster_id"`
+	BackupID         string    `json:"backup_id"`
+	SystemIdentifier string    `json:"system_identifier"`
+	PostgresImage    string    `json:"postgres_image"`
+	FinishedAt       time.Time `json:"finished_at"`
+	Success          bool      `json:"success"`
 }
 
 type Status struct {
@@ -393,15 +392,6 @@ func listCompleted(ctx context.Context, client objectStore, c Config, keys []str
 func validDrill(c Config, d Drill) error {
 	if d.Version != Version || d.Environment != c.Environment || d.Stack != c.Stack || d.ClusterID != c.ClusterID || !recovery.Name.MatchString(d.BackupID) || d.SystemIdentifier != c.Source.SystemIdentifier || !imageDigest.MatchString(d.PostgresImage) || d.FinishedAt.IsZero() {
 		return errors.New("invalid restore drill evidence")
-	}
-	if d.PITR != nil {
-		p := d.PITR
-		if p.Target.At.IsZero() || p.Target.Timeline == 0 || p.Target.MaxWALBytes <= 0 || p.Target.MaxWALBytes > c.MaxPlaintextBytes || p.StartedAt.IsZero() || p.FinishedAt != d.FinishedAt || p.FinishedAt.Before(p.StartedAt) || p.RTOms != p.FinishedAt.Sub(p.StartedAt).Milliseconds() {
-			return errors.New("invalid PITR restore measurements")
-		}
-		if d.Success && (p.ReplayTime.IsZero() || p.ReplayTime.After(p.Target.At) || !nativeReplayLSN.MatchString(p.ReplayLSN) || p.RTOms <= 0 || p.RTOms > (4*time.Hour).Milliseconds()) {
-			return errors.New("PITR success lacks native target and bounded restore evidence")
-		}
 	}
 	return nil
 }

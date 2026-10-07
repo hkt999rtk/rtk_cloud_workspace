@@ -4,7 +4,7 @@ Status: active procedure; live environment qualification required before product
 
 Owner: rtk_cloud_workspace (orchestration); service owners (dataset and recovery checks).
 
-Last reviewed: 2026-10-06.
+Last reviewed: 2026-08-31.
 
 Classification: source for cross-repository operations. The
 [Platform PKI contract](../repos/rtk_cloud_contracts_doc/platform_pki.md#14-backup-escrow-and-disaster-recovery)
@@ -20,9 +20,7 @@ inventory/checks configure the adapter; archive contents never supply commands.
 For scheduled PostgreSQL-only protection, use
 [Daily PostgreSQL Backup and Restore](postgres-backup-restore.md). Its separate
 `postgres-physical` format captures the entire PostgreSQL instance online with
-native physical backup tools. Its suspended daily schedule alone supplies no
-continuous WAL protection. The new authenticated WAL/PITR helpers require an
-explicit archive configuration and isolated native drill; they do not replace
+native physical backup tools. It has no continuous WAL/PITR and does not replace
 the matched cross-system consistency, escrow or reconciliation required here.
 The shared operation lock prevents overlap with this maintenance procedure.
 
@@ -50,7 +48,7 @@ objects, release images and external audit history.
 | --- | --- | --- |
 | Account Manager, Billing and Video Cloud PostgreSQL | Custom-format dumps for every application database; globals per server. | Same PostgreSQL major version and release; roles, permissions, schema, rows, ownership, billing and outbox consistency checks. |
 | Zammad PostgreSQL, when support tickets are enabled | A separate globals dump and custom-format dump of `zammad_production`; its PostgreSQL database also stores ticket attachments. | Restore with the matching Zammad and PostgreSQL releases; verify a ticket, public reply, internal note, attachment bytes and Brand Cloud boundary through Admin before reopening traffic. |
-| OpenBao file storage or Raft | File storage uses an offline dedicated PVC archive; the Raft adapter snapshots the exact original cluster through its pinned TLS API. Both participate in the matched capture/write fence. | Original seal/unseal access, issuer IDs, private keys, policies, auth configuration, trust chains and revocation reconciliation. Raft restore uses the original seal and normal restore API, never force or a replacement Root. Actual HA/migration/restore qualification remains required. |
+| OpenBao file storage | Offline archive of the entire dedicated PVC, in the same backup set as PostgreSQL. | Original seal/unseal access, issuer IDs, private keys, policies, auth configuration, trust chains and revocation reconciliation. Never replace a lost issuer with a newly generated Root and call it recovery. |
 | Frontend SQLite | Offline PVC archive including `connectplus.db`, `analytics.db` and any remaining WAL sidecars. | `PRAGMA integrity_check` on both databases, lead/admin and analytics checks. |
 | Cloud Admin SQLite | Offline PVC archive and explicitly listed database files. | Integrity check and local Admin configuration/session behavior. Account Manager remains the identity authority. |
 | Durable Redis/Valkey | Explicit literal key-prefix inventory, serialized with DUMP/RESTORE; no TTL allowed. | Shadow documents, named indexes, tombstones and notification outbox survive together; verify version semantics and pending delivery. |
@@ -110,9 +108,7 @@ to run backup/restore.
 
 Version 1 deliberately rejects or does not implement:
 
-- OpenBao HA/quorum and file-to-Raft migration qualification, HSM restoration
-  and managed/external database adapters; the original-seal Raft snapshot API
-  adapter alone is not evidence of those capabilities;
+- OpenBao Raft/HA, HSM restoration and managed/external database adapters;
 - custom PostgreSQL tablespaces, non-simple role names in globals restoration,
   cross-version upgrades and cross-environment cloning;
 - Redis Cluster, expiring keys inside durable prefixes and provider-managed
@@ -349,31 +345,6 @@ Opt-in integration tests use a temporary Unix-socket Redis and a uniquely named,
 network-isolated Docker PostgreSQL 16 fixture; they do not pull images or touch
 deployed resources. Missing local dependencies produce explicit skips.
 
-The native OpenBao drill requires an explicitly selected immutable image that is
-already present locally; it never pulls images or reads environment credentials.
-Resolve the available image ID, then run from the workspace:
-
-```sh
-RTK_OPENBAO_NATIVE_TEST_IMAGE=sha256:<local-image-id> \
-  go test ./scripts/go/rtk-cloud/internal/recovery \
-  -run '^TestNativeOpenBaoOriginalSealMigrationHAAndRestore$' -count=1 -timeout=8m -v
-```
-
-It creates and removes a unique Docker network, dynamic loopback ports, private
-temporary transport credentials and dedicated data/audit volumes. It exercises
-real 5/3 Shamir initialization, two-share rejection, offline file-to-Raft migration
-without destination initialization, original seal and cluster identity, three
-voting TLS peers, leader failure, peer restart, age-encrypted snapshot capture and
-normal original-seal restore. It checks the original fixture CA and a revoked
-leaf's CRL before migration and after restore, and verifies the active declarative
-audit device. Fixture CA creation is isolated test setup; it never replaces an
-environment Root or seal.
-
-These tests prove native primitives used by the adapters. Live provider placement,
-custody delivery, independent escrow, administrator recovery, all-domain
-distrust/audit reconciliation, continuous snapshot scheduling and the complete
-application RPO/RTO contract still require separate environment qualification.
-
 Before production use, rehearse the **whole configured set** on isolated
 same-environment recovery infrastructure: OpenBao file/PVC restoration and
 original unseal, existing-leaf validation/test issuance, PostgreSQL and SQLite
@@ -382,7 +353,6 @@ storage readback, interrupted operations and safety-backup rollback. Record
 measured downtime/RPO/RTO and all exclusions. Unit tests and local database
 drills are not evidence that LKE/OpenBao or a remote bucket has been qualified.
 
-The old [restore-staging-runtime.sh](../scripts/restore-staging-runtime.sh) is
-retired and copies no state. Follow the environment-store handoff in
-[deployment operations](deployment-operations.md#take-over-an-existing-environment).
-Operational state must not be restored into `cloud_env`.
+The old [restore-staging-runtime.sh](../scripts/restore-staging-runtime.sh) copies
+only an allowlisted **non-secret controller runtime**. It is not database,
+OpenBao, certificate, SecretStore or cloud disaster recovery.

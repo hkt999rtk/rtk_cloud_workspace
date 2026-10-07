@@ -357,9 +357,6 @@ func rtkSecretCatalog() []secretCatalogEntry {
 }
 
 func supportSecretRequired(store secretStore, id string) bool {
-	if id == "platform-admin" {
-		return !accountBootstrapCredentialsRetired(store)
-	}
 	if billingLifecycleSecretID(id) {
 		return billingLifecycleSecretRequired(store, id)
 	}

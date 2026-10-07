@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -17,17 +16,7 @@ import (
 )
 
 func (m *postgresBackupManager) drill(ctx context.Context, id, drillID, identity string) (resultErr error) {
-	return m.drillWithPITR(ctx, id, drillID, identity, nil)
-}
-
-func (m *postgresBackupManager) drillWithPITR(ctx context.Context, id, drillID, identity string, pitr *postgresbackup.PITRTarget) (resultErr error) {
 	c := m.Config
-	started := time.Now().UTC()
-	if pitr != nil {
-		if err := c.validatePITRTarget(*pitr); err != nil {
-			return err
-		}
-	}
 	if !recovery.Name.MatchString(id) {
 		return errors.New("drill requires a valid --id")
 	}
@@ -95,43 +84,19 @@ func (m *postgresBackupManager) drillWithPITR(ctx context.Context, id, drillID, 
 	defer func() {
 		_, _ = m.kube(context.WithoutCancel(ctx), nil, "-n", namespace, "delete", "secret", postgresBackupName+"-restore-credentials", "--ignore-not-found")
 	}()
-	objects := postgresBackupDrillObjectsWithPITR(c, namespace, id, secretData, pitr)
+	objects := postgresBackupDrillObjects(c, namespace, id, secretData)
 	if err = m.apply(ctx, objects...); err != nil {
 		return err
 	}
 	result := postgresbackup.Drill{Version: 1, Environment: c.Environment, Stack: c.Stack, ClusterID: c.Worker.ClusterID, BackupID: id, SystemIdentifier: c.Worker.Source.SystemIdentifier, PostgresImage: c.Worker.Source.PostgresImage, Success: false}
-	if pitr != nil {
-		result.PITR = &postgresbackup.PITRObservation{Target: *pitr, StartedAt: started}
-	}
 	err = m.waitDrill(ctx, namespace)
 	if err == nil {
 		logs, logErr := m.kube(ctx, nil, "-n", namespace, "logs", "job/"+postgresBackupName+"-drill", "-c", "drill")
 		if logErr != nil || json.Unmarshal(bytes.TrimSpace(logs), &result) != nil || !result.Success || result.Environment != c.Environment || result.Stack != c.Stack || result.ClusterID != c.Worker.ClusterID || result.BackupID != id || result.SystemIdentifier != c.Worker.Source.SystemIdentifier || result.PostgresImage != c.Worker.Source.PostgresImage {
 			err = errors.New("drill completion evidence does not match selected backup")
 		}
-		if err == nil && pitr != nil {
-			observation := result.PITR
-			if observation == nil || observation.Target != *pitr || observation.ReplayTime.IsZero() || observation.ReplayTime.After(pitr.At) || observation.ReplayLSN == "" || observation.StartedAt.Before(started.Add(-5*time.Second)) || observation.FinishedAt.Before(observation.StartedAt) || observation.FinishedAt.After(time.Now().UTC().Add(5*time.Second)) || observation.RTOms <= 0 || observation.RTOms > (4*time.Hour).Milliseconds() {
-				err = errors.New("PITR completion evidence differs from the requested native recovery target or objective")
-			}
-		}
-		if err == nil && pitr == nil && result.PITR != nil {
-			err = errors.New("base restore drill returned unexpected PITR evidence")
-		}
 	}
 	result.FinishedAt = time.Now().UTC()
-	if pitr != nil {
-		if result.PITR == nil {
-			result.PITR = &postgresbackup.PITRObservation{Target: *pitr}
-		}
-		// Controller timing includes scheduling, download, replay and checks.
-		// Native worker timing alone cannot qualify the full restore objective.
-		result.PITR.StartedAt, result.PITR.FinishedAt = started, result.FinishedAt
-		result.PITR.RTOms = result.FinishedAt.Sub(started).Milliseconds()
-		if result.PITR.RTOms > (4*time.Hour).Milliseconds() && err == nil {
-			err = errors.New("PITR exceeded the four-hour complete restore objective")
-		}
-	}
 	result.Success = err == nil
 	recordDrill := m.RecordDrill
 	if recordDrill == nil {
@@ -171,10 +136,6 @@ func postgresBackupDrillNamespace(c postgresBackupDeployment, id string) (string
 }
 
 func postgresBackupDrillObjects(c postgresBackupDeployment, namespace, id string, secretData map[string]string) []map[string]any {
-	return postgresBackupDrillObjectsWithPITR(c, namespace, id, secretData, nil)
-}
-
-func postgresBackupDrillObjectsWithPITR(c postgresBackupDeployment, namespace, id string, secretData map[string]string, pitr *postgresbackup.PITRTarget) []map[string]any {
 	meta := func(name string) map[string]any {
 		v := postgresBackupMetadata(c, name)
 		v["namespace"] = namespace
@@ -193,9 +154,6 @@ func postgresBackupDrillObjectsWithPITR(c postgresBackupDeployment, namespace, i
 	container := spec["containers"].([]any)[0].(map[string]any)
 	container["name"] = "drill"
 	container["args"] = []string{"postgres-backup-worker", "drill", "--config", "/etc/postgres-backup/config.json", "--id", id, "--identity", "/run/postgres-restore/identity.agekey"}
-	if pitr != nil {
-		container["args"] = []string{"postgres-backup-worker", "pitr-drill", "--config", "/etc/postgres-backup/config.json", "--id", id, "--identity", "/run/postgres-restore/identity.agekey", "--recovery-time", pitr.At.UTC().Format(time.RFC3339Nano), "--recovery-timeline", strconv.FormatUint(uint64(pitr.Timeline), 10), "--max-wal-bytes", strconv.FormatInt(pitr.MaxWALBytes, 10)}
-	}
 	container["env"] = postgresBackupCredentialEnv(postgresBackupName + "-restore-credentials")
 	container["volumeMounts"] = []any{map[string]string{"name": "scratch", "mountPath": "/backup", "subPath": "data"}, map[string]any{"name": "config", "mountPath": "/etc/postgres-backup", "readOnly": true}, map[string]any{"name": "credentials", "mountPath": "/run/postgres-restore", "readOnly": true}, map[string]any{"name": "tmp", "mountPath": "/tmp"}}
 	spec["volumes"] = []any{map[string]any{"name": "tmp", "emptyDir": map[string]any{"medium": "Memory", "sizeLimit": "64Mi"}}, map[string]any{"name": "scratch", "persistentVolumeClaim": map[string]string{"claimName": postgresBackupName + "-scratch"}}, map[string]any{"name": "config", "configMap": map[string]string{"name": postgresBackupName + "-config"}}, map[string]any{"name": "credentials", "secret": map[string]any{"secretName": postgresBackupName + "-restore-credentials", "defaultMode": 288, "items": []any{map[string]string{"key": "identity.agekey", "path": "identity.agekey"}}}}}

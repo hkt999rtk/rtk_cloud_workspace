@@ -54,9 +54,7 @@ jobs:
           RTK_POSTGRES_BACKUP_LARGE_INTEGRATION: '1'
         run: |
           docker pull postgres:16-alpine
-          docker pull quay.io/openbao/openbao:2.5.5
-          export RTK_OPENBAO_NATIVE_TEST_IMAGE="$(docker image inspect --format '{{.Id}}' quay.io/openbao/openbao:2.5.5)"
-          go test -timeout=20m -count=1 ./rtk-cloud/internal/postgresbackup ./rtk-cloud/internal/recovery ./rtk-cloud/internal/deploymentplan ./internal/cloudmonitor ./rtk-cloud
+          go test -timeout=20m -count=1 ./rtk-cloud/internal/postgresbackup ./rtk-cloud/internal/recovery ./internal/cloudmonitor ./rtk-cloud
       - uses: docker/setup-buildx-action@v3
       - name: Resolve immutable source image
         id: images
@@ -88,9 +86,7 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           load: ${{ github.event_name == 'pull_request' }}
           tags: ${{ steps.images.outputs.runner }}
-          build-args: |
-            POSTGRES_IMAGE=${{ steps.images.outputs.postgres }}
-            SOURCE_REVISION=${{ github.sha }}
+          build-args: POSTGRES_IMAGE=${{ steps.images.outputs.postgres }}
       - name: Write source and runner image evidence
         env:
           SOURCE_IMAGE: ${{ steps.images.outputs.postgres }}
@@ -100,9 +96,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .artifacts/postgres-backup
-          jq -n --arg source "$SOURCE_IMAGE" --arg tag "$RUNNER_TAG" --arg digest "$RUNNER_DIGEST" --arg commit "$GITHUB_SHA" --arg repo "$GITHUB_REPOSITORY" --arg run "$GITHUB_RUN_ID" --arg attempt "$GITHUB_RUN_ATTEMPT" '{version:1,repository:$repo,run_id:$run,run_attempt:$attempt,source_postgres_image:$source,runner_tag:$tag,runner_digest:$digest,source_commit:$commit}' > .artifacts/postgres-backup/images.json
+          jq -n --arg source "$SOURCE_IMAGE" --arg tag "$RUNNER_TAG" --arg digest "$RUNNER_DIGEST" --arg commit "$GITHUB_SHA" '{version:1,source_postgres_image:$source,runner_tag:$tag,runner_digest:$digest,source_commit:$commit}' > .artifacts/postgres-backup/images.json
       - uses: actions/upload-artifact@v4
         with:
           name: postgres-backup-runner-images
-          overwrite: true
           path: .artifacts/postgres-backup/images.json

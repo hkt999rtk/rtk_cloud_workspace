@@ -136,9 +136,6 @@ func (f *postgresControllerFake) run(ctx context.Context, args []string, in io.R
 			return err
 		case strings.Contains(sql, "ALTER ROLE"):
 			f.roleChanged = true
-			if !strings.Contains(sql, "NOINHERIT") || !strings.Contains(sql, "GRANT pg_monitor TO rtk_postgres_backup") {
-				f.t.Fatal("archive observation privileges are missing or inherited by ordinary backup sessions")
-			}
 			if strings.Contains(command, "PASSWORD") {
 				f.t.Fatal("credential-bearing SQL placed in argv")
 			}

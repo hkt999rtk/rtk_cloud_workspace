@@ -7,7 +7,7 @@ Classification: source for PostgreSQL-only backup operations.
 
 Owner: `rtk_cloud_workspace` operations; service owners validate restored data.
 
-Last reviewed: 2026-10-06.
+Last reviewed: 2026-10-03.
 
 ## Scope and decision
 
@@ -20,10 +20,8 @@ roles and PostgreSQL data in that instance belong to the same capture. The sourc
 continues serving application reads and writes.
 
 Streamed WAL covers the backup window and makes that full backup recoverable.
-The daily workflow alone does not enable a continuous WAL archive. The new
-authenticated `archive-wal`/`restore-wal` helpers and isolated `pitr-drill` use an
-explicitly configured continuous archive; installing the daily CronJob does not
-install or qualify it. Each successful daily backup remains a separate recovery point;
+This workflow does not retain a continuous WAL archive or support restoring to an
+arbitrary later time. Each successful daily backup is a separate recovery point;
 a missed job increases possible data loss. The initial recovery objective is the
 last completed daily capture, and actual recovery time must be measured in a drill.
 
@@ -92,9 +90,6 @@ Record and review:
 - `schedule` defaults to `0 3 * * *`; only one numeric minute and hour with
   `* * *` day/month/weekday fields are accepted. `time_zone` defaults to
   `Asia/Shanghai` and must be an IANA time zone.
-- The unified catalog additionally requires explicit `schedule_enabled` intent.
-  It does not copy live CronJob settings or silently reset them. `true` still
-  requires actual schedule/restore/performance qualification before execution.
 - The backup transfer rate and selected namespace/resource permissions. The
   rate caps the base-backup transfer, so it is not a limit on every source I/O or
   WAL byte. Monitor the database and API while choosing it.
@@ -263,102 +258,6 @@ namespace private and verify PVC, PV and provider-volume removal as part of the
 cleanup evidence. Apply the same checks when retiring the scratch PVC after its
 retained retry artifacts are no longer needed. With a `Retain` class, PVC removal
 alone does not establish that the underlying database files were removed.
-
-### Continuous WAL and time-point drill
-
-The worker provides `archive-wal` with an exact `--wal-pgdata`, `--wal-name`
-and `--wal-source`. It verifies PostgreSQL 16's actual source system identifier
-and native WAL path before encrypting. Each segment/history file is bound to
-the environment, stack, cluster, original PostgreSQL system ID and filename.
-The immutable encrypted object is read back before a completion record is
-published. Failed upload/readback never acknowledges archive completion.
-Retries may reuse an identical committed segment but cannot replace it with
-different bytes. Continuous archive does not acquire the base-backup lock.
-
-Production configuration must install the matched runner in the source Pod,
-enable PostgreSQL `archive_mode`, bound `archive_timeout`, reference the private
-archive config/credentials and retain sufficient durable WAL/spool space.
-The common compiler now includes a maintained archive installer, source
-`archive_mode=on`/`archive_timeout=60s`, durable encrypted spool on the original
-PostgreSQL claim, backup config/Secret, access policy, scratch PVC, base-backup CronJob and WAL
-monitor CronJob.
-The source and installer are pinned to the selected PostgreSQL/runner release;
-runtime credentials come from the exact hashed private snapshot. Initialization
-of the dedicated database role in the common execution stages and full
-public-entry qualification remain in progress. Do not claim live WAL protection from rendering
-or installing only part of this catalog.
-The worker's `check-wal --config <mounted-config>` performs a fixed read-only
-native query with the dedicated role. It checks the original physical system ID,
-primary state, `archive_mode=on`, an `archive_timeout` at most 60 seconds, source
-clock/observation freshness, a native segment archived within 15 minutes, and no
-newer unresolved archiver failure. It then reads the exact environment/system
-remote completion and verifies the complete encrypted object's checksum. An old
-base-backup/upload status does not pass this check. The backup role remains `NOINHERIT` with granted `pg_monitor` membership; the
-probe explicitly switches only its session to that role. It uses a temporary
-0600 credential file and removes it.
-
-Idle environments also need an explicit maintained archive heartbeat. The
-read-only probe never switches WAL or writes a heartbeat to create its own
-freshness evidence. Missing/stale remote completion, inaccessible state or
-corrupt ciphertext fails. Native isolated PostgreSQL tests cover the real query,
-remote read-back and PITR; freshness alone does not establish measured RPO,
-security-state reconciliation or production qualification. The shared `rtk-postgres-backup-wal-monitor` CronJob runs every minute with
-`Forbid` concurrency and a 180-second deadline. It explicitly calls
-`heartbeat-wal`, waits 65 seconds for archiving, then runs the independent
-read-only `check-wal`. Both schedules remain suspended until qualification.
-Monitoring uses bounded temporary scratch, no source/backup PVC and no Kubernetes
-API token. The heartbeat uses PostgreSQL's native
-[`pg_logical_emit_message`](https://www.postgresql.org/docs/16/functions-admin.html),
-without a business table or schema migration. It emits only for the configured
-original primary system ID with archiving enabled and bounded timeout. A failed
-heartbeat or remote verification makes the Job fail; preflight cannot emit a
-heartbeat to manufacture freshness. Actual role/configuration installation and
-live freshness must still be verified before GO.
-
-WAL/history retention requires a reviewed policy preserving every protected
-base backup's recovery chain; the daily full-backup prune does not delete WAL.
-
-For an environment whose continuous archive is already configured and verified:
-
-```sh
-go run ./scripts/go/rtk-cloud -- postgres-restore pitr-drill \
-  --environment staging --config cloud_env/staging/postgres-backup.json \
-  --confirm-environment staging --confirm-stack video-cloud-staging \
-  --id "$BACKUP_ID" --drill-id "$DRILL_ID" --identity "$RESTORE_IDENTITY" \
-  --recovery-time "$EXACT_RFC3339_TARGET" --recovery-timeline "$TIMELINE" \
-  --max-wal-bytes "$REVIEWED_WAL_CACHE_LIMIT"
-```
-
-Use an explicit timestamp with UTC offset, a reviewed timeline and measured WAL
-cache headroom in addition to downloaded ciphertext and restored data. The
-target must follow the authenticated base backup. Missing archive, corrupt or
-foreign WAL, invalid ancestry or unavailable target time fails the drill.
-There is no implicit `latest` timeline selection and no promotion on success.
-
-The fresh isolated Job uses read-only storage credentials, no source PVC or
-source database credential, no service-account token, and no inbound route.
-Native verification replaces inherited runtime configuration with Unix-socket
-only recovery, no source replication/archive hooks or preload libraries, and
-read-only startup. It observes PostgreSQL's recovery pause, last replay timestamp
-and LSN, executes maintained data checks and stops the target even after a check
-failure. Configuration changes after preparation prevent startup. Decryption
-or staging alone never records restore success.
-
-The result records the exact target, native replay time/LSN and measured restore
-time. Controller timing additionally includes Job scheduling/download/validation;
-the four-hour objective must hold for that complete interval. This is PostgreSQL
-data evidence, not complete production recovery approval. Production RPO requires
-an independently observed fault-time/last recovered commit witness; the age of an
-operator-entered target is not an RPO measurement. Independently reconcile
-revocation, suspension, Root distrust and audit history before traffic or
-issuance can reopen, as required by the
-[readiness standard](deployment-readiness-standard.md#bootstrap-and-qualification).
-
-Local native fixture evidence on 2026-10-06 verifies actual encrypted WAL replay:
-a transaction before the target is restored, a later one is excluded, the target
-remains in read-only recovery and is stopped. The fixture uses a disposable
-network-isolated PostgreSQL container and an in-memory encrypted-object store;
-it is not live provider, HA, custody or production RPO qualification.
 
 ## Monitoring and acceptance
 
