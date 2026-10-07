@@ -68,13 +68,17 @@ func defaultUnifiedDeploymentDependencies() unifiedDeploymentDependencies {
 					if err := c.Fence(ctx, p); err != nil {
 						return deploymentplan.GateEvidence{}, err
 					}
-					if err := c.Backend.CheckManagedServerRegistry(ctx, p); err != nil {
+					window, err := environmentPKIValidityWindow(c.Configuration.Values)
+					if err != nil {
 						return deploymentplan.GateEvidence{}, err
 					}
-					if err := c.Backend.CheckManagedClientRegistry(ctx, p); err != nil {
+					if err := c.Backend.CheckManagedServerRegistry(ctx, p, window); err != nil {
 						return deploymentplan.GateEvidence{}, err
 					}
-					return deploymentplan.GateEvidence{}, &deploymentplan.Blocker{ID: "deployment.pki", Cause: "original managed server and Service client key/chain/subject/purpose/current-validity and registry/issuer admission passed; Secret identities, installed CRLs, consumer acknowledgments and rollout validity margin remain incomplete", Next: "connect reviewed CRL paths, complete domain consumer policies and upgrade window to native deployment inspection; complete remaining identity qualification for the same target before authorizing deployment"}
+					if err := c.Backend.CheckManagedClientRegistry(ctx, p, window); err != nil {
+						return deploymentplan.GateEvidence{}, err
+					}
+					return deploymentplan.GateEvidence{}, &deploymentplan.Blocker{ID: "deployment.pki", Cause: "original managed server and Service client key/chain/subject/purpose/upgrade-window validity and registry/issuer admission passed; Secret identities, installed CRLs, consumer acknowledgments remain incomplete", Next: "connect reviewed CRL paths and complete domain consumer policies to native deployment inspection; complete remaining identity qualification for the same target before authorizing deployment"}
 				},
 				"deployment.release": func(ctx context.Context, p *deploymentplan.Plan) (deploymentplan.GateEvidence, error) {
 					if err := c.Fence(ctx, p); err != nil {
@@ -91,6 +95,12 @@ func defaultUnifiedDeploymentDependencies() unifiedDeploymentDependencies {
 			if accept == nil {
 				return &deploymentplan.Blocker{ID: "deployment.post-deploy", Cause: "complete acceptance is unavailable", Next: "install and qualify all required target, PKI, endpoint and business acceptance before execution"}
 			}
+			window, err := environmentPKIValidityWindow(c.Configuration.Values)
+			if err != nil {
+				return err
+			}
+			ctx, cancel := context.WithTimeout(ctx, time.Duration(window)*time.Second)
+			defer cancel()
 			if err := c.Plan.Execute(ctx, c.Backend, sha, c.Store.Root, qualify, c.Fence, func(ctx context.Context, p *deploymentplan.Plan) error {
 				if err := c.Backend.CheckTargetWorkloads(ctx, p); err != nil {
 					return err
@@ -165,13 +175,14 @@ func parseUnifiedDeploymentOptions(action string, args []string, out io.Writer) 
 }
 
 type unifiedDeploymentReport struct {
-	Schema      string                      `json:"schema"`
-	Environment string                      `json:"environment"`
-	Operation   string                      `json:"operation"`
-	Decision    string                      `json:"decision"`
-	Plan        *deploymentplan.Summary     `json:"plan,omitempty"`
-	Gates       []deploymentplan.GateResult `json:"gates,omitempty"`
-	Completed   bool                        `json:"completed"`
+	Schema                string                      `json:"schema"`
+	Environment           string                      `json:"environment"`
+	Operation             string                      `json:"operation"`
+	Decision              string                      `json:"decision"`
+	Plan                  *deploymentplan.Summary     `json:"plan,omitempty"`
+	Gates                 []deploymentplan.GateResult `json:"gates,omitempty"`
+	Completed             bool                        `json:"completed"`
+	ValidityWindowSeconds int64                       `json:"validity_window_seconds,omitempty"`
 }
 
 func runUnifiedEnvironmentDeploymentWithDependencies(parent context.Context, action string, args []string, out, diagnostics io.Writer, deps unifiedDeploymentDependencies) error {
@@ -222,6 +233,9 @@ func runUnifiedEnvironmentDeploymentWithDependencies(parent context.Context, act
 		}
 		report.Gates = []deploymentplan.GateResult{row}
 		return emitUnifiedDeploymentReport(out, diagnostics, o.Report, report, exitCode(1))
+	}
+	if window, err := environmentPKIValidityWindow(c.Configuration.Values); err == nil {
+		report.ValidityWindowSeconds = window
 	}
 	summary := c.Plan.Summary()
 	report.Plan = &summary

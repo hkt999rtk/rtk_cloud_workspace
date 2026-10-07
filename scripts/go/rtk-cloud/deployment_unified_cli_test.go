@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 )
@@ -21,7 +22,7 @@ func unifiedCLIProfile(t *testing.T, environment string) (*compiledEnvironmentDe
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := &compiledEnvironmentDeployment{Plan: plan, Configuration: deploymentConfig{Environment: environment, Values: map[string]string{"CLOUD_STACK_NAME": stack, "DEPLOYMENT_PROTECTION_PROFILE": map[bool]string{true: "production", false: "standard"}[environment == "prod"]}}}
+	c := &compiledEnvironmentDeployment{Plan: plan, Configuration: deploymentConfig{Environment: environment, Values: map[string]string{"CLOUD_STACK_NAME": stack, "DEPLOYMENT_UPGRADE_WINDOW_SECONDS": "1800", "DEPLOYMENT_PROTECTION_PROFILE": map[bool]string{true: "production", false: "standard"}[environment == "prod"]}}}
 	writes := 0
 	deps := unifiedDeploymentDependencies{
 		Resolve: func(string, string, string) (deploymentConfig, error) { return c.Configuration, nil },
@@ -77,7 +78,7 @@ func TestUnifiedPublicFlowUsesSamePlanAndRequiredGatesForAllEnvironments(t *test
 				if err != nil || json.Unmarshal(raw, &report) != nil {
 					t.Fatal("missing report")
 				}
-				if report.Plan == nil || report.Plan.PlanSHA256 != c.Plan.SHA256() || strings.Contains(string(raw), "never-public") || strings.Contains(out.String(), "never-public") {
+				if report.ValidityWindowSeconds != 1800 || report.Plan == nil || report.Plan.PlanSHA256 != c.Plan.SHA256() || strings.Contains(string(raw), "never-public") || strings.Contains(out.String(), "never-public") {
 					t.Fatal("changed plan or leaked desired Secret")
 				}
 				info, _ := os.Stat(path)
@@ -208,5 +209,51 @@ func TestUnifiedReportsRetainSanitizedAcceptanceResourceAndRepair(t *testing.T) 
 	err := runUnifiedEnvironmentDeploymentWithDependencies(context.Background(), "upgrade", []string{"--environment", "dev", "--release", "/reviewed/release.json", "--confirm", "video-cloud-dev", "--plan-sha256", c.Plan.SHA256()}, &out, &diagnostics, deps)
 	if err == nil || !strings.Contains(out.String(), "deployment.post-deploy.workloads") || !strings.Contains(out.String(), "Deployment/video-cloud-dev-application/application") || !strings.Contains(out.String(), "repair the original planned runtime") || !strings.Contains(out.String(), "completed=false") {
 		t.Fatal("acceptance repair lost", err, out.String())
+	}
+}
+
+func TestDefaultUnifiedExecutionUsesReviewedValidityWindowAndCallerDeadline(t *testing.T) {
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		for _, mode := range []string{"window", "earlier-caller", "missing-window"} {
+			t.Run(environment+"/"+mode, func(t *testing.T) {
+				c, _, _ := unifiedCLIProfile(t, environment)
+				c.Configuration.Values["DEPLOYMENT_UPGRADE_WINDOW_SECONDS"] = "1800"
+				if mode == "missing-window" {
+					delete(c.Configuration.Values, "DEPLOYMENT_UPGRADE_WINDOW_SECONDS")
+				}
+				duration := time.Hour
+				if mode == "earlier-caller" {
+					duration = time.Minute
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), duration)
+				defer cancel()
+				parentDeadline, _ := ctx.Deadline()
+				called := false
+				stop := errors.New("qualification-stop")
+				start := time.Now()
+				err := defaultUnifiedDeploymentDependencies().Execute(ctx, c, c.Plan.SHA256(), func(ctx context.Context, _ *deploymentplan.Plan) error {
+					called = true
+					deadline, ok := ctx.Deadline()
+					if !ok || deadline.After(parentDeadline) || deadline.After(start.Add(1800*time.Second+time.Second)) {
+						t.Fatal("execution exceeds reviewed window or caller deadline")
+					}
+					if mode == "window" && deadline.Before(start.Add(1799*time.Second)) {
+						t.Fatal("reviewed window silently changed")
+					}
+					return stop
+				}, func(context.Context, *compiledEnvironmentDeployment) error {
+					t.Fatal("acceptance ran after failed qualification")
+					return nil
+				})
+				if mode == "missing-window" {
+					var block *deploymentplan.Blocker
+					if called || !errors.As(err, &block) || block.ID != "deployment.pki.validity-window" {
+						t.Fatal("missing window reached execution", err)
+					}
+				} else if !called || !errors.Is(err, stop) {
+					t.Fatal("fenced qualification not reached", err)
+				}
+			})
+		}
 	}
 }

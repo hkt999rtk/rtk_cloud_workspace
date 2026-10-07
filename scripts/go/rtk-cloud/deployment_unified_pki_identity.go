@@ -5,33 +5,38 @@ import (
 	"errors"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 )
 
-type environmentServerIdentityPolicy struct{ State, Domain, Subject, Root, Names string }
+type environmentServerIdentityPolicy struct{ State, Domain, Subject, Root, Names, Database string }
 
 // Reuse the shipped read-only identity inspector. It checks the original key
 // pair, pinned chain, exact server DNS/purpose and current validity without
 // exporting a private key or creating identity/lock files. Registry admission,
 // CRLs, client identities and candidate startup remain separate qualifications.
 func (b environmentKubernetesBackend) CheckManagedServerIdentities(ctx context.Context, plan *deploymentplan.Plan) error {
-	return b.checkManagedIdentityStates(ctx, plan, false, false)
+	return b.checkManagedIdentityStates(ctx, plan, false, false, 0)
 }
 func (b environmentKubernetesBackend) CheckManagedClientIdentities(ctx context.Context, plan *deploymentplan.Plan) error {
-	return b.checkManagedIdentityStates(ctx, plan, true, false)
+	return b.checkManagedIdentityStates(ctx, plan, true, false, 0)
 }
 
-func (b environmentKubernetesBackend) CheckManagedServerRegistry(ctx context.Context, plan *deploymentplan.Plan) error {
-	return b.checkManagedIdentityStates(ctx, plan, false, true)
+func (b environmentKubernetesBackend) CheckManagedServerRegistry(ctx context.Context, plan *deploymentplan.Plan, window int64) error {
+	return b.checkManagedIdentityStates(ctx, plan, false, true, window)
 }
 
-func (b environmentKubernetesBackend) CheckManagedClientRegistry(ctx context.Context, plan *deploymentplan.Plan) error {
-	return b.checkManagedIdentityStates(ctx, plan, true, true)
+func (b environmentKubernetesBackend) CheckManagedClientRegistry(ctx context.Context, plan *deploymentplan.Plan, window int64) error {
+	return b.checkManagedIdentityStates(ctx, plan, true, true, window)
 }
 
-func (b environmentKubernetesBackend) checkManagedIdentityStates(ctx context.Context, plan *deploymentplan.Plan, clients, registry bool) error {
+func (b environmentKubernetesBackend) checkManagedIdentityStates(ctx context.Context, plan *deploymentplan.Plan, clients, registry bool, window int64) error {
+	if registry && (window <= 0 || window > int64((1<<63-1)/time.Second)) {
+		return validityWindowBlocker()
+	}
 	block := serverIdentityBlocker
 	if clients {
 		block = clientIdentityBlocker
@@ -75,9 +80,17 @@ func (b environmentKubernetesBackend) checkManagedIdentityStates(ctx context.Con
 		pod := environmentPKIPod(resource.Desired)
 		for _, value := range certIssuerObjectList(pod["containers"]) {
 			container := deploymentplan.Map(value)
-			policies, err := environmentServerIdentityPolicies(container)
+			resolved, recheckSettings, err := b.resolveIdentitySettings(ctx, plan, resource.Desired, container)
+			if err != nil {
+				var detail *deploymentplan.Blocker
+				if errors.As(err, &detail) {
+					return detail
+				}
+				return block(resource.ID, "public identity setting references are unavailable, changed or lack a planned original owner")
+			}
+			policies, err := environmentServerIdentityPolicies(resolved)
 			if clients {
-				policies, err = environmentClientIdentityPolicies(resource.Desired, container)
+				policies, err = environmentClientIdentityPolicies(resource.Desired, resolved)
 			}
 			if err != nil {
 				return block(resource.ID, "target managed host policy is unresolved, incomplete or ambiguous")
@@ -131,20 +144,17 @@ func (b environmentKubernetesBackend) checkManagedIdentityStates(ctx context.Con
 					} else {
 						args = append(args, "inspect-server", policy.State, policy.Domain, policy.Subject, policy.Root, policy.Names)
 					}
-					raw, err := b.command(ctx, nil, args...)
-					var state struct {
-						Subject     string `json:"subject"`
-						Fingerprint string `json:"fingerprint"`
-						PublicKey   string `json:"public_key_sha256"`
-						Root        string `json:"root_sha256"`
-						State       string `json:"state_sha256"`
-						Pending     *bool  `json:"pending"`
-						Registry    *bool  `json:"registry_verified,omitempty"`
+					if registry {
+						args = append(args, strconv.FormatInt(window, 10), policy.Database)
 					}
-					if err != nil || decodeEnvironmentJSON(raw, &state) != nil || state.Subject != policy.Subject || state.Root != policy.Root || !deploymentImageDigestPattern.MatchString("sha256:"+state.Fingerprint) || !deploymentImageDigestPattern.MatchString("sha256:"+state.PublicKey) || !deploymentImageDigestPattern.MatchString("sha256:"+state.State) || state.Pending == nil || *state.Pending || (registry && (state.Registry == nil || !*state.Registry)) {
+					raw, err := b.command(ctx, nil, args...)
+					if err != nil || validateEnvironmentIdentitySummary(raw, policy, registry, window) != nil {
 						return block(resource.ID, "original server identity inspection failed or reports incomplete/currently pending state")
 					}
 					checked++
+				}
+				if err := recheckSettings(ctx); err != nil {
+					return err
 				}
 				fresh, err := b.Read(ctx, deploymentplan.ID(object))
 				if err != nil || fresh == nil || deploymentplan.Map(fresh["metadata"])["uid"] != uid || deploymentplan.Map(fresh["metadata"])["deletionTimestamp"] != nil || !deploymentplan.Matches(deploymentplan.Projection(object), fresh) {
@@ -208,7 +218,7 @@ func environmentServerIdentityPolicies(container deploymentplan.Object) ([]envir
 			}
 			return deploymentplan.String(item["value"])
 		}
-		policy := environmentServerIdentityPolicy{State: deploymentplan.String(setting["value"]), Domain: domain, Subject: get("_HOST_NAME"), Root: get("_HOST_ROOT_SHA256"), Names: get("_HOST_DNS_NAMES")}
+		policy := environmentServerIdentityPolicy{State: deploymentplan.String(setting["value"]), Domain: domain, Subject: get("_HOST_NAME"), Root: get("_HOST_ROOT_SHA256"), Names: get("_HOST_DNS_NAMES"), Database: map[string]string{"CERT_ISSUER": "CERT_ISSUER_DB_DSN", "PKI": "PKI_DATABASE_URL", "EMQX_PKI": "PKI_DATABASE_URL", "OPENBAO_PKI": "PKI_DATABASE_URL"}[prefix]}
 		if setting["valueFrom"] != nil || domain == "" || !filepath.IsAbs(policy.State) || filepath.Clean(policy.State) != policy.State || policy.Subject == "" || !deploymentImageDigestPattern.MatchString("sha256:"+policy.Root) || policy.Names == "" {
 			return nil, errors.New("explicit canonical host policy required")
 		}
@@ -324,7 +334,13 @@ func environmentClientIdentityPolicies(object, container deploymentplan.Object) 
 		if prefix == "VIDEO_CLOUD_CONTROLLER" || prefix == "VIDEO_CLOUD_ACCOUNT_MANAGER" || prefix == "VIDEO_CLOUD_LOG_INGESTER_MQTT" {
 			rootSetting = settings[prefix+"_IDENTITY_ROOT_SHA256"]
 		}
-		policy := environmentServerIdentityPolicy{State: deploymentplan.String(setting["value"]), Subject: subject, Root: deploymentplan.String(rootSetting["value"])}
+		policy := environmentServerIdentityPolicy{State: deploymentplan.String(setting["value"]), Subject: subject, Root: deploymentplan.String(rootSetting["value"]), Database: "PKI_DATABASE_URL"}
+		if prefix == "CERT_ISSUER_SERVICE_CLIENT" {
+			policy.Database = "CERT_ISSUER_DB_DSN"
+		}
+		if strings.HasPrefix(prefix, "VIDEO_CLOUD_") {
+			policy.Database = "VIDEO_CLOUD_DB_DSN"
+		}
 		if setting["valueFrom"] != nil || rootSetting["valueFrom"] != nil || subject == "" || !filepath.IsAbs(policy.State) || filepath.Clean(policy.State) != policy.State || !deploymentImageDigestPattern.MatchString("sha256:"+policy.Root) {
 			return nil, errors.New("explicit maintained Service client policy required")
 		}
@@ -332,4 +348,34 @@ func environmentClientIdentityPolicies(object, container deploymentplan.Object) 
 	}
 	sort.Slice(policies, func(i, j int) bool { return policies[i].State < policies[j].State })
 	return policies, nil
+}
+
+func validityWindowBlocker() error {
+	return &deploymentplan.Blocker{ID: "deployment.pki.validity-window", Cause: "an explicit positive bounded upgrade validity window is required", Next: "maintain DEPLOYMENT_UPGRADE_WINDOW_SECONDS in the shared architecture or environment architecture override; select a window that covers the complete update and acceptance, then repeat complete preflight"}
+}
+
+func environmentPKIValidityWindow(values map[string]string) (int64, error) {
+	raw := values["DEPLOYMENT_UPGRADE_WINDOW_SECONDS"]
+	window, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || raw != strconv.FormatInt(window, 10) || window <= 0 || window > int64((1<<63-1)/time.Second) {
+		return 0, validityWindowBlocker()
+	}
+	return window, nil
+}
+
+func validateEnvironmentIdentitySummary(raw []byte, policy environmentServerIdentityPolicy, registry bool, window int64) error {
+	var state struct {
+		Subject     string `json:"subject"`
+		Fingerprint string `json:"fingerprint"`
+		PublicKey   string `json:"public_key_sha256"`
+		Root        string `json:"root_sha256"`
+		State       string `json:"state_sha256"`
+		Pending     *bool  `json:"pending"`
+		Registry    *bool  `json:"registry_verified,omitempty"`
+		Window      *int64 `json:"minimum_validity_seconds,omitempty"`
+	}
+	if decodeEnvironmentJSON(raw, &state) != nil || state.Subject != policy.Subject || state.Root != policy.Root || !deploymentImageDigestPattern.MatchString("sha256:"+state.Fingerprint) || !deploymentImageDigestPattern.MatchString("sha256:"+state.PublicKey) || !deploymentImageDigestPattern.MatchString("sha256:"+state.State) || state.Pending == nil || *state.Pending || (registry && (window <= 0 || state.Registry == nil || !*state.Registry || state.Window == nil || *state.Window != window)) {
+		return errors.New("original managed identity summary is incomplete or differs from reviewed policy")
+	}
+	return nil
 }

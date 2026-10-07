@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
@@ -104,7 +105,7 @@ func TestNativeManagedServerInspectionUsesRealCryptoAndOriginalOwners(t *testing
 		t.Fatalf("build maintained native inspector: %v\n%s", e, output)
 	}
 	for _, environment := range []string{"dev", "staging", "prod"} {
-		for _, mode := range []string{"valid", "expired", "wrong-san", "wrong-key", "wrong-root", "wrong-purpose", "pending", "partial-report", "bad-fingerprint", "private-report", "owner-replaced", "pod-drift", "controller-drift", "missing-pod", "foreign-parent", "wrong-claim", "missing-replica", "denied-exec", "inspector-unavailable", "ephemeral-state", "incomplete-policy", "stateful", "daemon", "mqtt", "openbao", "client", "client-expired", "client-wrong-key", "client-wrong-purpose", "client-pending", "registry-unavailable", "client-registry-unavailable", "cancelled"} {
+		for _, mode := range []string{"valid", "expired", "wrong-san", "wrong-key", "wrong-root", "wrong-purpose", "pending", "partial-report", "bad-fingerprint", "private-report", "owner-replaced", "pod-drift", "controller-drift", "missing-pod", "foreign-parent", "wrong-claim", "missing-replica", "denied-exec", "inspector-unavailable", "ephemeral-state", "incomplete-policy", "stateful", "daemon", "mqtt", "openbao", "client", "client-expired", "client-wrong-key", "client-wrong-purpose", "client-pending", "registry-unavailable", "client-registry-unavailable", "secret-root", "configmap-root", "envfrom-policy", "source-drift", "changed-root-source", "missing-source", "foreign-source", "envfrom-shadowed", "envfrom-latest", "client-secret-root", "client-configmap-root", "client-envfrom-policy", "cancelled"} {
 			t.Run(environment+"/"+mode, func(t *testing.T) {
 				store := makeIsolatedTestSecretStore(t, environment)
 				raw, e := json.Marshal(frozenKubernetesFixture(t))
@@ -182,6 +183,77 @@ func TestNativeManagedServerInspectionUsesRealCryptoAndOriginalOwners(t *testing
 					deploymentplan.Map(pod["metadata"])["ownerReferences"] = []any{deploymentplan.Object{"apiVersion": "apps/v1", "kind": "ReplicaSet", "name": "certissuer-selected", "uid": "replicaset-original", "controller": true}}
 				}
 				plan := &deploymentplan.Plan{Inputs: deploymentplan.Inputs{Environment: environment, Stack: "video-cloud-" + environment, Operation: "upgrade"}, Resources: []deploymentplan.Resource{{ID: deploymentplan.ID(controller), UID: "controller-original", Action: "retain", Desired: deploymentplan.Projection(controller), Baseline: deploymentplan.Projection(controller)}, {ID: deploymentplan.ID(claim), UID: "claim-original", Action: "retain", Desired: deploymentplan.Projection(claim), Baseline: deploymentplan.Projection(claim)}}}
+				referenceMode := strings.TrimPrefix(mode, "client-")
+				if keySet("secret-root", "configmap-root", "envfrom-policy", "source-drift", "changed-root-source", "missing-source", "foreign-source", "envfrom-shadowed", "envfrom-latest")[referenceMode] {
+					sourceKind := "Secret"
+					if referenceMode == "configmap-root" {
+						sourceKind = "ConfigMap"
+					}
+					rootSettingName := prefix + "_HOST_ROOT_SHA256"
+					if clients {
+						rootSettingName = prefix + "_ROOT_SHA256"
+					}
+					data := deploymentplan.Object{rootSettingName: pin, "DATABASE_URL": "private-diagnostic-canary"}
+					if sourceKind == "Secret" {
+						for key, text := range data {
+							data[key] = base64.StdEncoding.EncodeToString([]byte(text.(string)))
+						}
+					}
+					source := deploymentplan.Object{"apiVersion": "v1", "kind": sourceKind, "metadata": deploymentplan.Object{"name": "identity-policy", "namespace": namespace, "uid": "source-original", "resourceVersion": "1", "labels": deploymentplan.Object{"rtk.realtek.com/stack": plan.Stack}}, "data": data}
+					objects[deploymentplan.ID(source)] = source
+					planned := deploymentplan.Resource{ID: deploymentplan.ID(source), UID: "source-original", Action: "retain", Desired: deploymentplan.Projection(source), Baseline: deploymentplan.Projection(source)}
+					if mode == "changed-root-source" {
+						planned.Action = "update"
+						deploymentplan.Map(planned.Desired["data"])[rootSettingName] = base64.StdEncoding.EncodeToString([]byte(strings.Repeat("f", 64)))
+					}
+					if mode == "foreign-source" {
+						deploymentplan.Map(source["metadata"])["uid"] = "foreign-source"
+					}
+					if mode == "missing-source" {
+						delete(objects, deploymentplan.ID(source))
+					}
+					plan.Resources = append(plan.Resources, planned)
+					if referenceMode == "envfrom-policy" || referenceMode == "envfrom-shadowed" || referenceMode == "envfrom-latest" {
+						container["envFrom"] = []any{deploymentplan.Object{"secretRef": deploymentplan.Object{"name": "identity-policy"}}}
+						if referenceMode == "envfrom-latest" {
+							earlier := deploymentplan.Clone(source)
+							deploymentplan.Map(earlier["metadata"])["name"] = "identity-policy-earlier"
+							deploymentplan.Map(earlier["metadata"])["uid"] = "source-earlier"
+							deploymentplan.Map(earlier["data"])[rootSettingName] = base64.StdEncoding.EncodeToString([]byte(strings.Repeat("f", 64)))
+							objects[deploymentplan.ID(earlier)] = earlier
+							plan.Resources = append(plan.Resources, deploymentplan.Resource{ID: deploymentplan.ID(earlier), UID: "source-earlier", Action: "retain", Desired: deploymentplan.Projection(earlier), Baseline: deploymentplan.Projection(earlier)})
+							container["envFrom"] = []any{deploymentplan.Object{"secretRef": deploymentplan.Object{"name": "identity-policy-earlier"}}, deploymentplan.Object{"secretRef": deploymentplan.Object{"name": "identity-policy"}}}
+						}
+
+						if referenceMode == "envfrom-policy" || referenceMode == "envfrom-latest" {
+							for index, item := range env {
+								if deploymentplan.Map(item)["name"] == rootSettingName {
+									container["env"] = append(env[:index:index], env[index+1:]...)
+									break
+								}
+							}
+						} else {
+							deploymentplan.Map(source["data"])[rootSettingName] = base64.StdEncoding.EncodeToString([]byte(strings.Repeat("f", 64)))
+							plan.Resources[len(plan.Resources)-1].Desired = deploymentplan.Projection(source)
+							plan.Resources[len(plan.Resources)-1].Baseline = deploymentplan.Projection(source)
+						}
+					} else {
+						selector := "secretKeyRef"
+						if sourceKind == "ConfigMap" {
+							selector = "configMapKeyRef"
+						}
+						for _, item := range env {
+							if deploymentplan.Map(item)["name"] == rootSettingName {
+								delete(deploymentplan.Map(item), "value")
+								deploymentplan.Map(item)["valueFrom"] = deploymentplan.Object{selector: deploymentplan.Object{"name": "identity-policy", "key": rootSettingName}}
+							}
+						}
+					}
+					environmentPKIPod(controller)["containers"] = []any{deploymentplan.Clone(container)}
+					podSpec["containers"] = []any{container}
+					plan.Resources[0].Desired = deploymentplan.Projection(controller)
+					plan.Resources[0].Baseline = deploymentplan.Projection(controller)
+				}
 				switch mode {
 				case "owner-replaced":
 					deploymentplan.Map(controller["metadata"])["uid"] = "replacement"
@@ -208,6 +280,7 @@ if i>=0:
  elif ',' in kind: print(json.dumps({'items':[o for o in objects.values() if o['metadata'].get('namespace')==os.environ['RTK_NATIVE_IDENTITY_NS']]}))
  else:
   ns=args[args.index('--namespace')+1] if '--namespace' in args else ''; obj=objects.get(kind+'/'+ns+'/'+args[i+2])
+  if obj and kind in ['Secret','ConfigMap'] and mode=='source-drift' and os.path.exists(os.environ['RTK_NATIVE_IDENTITY_EXECUTED']): obj['metadata']['resourceVersion']='2'
   if obj and kind=='Pod' and mode=='pod-drift': obj['metadata']['uid']='replacement'
   if obj and kind in ['Deployment','StatefulSet','DaemonSet'] and mode=='controller-drift': obj['spec']['template']['spec']['containers'][0]['env'].append({'name':'changed','value':'parallel'})
   print(json.dumps(obj) if obj else '',end='')
@@ -218,7 +291,7 @@ else:
   open(os.environ['RTK_NATIVE_IDENTITY_EXECUTED'],'a').write('inspect-server\n')
   if mode=='inspector-unavailable': print('private-diagnostic-canary',file=sys.stderr);sys.exit(1)
   cmd=args[args.index('--')+1:]
-  if mode in ['registry-unavailable','client-registry-unavailable']: assert cmd[1] in ['inspect-registry','inspect-server-registry'] and cmd[2]==os.environ['RTK_NATIVE_IDENTITY_ENV']
+  if mode in ['registry-unavailable','client-registry-unavailable']: assert cmd[1] in ['inspect-registry','inspect-server-registry'] and cmd[2]==os.environ['RTK_NATIVE_IDENTITY_ENV'] and cmd[-2]=='1800' and cmd[-1]==('PKI_DATABASE_URL' if mode=='client-registry-unavailable' else 'CERT_ISSUER_DB_DSN')
   cmd[0]=os.environ['RTK_NATIVE_IDENTITY_INSPECTOR']; result=subprocess.run(cmd,capture_output=True)
   if result.returncode: sys.stderr.buffer.write(result.stderr);sys.exit(result.returncode)
   report=json.loads(result.stdout)
@@ -255,16 +328,18 @@ else:
 				}
 				if mode == "registry-unavailable" {
 					t.Setenv("PKI_DATABASE_URL", "")
-					e = backend.CheckManagedServerRegistry(ctx, plan)
+					t.Setenv("CERT_ISSUER_DB_DSN", "")
+					e = backend.CheckManagedServerRegistry(ctx, plan, 1800)
 				} else if mode == "client-registry-unavailable" {
 					t.Setenv("PKI_DATABASE_URL", "")
-					e = backend.CheckManagedClientRegistry(ctx, plan)
+					t.Setenv("CERT_ISSUER_DB_DSN", "")
+					e = backend.CheckManagedClientRegistry(ctx, plan, 1800)
 				} else if clients {
 					e = backend.CheckManagedClientIdentities(ctx, plan)
 				} else {
 					e = backend.CheckManagedServerIdentities(ctx, plan)
 				}
-				allowed := keySet("valid", "stateful", "daemon", "mqtt", "openbao", "client")[mode]
+				allowed := keySet("valid", "stateful", "daemon", "mqtt", "openbao", "client", "secret-root", "configmap-root", "envfrom-policy", "envfrom-shadowed", "envfrom-latest", "client-secret-root", "client-configmap-root", "client-envfrom-policy")[mode]
 				if (e == nil) != allowed {
 					t.Fatal("incorrect native server qualification", mode, e)
 				}
@@ -277,9 +352,14 @@ else:
 						t.Fatal("registry failure lost its stable check ID", b.ID)
 					}
 				}
-				if keySet("expired", "wrong-san", "wrong-key", "wrong-root", "wrong-purpose", "pending", "partial-report", "bad-fingerprint", "private-report", "client-expired", "client-wrong-key", "client-wrong-purpose", "client-pending", "registry-unavailable", "client-registry-unavailable")[mode] {
+				if keySet("expired", "wrong-san", "wrong-key", "wrong-root", "wrong-purpose", "pending", "partial-report", "bad-fingerprint", "private-report", "client-expired", "client-wrong-key", "client-wrong-purpose", "client-pending", "registry-unavailable", "client-registry-unavailable", "source-drift")[mode] {
 					if _, err := os.Stat(filepath.Join(directory, "executed")); err != nil {
 						t.Fatal("failure did not exercise the native inspector", err)
+					}
+				}
+				if keySet("missing-source", "foreign-source", "changed-root-source")[mode] {
+					if _, err := os.Stat(filepath.Join(directory, "executed")); !os.IsNotExist(err) {
+						t.Fatal("unqualified public setting source reached identity inspection")
 					}
 				}
 				if before != readTestFile(t, statePath) || plan.SHA256() != approved {
@@ -318,7 +398,14 @@ func TestClientPolicyMatchesMaintainedConsumerSubjectsAndRootAliases(t *testing.
 				settings := []any{deploymentplan.Object{"name": consumer.prefix + "_IDENTITY_STATE", "value": "/identity/client.json"}, deploymentplan.Object{"name": rootKey, "value": root}}
 				container := deploymentplan.Object{"env": settings}
 				policies, err := environmentClientIdentityPolicies(object, container)
-				if err != nil || len(policies) != 1 || policies[0].Subject != consumer.subject || policies[0].Root != root || policies[0].State != "/identity/client.json" {
+				database := "PKI_DATABASE_URL"
+				if consumer.prefix == "CERT_ISSUER_SERVICE_CLIENT" {
+					database = "CERT_ISSUER_DB_DSN"
+				}
+				if consumer.alias {
+					database = "VIDEO_CLOUD_DB_DSN"
+				}
+				if err != nil || len(policies) != 1 || policies[0].Database != database || policies[0].Subject != consumer.subject || policies[0].Root != root || policies[0].State != "/identity/client.json" {
 					t.Fatal("maintained client policy changed", err)
 				}
 				deploymentplan.Map(object["metadata"])["name"] = "unregistered-consumer"
@@ -329,6 +416,94 @@ func TestClientPolicyMatchesMaintainedConsumerSubjectsAndRootAliases(t *testing.
 				deploymentplan.Map(settings[1])["valueFrom"] = deploymentplan.Object{"secretKeyRef": deploymentplan.Object{"name": "unresolved", "key": "root"}}
 				if _, err := environmentClientIdentityPolicies(object, container); err == nil {
 					t.Fatal("unresolved root policy accepted")
+				}
+			})
+		}
+	}
+}
+
+func TestPKIUpgradeWindowIsMaintainedConfigurationAndHasNoImplicitDefault(t *testing.T) {
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		for _, mode := range []string{"valid", "missing", "zero", "negative", "overflow", "noncanonical", "private-canary"} {
+			t.Run(environment+"/"+mode, func(t *testing.T) {
+				value := map[string]string{"valid": "1800", "missing": "", "zero": "0", "negative": "-1", "overflow": "9223372036854775807", "noncanonical": "01800", "private-canary": "do-not-report-private-state"}[mode]
+				window, err := environmentPKIValidityWindow(map[string]string{"CLOUD_ENV_NAME": environment, "DEPLOYMENT_UPGRADE_WINDOW_SECONDS": value})
+				if (err == nil) != (mode == "valid") {
+					t.Fatalf("wrong upgrade window qualification: %v", err)
+				}
+				if mode == "valid" && window != 1800 {
+					t.Fatal("reviewed window changed")
+				}
+				if err != nil {
+					var block *deploymentplan.Blocker
+					if !errors.As(err, &block) || block.ID != "deployment.pki.validity-window" || block.Next == "" || strings.Contains(err.Error(), "do-not-report-private-state") {
+						t.Fatal("unsanitized/unactionable window failure", err)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestUpgradeWindowResolvesThroughSharedConfigurationAndEnvironmentOverride(t *testing.T) {
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		workspace := writeDeploymentFixture(t, environment, "lke")
+		architecture := filepath.Join(workspace, "cloud_deploy", "architectures", "kubernetes", "architecture.env")
+		original, err := os.ReadFile(architecture)
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeTestFile(t, architecture, string(original)+"\nDEPLOYMENT_UPGRADE_WINDOW_SECONDS=1800\n")
+		cfg, err := resolveDeploymentConfig(workspace, environment, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		window, err := environmentPKIValidityWindow(cfg.Values)
+		if err != nil || window != 1800 {
+			t.Fatal("shared window not selected", err)
+		}
+		writeTestFile(t, filepath.Join(workspace, "cloud_env", environment, "overrides", "architecture.env"), "DEPLOYMENT_UPGRADE_WINDOW_SECONDS=3600\n")
+		cfg, err = resolveDeploymentConfig(workspace, environment, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		window, err = environmentPKIValidityWindow(cfg.Values)
+		if err != nil || window != 3600 {
+			t.Fatal("reviewed environment override not selected", err)
+		}
+	}
+}
+
+func TestRegistrySummaryRequiresExactReviewedWindowAndPublicFields(t *testing.T) {
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		for _, mode := range []string{"valid", "missing-window", "wrong-window", "zero-window", "null-window", "missing-registry", "false-registry", "private-extra"} {
+			t.Run(environment+"/"+mode, func(t *testing.T) {
+				digest := strings.Repeat("a", 64)
+				policy := environmentServerIdentityPolicy{Subject: "host.video-cloud-" + environment + ".example.test", Root: digest}
+				report := map[string]any{"subject": policy.Subject, "root_sha256": digest, "fingerprint": digest, "public_key_sha256": digest, "state_sha256": digest, "pending": false, "registry_verified": true, "minimum_validity_seconds": int64(1800)}
+				switch mode {
+				case "missing-window":
+					delete(report, "minimum_validity_seconds")
+				case "wrong-window":
+					report["minimum_validity_seconds"] = int64(600)
+				case "zero-window":
+					report["minimum_validity_seconds"] = int64(0)
+				case "null-window":
+					report["minimum_validity_seconds"] = nil
+				case "missing-registry":
+					delete(report, "registry_verified")
+				case "false-registry":
+					report["registry_verified"] = false
+				case "private-extra":
+					report["private_key_pem"] = "do-not-report-private-state"
+				}
+				raw, err := json.Marshal(report)
+				if err != nil {
+					t.Fatal(err)
+				}
+				err = validateEnvironmentIdentitySummary(raw, policy, true, 1800)
+				if (err == nil) != (mode == "valid") || err != nil && strings.Contains(err.Error(), "do-not-report-private-state") {
+					t.Fatal("unqualified or unsanitized registry protocol", err)
 				}
 			})
 		}

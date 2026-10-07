@@ -119,13 +119,15 @@ every original owned replica using the frozen Kubernetes identity, verifies
 name-scoped Pod get/exec authorization, original PVC/PV bindings and actual Pod
 mounts, and rechecks Pod/controller ownership after inspection. The inspector
 checks key matching, pinned three-certificate chain, exact SANs, purpose and
-current validity without exporting private keys or creating state/lock files.
+the reviewed upgrade-window validity without exporting private keys or creating
+state/lock files. Basic state diagnostics retain the identity check IDs; complete
+registry inspection uses the registry check IDs described below.
 Pending state, missing/invalid public summary or owner drift is
 `deployment.pki.server-identity`. A new state, unavailable original inspector or
 unresolved policy needs bootstrap/candidate qualification; no state is initialized
 by preflight. Registry inspection additionally requires the original configured
 registry and formal issuance/issuer admission. Secret-backed leaves, installed
-revocation/CRL acknowledgments and rollout validity margin still require their
+revocation/CRL acknowledgments still require their
 own checks. These remaining gaps keep the complete PKI gate NO-GO even when
 server-state inspection succeeds.
 
@@ -139,8 +141,7 @@ pending state or failed inspection is `deployment.pki.client-identity`; it does
 not enroll, renew or replace state. Registry failures use stable
 `deployment.pki.server-registry`/`deployment.pki.client-registry` IDs and require
 explicit positive registry evidence; there is no basic-inspection fallback.
-Secret-backed identities, installed CRLs/acknowledgments and rollout validity
-margin remain required gaps,
+Secret-backed identities and installed CRLs/acknowledgments remain required gaps,
 so these observations do not pass the complete PKI gate.
 
 An old fault that blocks a necessary dependency blocks the plan. When the plan
@@ -483,7 +484,52 @@ these verify the explicit upgrade window, original installed Root/intermediate
 CRLs, exact current-digest domain consumer receipts and Root distrust in one
 read-only registry snapshot. Their native isolated tests cover dev/staging/prod
 and Service client plus Service/MQTT/OpenBao server domains. Connecting the full
-reviewed consumer inventory, original CRL mounts and configured upgrade window
+reviewed consumer inventory and original CRL mounts
 to the complete deployment adapter is still required; the adapter continues to
 report NO-GO for those missing qualifications. These local fixtures and commands
 do not prove actual environment readiness or production qualification.
+
+### Reviewed complete-update validity window
+
+`DEPLOYMENT_UPGRADE_WINDOW_SECONDS` is provider-neutral maintained configuration,
+resolved from the shared architecture and environment architecture override. The
+checked-in common baseline is 1800 seconds. Missing, zero, negative, overflowing
+or noncanonical values cannot qualify the PKI gate; there is no runtime default
+or inferred per-environment value. The public report exposes `validity_window_seconds`. Configuration hashing binds
+the selected window to the approved plan, and a changed window requires a new qualification.
+
+Every original managed client/server inspection receives the exact window and
+its maintained database setting name. CertIssuer uses `CERT_ISSUER_DB_DSN`,
+Video Cloud API/log-ingester use `VIDEO_CLOUD_DB_DSN`, and controller/MQTT/OpenBao
+owners use `PKI_DATABASE_URL`. Only the setting name appears in the command;
+its value remains inside the workload. The service checks every chain
+certificate's `notAfter` strictly beyond the entire window on the same original
+state snapshot. The formal verifier also checks registry issuer lifetimes and
+any original bootstrap-session expiry at both ends of that window in one
+read-only database snapshot, and the adapter requires the exact returned
+`minimum_validity_seconds`. A basic or older registry report lacking the window
+cannot qualify the stage. Execution and acceptance inherit a deadline bounded
+by this reviewed window and any earlier caller deadline. A timeout remains an
+incomplete deployment with its existing execution journal and fences; it does
+not trigger blind rollback or extend certificate evidence.
+
+This completes the managed-state certificate window check, not the complete PKI
+gate: Secret-backed leaves, complete installed trust/CRL consumer coverage and
+current acknowledgments remain separate required evidence. Fresh bootstrap must
+qualify its own original session, and production still requires its independent
+HA, custody and recovery evidence.
+
+### Original public identity setting references
+
+Managed identity observation resolves public state paths, Root fingerprints,
+server names and DNS policy through literal env, `valueFrom` Secret/ConfigMap
+keys and `envFrom`. Last `envFrom` source wins; explicit env wins over all inherited
+sources, following Kubernetes precedence. This does not materialize credential
+values into probe arguments. Each source must be an original planned owner with
+a verified UID, baseline and resource version. The selected public values must
+match the target plan; changed identity values require separate migration or
+candidate qualification, even when the reference name is unchanged. Re-read
+source ownership and versions after original state inspection. Missing/foreign
+sources, malformed public values or concurrent changes use stable
+`deployment.pki.settings` with the exact source resource and repair guidance.
+No file, Secret or ConfigMap is created or modified by this resolution.

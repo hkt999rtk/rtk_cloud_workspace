@@ -124,3 +124,14 @@ are generated inputs, not configuration authority. Compatibility cannot select
 a legacy execution path, regenerate managed PKI, copy a live desired spec, or
 weaken a required readiness gate. See the readiness standard's replacement
 status for capabilities that still require implementation and qualification.
+
+## Complete update validity window
+
+The maintained `DEPLOYMENT_UPGRADE_WINDOW_SECONDS` setting bounds a complete
+update and acceptance and selects its certificate validity margin. The shared
+Kubernetes baseline is 1800 seconds; each environment may explicitly override
+it through `overrides/architecture.env`. The selected value participates in
+configuration/plan hashing, native PKI qualification and execution deadlines.
+A required missing or invalid value is NO-GO; runtime code must not invent a
+window or extend an approved deadline. See the deployment readiness standard
+for the remaining required trust-consumer and recovery gates.
