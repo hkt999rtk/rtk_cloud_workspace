@@ -36,7 +36,7 @@ func renderEnvironmentResources(env map[string]string, bindings environmentIdent
 		}
 		if binding.Component != "existing-workload" {
 			if !needed[binding.Name] {
-				return nil, fmt.Errorf("deployment.inventory: %s is not enabled by maintained environment configuration", binding.Name)
+				return nil, &deploymentplan.Blocker{ID: "deployment.inventory.disabled", Resource: binding.Kind + "/" + bindings.Stack + "-" + binding.NamespaceSuffix + "/" + binding.Name, Cause: "an existing managed consumer is disabled in the maintained target", Next: "align its maintained enablement with the existing environment, or qualify an explicit controlled retirement; repeat preflight"}
 			}
 			delete(needed, binding.Name)
 		}
@@ -60,7 +60,7 @@ func renderEnvironmentResources(env map[string]string, bindings environmentIdent
 				if err == io.EOF {
 					return nil
 				}
-				return errors.New("deployment.renderer: invalid shared component output")
+				return &deploymentplan.Blocker{ID: "deployment.renderer.yaml", Cause: "shared component renderer produced invalid Kubernetes YAML", Next: "repair the maintained renderer output; do not include raw YAML or private values in diagnostics; repeat preflight"}
 			}
 			if len(object) == 0 {
 				continue
@@ -68,7 +68,7 @@ func renderEnvironmentResources(env map[string]string, bindings environmentIdent
 			// Normalize YAML integers and nested objects to the API JSON shape.
 			raw, err := json.Marshal(object)
 			if err != nil || json.Unmarshal(raw, &object) != nil {
-				return errors.New("deployment.renderer: invalid resource values")
+				return &deploymentplan.Blocker{ID: "deployment.renderer.resource", Cause: "shared renderer produced invalid Kubernetes resource values", Next: "repair the maintained renderer's resource structure, then repeat preflight"}
 			}
 			id := deploymentplan.ID(object)
 			if object["kind"] == "Ingress" {
@@ -81,7 +81,7 @@ func renderEnvironmentResources(env map[string]string, bindings environmentIdent
 				if deploymentplan.Digest(seenObjects[id]) == deploymentplan.Digest(object) {
 					continue
 				}
-				return fmt.Errorf("deployment.renderer: duplicate component %s", id)
+				return &deploymentplan.Blocker{ID: "deployment.renderer.duplicate", Resource: id, Cause: "shared renderers produced conflicting definitions for the same resource", Next: "remove the conflicting shared definition and keep one maintained renderer for this resource; repeat preflight"}
 			}
 			seen[id] = true
 			phase := environmentResourcePhase(deploymentplan.String(object["kind"]))
@@ -212,7 +212,7 @@ func renderEnvironmentResources(env map[string]string, bindings environmentIdent
 			continue
 		}
 		if binding.Component == "existing-workload" {
-			return nil, fmt.Errorf("deployment.inventory: %s has bindings but no enabled renderer", id)
+			return nil, &deploymentplan.Blocker{ID: "deployment.inventory.renderer", Resource: id, Cause: "existing workload has no enabled maintained renderer", Next: "add this workload to the common component catalog with its formal image roles and retained lifecycle references, or qualify explicit retirement; repeat preflight"}
 		}
 		if binding.Component == "managed-openbao" {
 			if err := validateOpenBaoTargetProfile(env, binding); err != nil {
@@ -382,10 +382,10 @@ func pinEnvironmentResourceImages(definitions []deploymentplan.Definition, relea
 				} else if selectedRefs[image] {
 					selected = image
 				} else if ambiguous[name] {
-					return errors.New("deployment.release: ambiguous image repository")
+					return &deploymentplan.Blocker{ID: "deployment.release.image-role", Resource: deploymentplan.ID(definition.Object), Cause: "container " + deploymentplan.String(container["name"]) + " matches multiple selected image roles with different digests", Next: "assign one maintained release image role to this container; repeat preflight"}
 				}
 				if selected == "" {
-					return fmt.Errorf("deployment.release: %s container %s lacks an immutable selected image", deploymentplan.ID(definition.Object), deploymentplan.String(container["name"]))
+					return &deploymentplan.Blocker{ID: "deployment.release.image-role", Resource: deploymentplan.ID(definition.Object), Cause: "container " + deploymentplan.String(container["name"]) + " lacks an immutable selected image", Next: "publish and select the exact formal CI image for this container's maintained role; repeat preflight"}
 				}
 				container["image"] = selected
 			}

@@ -169,9 +169,19 @@ func compileEnvironmentDeployment(ctx context.Context, cfg deploymentConfig, ope
 	run := environmentCIImageCommand(cfg)
 	release, err := loadEnvironmentCIImages(ctx, cfg, run)
 	if err != nil {
-		return nil, err
+		return nil, environmentCompilationError(err, "deployment.release.resolve", "formal CI image selection could not be completed", "verify selected service revisions, CI publication and registry access, then repeat preflight")
 	}
 	return compileEnvironmentDeploymentWithImages(ctx, cfg, operation, release, run)
+}
+
+// Keep expected public blockers intact. Unknown provider/tool errors are not
+// safe to print; report the exact compilation stage and its repair boundary.
+func environmentCompilationError(err error, id, cause, next string) error {
+	var blocker *deploymentplan.Blocker
+	if errors.As(err, &blocker) {
+		return err
+	}
+	return &deploymentplan.Blocker{ID: id, Cause: cause, Next: next}
 }
 
 func compileEnvironmentDeploymentWithImages(ctx context.Context, cfg deploymentConfig, operation string, release environmentRelease, sourceCommand environmentReleaseCommand) (*compiledEnvironmentDeployment, error) {
@@ -186,7 +196,7 @@ func compileEnvironmentDeploymentWithImages(ctx context.Context, cfg deploymentC
 		return nil, &deploymentplan.Blocker{ID: "deployment.production", Cause: "production protection cannot be downgraded through configuration", Next: "restore the production profile and qualify its actual HA, custody, recovery and PKI capabilities"}
 	}
 	if cfg.Adapter != "lke" {
-		return nil, errors.New("deployment.adapter: selected infrastructure adapter has no complete shared implementation")
+		return nil, &deploymentplan.Blocker{ID: "deployment.adapter", Resource: cfg.Adapter, Cause: "selected infrastructure adapter has no complete shared implementation", Next: "use an implemented maintained adapter before planning an environment update"}
 	}
 	store, err := newSecretStore("", cfg.Environment)
 	if err != nil {
@@ -209,11 +219,11 @@ func compileEnvironmentDeploymentWithImages(ctx context.Context, cfg deploymentC
 	}
 	backend, err := newEnvironmentKubernetesBackend(snapshot.Kubeconfig, cfg.Environment)
 	if err != nil {
-		return nil, err
+		return nil, environmentCompilationError(err, "deployment.access.kubeconfig", "selected Kubernetes identity could not be initialized", "restore the selected environment's compatible embedded Kubernetes credentials, then repeat preflight")
 	}
 	live, err := backend.Inventory(ctx, cfg.Values["CLOUD_STACK_NAME"])
 	if err != nil {
-		return nil, err
+		return nil, environmentCompilationError(err, "deployment.inventory.read", "selected Kubernetes workload and dependency inventory could not be read", "verify selected kubeconfig, API connectivity and inventory read permissions, then repeat preflight")
 	}
 	admissionID := "ValidatingWebhookConfiguration//" + cfg.Values["CLOUD_STACK_NAME"] + "-ingress-admission"
 	admissionSeen := false
@@ -225,7 +235,7 @@ func compileEnvironmentDeploymentWithImages(ctx context.Context, cfg deploymentC
 	if !admissionSeen {
 		admission, err := backend.Read(ctx, admissionID)
 		if err != nil {
-			return nil, err
+			return nil, &deploymentplan.Blocker{ID: "deployment.inventory.read", Resource: admissionID, Cause: "existing ingress admission owner could not be read", Next: "verify Kubernetes API access and webhook read permissions, then repeat preflight"}
 		}
 		if admission != nil {
 			live = append(live, admission)
@@ -241,14 +251,14 @@ func compileEnvironmentDeploymentWithImages(ctx context.Context, cfg deploymentC
 	}
 	support, err := renderEnvironmentZammad(ctx, cfg, store, release, operation, snapshot.ZammadValues, snapshot.ZammadChart)
 	if err != nil {
-		return nil, err
+		return nil, environmentCompilationError(err, "deployment.renderer.support", "fixed Zammad chart produced invalid resource output", "verify the maintained chart, values and installed Helm, then repeat preflight")
 	}
 	if err := bindZammadLifecycle(support, live); err != nil {
 		return nil, err
 	}
 	support, err = retireCompletedZammadInitJobs(support, live, release)
 	if err != nil {
-		return nil, err
+		return nil, environmentCompilationError(err, "deployment.lifecycle.support", "Zammad initialization job lifecycle could not be verified", "verify original initialization job ownership and completion before retirement, then repeat preflight")
 	}
 	configurationDigest := snapshot.Digest(cfg)
 	var definitions []deploymentplan.Definition
@@ -261,7 +271,7 @@ func compileEnvironmentDeploymentWithImages(ctx context.Context, cfg deploymentC
 		return err
 	})
 	if err != nil {
-		return nil, err
+		return nil, environmentCompilationError(err, "deployment.renderer.target", "shared target rendering could not complete its configuration or lifecycle references", "verify maintained component configuration, original identity references and shared renderer support, then repeat preflight")
 	}
 	// Explicit desired cluster-scoped owners may predate stack labels. Read each
 	// exact ID, then require an existing label or a recorded UID-bound adoption.
@@ -276,7 +286,7 @@ func compileEnvironmentDeploymentWithImages(ctx context.Context, cfg deploymentC
 		}
 		current, err := backend.Read(ctx, id)
 		if err != nil {
-			return nil, err
+			return nil, &deploymentplan.Blocker{ID: "deployment.inventory.read", Resource: id, Cause: "planned resource's original owner could not be read", Next: "verify selected Kubernetes API access and this resource's read permissions, then repeat preflight"}
 		}
 		if current != nil {
 			meta := deploymentplan.Map(current["metadata"])
@@ -284,7 +294,7 @@ func compileEnvironmentDeploymentWithImages(ctx context.Context, cfg deploymentC
 			if deploymentplan.String(meta["namespace"]) == "" && strings.HasPrefix(deploymentplan.String(meta["name"]), bindings.Stack+"-") && (label == "" || label == bindings.Stack) && meta["deletionTimestamp"] == nil {
 				uid := deploymentplan.String(meta["uid"])
 				if uid == "" {
-					return nil, errors.New("observed cluster resource has no owner UID")
+					return nil, &deploymentplan.Blocker{ID: "deployment.ownership", Resource: id, Cause: "observed cluster resource has no owner UID", Next: "verify the original resource owner through the selected Kubernetes API and repeat preflight"}
 				}
 				bindings.Owners[id] = uid
 			}
@@ -293,7 +303,7 @@ func compileEnvironmentDeploymentWithImages(ctx context.Context, cfg deploymentC
 		}
 	}
 	if err := bindOpenBaoAllocations(definitions, live); err != nil {
-		return nil, err
+		return nil, environmentCompilationError(err, "deployment.compatibility.openbao", "original OpenBao persistent allocations could not be matched to the target", "verify original OpenBao data/audit claims and immutable allocation compatibility, then repeat preflight")
 	}
 	if err := validateEnvironmentPKITransition(definitions, live); err != nil {
 		return nil, err
@@ -309,21 +319,21 @@ func compileEnvironmentDeploymentWithImages(ctx context.Context, cfg deploymentC
 	}
 	fresh, err := environmentDeploymentInputDigest(cfg, store)
 	if err != nil || fresh != configurationDigest {
-		return nil, errors.New("deployment.inputs: configuration credentials changed during rendering; repeat planning")
+		return nil, &deploymentplan.Blocker{ID: "deployment.inputs.changed", Cause: "configuration or credential inputs changed or became unavailable during rendering", Next: "restore stable maintained settings and environment credentials, then repeat full preflight before deployment"}
 	}
 	input := deploymentplan.Inputs{Environment: cfg.Environment, Stack: cfg.Values["CLOUD_STACK_NAME"], Operation: operation, ConfigurationSHA256: configurationDigest, ReleaseSHA256: deploymentplan.Digest(release), BindingsSHA256: deploymentplan.Digest(bindings)}
 	plan, err := deploymentplan.Compile(input, definitions, live, bindings.Owners)
 	if err != nil {
-		return nil, err
+		return nil, environmentCompilationError(err, "deployment.plan.compile", "resource ordering or lifecycle plan compilation failed", "repair maintained resource phases, dependencies and lifecycle classifications, then repeat preflight")
 	}
 	storage, err := backend.storageBindings(ctx, plan)
 	if err != nil {
-		return nil, err
+		return nil, environmentCompilationError(err, "deployment.storage.observation", "original storage bindings could not be verified", "verify the planned PVC/PV owners and selected Kubernetes storage access, then repeat preflight")
 	}
 	plan.StorageSHA256 = deploymentplan.Digest(storage)
 	compiled := &compiledEnvironmentDeployment{Plan: plan, Release: release, Bindings: bindings, Store: store, Backend: backend, Configuration: cfg, SourceCommand: sourceCommand}
 	if err := compiled.Fence(ctx, plan); err != nil {
-		return nil, err
+		return nil, environmentCompilationError(err, "deployment.inputs.recheck", "compiled plan inputs or runtime ownership no longer match the observed baseline", "recheck configuration, CI selection, original owners and storage bindings, then repeat full preflight for a fresh plan")
 	}
 	return compiled, nil
 }

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path"
@@ -283,12 +282,12 @@ func applyEnvironmentPodBindings(object deploymentplan.Object, b environmentIden
 				var err error
 				container, err = environmentManagedSidecar(bound.Name)
 				if err != nil {
-					return err
+					return &deploymentplan.Blocker{ID: "deployment.inventory.sidecar", Resource: id, Cause: "container " + bound.Name + " has no maintained sidecar definition", Next: "add its launch, health and image role to the shared renderer; retain existing credential/state references and repeat preflight"}
 				}
 			}
 			image := release.Images[bound.ImageKey].Reference
 			if image == "" {
-				return fmt.Errorf("deployment.release: managed consumer %s/%s lacks %s", id, bound.Name, bound.ImageKey)
+				return &deploymentplan.Blocker{ID: "deployment.release.image-role", Resource: id, Cause: "container " + bound.Name + " lacks selected role " + bound.ImageKey, Next: "publish and select the exact formal CI image for this maintained container role; repeat preflight"}
 			}
 			if expected := environmentManagedImageKey(binding.Component, bound.Name, index); expected != "" && bound.ImageKey != expected {
 				return errors.New("deployment.release: consumer image role differs from the maintained catalog")
@@ -359,7 +358,7 @@ func environmentManagedSidecar(name string) (map[string]any, error) {
 	case "pkimanagement":
 		container["command"] = []any{"/app/pkimanagement"}
 	default:
-		return nil, errors.New("deployment.inventory: unknown sidecar requires a maintained catalog definition")
+		return nil, &deploymentplan.Blocker{ID: "deployment.inventory.sidecar", Resource: name, Cause: "container has no maintained sidecar definition", Next: "add its launch, health and formal image role to the shared renderer; retain existing credential/state references and repeat preflight"}
 	}
 	return container, nil
 }

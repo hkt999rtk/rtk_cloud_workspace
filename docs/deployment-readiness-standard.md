@@ -83,6 +83,16 @@ configuration SHA-256 includes both sets; changing an adapter setting requires
 new preflight qualification. It is a plan/report identifier, not a new
 configuration file that operators must create.
 
+Expected compiler failures must provide a structured public blocker with a
+stable ID, the affected resource/container when known, a specific cause and a
+repair/recheck operation. Missing renderers, unknown sidecars, conflicting
+definitions and missing image roles must not collapse into a generic target
+failure. External-tool failures report their safe compilation stage and access
+or configuration repair boundary, without printing raw provider output, YAML,
+credentials or private file contents. An unclassified failure is explicitly
+`deployment.compilation.internal`, an implementation diagnostic gap rather than
+an instruction to select another release.
+
 ## Retired static PKI templates
 
 The production binary no longer contains the static CertIssuer or FactoryEnroll

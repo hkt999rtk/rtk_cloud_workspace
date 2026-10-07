@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -15,6 +16,60 @@ import (
 
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 )
+
+func TestUnifiedCompilationErrorsExposeSafeCauseAndResource(t *testing.T) {
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		for _, action := range []string{"preflight", "upgrade"} {
+			for _, mode := range []string{"missing-renderer", "unknown-sidecar", "provider-error", "unclassified"} {
+				t.Run(environment+"/"+action+"/"+mode, func(t *testing.T) {
+					c, deps, writes := unifiedCLIProfile(t, environment)
+					env, bindings, release := completeEnvironmentRenderFixture(environment)
+					resource := "Deployment/video-cloud-" + environment + "-video-cloud/video-cloud-api-app-pki"
+					id, cause, next := "deployment.inventory.renderer", "existing workload has no enabled maintained renderer", "common component catalog"
+					deps.Compile = func(context.Context, deploymentConfig, string) (*compiledEnvironmentDeployment, error) {
+						var err error
+						switch mode {
+						case "missing-renderer":
+							bindings.Pods = append(bindings.Pods, environmentPodBindings{Kind: "Deployment", NamespaceSuffix: "video-cloud", Name: "video-cloud-api-app-pki", Component: "existing-workload", Containers: []environmentContainerBindings{{Name: "app", ImageKey: "LKE_VIDEO_CLOUD_IMAGE"}}})
+							_, err = renderEnvironmentResources(env, bindings, release)
+						case "unknown-sidecar":
+							binding := environmentPodBindings{Kind: "Deployment", NamespaceSuffix: "video-cloud", Name: "video-cloud-api-app-pki", Component: "existing-workload", Containers: []environmentContainerBindings{{Name: "app", ImageKey: "LKE_VIDEO_CLOUD_IMAGE"}, {Name: "unmaintained-sidecar", ImageKey: "LKE_VIDEO_CLOUD_IMAGE"}}}
+							bindings.Pods = []environmentPodBindings{binding}
+							object := deploymentplan.Object{"kind": "Deployment", "metadata": map[string]any{"name": binding.Name, "namespace": bindings.Stack + "-video-cloud"}, "spec": map[string]any{"template": map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"name": "app"}}}}}}
+							err = applyEnvironmentPodBindings(object, bindings, release)
+						case "provider-error":
+							err = environmentCompilationError(errors.New("private provider output: never-public-password"), "deployment.inventory.read", "selected Kubernetes inventory could not be read", "verify API connectivity and inventory permissions")
+						case "unclassified":
+							err = errors.New("private unclassified output: never-public-password")
+						}
+						if err == nil {
+							t.Fatal("fixture did not reach the real compiler failure")
+						}
+						// A wrapped tool error may contain a private prefix; the
+						// public flow must extract only the structured safe fields.
+						return nil, fmt.Errorf("never-public-wrapper: %w", err)
+					}
+					if mode == "unknown-sidecar" {
+						id, cause, next = "deployment.inventory.sidecar", "unmaintained-sidecar", "shared renderer"
+					} else if mode == "provider-error" {
+						id, cause, next, resource = "deployment.inventory.read", "Kubernetes inventory could not be read", "inventory permissions", ""
+					} else if mode == "unclassified" {
+						id, cause, next, resource = "deployment.compilation.internal", "unclassified internal error", "failing compiler boundary", ""
+					}
+					args := []string{"--environment", environment}
+					if action == "upgrade" {
+						args = append(args, "--confirm", "video-cloud-"+environment, "--plan-sha256", c.Plan.SHA256())
+					}
+					var out bytes.Buffer
+					err := runUnifiedEnvironmentDeploymentWithDependencies(context.Background(), action, args, &out, &out, deps)
+					if err != exitCode(1) || *writes != 0 || !strings.Contains(out.String(), id) || !strings.Contains(out.String(), cause) || !strings.Contains(out.String(), next) || resource != "" && !strings.Contains(out.String(), resource) || strings.Contains(out.String(), "never-public") || strings.Contains(out.String(), "complete target plan could not be compiled") {
+						t.Fatal("public compiler diagnosis lost actionable metadata or exposed private data", err, out.String())
+					}
+				})
+			}
+		}
+	}
+}
 
 func unifiedCLIProfile(t *testing.T, environment string) (*compiledEnvironmentDeployment, unifiedDeploymentDependencies, *int) {
 	t.Helper()

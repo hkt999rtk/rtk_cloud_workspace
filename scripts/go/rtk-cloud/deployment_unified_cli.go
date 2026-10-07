@@ -333,7 +333,7 @@ func runUnifiedEnvironmentDeploymentWithDependencies(parent context.Context, act
 	c, err := deps.Compile(ctx, cfg, o.Operation)
 	if err != nil {
 		// Never print compiler/provider output: it can contain private payloads.
-		row := deploymentplan.GateResult{ID: "deployment.target", Status: "BLOCKED", Required: true, Cause: "complete target plan could not be compiled", Next: "select the exact formal release and repair maintained configuration, managed identity bindings, ownership and migration prerequisites", Impact: "the complete environment update has no executable reviewed plan", Recheck: "repeat full preflight for the same release"}
+		row := deploymentplan.GateResult{ID: "deployment.compilation.internal", Status: "BLOCKED", Required: true, Cause: "deployment compiler returned an unclassified internal error", Next: "report the selected environment and workspace revision so the failing compiler boundary can provide a safe stage/resource diagnosis and be repaired", Impact: "the complete environment update has no executable reviewed plan", Recheck: "repeat full preflight for the same release"}
 		var blocker *deploymentplan.Blocker
 		if errors.As(err, &blocker) {
 			row.ID, row.Cause, row.Next = blocker.ID, blocker.Cause, blocker.Next
