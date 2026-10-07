@@ -1448,3 +1448,43 @@ func appendFile(t *testing.T, path, body string) {
 		t.Fatal(err)
 	}
 }
+
+func TestSharedWorkloadImagesUseArchitectureForEveryEnvironment(t *testing.T) {
+	root := mustWorkspaceRoot(t)
+	baseline, err := readStrictEnv(filepath.Join(root, "cloud_deploy", "architectures", "kubernetes", "architecture.env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := []string{"POSTGRES_IMAGE", "INGRESS_CONTROLLER_IMAGE", "OPENBAO_IMAGE"}
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		t.Run(environment, func(t *testing.T) {
+			actualOverrides, err := readOptionalStrictEnv(filepath.Join(root, "cloud_env", environment, "overrides", "architecture.env"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			workspace := writeDeploymentFixture(t, environment, "lke")
+			path := filepath.Join(workspace, "cloud_deploy", "architectures", "kubernetes", "architecture.env")
+			body := readTestFile(t, path)
+			for _, key := range keys {
+				if !immutableEnvironmentImage.MatchString(baseline[key]) || actualOverrides[key] != "" {
+					t.Fatalf("%s must use the shared immutable %s", environment, key)
+				}
+				body += key + "=" + baseline[key] + "\n"
+			}
+			writeTestFile(t, path, body)
+			cfg, err := resolveDeploymentConfig(workspace, environment, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, key := range keys {
+				if cfg.Values[key] != baseline[key] || cfg.AdapterResolved[key] != "" {
+					t.Fatalf("%s did not resolve from shared architecture", key)
+				}
+			}
+			writeTestFile(t, path, body+"LKE_POSTGRES_IMAGE=postgres:16-alpine\n")
+			if _, err := resolveDeploymentConfig(workspace, environment, ""); err == nil || !strings.Contains(err.Error(), "provider key LKE_POSTGRES_IMAGE is not allowed in architecture") {
+				t.Fatalf("provider boundary was weakened: %v", err)
+			}
+		})
+	}
+}

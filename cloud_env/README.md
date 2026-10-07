@@ -115,6 +115,13 @@ NODE_CLASS_BROKER_MIN_VCPU=4
 NODE_CLASS_BROKER_MIN_MEMORY_GIB=8
 ```
 
+Container image versions are maintained in the shared architecture using
+`POSTGRES_IMAGE`, `INGRESS_CONTROLLER_IMAGE` and `OPENBAO_IMAGE`. Use
+`overrides/architecture.env` only for an explicit environment difference.
+Do not place `LKE_*_IMAGE` keys in architecture files or adapter overrides;
+the compiler supplies those internal renderer roles from the neutral settings.
+Registry credentials remain in the selected private environment store.
+
 An environment does not specify an LKE region, Linode type, or provider account quota. The adapter selects provider resources from the logical location and node-class resource minima. Resolved results are written only to ignored runtime evidence.
 
 `overrides/adapter.env` is reserved for reviewed provider escape hatches; it is not standard environment configuration. Keep it empty for normal dev, staging, and prod environments. The operator-confirmed provider quota lives in the private environment store:

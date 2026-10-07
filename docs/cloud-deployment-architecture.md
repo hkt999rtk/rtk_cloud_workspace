@@ -163,6 +163,19 @@ for the remaining required trust-consumer and recovery gates.
 Service images come directly from exact-source formal CI `image-manifest.json`
 artifacts. The compiler holds their verified immutable selection in memory; a
 local release file is not a configuration input or deployment prerequisite.
-Provider image versions are explicit `LKE_*_IMAGE` settings in maintained shared
-architecture/environment configuration. Preflight resolves their registry digests
-and includes the complete selected images in the approved plan SHA-256.
+Workload image versions use provider-neutral keys in
+`cloud_deploy/architectures/kubernetes/architecture.env`: `POSTGRES_IMAGE`,
+`INGRESS_CONTROLLER_IMAGE`, `OPENBAO_IMAGE`, and optional catalog image settings.
+Environment differences belong in `cloud_env/<environment>/overrides/architecture.env`.
+Preflight resolves their registry digests and includes the complete selected images
+in the approved plan SHA-256. The compiler maps these settings to existing internal
+`LKE_*_IMAGE` renderer/binding roles; these legacy role names are not maintained
+architecture keys. Provider-prefixed configuration remains forbidden in the
+architecture layer and workload image settings cannot be moved into adapter defaults.
+
+The recorded baseline retains PostgreSQL 16.15, NGINX Ingress 1.15.1 and OpenBao
+2.5.4 with observed immutable digests. All environments consume that shared
+baseline. An image setting does not prove CI provenance, managed identity
+adoption, sidecar completeness or storage
+compatibility; those gates still apply. Image configuration is tracked intent,
+not generated deployment state, and never belongs in a private `release.json`.

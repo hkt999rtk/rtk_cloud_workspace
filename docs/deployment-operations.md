@@ -955,8 +955,11 @@ The executing checkout must be clean. A different CI image selection changes the
 plan SHA-256, so deployment refuses a previously approved plan rather than
 silently selecting a new image.
 
-Upstream provider versions use maintained `LKE_*_IMAGE` settings in the shared
-architecture or environment overrides. Configured version tags are resolved to
+Infrastructure workload versions use provider-neutral `POSTGRES_IMAGE`,
+`INGRESS_CONTROLLER_IMAGE` and `OPENBAO_IMAGE` settings in
+`cloud_deploy/architectures/kubernetes/architecture.env`; environment differences
+use `cloud_env/<environment>/overrides/architecture.env`. Internal `LKE_*_IMAGE`
+roles are compiler outputs, not architecture configuration inputs. Configured version tags are resolved to
 matching immutable registry digests; missing configuration or registry failure is
 NO-GO. At minimum PostgreSQL, ingress and OpenBao versions must be explicit.
 `GHCR_PULL_TOKEN` in the selected environment operator store supplies GitHub

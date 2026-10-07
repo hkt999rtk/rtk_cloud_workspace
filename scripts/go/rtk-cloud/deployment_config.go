@@ -129,7 +129,7 @@ func architectureKeySet() map[string]bool {
 		"EDGE_REPLICAS", "EDGE_MAX_CONNECTIONS", "TURN_REPLICAS", "TURN_MIN_PORT", "TURN_MAX_PORT",
 	)
 	for _, key := range environmentProviderImageKeys {
-		out[key] = true
+		out[environmentProviderImageConfigKey(key)] = true
 	}
 	for _, key := range capacitySourceKeys() {
 		out[key] = true

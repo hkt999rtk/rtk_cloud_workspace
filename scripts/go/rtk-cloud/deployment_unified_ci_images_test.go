@@ -35,7 +35,7 @@ func TestDirectCIImagesUseFrozenGitlinksAndExactPublicationForAllEnvironments(t 
 				cfg := deploymentConfig{Workspace: "/frozen", Environment: environment, Values: map[string]string{"CLOUD_STACK_NAME": "video-cloud-" + environment, "DEPLOYMENT_POSTGRES_BACKUP_ENABLED": "true"}}
 				for key, image := range providers.Images {
 					if image.SourceRevision == "" {
-						cfg.Values[key] = image.Reference
+						cfg.Values[environmentProviderImageConfigKey(key)] = image.Reference
 					}
 				}
 				if mode == "backups-disabled" {
@@ -168,6 +168,11 @@ func TestDirectCIImagesUseFrozenGitlinksAndExactPublicationForAllEnvironments(t 
 					return
 				}
 				if mode == "valid" {
+					for _, role := range environmentProviderImageKeys {
+						if release.Images[role].Reference != cfg.Values[environmentProviderImageConfigKey(role)] {
+							t.Fatal("neutral configuration did not reach the renderer image role", role)
+						}
+					}
 					if release.WorkspaceRevision != rootSHA || release.Environment != environment || len(refs) != 8 {
 						t.Fatal("incomplete frozen release")
 					}

@@ -19,17 +19,27 @@ var environmentProviderImageKeys = []string{
 	"LKE_LOG_COLLECTOR_IMAGE", "LKE_OPENBAO_IMAGE", "LKE_UTILITY_IMAGE", "LKE_ALPINE_IMAGE", "LKE_INGRESS_IMAGE",
 }
 
+// Maintained workload images are provider-neutral. Legacy image role names
+// remain internal so existing renderers and identity bindings stay unchanged.
+func environmentProviderImageConfigKey(role string) string {
+	if role == "LKE_INGRESS_IMAGE" {
+		return "INGRESS_CONTROLLER_IMAGE"
+	}
+	return strings.TrimPrefix(role, "LKE_")
+}
+
 func loadEnvironmentCIImages(ctx context.Context, cfg deploymentConfig, run environmentReleaseCommand) (environmentRelease, error) {
 	providers := environmentRelease{Environment: cfg.Environment, Stack: cfg.Values["CLOUD_STACK_NAME"], Images: map[string]environmentReleaseImage{}}
 	values := appendMap(cfg.Values, cfg.AdapterResolved)
 	for _, key := range environmentProviderImageKeys {
-		reference := strings.TrimSpace(values[key])
+		configKey := environmentProviderImageConfigKey(key)
+		reference := strings.TrimSpace(values[configKey])
 		if reference == "" {
 			continue
 		}
 		pinned, err := resolveConfiguredProviderImage(ctx, reference, run)
 		if err != nil {
-			return environmentRelease{}, &deploymentplan.Blocker{ID: "deployment.provider.images", Resource: key, Cause: "configured provider image cannot be pinned to an immutable registry digest", Next: "correct the maintained provider image reference and registry access, then repeat preflight"}
+			return environmentRelease{}, &deploymentplan.Blocker{ID: "deployment.provider.images", Resource: configKey, Cause: "configured provider image cannot be pinned to an immutable registry digest", Next: "correct the maintained provider image reference and registry access, then repeat preflight"}
 		}
 		providers.Images[key] = environmentReleaseImage{Reference: pinned}
 	}
@@ -174,7 +184,7 @@ func resolveEnvironmentCIImages(ctx context.Context, cfg deploymentConfig, provi
 		}
 	}
 	if result.Images["LKE_POSTGRES_IMAGE"].Reference == "" || result.Images["LKE_INGRESS_IMAGE"].Reference == "" || result.Images["LKE_OPENBAO_IMAGE"].Reference == "" {
-		return result, &deploymentplan.Blocker{ID: "deployment.provider.images", Cause: "maintained PostgreSQL, ingress or OpenBao image version is not configured", Next: "maintain LKE_POSTGRES_IMAGE, LKE_INGRESS_IMAGE and LKE_OPENBAO_IMAGE in the common architecture or environment overrides; preflight pins their registry digests without a local release.json"}
+		return result, &deploymentplan.Blocker{ID: "deployment.provider.images", Cause: "maintained PostgreSQL, ingress or OpenBao image version is not configured", Next: "maintain POSTGRES_IMAGE, INGRESS_CONTROLLER_IMAGE and OPENBAO_IMAGE in cloud_deploy/architectures/kubernetes/architecture.env or cloud_env/<environment>/overrides/architecture.env; preflight pins their registry digests without a local release.json"}
 	}
 	if cfg.Values["DEPLOYMENT_POSTGRES_BACKUP_ENABLED"] == "true" {
 		repo := "hkt999rtk/rtk_cloud_workspace"

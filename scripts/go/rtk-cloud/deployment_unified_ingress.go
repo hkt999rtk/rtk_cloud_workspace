@@ -41,7 +41,7 @@ func renderEnvironmentIngress(env map[string]string, binding *environmentAdmissi
 	}
 	image := release.Images["LKE_INGRESS_IMAGE"].Reference
 	if !immutableEnvironmentImage.MatchString(image) {
-		return nil, errors.New("deployment.release.ingress: select the controller's immutable LKE_INGRESS_IMAGE")
+		return nil, errors.New("deployment.release.ingress: select the controller's immutable INGRESS_CONTROLLER_IMAGE")
 	}
 	namespace, stack := lkeIngressNamespace(env), env["CLOUD_STACK_NAME"]
 	class, roleName := stack+"-nginx", stack+"-ingress-nginx"
