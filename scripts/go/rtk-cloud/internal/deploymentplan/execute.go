@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -19,6 +20,15 @@ type Backend interface {
 	Write(context.Context, string, Object, bool) (Object, error)
 	Wait(context.Context, Resource) error
 }
+
+// Only backends with independent, concurrent-safe dry-run operations opt in.
+// Progress counts settled checks (including retains), never passed checks.
+type ParallelAdmissionBackend interface {
+	AdmissionConcurrency() int
+	AdmissionProgress(context.Context, int, int)
+}
+
+const maxAdmissionConcurrency = 8
 
 // Controllers on separate hosts must serialize through the selected cluster,
 // not merely through their own local SecretStore directory. Leases cannot be
@@ -115,26 +125,118 @@ func normalizeDaemonSetAdmissionGeneration(body, admitted, have Object) bool {
 
 // Admit performs no persisted Kubernetes writes. The executor repeats it.
 func (p *Plan) Admit(ctx context.Context, backend Backend) error {
+	if parallel, ok := backend.(ParallelAdmissionBackend); ok {
+		if concurrency := parallel.AdmissionConcurrency(); concurrency > 1 {
+			return p.admitParallel(ctx, backend, parallel, concurrency)
+		}
+	}
 	for _, resource := range p.Resources {
-		if err := ctx.Err(); err != nil {
+		if err := admitResource(ctx, backend, resource); err != nil {
 			return err
 		}
-		current, err := backend.Read(ctx, resource.ID)
-		if err != nil {
-			return preserveReadBlocker(err, blocked("deployment.access", resource.ID, "cannot read the selected resource", "restore environment-local read access"))
+	}
+	return nil
+}
+
+func admitResource(ctx context.Context, backend Backend, resource Resource) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	current, err := backend.Read(ctx, resource.ID)
+	if err != nil {
+		return preserveReadBlocker(err, blocked("deployment.access", resource.ID, "cannot read the selected resource", "restore environment-local read access"))
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	body, err := resource.Body(current)
+	if err != nil {
+		return err
+	}
+	if body == nil {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	admitted, err := backend.Write(ctx, resource.Action, body, true)
+	if err != nil {
+		return blocked("deployment.admission", resource.ID, "server dry-run rejected the exact desired body", "resolve write permission, immutable fields, admission, quota and namespace prerequisites")
+	}
+	if admitted == nil || ID(admitted) != resource.ID || !matchesAdmission(body, admitted) {
+		return blocked("deployment.admission", resource.ID, admissionMismatchCause("server admission changed the approved resource or consumer configuration", body, admitted), "declare and qualify the admission mutation or repair the policy; never deploy a different image, identity or workload body")
+	}
+	return nil
+}
+
+func (p *Plan) admitParallel(ctx context.Context, backend Backend, parallel ParallelAdmissionBackend, concurrency int) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	workers := min(concurrency, maxAdmissionConcurrency, len(p.Resources))
+	parallel.AdmissionProgress(ctx, 0, len(p.Resources))
+	if workers == 0 {
+		return nil
+	}
+	type result struct {
+		index int
+		err   error
+	}
+	jobs := make(chan int)
+	results := make(chan result, workers)
+	var joined sync.WaitGroup
+	for worker := 0; worker < workers; worker++ {
+		joined.Add(1)
+		go func() {
+			defer joined.Done()
+			for index := range jobs {
+				results <- result{index, admitResource(ctx, backend, p.Resources[index])}
+			}
+		}()
+	}
+	errorsByIndex := make([]error, len(p.Resources))
+	next, active, completed := 0, 0, 0
+	open, failed := true, false
+	cancelled := ctx.Done()
+	for open || active > 0 {
+		if open && (next == len(p.Resources) || failed || ctx.Err() != nil) {
+			close(jobs)
+			open = false
 		}
-		body, err := resource.Body(current)
+		if ctx.Err() != nil {
+			cancelled = nil
+		}
+		if !open && active == 0 {
+			break
+		}
+		var dispatch chan<- int
+		if open {
+			dispatch = jobs
+		}
+		select {
+		case dispatch <- next:
+			next++
+			active++
+		case finished := <-results:
+			active--
+			completed++
+			errorsByIndex[finished.index] = finished.err
+			failed = failed || finished.err != nil
+			// Callbacks run only in the caller, after one check settles.
+			parallel.AdmissionProgress(ctx, completed, len(p.Resources))
+		case <-cancelled:
+			cancelled = nil
+		}
+	}
+	joined.Wait()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// Dispatch is a prefix of plan order. Join that entire prefix before
+	// selecting its first failure, independent of completion order.
+	for _, err := range errorsByIndex {
 		if err != nil {
 			return err
-		}
-		if body != nil {
-			var admitted Object
-			if admitted, err = backend.Write(ctx, resource.Action, body, true); err != nil {
-				return blocked("deployment.admission", resource.ID, "server dry-run rejected the exact desired body", "resolve write permission, immutable fields, admission, quota and namespace prerequisites")
-			}
-			if admitted == nil || ID(admitted) != resource.ID || !matchesAdmission(body, admitted) {
-				return blocked("deployment.admission", resource.ID, admissionMismatchCause("server admission changed the approved resource or consumer configuration", body, admitted), "declare and qualify the admission mutation or repair the policy; never deploy a different image, identity or workload body")
-			}
 		}
 	}
 	return nil

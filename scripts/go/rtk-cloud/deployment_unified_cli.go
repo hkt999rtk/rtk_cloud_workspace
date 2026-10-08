@@ -58,28 +58,35 @@ func defaultUnifiedDeploymentDependencies() unifiedDeploymentDependencies {
 				},
 				"deployment.execution": func(ctx context.Context, p *deploymentplan.Plan) (deploymentplan.GateEvidence, error) {
 					if p.Operation != "upgrade" {
+						environmentDeploymentProgress(ctx, "deployment.execution.provider-quota")
 						if err := c.CheckProviderQuota(ctx, p); err != nil {
 							return deploymentplan.GateEvidence{}, err
 						}
 					}
+					environmentDeploymentProgress(ctx, "deployment.execution.node-capacity")
 					if err := c.CheckNodeCapacity(ctx, p); err != nil {
 						return deploymentplan.GateEvidence{}, err
 					}
+					environmentDeploymentProgress(ctx, "deployment.execution.storage")
 					if err := c.Backend.CheckStorageBindings(ctx, p); err != nil {
 						return deploymentplan.GateEvidence{}, err
 					}
+					environmentDeploymentProgress(ctx, "deployment.execution.permissions")
 					if err := c.Backend.CheckPlanAccess(ctx, p); err != nil {
 						return deploymentplan.GateEvidence{}, err
 					}
+					environmentDeploymentProgress(ctx, "deployment.execution.lease")
 					if err := c.Backend.CheckExecutionPrerequisites(ctx, p, c.Store.Root); err != nil {
 						return deploymentplan.GateEvidence{}, err
 					}
+					environmentDeploymentProgress(ctx, "deployment.execution.admission")
 					if err := p.Admit(ctx, c.Backend); err != nil {
 						return deploymentplan.GateEvidence{}, err
 					}
 					return deploymentplan.GateEvidence{SHA256: p.SHA256()}, nil
 				},
 				"deployment.pki": func(ctx context.Context, p *deploymentplan.Plan) (deploymentplan.GateEvidence, error) {
+					environmentDeploymentProgress(ctx, "deployment.pki.before-fence")
 					if err := c.Fence(ctx, p); err != nil {
 						return deploymentplan.GateEvidence{}, err
 					}
@@ -89,18 +96,22 @@ func defaultUnifiedDeploymentDependencies() unifiedDeploymentDependencies {
 					}
 					store := c.Store
 					store.checkRuntime = newDeploymentCheckRuntime(ctx, p.Environment)
+					environmentDeploymentProgress(ctx, "deployment.pki.bindings")
 					if err := verifySecretStoreK8SBindings(store); err != nil {
 						return deploymentplan.GateEvidence{}, &deploymentplan.Blocker{ID: "deployment.pki.bindings", Cause: "original runtime Secret bindings cannot be verified", Next: "restore the selected environment's original synchronized credentials and bindings; never generate replacement identity to pass"}
 					}
 					now := time.Now().UTC()
-					for _, at := range []time.Time{now, now.Add(time.Duration(window) * time.Second)} {
+					for index, at := range []time.Time{now, now.Add(time.Duration(window) * time.Second)} {
+						environmentDeploymentProgress(ctx, []string{"deployment.pki.mqtt-now", "deployment.pki.mqtt-window"}[index])
 						if err := c.CheckMQTTFoundationIdentity(ctx, at); err != nil {
 							return deploymentplan.GateEvidence{}, err
 						}
+						environmentDeploymentProgress(ctx, []string{"deployment.pki.runtime-now", "deployment.pki.runtime-window"}[index])
 						if err := verifySecretStoreK8SRuntime(store, at); err != nil {
 							return deploymentplan.GateEvidence{}, environmentCompilationError(err, "deployment.pki", "retained runtime PKI is invalid or will not remain valid through the checked rollout window", "run check-deployment-health.sh for the selected environment; repair its original certificate, trust or runtime configuration through the managed lifecycle, then repeat preflight")
 						}
 					}
+					environmentDeploymentProgress(ctx, "deployment.pki.after-fence")
 					if err := c.Fence(ctx, p); err != nil {
 						return deploymentplan.GateEvidence{}, err
 					}

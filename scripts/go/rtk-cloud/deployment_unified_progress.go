@@ -14,6 +14,8 @@ type environmentProgress struct {
 	out     io.Writer
 	stage   string
 	started time.Time
+	checked int
+	total   int
 }
 
 // Only maintained stage IDs cross this boundary; never pass command output,
@@ -23,7 +25,28 @@ func environmentDeploymentProgress(ctx context.Context, stage string) {
 		progress.mu.Lock()
 		defer progress.mu.Unlock()
 		progress.stage, progress.started = stage, time.Now()
+		progress.checked, progress.total = 0, -1
 		fmt.Fprintf(progress.out, "[RUNNING] %s elapsed=0s\n", stage)
+	}
+}
+
+// Admission counts finished resource checks, including failures. Counts never
+// imply PASS and never restart the current stage's elapsed-time clock.
+func environmentDeploymentAdmissionProgress(ctx context.Context, checked, total int) {
+	if checked < 0 || total < 0 || checked > total {
+		return
+	}
+	if progress, ok := ctx.Value(environmentProgressKey{}).(*environmentProgress); ok {
+		progress.mu.Lock()
+		defer progress.mu.Unlock()
+		if progress.total >= 0 && (total != progress.total || checked <= progress.checked) {
+			return
+		}
+		first := progress.total < 0
+		progress.checked, progress.total = checked, total
+		if (first && checked == 0) || checked == total {
+			fmt.Fprintf(progress.out, "[RUNNING] %s elapsed=%ds checked=%d/%d\n", progress.stage, int64(time.Since(progress.started)/time.Second), checked, total)
+		}
 	}
 }
 
@@ -47,7 +70,11 @@ func runEnvironmentProgressInterval(ctx context.Context, out io.Writer, stage st
 				return
 			case <-ticker.C:
 				progress.mu.Lock()
-				fmt.Fprintf(progress.out, "[RUNNING] %s elapsed=%ds still running\n", progress.stage, int64(time.Since(progress.started)/time.Second))
+				if progress.total >= 0 {
+					fmt.Fprintf(progress.out, "[RUNNING] %s elapsed=%ds checked=%d/%d still running\n", progress.stage, int64(time.Since(progress.started)/time.Second), progress.checked, progress.total)
+				} else {
+					fmt.Fprintf(progress.out, "[RUNNING] %s elapsed=%ds still running\n", progress.stage, int64(time.Since(progress.started)/time.Second))
+				}
 				progress.mu.Unlock()
 			}
 		}

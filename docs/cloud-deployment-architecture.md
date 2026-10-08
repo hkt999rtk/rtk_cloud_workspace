@@ -12,6 +12,11 @@ prevents. It also defines drift, canonical evidence paths, bounded side effects
 and the limits of dry-run, capacity and PKI checks. Keep that checklist aligned
 with the common compiler and gate callbacks; a successful preflight qualifies
 one exact plan, while deployment completion requires separate runtime acceptance.
+The [execution gate](deployment-readiness-standard.md#gate-3-deploymentexecution--ability-to-execute-the-plan)
+uses native admission concurrency of at most eight and the existing four-worker
+RBAC review limit. Progress identifies execution/PKI substeps and counts finished
+admission checks; these counts are not PASS evidence. Parallel qualification
+preserves fresh ownership reads and leaves actual deployment writes in plan order.
 
 ### Preflight bucket preparation
 

@@ -28,6 +28,14 @@ type environmentKubernetesBackend struct {
 	KubeconfigContent []byte
 }
 
+// Only independent, non-persisting admission checks run concurrently. Actual
+// deployment mutations retain the plan's dependency and phase ordering.
+func (b environmentKubernetesBackend) AdmissionConcurrency() int { return 8 }
+
+func (b environmentKubernetesBackend) AdmissionProgress(ctx context.Context, checked, total int) {
+	environmentDeploymentAdmissionProgress(ctx, checked, total)
+}
+
 // Kubernetes inventories can be larger than one resource, but subprocess output
 // must not grow without a bound while private material is being captured.
 type environmentAPIOutput struct{ buffer bytes.Buffer }

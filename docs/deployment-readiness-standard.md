@@ -54,10 +54,22 @@ selected environment and release.
 
 Preflight and deployment stream `[RUNNING]` stage IDs while resolving provider
 and formal CI images, observing Kubernetes, compiling the target and qualifying
-required gates. A running stage repeats its elapsed time every 10 seconds.
-Progress lines are not PASS/GO evidence and do not enter the plan hash or JSON
-report. Errors, cancellation and completion stop the heartbeat before results
-are printed; private provider output and credentials are never progress text.
+required gates. Execution qualification identifies the current substep as
+`deployment.execution.node-capacity`, `.storage`, `.permissions`, `.lease` or
+`.admission`; `.provider-quota` applies only to operations requiring that check.
+PKI qualification identifies `.before-fence`, `.bindings`, `.mqtt-now`,
+`.runtime-now`, `.mqtt-window`, `.runtime-window` and `.after-fence` under
+`deployment.pki`. The six final gate IDs remain unchanged.
+
+A running substep repeats its elapsed time every 10 seconds. Native admission
+also reports `checked=<finished>/<total>` at its start, during the heartbeat and
+when all resource checks have finished. The total includes retained resources'
+fresh reads; the finished count includes failed checks and is not a PASS count.
+Updating the count does not restart the substep's elapsed-time clock. Progress
+lines are not PASS/GO evidence and do not enter the plan hash or JSON report.
+Errors, cancellation and completion join active checks and stop the heartbeat
+before results are printed; private provider output and credentials are never
+progress text.
 
 ## GO for an existing environment update
 
@@ -165,6 +177,23 @@ same release qualification. Do not substitute a newer SHA's CI result.
 | Fresh resource baseline | Creates remain absent; existing UID and projected content still match the plan baseline before dry-run. Retained assets are checked even without a write body. | Preserve edits made between inventory and execution checks. | Another owner's resource or newer configuration is overwritten. |
 | Exact server dry-run | Kubernetes accepts the concrete create/update/retirement body with owner/version conditions; admitted ID and approved projection agree under documented normalization rules. | Detect immutable fields, policy/admission, namespace and resource-quota rejection; detect unintended image/identity/configuration mutations. | The API rejects part of the update or admits a different, unreviewed target. |
 | Completion capability | Required post-deploy acceptance adapter is available. | Successful writes alone cannot establish completed deployment. | The tool could report success without proving workloads, PKI and endpoints work. |
+
+The native Kubernetes backend qualifies admission with at most eight concurrent
+resource checks. Each check still performs its own fresh resource read, planned
+absence or original UID/baseline validation, then exact-body server dry-run. Retained
+resources still receive fresh reads and baseline validation without a write.
+The native backend explicitly opts in; backends without that capability retain
+serial admission. RBAC access reviews use their existing separate limit of four.
+
+Checks are dispatched in plan order. A failure stops new dispatch; already
+started checks finish before the first failure in that dispatched plan order is
+returned. Cancellation stops new dispatch, reaches active API calls and joins
+all workers before returning. Concurrent completion order cannot choose a
+different blocker or leave qualification running after its result. These limits
+apply to checks only: actual resource writes, retirement and rollout waits keep
+the plan's dependency/phase order, and later fences retain fresh, uncached owner
+and PVC/PV reads. The six qualification gates and other execution substeps remain
+ordered.
 
 Existing Kubernetes upgrades do not require local Linode cluster-ID or account
 quota files. Explicit infrastructure operations have separate provider checks.
