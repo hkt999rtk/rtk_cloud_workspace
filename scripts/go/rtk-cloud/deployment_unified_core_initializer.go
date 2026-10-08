@@ -41,3 +41,7 @@ func validateObservedCoreMQTTInitializer(id string, c map[string]any, release en
 	}
 	return nil
 }
+
+func existingMQTTStateConsumer(component, name string) bool {
+	return component == "existing-workload" && (name == "video-cloud-api" || name == "video-cloud-logingester")
+}

@@ -130,7 +130,7 @@ func observeEnvironmentBindings(environment string, release environmentRelease, 
 			}
 		}
 		groups := []string{"containers"}
-		if component == "managed-openbao" || component == "managed-turn" || component == "managed-app-api" || component == "managed-mqtt" || component == "managed-api" || component == "existing-workload" && name == "video-cloud-api" {
+		if component == "managed-openbao" || component == "managed-turn" || component == "managed-app-api" || component == "managed-mqtt" || component == "managed-api" || existingMQTTStateConsumer(component, name) {
 			groups = append(groups, "initContainers")
 		}
 		for _, group := range groups {
@@ -168,7 +168,7 @@ func observeEnvironmentBindings(environment string, release environmentRelease, 
 					}
 					bound.ImageKey = "LKE_VIDEO_CLOUD_IMAGE"
 				}
-				if component == "existing-workload" && name == "video-cloud-api" && group == "initContainers" {
+				if existingMQTTStateConsumer(component, name) && group == "initContainers" {
 					if err := validateObservedCoreMQTTInitializer(id, container, release); err != nil {
 						return b, err
 					}

@@ -118,7 +118,7 @@ func validateEnvironmentIdentityBindings(b environmentIdentityBindings, environm
 			return errors.New("deployment.bindings: duplicate or empty managed component")
 		}
 		seen[id] = true
-		if pod.Component != "managed-openbao" && pod.OpenBao != nil || pod.Component != "managed-openbao" && pod.Component != "managed-turn" && pod.Component != "managed-app-api" && pod.Component != "managed-mqtt" && pod.Component != "managed-api" && !(pod.Component == "existing-workload" && pod.Name == "video-cloud-api") && len(pod.InitContainers) != 0 {
+		if pod.Component != "managed-openbao" && pod.OpenBao != nil || pod.Component != "managed-openbao" && pod.Component != "managed-turn" && pod.Component != "managed-app-api" && pod.Component != "managed-mqtt" && pod.Component != "managed-api" && !(existingMQTTStateConsumer(pod.Component, pod.Name)) && len(pod.InitContainers) != 0 {
 			return errors.New("deployment.bindings: OpenBao lifecycle references require the managed OpenBao component")
 		}
 		if pod.DeviceTrustStateFile != "" && (pod.Component != "managed-api" || !deviceTrustStatePath.MatchString(pod.DeviceTrustStateFile)) {
@@ -277,7 +277,7 @@ func applyEnvironmentPodBindings(object deploymentplan.Object, b environmentIden
 				pod[field] = value
 			}
 		}
-		if binding.Component == "existing-workload" && binding.Name == "video-cloud-api" {
+		if existingMQTTStateConsumer(binding.Component, binding.Name) {
 			var initializers []any
 			for _, bound := range binding.InitContainers {
 				c, err := maintainedCoreMQTTInitializer(bound.Name)
@@ -358,7 +358,7 @@ func applyEnvironmentPodBindings(object deploymentplan.Object, b environmentIden
 			containers = append(containers, container)
 		}
 		pod["containers"] = containers
-		if binding.Component == "managed-openbao" || binding.Component == "managed-turn" || binding.Component == "managed-app-api" || binding.Component == "managed-mqtt" || binding.Component == "managed-api" || binding.Component == "existing-workload" && binding.Name == "video-cloud-api" {
+		if binding.Component == "managed-openbao" || binding.Component == "managed-turn" || binding.Component == "managed-app-api" || binding.Component == "managed-mqtt" || binding.Component == "managed-api" || existingMQTTStateConsumer(binding.Component, binding.Name) {
 			for _, bound := range binding.InitContainers {
 				var container map[string]any
 				for _, v := range certIssuerObjectList(pod["initContainers"]) {
