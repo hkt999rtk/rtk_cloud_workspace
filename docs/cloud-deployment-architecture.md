@@ -537,3 +537,9 @@ prepare private directories and permissions, retaining original state mounts;
 they never copy, delete or regenerate identity contents. Unknown initializer
 commands or image repositories block qualification. Supported original immutable
 recipe fingerprints prove compatibility and never supply desired workload specs.
+
+The ordinary Core API also retains its observed `mqtt-pki-state-init` through
+a maintained permission-only recipe and the formal API image role. It prepares
+existing private CRL/identity directories and never rewrites their contents.
+Its lifecycle mounts and trust references are observed separately from ordinary
+API configuration; unknown recipes block qualification.

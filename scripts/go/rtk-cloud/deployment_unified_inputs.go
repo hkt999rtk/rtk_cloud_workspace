@@ -117,7 +117,7 @@ func validateEnvironmentIdentityBindings(b environmentIdentityBindings, environm
 			return errors.New("deployment.bindings: duplicate or empty managed component")
 		}
 		seen[id] = true
-		if pod.Component != "managed-openbao" && pod.OpenBao != nil || pod.Component != "managed-openbao" && pod.Component != "managed-turn" && pod.Component != "managed-app-api" && pod.Component != "managed-mqtt" && len(pod.InitContainers) != 0 {
+		if pod.Component != "managed-openbao" && pod.OpenBao != nil || pod.Component != "managed-openbao" && pod.Component != "managed-turn" && pod.Component != "managed-app-api" && pod.Component != "managed-mqtt" && !(pod.Component == "existing-workload" && pod.Name == "video-cloud-api") && len(pod.InitContainers) != 0 {
 			return errors.New("deployment.bindings: OpenBao lifecycle references require the managed OpenBao component")
 		}
 		if pod.Component == "managed-app-api" {
@@ -270,6 +270,20 @@ func applyEnvironmentPodBindings(object deploymentplan.Object, b environmentIden
 				pod[field] = value
 			}
 		}
+		if binding.Component == "existing-workload" && binding.Name == "video-cloud-api" {
+			var initializers []any
+			for _, bound := range binding.InitContainers {
+				c, err := maintainedCoreMQTTInitializer(bound.Name)
+				if err != nil {
+					return coreMQTTInitializerBlocker(id)
+				}
+				c["image"] = release.Images["LKE_VIDEO_CLOUD_IMAGE"].Reference
+				initializers = append(initializers, c)
+			}
+			if len(initializers) > 0 {
+				pod["initContainers"] = initializers
+			}
+		}
 		boundNames := map[string]bool{}
 		for _, bound := range binding.Containers {
 			boundNames[bound.Name] = true
@@ -337,7 +351,7 @@ func applyEnvironmentPodBindings(object deploymentplan.Object, b environmentIden
 			containers = append(containers, container)
 		}
 		pod["containers"] = containers
-		if binding.Component == "managed-openbao" || binding.Component == "managed-turn" || binding.Component == "managed-app-api" || binding.Component == "managed-mqtt" {
+		if binding.Component == "managed-openbao" || binding.Component == "managed-turn" || binding.Component == "managed-app-api" || binding.Component == "managed-mqtt" || binding.Component == "existing-workload" && binding.Name == "video-cloud-api" {
 			for _, bound := range binding.InitContainers {
 				var container map[string]any
 				for _, v := range certIssuerObjectList(pod["initContainers"]) {
