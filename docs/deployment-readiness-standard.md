@@ -74,6 +74,14 @@ environments:
 | `deployment.compatibility` | Selected AM/Billing schema prerequisites, required restricted payment-simulator startup and migration setting, with candidate source/CI checked by the release gate. |
 | `deployment.network` | Configured public CertIssuer ingress, authenticated mTLS and anonymous TLS denial; planned Kubernetes network objects also pass exact-body admission. |
 
+Live Service registry evidence must match the selected environment, domain,
+issuer and Root. Its timestamp may be at most five minutes old and at most five
+seconds ahead of the checking machine. `deployment.pki.clock` identifies a
+future timestamp; verify the checking machine and controller node against a
+trusted time source and correct the faulty clock. `deployment.pki.registry.stale`
+requires a new live inventory. These failures do not authorize replacement
+identity or a fabricated report.
+
 Missing or failed update evidence, changed inputs/owners, cancellation or `--fast`
 is NO-GO. Actual scheduling/startup and endpoint health are verified after rollout
 before completion is recorded. Ordinary update does not mutate bootstrap

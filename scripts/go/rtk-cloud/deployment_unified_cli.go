@@ -98,7 +98,7 @@ func defaultUnifiedDeploymentDependencies() unifiedDeploymentDependencies {
 							return deploymentplan.GateEvidence{}, err
 						}
 						if err := verifySecretStoreK8SRuntime(store, at); err != nil {
-							return deploymentplan.GateEvidence{}, &deploymentplan.Blocker{ID: "deployment.pki", Cause: "retained runtime PKI is invalid or will not remain valid through the checked rollout window", Next: "run check-deployment-health.sh for the selected environment; repair its original certificate, trust or runtime configuration through the managed lifecycle, then repeat preflight"}
+							return deploymentplan.GateEvidence{}, environmentCompilationError(err, "deployment.pki", "retained runtime PKI is invalid or will not remain valid through the checked rollout window", "run check-deployment-health.sh for the selected environment; repair its original certificate, trust or runtime configuration through the managed lifecycle, then repeat preflight")
 						}
 					}
 					if err := c.Fence(ctx, p); err != nil {

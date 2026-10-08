@@ -18,6 +18,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 )
 
 type liveSecretList struct {
@@ -263,6 +265,7 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 		return errors.New("live Kubernetes Secret metadata is invalid")
 	}
 	var failures []string
+	var registryBlocker *deploymentplan.Blocker
 	for _, secret := range secrets.Items {
 		if secret.Metadata.Namespace != stack && !strings.HasPrefix(secret.Metadata.Namespace, stack+"-") {
 			continue
@@ -342,7 +345,12 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 			if serviceClientController {
 				if serviceClientRegistryConfigured {
 					if err := verifyLiveServiceClientRegistry(kubeconfig, namespace, deployments, store.checkRuntime); err != nil {
-						failures = append(failures, err.Error())
+						var blocker *deploymentplan.Blocker
+						if errors.As(err, &blocker) && (blocker.ID == "deployment.pki.clock" || blocker.ID == "deployment.pki.registry.stale") {
+							registryBlocker = blocker
+						} else {
+							failures = append(failures, err.Error())
+						}
 					}
 				} else if err := verifyUnadoptedServiceClientRegistry(kubeconfig, stack+"-platform", now, store.checkRuntime); err != nil {
 					failures = append(failures, err.Error())
@@ -373,10 +381,17 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 		}
 	}
 	if len(failures) == 0 {
+		if registryBlocker != nil {
+			return registryBlocker
+		}
 		return nil
 	}
 	sort.Strings(failures)
-	return secretCheckSummary(fmt.Sprintf("live Kubernetes secret validation failed: %s", strings.Join(failures, "; ")))
+	summary := secretCheckSummary(fmt.Sprintf("live Kubernetes secret validation failed: %s", strings.Join(failures, "; ")))
+	if registryBlocker != nil {
+		return errors.Join(registryBlocker, summary)
+	}
+	return summary
 }
 
 // Product CA creation waits for receipts from these workloads. If either
@@ -1063,8 +1078,15 @@ func verifyLiveServiceClientRegistry(kubeconfig, namespace string, deployments l
 	if report.Status == "service-client-registry-inventory-incomplete" {
 		return secretCheckFailure(commandErr, "pki-controller Service client registry inventory did not complete; check controller database grants and query errors")
 	}
-	if commandErr != nil || validateServiceClientInventoryReport(report, namespace, issuerID, rootSHA, time.Now().UTC()) != nil {
+	if commandErr != nil {
 		return secretCheckFailure(commandErr, "pki-controller Service client registry evidence is incomplete, stale or differs from its selected issuer, Root and environment")
+	}
+	if err := validateServiceClientInventoryReport(report, namespace, issuerID, rootSHA, time.Now().UTC()); err != nil {
+		var blocker *deploymentplan.Blocker
+		if errors.As(err, &blocker) {
+			return blocker
+		}
+		return errors.New("pki-controller Service client registry evidence is incomplete or differs from its selected issuer, Root and environment")
 	}
 
 	return nil
