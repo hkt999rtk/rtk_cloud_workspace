@@ -52,7 +52,7 @@ func TestLKEDevLoggerCutoverPersistsThroughPlainConfigRender(t *testing.T) {
 			"LKE_LOGGER_HTTP_CORE_CUTOVER_ENABLED=true\n"+
 			"LKE_LOGGER_MQTT_CORE_CUTOVER_ENABLED=true\n"+
 			"LKE_LOGGER_RETENTION_STORAGE_ENABLED=true\n"+
-			"LKE_OTA_REGISTRAR_REGISTRATION_ENABLED=true\n")
+			"")
 	for pass := 0; pass < 2; pass++ {
 		cfg, err := resolveDeploymentConfig(workspace, "dev", "")
 		if err != nil {
@@ -67,8 +67,7 @@ func TestLKEDevLoggerCutoverPersistsThroughPlainConfigRender(t *testing.T) {
 		}
 		env := loaded.Values
 		if !lkeLoggerServiceRegistrationEnabled(env) || !lkeLoggerHTTPCoreCutoverEnabled(env) ||
-			!lkeLoggerMQTTCoreCutoverEnabled(env) || !lkeLoggerRetentionStorageEnabled(env) ||
-			!lkeOTARegistrarRegistrationEnabled(env) {
+			!lkeLoggerMQTTCoreCutoverEnabled(env) || !lkeLoggerRetentionStorageEnabled(env) {
 			t.Fatalf("plain config pass %d lost persisted Logger/OTA gates", pass+1)
 		}
 		workload := lkeWorkload{Key: "video-cloud", Name: "video-cloud-api", Namespace: lkeNamespaceName(env, "video-cloud"), Port: 8080, Image: "example.test/video-cloud:reviewed"}

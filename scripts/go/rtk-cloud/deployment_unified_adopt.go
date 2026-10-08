@@ -37,6 +37,9 @@ func observeEnvironmentBindings(environment string, release environmentRelease, 
 			return b, errors.New("adoption requires unique, active, exact environment owners")
 		}
 		b.Owners[id] = uid
+		if ns == b.Stack+"-video-cloud" && name == "video-cloud-otaregistrar" && (kind == "Deployment" || kind == "Service") {
+			continue
+		}
 		if kind == "ConfigMap" && name == "pki-bootstrap-cleanup-binding" {
 			if ns != b.Stack+"-video-cloud" || object["immutable"] != true || b.BootstrapCleanup != nil {
 				return b, errors.New("bootstrap cleanup adoption requires one immutable environment owner record")

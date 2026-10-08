@@ -169,9 +169,6 @@ func renderEnvironmentResources(env map[string]string, bindings environmentIdent
 	if lkeOTAServiceRegistrationEnabled(env) {
 		manifests = append(manifests, lkeOTAServiceDeploymentManifest(env), lkeOTAServiceServiceManifest(env))
 	}
-	if lkeOTARegistrarRegistrationEnabled(env) {
-		manifests = append(manifests, lkeOTARegistrarDeploymentManifest(env), lkeOTARegistrarServiceManifest(env))
-	}
 	if lkeShadowHTTPCoreCutoverEnabled(env) {
 		manifests = append(manifests, lkeAllowVideoCloudAPIShadowGatewayNetworkPolicyManifest(env))
 	}

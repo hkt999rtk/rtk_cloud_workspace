@@ -153,10 +153,6 @@ func TestLKEOTAServiceInputsRequirePrivateCDNAndSeparateLease(t *testing.T) {
 	if err := lkeRequireOTAServiceInputs(env); err == nil || !strings.Contains(err.Error(), "HTTPS") {
 		t.Fatalf("non-TLS CDN was accepted: %v", err)
 	}
-	env["LKE_OTA_REGISTRAR_REGISTRATION_ENABLED"] = "true"
-	if err := lkeRequireOTAServiceInputs(env); err == nil || !strings.Contains(err.Error(), "same Platform lease") {
-		t.Fatalf("dual OTA registrars were accepted: %v", err)
-	}
 }
 
 func TestLKEOTACDNSecretRejectsShortToken(t *testing.T) {

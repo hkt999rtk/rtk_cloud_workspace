@@ -2034,7 +2034,6 @@ spec:
                   - video-cloud-webrtcservice
                   - video-cloud-videostorage
                   - video-cloud-logingester
-                  - video-cloud-otaregistrar
                   - video-cloud-otaservice
       ports:
         - protocol: TCP
@@ -2181,9 +2180,6 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: video-cloud-api
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: video-cloud-otaregistrar
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: mqtt
@@ -2671,20 +2667,7 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 			return err
 		}
 	}
-	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeOTARegistrarRegistrationEnabled(env) {
-		if !lkeOTAEntitlementsRequired(env) {
-			return fmt.Errorf("OTA registration requires strict OTA entitlements on the core API")
-		}
-		if !lkeMQTTFoundationRegistrationEnabled(env) {
-			return fmt.Errorf("OTA registration requires the MQTT foundation registrar")
-		}
-		if !lkeAccountManagerServiceRegistrationEnabled(env) {
-			return fmt.Errorf("OTA registration requires the Account Manager service registration listener")
-		}
-		if err := lkeRequireOTARegistrarIdentitySecret(env); err != nil {
-			return err
-		}
-	}
+
 	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeOTAServiceRegistrationEnabled(env) {
 		if err := lkeRequireOTAServiceInputs(env); err != nil {
 			return err
@@ -2773,7 +2756,7 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 			return err
 		}
 	}
-	if lkeWorkloadSelected(env, opts, "video-cloud") && (lkeMQTTFoundationRegistrationEnabled(env) || lkeShadowWorkerRegistrationEnabled(env) || lkeWebRTCServiceRegistrationEnabled(env) || lkeVideoStorageServiceRegistrationEnabled(env) || lkeLoggerServiceRegistrationEnabled(env) || lkeOTARegistrarRegistrationEnabled(env) || lkeOTAServiceRegistrationEnabled(env)) {
+	if lkeWorkloadSelected(env, opts, "video-cloud") && (lkeMQTTFoundationRegistrationEnabled(env) || lkeShadowWorkerRegistrationEnabled(env) || lkeWebRTCServiceRegistrationEnabled(env) || lkeVideoStorageServiceRegistrationEnabled(env) || lkeLoggerServiceRegistrationEnabled(env) || lkeOTAServiceRegistrationEnabled(env)) {
 		if err := kubectlApply(lkeAllowServiceRegistrationNetworkPolicyManifest(env)); err != nil {
 			return err
 		}
@@ -2952,20 +2935,7 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 			return err
 		}
 	}
-	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeOTARegistrarRegistrationEnabled(env) {
-		if err := kubectlApply(lkeAllowVideoCloudAPIInternalNetworkPolicyManifest(env)); err != nil {
-			return err
-		}
-		if err := kubectlApply(lkeOTARegistrarDeploymentManifest(env)); err != nil {
-			return err
-		}
-		if err := kubectlApply(lkeOTARegistrarServiceManifest(env)); err != nil {
-			return err
-		}
-		if err := runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "rollout", "status", "deployment/video-cloud-otaregistrar", "--timeout", firstNonEmpty(os.Getenv("LKE_WORKLOAD_ROLLOUT_TIMEOUT"), "5m")); err != nil {
-			return err
-		}
-	}
+
 	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeOTAServiceRegistrationEnabled(env) {
 		if lkeOTADedicatedStorage(env) {
 			if lkeObjectStorageCredential(env, "LINODE_OTA_OBJ_ACCESS_KEY_ID") == "" || lkeObjectStorageCredential(env, "LINODE_OTA_OBJ_SECRET_ACCESS_KEY") == "" {
@@ -3265,7 +3235,6 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/mqttfoundat
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/shadowworker ./cmd/shadowworker
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/webrtcservice ./cmd/webrtcservice
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/videostorage ./cmd/videostorage
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/otaregistrar ./cmd/otaregistrar
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/otaservice ./cmd/otaservice
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/clipverifier ./cmd/clipverifier
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/clipuploadpreflight ./cmd/clipuploadpreflight
@@ -3291,7 +3260,6 @@ COPY --from=builder /out/mqttfoundation /app/mqttfoundation
 COPY --from=builder /out/shadowworker /app/shadowworker
 COPY --from=builder /out/webrtcservice /app/webrtcservice
 COPY --from=builder /out/videostorage /app/videostorage
-COPY --from=builder /out/otaregistrar /app/otaregistrar
 COPY --from=builder /out/otaservice /app/otaservice
 COPY --from=builder /out/clipverifier /app/clipverifier
 COPY --from=builder /out/clipuploadpreflight /app/clipuploadpreflight

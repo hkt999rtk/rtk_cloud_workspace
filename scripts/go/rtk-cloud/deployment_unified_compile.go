@@ -309,6 +309,10 @@ func compileEnvironmentDeploymentWithImages(ctx context.Context, cfg deploymentC
 			seen[id] = true
 		}
 	}
+	definitions, err = retireLegacyOTARegistrar(definitions, live, bindings)
+	if err != nil {
+		return nil, err
+	}
 	environmentDeploymentProgress(ctx, "deployment.compatibility")
 	if err := bindOpenBaoAllocations(definitions, live); err != nil {
 		return nil, environmentCompilationError(err, "deployment.compatibility.openbao", "original OpenBao persistent allocations could not be matched to the target", "verify original OpenBao data/audit claims and immutable allocation compatibility, then repeat preflight")

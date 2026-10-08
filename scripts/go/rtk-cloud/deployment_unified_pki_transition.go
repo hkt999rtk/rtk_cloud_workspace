@@ -39,6 +39,9 @@ func validateEnvironmentPKITransition(definitions []deploymentplan.Definition, l
 			if !exists || target.Retire {
 				return environmentPKITransitionBlocker(id, "existing PKI consumer cannot be removed through an ordinary update")
 			}
+			if target.Retire && deploymentplan.Map(current["metadata"])["name"] == "video-cloud-otaregistrar" {
+				continue
+			}
 			if target.Retain {
 				continue
 			}

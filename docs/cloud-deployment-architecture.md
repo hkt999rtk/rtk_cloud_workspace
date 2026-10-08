@@ -422,3 +422,26 @@ not generated deployment state, and never belongs in a private `release.json`.
 Grafana uses the common official `grafana/grafana:13.0.2` digest across all
 environments. Its renderer has no built-in version fallback; preflight and
 deployment consume the same maintained setting.
+
+### Retired core OTA Registrar
+
+The core-API-plus-`otaregistrar` deployment topology is retired. Its enablement
+setting, Deployment/Service templates, rollout branches and network access
+entries are removed. `otaservice` is the sole supported OTA process/registration
+owner. The shared `ota-service-platform-identity` Secret and `ota-service-0`
+instance remain unchanged; ordinary retirement cannot delete their credentials
+or OTA persistent data.
+
+Preflight observes the legacy Deployment/Service owner UIDs without selecting
+an obsolete image or renderer. Once a stopped registrar (replicas and observed
+replicas zero, no non-terminal Pod), an existing independent OTA deployment and
+core cutover are verified, the common compiler adds only the old Deployment and
+Service as `retirement` actions. Deployment executes their normal UID/version
+fenced deletions from the reviewed plan. Active, foreign, unverified or
+unmigrated owners block with `deployment.ota.retirement`. Preflight never deletes
+them. After deletion, repeated planning has no retirement action.
+
+This cleanup does not enable missing independent OTA configuration or qualify
+its runtime. The independent service's renderer, storage, credentials, candidate
+startup and readiness must pass the same full update gates; a stopped legacy
+Deployment is not evidence that its replacement is healthy.
