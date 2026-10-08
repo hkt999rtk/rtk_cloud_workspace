@@ -85,7 +85,7 @@ func TestMaintainedSnapshotAndNativeFenceRejectInputDriftAcrossEnvironments(t *t
 				writeTestFile(t, filepath.Join(directory, "inventory.json"), string(raw))
 				raw, _ = json.Marshal(map[string]any{"items": []any{map[string]any{"metadata": map[string]any{"name": bindings.Stack + "-platform"}}}})
 				writeTestFile(t, filepath.Join(directory, "namespaces.json"), string(raw))
-				writeTestFile(t, filepath.Join(directory, "kubectl"), "#!/bin/sh\ncase \"$*\" in\n *' exec '*) printf '{\"system_identifier\":\"123456789\",\"sealed\":true}' ;;\n *'get namespace '*) cat \"$RTK_SNAPSHOT_NAMESPACES\";;\n *'get clusterrole,'*) printf '{\"items\":[]}' ;;\n *'get deployment,'*) cat \"$RTK_SNAPSHOT_INVENTORY\";;\n *) exit 1;;\nesac\n")
+				writeTestFile(t, filepath.Join(directory, "kubectl"), "#!/bin/sh\ncase \"$*\" in\n *' exec '*) printf '{\"system_identifier\":\"123456789\",\"sealed\":true}' ;;\n *'get namespace '*) cat \"$RTK_SNAPSHOT_NAMESPACES\";;\n *'get validatingwebhookconfiguration '*|*'get clusterrole,'*) printf '{\"items\":[]}' ;;\n *'get deployment,'*) cat \"$RTK_SNAPSHOT_INVENTORY\";;\n *) exit 1;;\nesac\n")
 				os.Chmod(filepath.Join(directory, "kubectl"), 0755)
 				t.Setenv("PATH", directory+string(os.PathListSeparator)+os.Getenv("PATH"))
 				t.Setenv("RTK_SNAPSHOT_NAMESPACES", filepath.Join(directory, "namespaces.json"))

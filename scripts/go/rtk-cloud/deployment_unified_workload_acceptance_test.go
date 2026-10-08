@@ -251,7 +251,7 @@ test "$1" = --kubeconfig || exit 1
 case "$2" in "$RTK_TEST_STORE_ROOT"/deployment/tmp/kubernetes-api-*/kubeconfig.yaml) ;; *) exit 1;; esac
 case "$*" in
  *"get namespace "*) cat "$RTK_TEST_NAMESPACES";;
- *"get clusterrole,"*) printf '{"items":[]}' ;;
+ *"get validatingwebhookconfiguration "*|*"get clusterrole,"*) printf '{"items":[]}' ;;
  *"get deployment,"*) cat "$RTK_TEST_INVENTORY";;
  *) exit 1;;
 esac
