@@ -304,10 +304,29 @@ func applyEnvironmentPodBindings(object deploymentplan.Object, b environmentIden
 					return errors.New("deployment.release: identity bindings cannot replace an existing workload's application image role")
 				}
 			}
+			// MQTT bootstrap defaults cannot add identity settings to an observed owner.
+			// Retain only observed identity references, then overlay them below;
+			// maintained nonidentity configuration remains renderer-owned.
+			if b.Owners[id] != "" && binding.Component == "managed-mqtt" {
+				original := map[string]bool{}
+				for _, value := range certIssuerObjectList(bound.Fields["env"]) {
+					original[deploymentplan.String(deploymentplan.Map(value)["name"])] = true
+				}
+				var settings []any
+				for _, value := range certIssuerObjectList(container["env"]) {
+					name := deploymentplan.String(deploymentplan.Map(value)["name"])
+					if !environmentIdentitySetting(name) || original[name] {
+						settings = append(settings, value)
+					}
+				}
+				container["env"] = settings
+			}
 			container["image"] = image
 			for field, value := range bound.Fields {
 				if field == "env" || field == "volumeMounts" || field == "ports" {
 					container[field] = mergeEnvironmentNamedFields(container[field], value)
+				} else if field == "envFrom" && value == nil {
+					delete(container, field)
 				} else {
 					container[field] = value
 				}

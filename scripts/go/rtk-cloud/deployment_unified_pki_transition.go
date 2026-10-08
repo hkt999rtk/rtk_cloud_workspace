@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"reflect"
+	"strings"
 
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 )
@@ -58,7 +59,20 @@ func validateEnvironmentPKITransition(definitions []deploymentplan.Definition, l
 			}
 			wantedSettings, err := environmentPKISettings(wanted["env"])
 			if err != nil || !reflect.DeepEqual(settings, wantedSettings) {
-				return environmentPKITransitionBlocker(id, "target changes existing identity or trust settings")
+				keys := map[string]string{}
+				for key := range settings {
+					keys[key] = ""
+				}
+				for key := range wantedSettings {
+					keys[key] = ""
+				}
+				var changed []string
+				for _, key := range sortedMapKeys(keys) {
+					if !reflect.DeepEqual(settings[key], wantedSettings[key]) {
+						changed = append(changed, key)
+					}
+				}
+				return environmentPKITransitionBlocker(id, "target changes identity or trust settings in container "+containerName+": "+strings.Join(changed, ", "))
 			}
 			oldSources, err := environmentPKIInheritedSources(old["envFrom"])
 			newSources, wantedErr := environmentPKIInheritedSources(wanted["envFrom"])

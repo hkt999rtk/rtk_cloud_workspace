@@ -519,3 +519,12 @@ name only when every webhook targets the selected environment
 observed bindings and the target; mixed endpoints, foreign owners and duplicate
 admission owners block qualification. Discovery is not a template fallback and
 does not replace admission credentials or waive server dry-run.
+
+### Upgrade identity overlay
+
+For verified existing MQTT owners, broker bootstrap identity defaults are replaced
+by exactly the observed identity references. Absent inherited credential sources
+remain absent; existing `envFrom` remains authoritative instead of being masked
+by newly injected Secret references. Ordinary workload behavior remains in the
+maintained renderer. The PKI transition gate still rejects identity or trust
+changes and identifies the container and setting names without their values.

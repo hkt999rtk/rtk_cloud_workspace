@@ -179,7 +179,10 @@ func observeEnvironmentBindings(environment string, release environmentRelease, 
 				if bound.ImageKey == "" {
 					return b, &deploymentplan.Blocker{ID: "deployment.inventory.image-role", Resource: id, Cause: "an existing container has no maintained release image role", Next: "maintain this enabled component and its image role in the common catalog; do not copy its live workload spec or hand-edit generated bindings"}
 				}
-				for _, field := range []string{"volumeMounts", "envFrom"} {
+				// Record absence too: an upgrade must not introduce a new inherited
+				// credential source over the existing runtime configuration.
+				bound.Fields["envFrom"] = container["envFrom"]
+				for _, field := range []string{"volumeMounts"} {
 					if value, ok := container[field]; ok {
 						bound.Fields[field] = value
 					}
