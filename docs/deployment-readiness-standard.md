@@ -58,6 +58,17 @@ Progress lines are not PASS/GO evidence and do not enter the plan hash or JSON
 report. Errors, cancellation and completion stop the heartbeat before results
 are printed; private provider output and credentials are never progress text.
 
+Independent recent-change checks run before formal CI image resolution: stopped
+legacy OTA Registrar retirement prerequisites and the enabled renderer settings
+for existing MQTT Foundation/independent OTA workloads. They reuse the selected
+credential snapshot and Kubernetes inventory; no extra inventory read, generated
+release, plan promotion or resource deletion is performed. A failed early check
+returns the same renderer/retirement blocker. A successful `[PRECHECK]` explicitly
+states `full qualification pending`; it does not satisfy a required gate. The
+first reported blocker may appear sooner, while full GO criteria remain unchanged.
+Formal images, lifecycle bindings, target compilation, admission, qualification
+and execution drift fences still run. Preflight/deployment share this order.
+
 ## GO for an existing environment update
 
 The current scripts report `scope=existing-environment-update`. GO authorizes
