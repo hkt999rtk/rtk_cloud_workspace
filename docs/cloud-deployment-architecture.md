@@ -510,3 +510,12 @@ retain the existing public/Core routing; service registration alone is not an
 edge cutover. All three settings belong only to shared `architecture.env`, are
 projected to internal aliases and hashed. Original instance and identity mounts
 are retained. Public routing changes still require their own qualified target.
+
+### Existing ingress admission ownership
+
+The inventory includes an original Helm admission webhook without a stack-prefixed
+name only when every webhook targets the selected environment
+`ingress-nginx-controller-admission` Service. Original UID, name and CA remain in
+observed bindings and the target; mixed endpoints, foreign owners and duplicate
+admission owners block qualification. Discovery is not a template fallback and
+does not replace admission credentials or waive server dry-run.

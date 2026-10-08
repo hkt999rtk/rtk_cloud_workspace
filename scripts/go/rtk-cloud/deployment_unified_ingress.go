@@ -17,33 +17,37 @@ import (
 // a full upgrade never generates a replacement admission key or disables it.
 func renderEnvironmentIngress(env map[string]string, binding *environmentAdmissionBinding, release environmentRelease) ([]deploymentplan.Definition, error) {
 	if binding == nil || !secretEnvironmentPattern.MatchString(binding.SecretName) {
-		return nil, errors.New("deployment.bindings.ingress: existing admission Secret reference or authoritative webhook CA could not be observed; next: verify the selected ingress controller mounts and webhook configuration, or qualify the new admission identity initialization")
+		return nil, ingressAdmissionBlocker(env["CLOUD_STACK_NAME"], "existing admission Secret reference or authoritative webhook CA could not be observed")
 	}
 	raw, err := base64.StdEncoding.DecodeString(binding.CABundle)
 	if err != nil {
-		return nil, errors.New("deployment.bindings.ingress: invalid public admission CA bundle")
+		return nil, ingressAdmissionBlocker(env["CLOUD_STACK_NAME"], "invalid public admission CA bundle")
 	}
 	count := 0
 	for len(strings.TrimSpace(string(raw))) > 0 {
 		block, rest := pem.Decode(raw)
 		if block == nil || block.Type != "CERTIFICATE" {
-			return nil, errors.New("deployment.bindings.ingress: only public CA certificates are accepted")
+			return nil, ingressAdmissionBlocker(env["CLOUD_STACK_NAME"], "only public CA certificates are accepted")
 		}
 		cert, err := x509.ParseCertificate(block.Bytes)
 		if err != nil || !cert.IsCA || !cert.BasicConstraintsValid || cert.KeyUsage&x509.KeyUsageCertSign == 0 {
-			return nil, errors.New("deployment.bindings.ingress: invalid admission CA certificate")
+			return nil, ingressAdmissionBlocker(env["CLOUD_STACK_NAME"], "invalid admission CA certificate")
 		}
 		count++
 		raw = rest
 	}
 	if count == 0 {
-		return nil, errors.New("deployment.bindings.ingress: empty admission CA bundle")
+		return nil, ingressAdmissionBlocker(env["CLOUD_STACK_NAME"], "empty admission CA bundle")
 	}
 	image := release.Images["LKE_INGRESS_IMAGE"].Reference
 	if !immutableEnvironmentImage.MatchString(image) {
 		return nil, errors.New("deployment.release.ingress: select the controller's immutable INGRESS_CONTROLLER_IMAGE")
 	}
 	namespace, stack := lkeIngressNamespace(env), env["CLOUD_STACK_NAME"]
+	webhookName := firstNonEmpty(binding.WebhookName, stack+"-ingress-admission")
+	if !secretEnvironmentPattern.MatchString(webhookName) {
+		return nil, ingressAdmissionBlocker(stack, "observed admission webhook name is invalid")
+	}
 	class, roleName := stack+"-nginx", stack+"-ingress-nginx"
 	controllerClass := "rtk.realtek.com/" + class
 	selector := map[string]any{"app.kubernetes.io/name": "ingress-nginx", "app.kubernetes.io/instance": "ingress-nginx", "app.kubernetes.io/component": "controller"}
@@ -117,7 +121,7 @@ func renderEnvironmentIngress(env map[string]string, binding *environmentAdmissi
 	pod := map[string]any{"serviceAccountName": serviceAccount, "securityContext": map[string]any{"fsGroup": float64(101)}, "containers": []any{container}, "volumes": []any{map[string]any{"name": "admission", "secret": map[string]any{"secretName": binding.SecretName, "defaultMode": float64(288)}}}, "nodeSelector": map[string]any{firstNonEmpty(env["NODE_CLASS_LABEL_KEY"], "rtk.io/node-class"): firstNonEmpty(env["INGRESS_NODE_CLASS"], env["DEFAULT_WORKLOAD_NODE_CLASS"], "general")}, "topologySpreadConstraints": []any{map[string]any{"maxSkew": float64(1), "topologyKey": "kubernetes.io/hostname", "whenUnsatisfiable": "ScheduleAnyway", "labelSelector": map[string]any{"matchLabels": selector}}}}
 	deploy := object("apps/v1", "Deployment", "ingress-nginx-controller", namespace, map[string]any{"spec": map[string]any{"replicas": float64(replicas), "selector": map[string]any{"matchLabels": selector}, "template": map[string]any{"metadata": map[string]any{"labels": selector}, "spec": pod}}})
 	add(deploy, "workload", saID, configID, roleBindingID, clusterBindingID, "Secret/"+namespace+"/"+binding.SecretName)
-	add(object("admissionregistration.k8s.io/v1", "ValidatingWebhookConfiguration", stack+"-ingress-admission", "", map[string]any{"webhooks": []any{map[string]any{
+	add(object("admissionregistration.k8s.io/v1", "ValidatingWebhookConfiguration", webhookName, "", map[string]any{"webhooks": []any{map[string]any{
 		"name": "validate.nginx.ingress.kubernetes.io", "admissionReviewVersions": []any{"v1"}, "sideEffects": "None", "failurePolicy": "Fail", "matchPolicy": "Equivalent", "timeoutSeconds": float64(10),
 		"namespaceSelector": map[string]any{"matchLabels": map[string]any{"rtk.realtek.com/stack": stack}},
 		"clientConfig":      map[string]any{"caBundle": binding.CABundle, "service": map[string]any{"namespace": namespace, "name": "ingress-nginx-controller-admission", "path": "/networking/v1/ingresses", "port": float64(443)}},
@@ -129,4 +133,28 @@ func renderEnvironmentIngress(env map[string]string, binding *environmentAdmissi
 
 func environmentIngressClass(env map[string]string) string {
 	return fmt.Sprintf("%s-nginx", env["CLOUD_STACK_NAME"])
+}
+
+func ingressAdmissionBlocker(stack, cause string) error {
+	return &deploymentplan.Blocker{ID: "deployment.ingress.admission", Resource: "Service/" + stack + "-ingress/ingress-nginx-controller-admission", Cause: cause, Next: "verify the original controller Secret mount and authoritative webhook CA for this environment; preserve its owner and credentials, then repeat preflight"}
+}
+
+// A non-prefixed Helm owner is accepted only when every webhook targets this
+// exact private admission Service. Mixed/foreign endpoints are never adopted.
+func environmentIngressAdmissionOwner(object deploymentplan.Object, stack string) bool {
+	if object["kind"] != "ValidatingWebhookConfiguration" {
+		return false
+	}
+	hooks := certIssuerObjectList(object["webhooks"])
+	if len(hooks) == 0 {
+		return false
+	}
+	for _, v := range hooks {
+		client := deploymentplan.Map(deploymentplan.Map(v)["clientConfig"])
+		service := deploymentplan.Map(client["service"])
+		if client["url"] != nil || service["namespace"] != stack+"-ingress" || service["name"] != "ingress-nginx-controller-admission" {
+			return false
+		}
+	}
+	return true
 }

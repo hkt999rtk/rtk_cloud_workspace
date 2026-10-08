@@ -25,7 +25,7 @@ func observeEnvironmentBindings(environment string, release environmentRelease, 
 		meta := deploymentplan.Map(object["metadata"])
 		id, kind := deploymentplan.ID(object), deploymentplan.String(object["kind"])
 		ns, name := deploymentplan.String(meta["namespace"]), deploymentplan.String(meta["name"])
-		if ns == "" && !strings.HasPrefix(name, b.Stack+"-") || ns != "" && !strings.HasPrefix(ns, b.Stack+"-") {
+		if ns == "" && !strings.HasPrefix(name, b.Stack+"-") && !environmentIngressAdmissionOwner(object, b.Stack) || ns != "" && !strings.HasPrefix(ns, b.Stack+"-") {
 			return b, errors.New("adoption inventory contains an owner outside the selected environment")
 		}
 		if kind == "Pod" || kind == "ReplicaSet" {
@@ -55,7 +55,10 @@ func observeEnvironmentBindings(environment string, release environmentRelease, 
 			}
 			b.BootstrapCleanup = &recorded
 		}
-		if kind == "ValidatingWebhookConfiguration" && name == b.Stack+"-ingress-admission" {
+		if environmentIngressAdmissionOwner(object, b.Stack) {
+			if b.IngressAdmission != nil && b.IngressAdmission.WebhookName != "" && b.IngressAdmission.WebhookName != name {
+				return b, ingressAdmissionBlocker(b.Stack, "multiple webhook owners target the same admission Service")
+			}
 			for _, value := range certIssuerObjectList(object["webhooks"]) {
 				client := deploymentplan.Map(deploymentplan.Map(value)["clientConfig"])
 				service := deploymentplan.Map(client["service"])
@@ -67,6 +70,7 @@ func observeEnvironmentBindings(environment string, release environmentRelease, 
 					if ca == "" || b.IngressAdmission.CABundle != "" && b.IngressAdmission.CABundle != ca {
 						return b, errors.New("existing ingress admission trust is missing or ambiguous")
 					}
+					b.IngressAdmission.WebhookName = name
 					b.IngressAdmission.CABundle = ca
 				}
 			}

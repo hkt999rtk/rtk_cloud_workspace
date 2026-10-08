@@ -65,6 +65,7 @@ func TestCompleteCompilerUsesMaintainedCatalogAndFencesNativeSnapshot(t *testing
 					t.Fatal(err)
 				}
 			}
+			bindings.IngressAdmission.WebhookName = "original-ingress-admission"
 			// Original Account Manager state is a retained dependency, not a template.
 			secret := deploymentplan.Object{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": "account-manager-runtime", "namespace": bindings.Stack + "-account-manager", "uid": "original-runtime", "resourceVersion": "1", "labels": map[string]any{"rtk.realtek.com/stack": bindings.Stack}}, "data": map[string]any{"DATABASE_URL": base64.StdEncoding.EncodeToString([]byte("postgres://runtime@postgresql." + bindings.Stack + "-platform.svc.cluster.local/rtk_account_manager"))}}
 			for key := range deploymentplan.Map(secret["data"]) {
@@ -168,7 +169,7 @@ print(json.dumps(body))';;
  *' exec '*) printf '{"system_identifier":"123456789","sealed":true}';;
  *'get namespace '*) cat "$RTK_COMPILE_NAMESPACES";;
  *'get deployment,'*) python3 -c 'import json,sys; args=sys.argv[1:]; ns=args[args.index("--namespace")+1]; values=json.load(open(sys.argv[-1])); print(json.dumps({"items":[o for o in values.values() if o["metadata"].get("namespace","")==ns]}))' "$@" "$RTK_COMPILE_DEPENDENCIES";;
- *'get clusterrole,'*) python3 -c 'import json,sys; values=json.load(open(sys.argv[-1])); print(json.dumps({"items":[o for o in values.values() if o["kind"]=="ValidatingWebhookConfiguration"]}))' "$RTK_COMPILE_DEPENDENCIES" ;;
+ *'get validatingwebhookconfiguration '*|*'get clusterrole,'*) python3 -c 'import json,sys; values=json.load(open(sys.argv[-1])); print(json.dumps({"items":[o for o in values.values() if o["kind"]=="ValidatingWebhookConfiguration"]}))' "$RTK_COMPILE_DEPENDENCIES" ;;
  *' get '*) python3 -c 'import json,sys; args=sys.argv[1:]; i=args.index("get"); ns=args[args.index("--namespace")+1] if "--namespace" in args else ""; obj=json.load(open(sys.argv[-1])).get(args[i+1]+"/"+ns+"/"+args[i+2]); print(json.dumps(obj) if obj else "",end="")' "$@" "$RTK_COMPILE_DEPENDENCIES";;
  *) exit 1;;
 esac

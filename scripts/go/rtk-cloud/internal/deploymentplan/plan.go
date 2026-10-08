@@ -135,7 +135,8 @@ func Compile(in Inputs, definitions []Definition, live []Object, adoptions ...ma
 		metadata := Map(desired["metadata"])
 		namespace, name := String(metadata["namespace"]), String(metadata["name"])
 		clusterScoped := kind == "Namespace" || kind == "ClusterRole" || kind == "ClusterRoleBinding" || kind == "IngressClass" || kind == "ValidatingWebhookConfiguration"
-		if !kinds[kind] || name == "" || (clusterScoped && (namespace != "" || !strings.HasPrefix(name, in.Stack+"-"))) || (!clusterScoped && !strings.HasPrefix(namespace, in.Stack+"-")) || seen[id] {
+		originalAdmission := originalAdmissionOwner(desired, byID[id], in.Stack, adoptions)
+		if !kinds[kind] || name == "" || (clusterScoped && (namespace != "" || !strings.HasPrefix(name, in.Stack+"-") && !originalAdmission)) || (!clusterScoped && !strings.HasPrefix(namespace, in.Stack+"-")) || seen[id] {
 			return nil, blocked("deployment.inventory", id, "invalid, duplicate or foreign desired resource", "correct the shared renderer and selected environment intent")
 		}
 		if _, ok := phases[definition.Phase]; !ok {
@@ -512,4 +513,30 @@ func (p *Plan) Summary() Summary {
 		s.Resources = append(s.Resources, SummaryResource{r.ID, r.Phase, r.Action})
 	}
 	return s
+}
+
+// Only an existing UID-bound admission webhook with exact selected Service
+// endpoints may keep its original non-prefixed Helm name.
+func originalAdmissionOwner(desired, current Object, stack string, adoptions []map[string]string) bool {
+	if desired["kind"] != "ValidatingWebhookConfiguration" || current == nil || len(adoptions) != 1 {
+		return false
+	}
+	uid := String(Map(current["metadata"])["uid"])
+	if uid == "" || adoptions[0][ID(desired)] != uid {
+		return false
+	}
+	for _, object := range []Object{desired, current} {
+		hooks, ok := object["webhooks"].([]any)
+		if !ok || len(hooks) == 0 {
+			return false
+		}
+		for _, value := range hooks {
+			client := Map(Map(value)["clientConfig"])
+			service := Map(client["service"])
+			if client["url"] != nil || service["namespace"] != stack+"-ingress" || service["name"] != "ingress-nginx-controller-admission" {
+				return false
+			}
+		}
+	}
+	return true
 }

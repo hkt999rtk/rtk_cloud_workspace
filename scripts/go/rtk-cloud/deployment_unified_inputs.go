@@ -71,8 +71,9 @@ type environmentIdentityBindings struct {
 }
 
 type environmentAdmissionBinding struct {
-	SecretName string `json:"secret_name"`
-	CABundle   string `json:"ca_bundle"`
+	WebhookName string `json:"webhook_name,omitempty"`
+	SecretName  string `json:"secret_name"`
+	CABundle    string `json:"ca_bundle"`
 }
 type environmentPodBindings struct {
 	Kind            string                         `json:"kind"`
@@ -101,7 +102,7 @@ func validateEnvironmentIdentityBindings(b environmentIdentityBindings, environm
 	seen := map[string]bool{}
 	for id, uid := range b.Owners {
 		parts := strings.Split(id, "/")
-		if len(parts) != 3 || uid == "" || (parts[1] != "" && !strings.HasPrefix(parts[1], b.Stack+"-")) || (parts[1] == "" && !strings.HasPrefix(parts[2], b.Stack+"-")) {
+		if len(parts) != 3 || uid == "" || (parts[1] != "" && !strings.HasPrefix(parts[1], b.Stack+"-")) || (parts[1] == "" && !strings.HasPrefix(parts[2], b.Stack+"-") && !(parts[0] == "ValidatingWebhookConfiguration" && b.IngressAdmission != nil && parts[2] == b.IngressAdmission.WebhookName)) {
 			return errors.New("deployment.bindings: invalid environment ownership adoption")
 		}
 	}

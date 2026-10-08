@@ -365,7 +365,27 @@ func (b environmentKubernetesBackend) Inventory(ctx context.Context, stack strin
 	if json.Unmarshal(raw, &list) != nil {
 		return nil, errors.New("cannot decode cluster ownership inventory")
 	}
-	return append(resources, list.Items...), nil
+	resources = append(resources, list.Items...)
+	// Helm admission owners may lack our stack label. Discover them by exact
+	// Service endpoint, deduplicating resources already selected above.
+	raw, err = b.command(ctx, nil, "get", "validatingwebhookconfiguration", "-o", "json")
+	if err != nil {
+		return nil, ingressAdmissionBlocker(stack, "admission webhook ownership inventory cannot be read")
+	}
+	list.Items = nil
+	if json.Unmarshal(raw, &list) != nil {
+		return nil, ingressAdmissionBlocker(stack, "admission webhook inventory is invalid")
+	}
+	seen := map[string]bool{}
+	for _, resource := range resources {
+		seen[deploymentplan.ID(resource)] = true
+	}
+	for _, object := range list.Items {
+		if environmentIngressAdmissionOwner(object, stack) && !seen[deploymentplan.ID(object)] {
+			resources = append(resources, object)
+		}
+	}
+	return resources, nil
 }
 
 func (b environmentKubernetesBackend) retire(ctx context.Context, body deploymentplan.Object, dry bool) (deploymentplan.Object, error) {

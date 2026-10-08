@@ -228,22 +228,6 @@ func compileEnvironmentDeploymentWithImages(ctx context.Context, cfg deploymentC
 	if err != nil {
 		return nil, environmentCompilationError(err, "deployment.inventory.read", "selected Kubernetes workload and dependency inventory could not be read", "verify selected kubeconfig, API connectivity and inventory read permissions, then repeat preflight")
 	}
-	admissionID := "ValidatingWebhookConfiguration//" + cfg.Values["CLOUD_STACK_NAME"] + "-ingress-admission"
-	admissionSeen := false
-	for _, object := range live {
-		if deploymentplan.ID(object) == admissionID {
-			admissionSeen = true
-		}
-	}
-	if !admissionSeen {
-		admission, err := backend.Read(ctx, admissionID)
-		if err != nil {
-			return nil, &deploymentplan.Blocker{ID: "deployment.inventory.read", Resource: admissionID, Cause: "existing ingress admission owner could not be read", Next: "verify Kubernetes API access and webhook read permissions, then repeat preflight"}
-		}
-		if admission != nil {
-			live = append(live, admission)
-		}
-	}
 	environmentDeploymentProgress(ctx, "deployment.pki.observation")
 	bindings, err := observeEnvironmentBindings(cfg.Environment, release, live)
 	if err != nil {
