@@ -95,6 +95,13 @@ Admission comparison permits only the client's refresh of
 remove that annotation from baseline drift checks, mutate the approved plan,
 or relax existing UID, consumer configuration and security-policy checks.
 
+For an existing `apps/v1` DaemonSet, admission may advance the native
+`deprecated.daemonset.template.generation` counter by exactly one. The comparison
+requires canonical positive counters, the same original UID and the matching
+metadata generation increment; it restores the original counter only in its
+comparison copy. Other fields, baseline drift checks and the approved plan stay
+unchanged. Missing, malformed, backward or larger counter changes fail.
+
 Storage fences use fresh reads with the same frozen Kubernetes identity and
 retry a transient API read failure once. `deployment.access.storage` reports a
 sanitized read/access failure for the exact PVC or PV; it does not establish

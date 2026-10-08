@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strconv"
 	"syscall"
 	"time"
 )
@@ -51,6 +54,12 @@ func matchesAdmission(body, admitted Object) bool {
 		return false
 	}
 	want, have := Projection(body), Projection(admitted)
+	if want == nil || have == nil {
+		return false
+	}
+	if !normalizeDaemonSetAdmissionGeneration(body, admitted, have) {
+		return false
+	}
 	for _, object := range []Object{want, have} {
 		metadata := Map(object["metadata"])
 		annotations := Map(metadata["annotations"])
@@ -63,6 +72,40 @@ func matchesAdmission(body, admitted Object) bool {
 		}
 	}
 	return Matches(want, have)
+}
+
+// DaemonSet updates increment this native counter when the Pod template changes.
+// Compare the original request on a copy; ownership and all other fields stay fenced.
+func normalizeDaemonSetAdmissionGeneration(body, admitted, have Object) bool {
+	const annotation = "deprecated.daemonset.template.generation"
+	before, declared := Map(Map(body["metadata"])["annotations"])[annotation]
+	after := Map(Map(admitted["metadata"])["annotations"])[annotation]
+	if !declared || reflect.DeepEqual(before, after) {
+		return true
+	}
+	if body["apiVersion"] != "apps/v1" || admitted["apiVersion"] != "apps/v1" || body["kind"] != "DaemonSet" || admitted["kind"] != "DaemonSet" {
+		return false
+	}
+	uid := String(Map(body["metadata"])["uid"])
+	if uid == "" || uid != String(Map(admitted["metadata"])["uid"]) {
+		return false
+	}
+	oldText, oldString := before.(string)
+	newText, newString := after.(string)
+	oldCounter, oldErr := strconv.ParseInt(oldText, 10, 64)
+	newCounter, newErr := strconv.ParseInt(newText, 10, 64)
+	if !oldString || !newString || oldErr != nil || newErr != nil || oldCounter < 1 || newCounter <= oldCounter || newCounter-oldCounter != 1 || strconv.FormatInt(oldCounter, 10) != oldText || strconv.FormatInt(newCounter, 10) != newText {
+		return false
+	}
+	// API JSON generations must remain exact integers, including the increment.
+	const maxJSONInteger = float64(1<<53 - 1)
+	oldGeneration, oldNumber := Map(body["metadata"])["generation"].(float64)
+	newGeneration, newNumber := Map(admitted["metadata"])["generation"].(float64)
+	if !oldNumber || !newNumber || !(oldGeneration >= 1 && oldGeneration < maxJSONInteger && newGeneration >= 1 && newGeneration <= maxJSONInteger) || math.Trunc(oldGeneration) != oldGeneration || math.Trunc(newGeneration) != newGeneration || newGeneration != oldGeneration+1 {
+		return false
+	}
+	Map(Map(have["metadata"])["annotations"])[annotation] = before
+	return true
 }
 
 // Admit performs no persisted Kubernetes writes. The executor repeats it.
