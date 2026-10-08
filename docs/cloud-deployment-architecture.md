@@ -528,3 +528,12 @@ remain absent; existing `envFrom` remains authoritative instead of being masked
 by newly injected Secret references. Ordinary workload behavior remains in the
 maintained renderer. The PKI transition gate still rejects identity or trust
 changes and identifies the container and setting names without their values.
+
+### MQTT permission initializers
+
+Existing `prepare-pki-state` and `prepare-mqtt-host-state` are observed and rendered
+from maintained permission-only recipes using the formal API image role. They
+prepare private directories and permissions, retaining original state mounts;
+they never copy, delete or regenerate identity contents. Unknown initializer
+commands or image repositories block qualification. Supported original immutable
+recipe fingerprints prove compatibility and never supply desired workload specs.

@@ -130,7 +130,7 @@ func observeEnvironmentBindings(environment string, release environmentRelease, 
 			}
 		}
 		groups := []string{"containers"}
-		if component == "managed-openbao" || component == "managed-turn" || component == "managed-app-api" {
+		if component == "managed-openbao" || component == "managed-turn" || component == "managed-app-api" || component == "managed-mqtt" {
 			groups = append(groups, "initContainers")
 		}
 		for _, group := range groups {
@@ -161,6 +161,12 @@ func observeEnvironmentBindings(environment string, release environmentRelease, 
 					default:
 						return b, openBaoCompatibilityBlocker(id, "existing OpenBao contains an unsupported container")
 					}
+				}
+				if component == "managed-mqtt" && group == "initContainers" {
+					if err := validateObservedMQTTInitializer(id, container, release); err != nil {
+						return b, err
+					}
+					bound.ImageKey = "LKE_VIDEO_CLOUD_IMAGE"
 				}
 				if component == "managed-app-api" && group == "initContainers" && bound.Name == "initialize-app-trust-state" {
 					command := certIssuerObjectList(container["command"])

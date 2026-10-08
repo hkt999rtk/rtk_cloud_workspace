@@ -117,7 +117,7 @@ func validateEnvironmentIdentityBindings(b environmentIdentityBindings, environm
 			return errors.New("deployment.bindings: duplicate or empty managed component")
 		}
 		seen[id] = true
-		if pod.Component != "managed-openbao" && pod.OpenBao != nil || pod.Component != "managed-openbao" && pod.Component != "managed-turn" && pod.Component != "managed-app-api" && len(pod.InitContainers) != 0 {
+		if pod.Component != "managed-openbao" && pod.OpenBao != nil || pod.Component != "managed-openbao" && pod.Component != "managed-turn" && pod.Component != "managed-app-api" && pod.Component != "managed-mqtt" && len(pod.InitContainers) != 0 {
 			return errors.New("deployment.bindings: OpenBao lifecycle references require the managed OpenBao component")
 		}
 		if pod.Component == "managed-app-api" {
@@ -210,6 +210,9 @@ func environmentPrivateFileMount(pod environmentPodBindings, container environme
 }
 
 func environmentManagedImageKey(component, name string, index int) string {
+	if component == "managed-mqtt" && (name == "prepare-pki-state" || name == "prepare-mqtt-host-state") {
+		return "LKE_VIDEO_CLOUD_IMAGE"
+	}
 	if component == "managed-turn" || component == "managed-app-api" {
 		return "LKE_VIDEO_CLOUD_IMAGE"
 	}
@@ -334,7 +337,7 @@ func applyEnvironmentPodBindings(object deploymentplan.Object, b environmentIden
 			containers = append(containers, container)
 		}
 		pod["containers"] = containers
-		if binding.Component == "managed-openbao" || binding.Component == "managed-turn" || binding.Component == "managed-app-api" {
+		if binding.Component == "managed-openbao" || binding.Component == "managed-turn" || binding.Component == "managed-app-api" || binding.Component == "managed-mqtt" {
 			for _, bound := range binding.InitContainers {
 				var container map[string]any
 				for _, v := range certIssuerObjectList(pod["initContainers"]) {
@@ -347,7 +350,7 @@ func applyEnvironmentPodBindings(object deploymentplan.Object, b environmentIden
 					if binding.Component == "managed-turn" {
 						return turnDeploymentBlocker(id, "private-file initializer lacks its selected formal CI image")
 					}
-					return errors.New("deployment.release: managed OpenBao installer lacks its formal CI image")
+					return &deploymentplan.Blocker{ID: "deployment.release.image-role", Resource: id, Cause: "initializer " + bound.Name + " lacks its selected formal image role", Next: "retain the maintained initializer and select its exact formal CI image; repeat preflight"}
 				}
 				container["image"] = image
 				for field, value := range bound.Fields {

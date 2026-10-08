@@ -363,6 +363,18 @@ func renderManagedEnvironmentComponent(env map[string]string, binding environmen
 		if err := applyManagedBrokerDefaults(env, object); err != nil {
 			return nil, err
 		}
+		var initializers []any
+		for _, bound := range binding.InitContainers {
+			c, err := maintainedMQTTInitializer(bound.Name)
+			if err != nil {
+				return nil, mqttInitializerBlocker(deploymentplan.ID(object), bound.Name)
+			}
+			c["image"] = env["LKE_VIDEO_CLOUD_IMAGE"]
+			initializers = append(initializers, c)
+		}
+		if len(initializers) > 0 {
+			environmentPKIPod(object)["initContainers"] = initializers
+		}
 	}
 	return object, nil
 }
