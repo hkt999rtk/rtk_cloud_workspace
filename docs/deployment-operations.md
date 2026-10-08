@@ -743,8 +743,11 @@ creation and updates, not retirement of an already-deployed registrar; drain
 or suspend it explicitly before removing its workload. No optional plugin Pods
 or gateway routes are deployed by this flag. It does not enable Product writes.
 
-`LKE_SHADOW_WORKER_REGISTRATION_ENABLED` is a separate default-off Shadow
-worker rollout flag. It requires the MQTT foundation flag and a distinct
+`SHADOW_WORKER_REGISTRATION_ENABLED=true` is maintained in the shared
+`architecture.env` for every environment. The resolver projects the internal
+`LKE_SHADOW_WORKER_REGISTRATION_ENABLED` renderer alias; adapter/environment
+copies are removed. `SHADOW_HTTP_CORE_CUTOVER_ENABLED=false` keeps HTTP handling
+on the core API. The worker requires MQTT Foundation and a distinct
 `shadow-worker-platform-identity` Secret with the same three client identity
 keys. Its one `shadow-worker-0` instance must be approved for service `shadow`
 and option `iot_shadow`, with `mqtt` as the declared dependency. The renderer

@@ -114,6 +114,7 @@ var deploymentEnvironmentServiceKeys = keySet(
 
 func architectureKeySet() map[string]bool {
 	out := keySet(
+		"SHADOW_WORKER_REGISTRATION_ENABLED", "SHADOW_HTTP_CORE_CUTOVER_ENABLED",
 		"OTA_SERVICE_REGISTRATION_ENABLED", "OTA_CORE_CUTOVER_ENABLED", "OTA_SERVICE_EDGE_ENABLED", "VIDEO_CLOUD_OTA_ENTITLEMENTS_REQUIRED",
 		"MQTT_FOUNDATION_REGISTRATION_ENABLED", "ACCOUNT_MANAGER_SERVICE_REGISTRATION_ENABLED", "ACCOUNT_MANAGER_SERVICE_REGISTRATION_PORT",
 		"DEVICE_API_AUTH_APP_PKI_ENABLED", "DEVICE_API_AUTH_PRODUCT_PKI_ENABLED", "DEVICE_API_AUTH_MTLS_REQUIRED",
@@ -903,6 +904,9 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 		return deploymentConfig{}, err
 	}
 	for k := range architectureOverride {
+		if sharedShadowDeploymentKey(k) {
+			return deploymentConfig{}, sharedShadowDeploymentBlocker(k, "Shadow settings belong in shared architecture, not environment overrides")
+		}
 		if sharedOTADeploymentKey(k) {
 			return deploymentConfig{}, sharedOTADeploymentBlocker(k, "shared OTA topology cannot be overridden per environment")
 		}
@@ -917,6 +921,9 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 		}
 		values[k] = architectureOverride[k]
 	}
+	if err := validateSharedShadowDeploymentConfiguration(values); err != nil {
+		return deploymentConfig{}, err
+	}
 	if err := validateSharedOTADeploymentConfiguration(values); err != nil {
 		return deploymentConfig{}, err
 	}
@@ -927,6 +934,9 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 		return deploymentConfig{}, err
 	}
 	for k, v := range envIdentity {
+		if sharedShadowDeploymentKey(k) {
+			return deploymentConfig{}, sharedShadowDeploymentBlocker(k, "Shadow settings belong in shared architecture, not environment identity")
+		}
 		if sharedOTADeploymentKey(k) {
 			return deploymentConfig{}, sharedOTADeploymentBlocker(k, "OTA settings belong in shared architecture, not environment identity")
 		}
@@ -1579,6 +1589,8 @@ func deploymentLegacyLKEValues(v map[string]string, environment string) map[stri
 		return map[string]string{}
 	}
 	out := map[string]string{
+		"LKE_SHADOW_WORKER_REGISTRATION_ENABLED":           v["SHADOW_WORKER_REGISTRATION_ENABLED"],
+		"LKE_SHADOW_HTTP_CORE_CUTOVER_ENABLED":             v["SHADOW_HTTP_CORE_CUTOVER_ENABLED"],
 		"LKE_OTA_SERVICE_REGISTRATION_ENABLED":             v["OTA_SERVICE_REGISTRATION_ENABLED"],
 		"LKE_OTA_CORE_CUTOVER_ENABLED":                     v["OTA_CORE_CUTOVER_ENABLED"],
 		"LKE_OTA_SERVICE_EDGE_ENABLED":                     v["OTA_SERVICE_EDGE_ENABLED"],

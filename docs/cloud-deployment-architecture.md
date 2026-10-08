@@ -466,3 +466,27 @@ checks; enabling the topology does not itself establish GO.
 The experimental PRECHECK path is removed. Formal CI image resolution again
 precedes environment inventory/target compilation. Standard progress stages and
 10-second elapsed-time heartbeats remain; only full qualification can report GO.
+
+### Shared Shadow worker topology
+
+`architecture.env` owns `SHADOW_WORKER_REGISTRATION_ENABLED=true` and
+`SHADOW_HTTP_CORE_CUTOVER_ENABLED=false` for all environments; adapter and
+environment copies are removed/rejected. The common resolver projects internal
+`LKE_SHADOW_*` aliases for the existing renderer. The worker uses the formal CI
+API image running `/app/shadowworker`, a private health Service and existing
+PostgreSQL, Redis, MQTT and Account Manager access policies. The selected
+environment controls `VIDEO_CLOUD_ENV`; it cannot default Dev/Prod to Staging.
+
+The core API receives `VIDEO_CLOUD_SHADOW_WORKER_ENABLED=true`, disabling its
+duplicate MQTT Shadow subscriber and mutation outbox worker. HTTP Shadow routes
+remain on the core API; this change does not enable HTTP forwarding. Existing
+worker instance, endpoint, registration URL and certificate/trust Secret
+references are observed and retained through the same compiler for preflight
+and deployment. They remain generated bindings in the canonical private
+environment store; no credentials or identity are recreated.
+
+Missing MQTT Foundation/Account Manager listener enablement and incompatible
+HTTP forwarding settings block configuration. Certificate, database, Redis,
+broker subscriptions, Platform registration and candidate/runtime readiness
+remain independent required checks. Local renderer tests do not establish
+environment GO or resolve an existing unready worker.
