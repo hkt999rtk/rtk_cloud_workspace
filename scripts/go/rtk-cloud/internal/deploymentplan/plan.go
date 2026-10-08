@@ -202,7 +202,7 @@ func Compile(in Inputs, definitions []Definition, live []Object, adoptions ...ma
 	for id, object := range byID {
 		m := Map(object["metadata"])
 		if controller(String(object["kind"])) && strings.HasPrefix(String(m["namespace"]), in.Stack+"-") && !seen[id] && in.Operation != "scoped" {
-			if verifiedControllerChild(id, byID, seen, in.Stack, map[string]bool{}) {
+			if historicalTerminalJob(id, byID, in.Stack) || verifiedControllerChild(id, byID, seen, in.Stack, map[string]bool{}) {
 				continue
 			}
 			return nil, blocked("deployment.inventory", id, "live controller has no declared renderer or retirement action", "add its shared component definition or review its retirement lifecycle")
@@ -329,7 +329,7 @@ func (p *Plan) CheckWorkloadInventory(objects []Object) error {
 	sort.Strings(ids)
 	for _, id := range ids {
 		object := live[id]
-		if controller(String(object["kind"])) && !declared[id] && strings.HasPrefix(String(Map(object["metadata"])["namespace"]), p.Stack+"-") && !verifiedControllerChild(id, live, declared, p.Stack, map[string]bool{}) {
+		if controller(String(object["kind"])) && !declared[id] && strings.HasPrefix(String(Map(object["metadata"])["namespace"]), p.Stack+"-") && !historicalTerminalJob(id, live, p.Stack) && !verifiedControllerChild(id, live, declared, p.Stack, map[string]bool{}) {
 			return blocked("deployment.inventory", id, "a new unknown workload appeared during qualification or execution", "stop and declare its maintained component or controlled retirement; repeat complete preflight")
 		}
 	}

@@ -138,3 +138,13 @@ observed-bindings hashes. Failed/fast preflight invalidates previous GO. Deploym
 must freshly compile the same plan, verify the matching GO record and fence
 ownership during execution. An unsupported existing OpenBao profile remains a
 compatibility blocker, not an instruction to manufacture a bindings file.
+
+### Historical one-off execution records
+
+A standalone Job with an explicit Complete/Failed terminal condition, zero active
+workers and only terminal Pods is historical evidence, not an enabled update
+component. Preflight and execution inventory checks preserve it without requiring
+a new renderer, old image publication or retired temporary credentials. Pod
+lineage must match the original Job UID/API version. Running, partial, scheduled,
+foreign or ambiguous owners remain NO-GO; no online cleanup is performed by
+preflight and no historical commands are imported into the candidate plan.
