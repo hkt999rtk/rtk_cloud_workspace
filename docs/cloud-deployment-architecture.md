@@ -550,3 +550,8 @@ Root-specific trust-state filename and mount references, not workload commands.
 Trust initialization writes only a missing file via a private temporary file;
 existing trust and controller identity contents are never overwritten. Unknown
 recipes, image sources or state paths block qualification.
+
+A lifecycle-qualified, fully stopped legacy OTA registrar retirement is recognized
+before PKI consumer parsing. This narrow exception never permits active or
+unknown consumer retirement; owner, drain, replacement and cutover checks remain
+mandatory, and shared OTA identity/data remain retained.

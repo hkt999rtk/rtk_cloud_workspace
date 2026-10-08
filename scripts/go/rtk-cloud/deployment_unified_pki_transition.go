@@ -21,6 +21,13 @@ func validateEnvironmentPKITransition(definitions []deploymentplan.Definition, l
 			continue
 		}
 		id := deploymentplan.ID(current)
+		target, exists := targets[id]
+		// The lifecycle compiler already verifies this exact original owner,
+		// drained Pods, replacement and core cutover before adding retirement.
+		// Check it before parsing a deliberately retired consumer.
+		if exists && target.Retire && target.Phase == "retirement" && deploymentplan.Map(current["metadata"])["name"] == "video-cloud-otaregistrar" && deploymentplan.Map(current["spec"])["replicas"] == float64(0) && nonnegativeNumber(deploymentplan.Map(current["status"])["replicas"]) == 0 {
+			continue
+		}
 		before := environmentPKIPod(current)
 		component := environmentManagedComponents[deploymentplan.String(deploymentplan.Map(current["metadata"])["name"])]
 		oldContainers, err := environmentPKIPodContainers(before)
@@ -36,12 +43,8 @@ func validateEnvironmentPKITransition(definitions []deploymentplan.Definition, l
 			if len(settings) == 0 && containerName != "pkimanagement" && containerName != "pkibroker" && component == "" {
 				continue
 			}
-			target, exists := targets[id]
 			if !exists || target.Retire {
 				return environmentPKITransitionBlocker(id, "existing PKI consumer cannot be removed through an ordinary update")
-			}
-			if target.Retire && deploymentplan.Map(current["metadata"])["name"] == "video-cloud-otaregistrar" {
-				continue
 			}
 			if target.Retain {
 				continue

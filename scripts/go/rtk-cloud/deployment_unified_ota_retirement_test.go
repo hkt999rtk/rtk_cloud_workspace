@@ -94,3 +94,27 @@ func TestLegacyOTARegistrarIsAbsentFromObservedWorkloadCatalog(t *testing.T) {
 		t.Fatal("legacy registrar still requires renderer/image selection or lost retirement ownership")
 	}
 }
+
+func TestQualifiedOTARegistrarRetirementPassesPKITransitionOnlyWhenStopped(t *testing.T) {
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		t.Run(environment, func(t *testing.T) {
+			live, bindings := otaRetirementFixture(environment)
+			definitions, err := retireLegacyOTARegistrar(nil, live, bindings)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := validateEnvironmentPKITransition(definitions, live[:1]); err != nil {
+				t.Fatal("qualified stopped retirement rejected", err)
+			}
+			deploymentplan.Map(live[0]["spec"])["replicas"] = float64(1)
+			if err := validateEnvironmentPKITransition(definitions, live[:1]); err == nil {
+				t.Fatal("active consumer retirement bypassed PKI gate")
+			}
+			deploymentplan.Map(live[0]["spec"])["replicas"] = float64(0)
+			definitions[0].Phase = "workload"
+			if err := validateEnvironmentPKITransition(definitions, live[:1]); err == nil {
+				t.Fatal("unqualified retirement phase accepted")
+			}
+		})
+	}
+}
