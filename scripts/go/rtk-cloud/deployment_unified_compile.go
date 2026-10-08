@@ -166,7 +166,13 @@ func readEnvironmentDeploymentSnapshot(cfg deploymentConfig, store secretStore) 
 }
 
 func compileEnvironmentDeployment(ctx context.Context, cfg deploymentConfig, operation string) (*compiledEnvironmentDeployment, error) {
-	return compileEnvironmentDeploymentWithImages(ctx, cfg, operation, environmentRelease{}, environmentCIImageCommand(cfg))
+	environmentDeploymentProgress(ctx, "deployment.release.resolve")
+	run := environmentCIImageCommand(cfg)
+	release, err := loadEnvironmentCIImages(ctx, cfg, run)
+	if err != nil {
+		return nil, environmentCompilationError(err, "deployment.release.resolve", "formal CI image selection could not be completed", "verify selected service revisions, CI publication and registry access, then repeat preflight")
+	}
+	return compileEnvironmentDeploymentWithImages(ctx, cfg, operation, release, run)
 }
 
 // Keep expected public blockers intact. Unknown provider/tool errors are not
@@ -236,21 +242,6 @@ func compileEnvironmentDeploymentWithImages(ctx context.Context, cfg deploymentC
 		}
 		if admission != nil {
 			live = append(live, admission)
-		}
-	}
-	// Reuse the existing snapshot/inventory. Early checks are rejection-only;
-	// every formal image, rendering and qualification gate still runs below.
-	err = withEnvironmentRenderInputs(cfg, store, environmentRelease{}, snapshot, func(values map[string]string) error {
-		return checkEnvironmentEarlyInventory(ctx, values, live)
-	})
-	if err != nil {
-		return nil, err
-	}
-	if release.Images == nil {
-		environmentDeploymentProgress(ctx, "deployment.release.resolve")
-		release, err = loadEnvironmentCIImages(ctx, cfg, sourceCommand)
-		if err != nil {
-			return nil, environmentCompilationError(err, "deployment.release.resolve", "formal CI image selection could not be completed", "verify selected service revisions, CI publication and registry access, then repeat preflight")
 		}
 	}
 	environmentDeploymentProgress(ctx, "deployment.pki.observation")

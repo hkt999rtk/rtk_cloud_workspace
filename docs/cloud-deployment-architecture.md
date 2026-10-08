@@ -445,3 +445,24 @@ This cleanup does not enable missing independent OTA configuration or qualify
 its runtime. The independent service's renderer, storage, credentials, candidate
 startup and readiness must pass the same full update gates; a stopped legacy
 Deployment is not evidence that its replacement is healthy.
+
+### Shared independent OTA topology
+
+`architecture.env` owns `OTA_SERVICE_REGISTRATION_ENABLED=true`,
+`OTA_CORE_CUTOVER_ENABLED=true`, `OTA_SERVICE_EDGE_ENABLED=true`, and the required
+`VIDEO_CLOUD_OTA_ENTITLEMENTS_REQUIRED=true` for all environments. Adapter defaults
+and Staging-only overrides are removed. The common resolver projects the three
+internal `LKE_OTA_*` renderer aliases; these are not operator-maintained settings.
+Environment copies/overrides and inconsistent forwarding without an independent
+service or strict Product/device OTA grants are rejected.
+
+Preflight and deployment render the independent OTA workload and routes from
+the same maintained settings and formal CI image. Existing OTA instance, endpoint,
+registration URL and certificate/trust references are observed and retained.
+No new identity is generated to enable the renderer. Dedicated storage, runtime
+credentials, certificate validity, compatibility and startup remain required
+checks; enabling the topology does not itself establish GO.
+
+The experimental PRECHECK path is removed. Formal CI image resolution again
+precedes environment inventory/target compilation. Standard progress stages and
+10-second elapsed-time heartbeats remain; only full qualification can report GO.

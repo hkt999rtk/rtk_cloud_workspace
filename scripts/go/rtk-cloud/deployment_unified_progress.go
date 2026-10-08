@@ -57,12 +57,3 @@ func runEnvironmentProgressInterval(ctx context.Context, out io.Writer, stage st
 	defer func() { close(done); <-stopped }()
 	return work(ctx)
 }
-
-// A preliminary success is neither qualification evidence nor an environment GO.
-func environmentDeploymentPrecheckPassed(ctx context.Context, stage string) {
-	if progress, ok := ctx.Value(environmentProgressKey{}).(*environmentProgress); ok {
-		progress.mu.Lock()
-		defer progress.mu.Unlock()
-		fmt.Fprintf(progress.out, "[PRECHECK] %s PASS; full qualification pending\n", stage)
-	}
-}

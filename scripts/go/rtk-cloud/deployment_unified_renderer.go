@@ -215,7 +215,7 @@ func renderEnvironmentResources(env map[string]string, bindings environmentIdent
 			continue
 		}
 		if binding.Component == "existing-workload" {
-			return nil, environmentMissingRendererBlocker(id)
+			return nil, &deploymentplan.Blocker{ID: "deployment.inventory.renderer", Resource: id, Cause: "existing workload has no enabled maintained renderer", Next: "add this workload to the common component catalog with its formal image roles and retained lifecycle references, or qualify explicit retirement; repeat preflight"}
 		}
 		if binding.Component == "managed-openbao" {
 			if err := validateOpenBaoTargetProfile(env, binding); err != nil {
@@ -424,8 +424,4 @@ func environmentImageRepository(reference string) string {
 		name = "library/" + name
 	}
 	return name
-}
-
-func environmentMissingRendererBlocker(id string) error {
-	return &deploymentplan.Blocker{ID: "deployment.inventory.renderer", Resource: id, Cause: "existing workload has no enabled maintained renderer", Next: "add this workload to the common component catalog with its formal image roles and retained lifecycle references, or qualify explicit retirement; repeat preflight"}
 }
