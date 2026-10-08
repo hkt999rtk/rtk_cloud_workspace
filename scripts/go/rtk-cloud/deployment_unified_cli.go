@@ -90,6 +90,9 @@ func defaultUnifiedDeploymentDependencies() unifiedDeploymentDependencies {
 					}
 					now := time.Now().UTC()
 					for _, at := range []time.Time{now, now.Add(time.Duration(window) * time.Second)} {
+						if err := c.CheckMQTTFoundationIdentity(ctx, at); err != nil {
+							return deploymentplan.GateEvidence{}, err
+						}
 						if err := verifySecretStoreK8SRuntime(store, at); err != nil {
 							return deploymentplan.GateEvidence{}, &deploymentplan.Blocker{ID: "deployment.pki", Cause: "retained runtime PKI is invalid or will not remain valid through the checked rollout window", Next: "run check-deployment-health.sh for the selected environment; repair its original certificate, trust or runtime configuration through the managed lifecycle, then repeat preflight"}
 						}

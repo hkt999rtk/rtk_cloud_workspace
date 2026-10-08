@@ -20,6 +20,8 @@ func completeEnvironmentRenderFixture(environment string) (map[string]string, en
 		}
 	}
 	env["DEVICE_API_AUTH_APP_PKI_ENABLED"], env["APP_API_AUTH_PRODUCT_PKI_ENABLED"] = "false", "false"
+	env["MQTT_FOUNDATION_REGISTRATION_ENABLED"], env["ACCOUNT_MANAGER_SERVICE_REGISTRATION_ENABLED"], env["ACCOUNT_MANAGER_SERVICE_REGISTRATION_PORT"] = "false", "false", "9444"
+	env["LKE_MQTT_FOUNDATION_REGISTRATION_ENABLED"], env["LKE_ACCOUNT_MANAGER_SERVICE_REGISTRATION_ENABLED"] = "false", "false"
 	env["OPENBAO_STORAGE_BACKEND"], env["OPENBAO_DATA_STORAGE"], env["OPENBAO_AUDIT_STORAGE"], env["OPENBAO_POD_MANAGEMENT_POLICY"], env["OPENBAO_UPDATE_STRATEGY"] = "raft", "20Gi", "10Gi", "Parallel", "RollingUpdate"
 	env["PKI_APP_CRL_WORKER_ENABLED"], env["PKI_SERVER_CRL_DOMAIN"], env["PKI_REQUIRE_USER_MFA"] = "true", "service,mqtt,openbao_tls", "true"
 	env["REDIS_DATA_STORAGE"], env["PROMETHEUS_DATA_STORAGE"] = "5Gi", "20Gi"

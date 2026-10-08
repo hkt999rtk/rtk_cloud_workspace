@@ -15,7 +15,7 @@ import (
 var environmentManagedComponents = map[string]string{
 	"certissuer": "certissuer", "factoryenroll": "certissuer", "certissuer-service-pki": "service-issuer",
 	"pki-controller": "pki-controller", "video-cloud-api-pki": "managed-api", "mqtt-pki": "managed-mqtt", "openbao": "managed-openbao",
-	"pkiturn": "managed-turn", "video-cloud-api-app-pki": "managed-app-api",
+	"video-cloud-mqttfoundation": "managed-mqtt-foundation", "pkiturn": "managed-turn", "video-cloud-api-app-pki": "managed-app-api",
 }
 
 // The catalog describes desired configuration, not copies of live workloads.
@@ -33,6 +33,9 @@ func renderEnvironmentResources(env map[string]string, bindings environmentIdent
 		// environment. Installing a new identity is a separate bootstrap stage.
 		if binding.Component == "managed-turn" {
 			needed["pkiturn"] = true
+		}
+		if binding.Component == "managed-mqtt-foundation" && lkeMQTTFoundationRegistrationEnabled(env) {
+			needed[binding.Name] = true
 		}
 		if binding.Component == "managed-app-api" {
 			needed[binding.Name] = true
@@ -266,6 +269,11 @@ func renderEnvironmentResources(env map[string]string, bindings environmentIdent
 	definitions = append(definitions, ingress...)
 	if len(support) == 1 {
 		definitions = append(definitions, support[0]...)
+	}
+	if lkeMQTTFoundationRegistrationEnabled(env) {
+		if err := validateMQTTFoundationTarget(env, definitions); err != nil {
+			return nil, err
+		}
 	}
 	definitions, err = applyEnvironmentDurableStorage(definitions, env)
 	if err != nil {

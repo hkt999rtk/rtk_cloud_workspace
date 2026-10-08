@@ -108,6 +108,12 @@ func observeEnvironmentBindings(environment string, release environmentRelease, 
 		if component == "" {
 			component = "existing-workload"
 		}
+		if component == "managed-mqtt-foundation" {
+			containers := certIssuerObjectList(environmentPKIPod(object)["containers"])
+			if len(containers) != 1 || deploymentplan.Map(containers[0])["name"] != "mqttfoundation" || len(certIssuerObjectList(environmentPKIPod(object)["initContainers"])) != 0 {
+				return b, mqttFoundationBlocker("deployment.mqtt-foundation.inventory", id, "existing registrar has an unsupported consumer or initializer")
+			}
+		}
 		binding := environmentPodBindings{Kind: kind, NamespaceSuffix: strings.TrimPrefix(ns, b.Stack+"-"), Name: name, Component: component, PodFields: map[string]any{}}
 		pod := deploymentplan.Map(deploymentplan.Map(deploymentplan.Map(object["spec"])["template"])["spec"])
 		for _, field := range []string{"volumes", "serviceAccountName", "imagePullSecrets"} {

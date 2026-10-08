@@ -18,13 +18,14 @@ func TestCompleteCompilerUsesMaintainedCatalogAndFencesNativeSnapshot(t *testing
 		t.Run(environment, func(t *testing.T) {
 			cfg, store, release, bindings := maintainedDeploymentSnapshotFixture(t, environment)
 			settings, _, _ := completeEnvironmentRenderFixture(environment)
+			settings["MQTT_FOUNDATION_REGISTRATION_ENABLED"], settings["ACCOUNT_MANAGER_SERVICE_REGISTRATION_ENABLED"] = "true", "true"
 			profile := "standard"
 			if environment == "prod" {
 				profile = "production"
 			}
 			architecture := "DEPLOYMENT_RUNTIME=kubernetes\nNODE_CLASS_LABEL_KEY=rtk.io/node-class\nDEFAULT_WORKLOAD_NODE_CLASS=general\nDEPLOYMENT_PROTECTION_PROFILE=" + profile + "\nDEPLOYMENT_POSTGRES_BACKUP_ENABLED=true\nREDIS_DATA_STORAGE=5Gi\nPROMETHEUS_DATA_STORAGE=20Gi\n"
 			for key, value := range settings {
-				if environmentAuthArchitectureKey(key) || environmentControllerPolicySetting(key) || key == "OPENBAO_STORAGE_BACKEND" || key == "OPENBAO_DATA_STORAGE" || key == "OPENBAO_AUDIT_STORAGE" || key == "OPENBAO_POD_MANAGEMENT_POLICY" || key == "OPENBAO_UPDATE_STRATEGY" {
+				if key == "MQTT_FOUNDATION_REGISTRATION_ENABLED" || key == "ACCOUNT_MANAGER_SERVICE_REGISTRATION_ENABLED" || key == "ACCOUNT_MANAGER_SERVICE_REGISTRATION_PORT" || environmentAuthArchitectureKey(key) || environmentControllerPolicySetting(key) || key == "OPENBAO_STORAGE_BACKEND" || key == "OPENBAO_DATA_STORAGE" || key == "OPENBAO_AUDIT_STORAGE" || key == "OPENBAO_POD_MANAGEMENT_POLICY" || key == "OPENBAO_UPDATE_STRATEGY" {
 					architecture += key + "=" + value + "\n"
 				}
 			}

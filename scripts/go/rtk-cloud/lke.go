@@ -9760,11 +9760,12 @@ func lkeDeploymentManifestWithVideoSurge(env map[string]string, workload lkeWork
 		}
 		if lkeAccountManagerServiceRegistrationEnabled(env) {
 			checksumValues = append(checksumValues, "service-registration-enabled")
-			extraPorts = `            - name: service-reg
-              containerPort: 8443
-`
-			extraEnv += `            - name: ACCOUNT_MANAGER_SERVICE_REGISTRATION_PORT
-              value: "8443"
+			registrationPort := firstNonEmpty(env["ACCOUNT_MANAGER_SERVICE_REGISTRATION_PORT"], "8443")
+			extraPorts = fmt.Sprintf(`            - name: service-reg
+              containerPort: %s
+`, registrationPort)
+			extraEnv += fmt.Sprintf(`            - name: ACCOUNT_MANAGER_SERVICE_REGISTRATION_PORT
+              value: %q
             - name: ACCOUNT_MANAGER_SERVICE_REGISTRATION_SERVER_CERT
               value: "/etc/rtk-account-manager/service-registration/tls.crt"
             - name: ACCOUNT_MANAGER_SERVICE_REGISTRATION_SERVER_KEY
@@ -9773,7 +9774,7 @@ func lkeDeploymentManifestWithVideoSurge(env map[string]string, workload lkeWork
               value: "/etc/rtk-account-manager/service-registration/client-ca.crt"
             - name: ACCOUNT_MANAGER_SERVICE_REGISTRATION_CLIENT_CRL
               value: "/etc/rtk-account-manager/service-registration/client.crl"
-`
+`, registrationPort)
 		}
 		templateAnnotations = fmt.Sprintf(`      annotations:
         rtk.realtek.com/runtime-checksum: %q

@@ -114,6 +114,7 @@ var deploymentEnvironmentServiceKeys = keySet(
 
 func architectureKeySet() map[string]bool {
 	out := keySet(
+		"MQTT_FOUNDATION_REGISTRATION_ENABLED", "ACCOUNT_MANAGER_SERVICE_REGISTRATION_ENABLED", "ACCOUNT_MANAGER_SERVICE_REGISTRATION_PORT",
 		"DEVICE_API_AUTH_APP_PKI_ENABLED", "DEVICE_API_AUTH_PRODUCT_PKI_ENABLED", "DEVICE_API_AUTH_MTLS_REQUIRED",
 		"APP_API_AUTH_APP_PKI_ENABLED", "APP_API_AUTH_PRODUCT_PKI_ENABLED", "APP_API_AUTH_MTLS_REQUIRED",
 		"CERT_ISSUER_PRODUCT_PKI_ENABLED", "CERT_ISSUER_APP_PKI_ENABLED", "FACTORY_ENROLL_PRODUCT_PKI_ENABLED",
@@ -901,6 +902,9 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 		return deploymentConfig{}, err
 	}
 	for k := range architectureOverride {
+		if k == "MQTT_FOUNDATION_REGISTRATION_ENABLED" || k == "ACCOUNT_MANAGER_SERVICE_REGISTRATION_ENABLED" || k == "ACCOUNT_MANAGER_SERVICE_REGISTRATION_PORT" {
+			return deploymentConfig{}, mqttFoundationBlocker("deployment.mqtt-foundation.configuration", k, "shared registration settings cannot be overridden per environment")
+		}
 		if environmentAuthArchitectureKey(k) {
 			return deploymentConfig{}, environmentAuthBlocker("", "shared authentication roles cannot be overridden per environment: "+k)
 		}
@@ -908,6 +912,9 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 			return deploymentConfig{}, fmt.Errorf("unknown architecture override %s", k)
 		}
 		values[k] = architectureOverride[k]
+	}
+	if err := validateMQTTFoundationConfiguration(values); err != nil {
+		return deploymentConfig{}, err
 	}
 	if err := validateEnvironmentAuthConfiguration(values); err != nil {
 		return deploymentConfig{}, err
@@ -1562,6 +1569,8 @@ func deploymentLegacyLKEValues(v map[string]string, environment string) map[stri
 		return map[string]string{}
 	}
 	out := map[string]string{
+		"LKE_MQTT_FOUNDATION_REGISTRATION_ENABLED":         v["MQTT_FOUNDATION_REGISTRATION_ENABLED"],
+		"LKE_ACCOUNT_MANAGER_SERVICE_REGISTRATION_ENABLED": v["ACCOUNT_MANAGER_SERVICE_REGISTRATION_ENABLED"],
 		"CLOUD_ENV_NAME": environment, "CLOUD_PROVIDER": "lke", "CLOUD_REGION": v["LKE_REGION"],
 		"LKE_TARGET_CONNECTS": v["CAPACITY_TARGET_CONNECTIONS"], "LKE_MQTT_CONNECTIONS_PER_POD": v["CAPACITY_CONNECTIONS_PER_MQTT_POD"],
 		"LKE_SYSTEM_RESERVED_CPU_PER_NODE": v["CAPACITY_SYSTEM_RESERVED_CPU_MILLI"] + "m", "LKE_SYSTEM_RESERVED_MEMORY_PER_NODE": v["CAPACITY_SYSTEM_RESERVED_MEMORY_MIB"] + "Mi",

@@ -40,7 +40,7 @@ func TestLKEMQTTFoundationRendersStablePrivateRegistrar(t *testing.T) {
 	t.Setenv("LKE_MQTT_FOUNDATION_REGISTRATION_ENABLED", "true")
 	env := map[string]string{
 		"CLOUD_STACK_NAME":      "video-cloud-staging",
-		"CLOUD_ENV_NAME":        "dev",
+		"CLOUD_ENV_NAME":        "staging",
 		"ACCOUNT_MANAGER_ENV":   "staging",
 		"LKE_VIDEO_CLOUD_IMAGE": "example.test/video-cloud:reviewed",
 	}

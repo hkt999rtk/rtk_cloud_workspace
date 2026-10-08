@@ -683,8 +683,10 @@ For the existing dev managed-PKI stack, complete the separate
 this listener or any of the six Product registrars. It preserves the live CRL
 consumers and uses a new bootstrap session rather than the retired state PVC.
 
-`LKE_ACCOUNT_MANAGER_SERVICE_REGISTRATION_ENABLED` defaults to `false`. When
-reviewed and enabled, the LKE renderer adds a private `account-manager`
+`ACCOUNT_MANAGER_SERVICE_REGISTRATION_ENABLED=true` is maintained in the shared
+`architecture.env` for every environment. The resolver projects the internal
+`LKE_ACCOUNT_MANAGER_SERVICE_REGISTRATION_ENABLED` renderer input; it is no
+longer an adapter override. The renderer adds a private `account-manager`
 Service port `8443`, the matching Account Manager mTLS listener settings, and
 an ingress NetworkPolicy limited to the MQTT foundation, Shadow worker,
 WebRTC service, and video-storage service Pod identities in the Video Cloud
@@ -694,7 +696,7 @@ which fits Kubernetes' 15-character port-name limit. Its destination port may di
 from the Service port: an existing `8443 -> service-reg:9444` mapping must allow
 Pod port 9444. Preserve that mapping during routing-only reconciliation.
 
-Before enabling the flag, provision the environment-local Kubernetes Secret
+Existing upgrades retain the environment-local Kubernetes Secret
 `account-manager-service-registration-tls` in the Account Manager namespace
 with `tls.crt` (server certificate and chain), `tls.key`, `client-ca.crt`, and
 the current issuer-signed `client.crl`. The rendered Pod mounts it read-only
@@ -720,9 +722,12 @@ rotation pass with the actual issuer and workloads.
 
 The Video Cloud LKE image build paths include the independent
 `mqttfoundation`, `shadowworker`, `webrtcservice`, and `videostorage` binaries.
-`LKE_MQTT_FOUNDATION_REGISTRATION_ENABLED` is a separate default-off deploy
-flag for one MQTT foundation registrar. It requires the Account Manager listener
-flag and an existing `mqtt-foundation-platform-identity` Secret in the Video
+`MQTT_FOUNDATION_REGISTRATION_ENABLED=true` is maintained in the shared
+`architecture.env`, alongside the Account Manager listener enablement and
+`ACCOUNT_MANAGER_SERVICE_REGISTRATION_PORT=9444`. The resolver projects the
+internal `LKE_MQTT_FOUNDATION_REGISTRATION_ENABLED` input for the existing
+renderer. Adapter/environment copies are retired. The private Service retains
+`8443 -> service-reg:9444`. The registrar requires an existing `mqtt-foundation-platform-identity` Secret in the Video
 Cloud namespace with `client.crt`, `client.key`, and `server-ca.crt`. The
 renderer checks the certificate/key pair, trust and revocation against the
 Account Manager listener Secret before the workload step mutates Kubernetes. A

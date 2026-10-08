@@ -116,6 +116,41 @@ must run complete preflight and, after deployment, verify Device CSR admission,
 issuance and Device API mTLS, plus App certificate authentication and token
 issuance. Production qualification remains an independent required gate.
 
+### MQTT Foundation registration
+
+Every environment uses shared `MQTT_FOUNDATION_REGISTRATION_ENABLED=true`,
+`ACCOUNT_MANAGER_SERVICE_REGISTRATION_ENABLED=true`, and
+`ACCOUNT_MANAGER_SERVICE_REGISTRATION_PORT=9444` from `architecture.env`.
+Environment overrides are rejected. The resolver projects the two internal
+`LKE_*_REGISTRATION_ENABLED` aliases for existing renderers; these aliases are
+not maintained adapter configuration. The flags do not enable Product writes,
+Shadow, WebRTC, video storage, or OTA services.
+
+The common target includes the formal CI API image running `/app/mqttfoundation`,
+its private health Service, and the Account Manager, PostgreSQL and MQTT access
+policies. Account Manager's private Service routes `8443` to the named
+`service-reg` container port `9444`; NetworkPolicy uses the named port as well.
+The existing registrar instance and read-only certificate/trust Secret mount
+are observed and retained. One replica with `Recreate` avoids overlapping leases
+for the same approved identity. Existing listener TLS and CRL references are
+retained rather than regenerated.
+
+Target compilation rejects an absent/non-private registration Service, wrong
+listener port or registration URL, missing identity mounts or missing required
+network/service dependencies. The PKI qualification gate reads the retained
+registrar and listener Secrets in memory and verifies key pairs, exact
+`service:mqtt` identity, client/server purposes, mutual trust, server DNS and
+current issuer CRL through the rollout window. Errors are reported using stable
+`deployment.mqtt-foundation.*` IDs without provider output or Secret payloads.
+These checks do not fabricate Platform workload approval or establish broker
+publish/subscribe health; candidate startup and post-deploy readiness remain
+required gates. Missing existing credentials remain NO-GO.
+
+Bindings, qualification records and reports remain deployment-generated data in
+`~/.config/rtk_cloud/<environment>/deployment/` (0700 directories, 0600 files),
+using the same compiler/path helpers for preflight and deployment. No new local
+credential/configuration file is required for this service.
+
 ### TURN CLI credential lifecycle
 
 `PKI_TURN_CLI_PASSWORD_FILE` names a **container-runtime file**, not a password

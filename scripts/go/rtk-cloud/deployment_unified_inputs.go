@@ -108,7 +108,7 @@ func validateEnvironmentIdentityBindings(b environmentIdentityBindings, environm
 	podFields := keySet("volumes", "securityContext", "serviceAccountName", "automountServiceAccountToken", "imagePullSecrets")
 	containerFields := keySet("volumeMounts", "securityContext", "envFrom", "env")
 	for _, pod := range b.Pods {
-		if (pod.Kind != "Deployment" && pod.Kind != "StatefulSet" && pod.Kind != "DaemonSet") || !secretEnvironmentPattern.MatchString(pod.NamespaceSuffix) || !secretEnvironmentPattern.MatchString(pod.Name) || !keySet("existing-workload", "certissuer", "pki-controller", "managed-api", "managed-app-api", "managed-mqtt", "managed-openbao", "managed-turn", "service-issuer")[pod.Component] {
+		if (pod.Kind != "Deployment" && pod.Kind != "StatefulSet" && pod.Kind != "DaemonSet") || !secretEnvironmentPattern.MatchString(pod.NamespaceSuffix) || !secretEnvironmentPattern.MatchString(pod.Name) || !keySet("existing-workload", "certissuer", "pki-controller", "managed-api", "managed-app-api", "managed-mqtt-foundation", "managed-mqtt", "managed-openbao", "managed-turn", "service-issuer")[pod.Component] {
 			return errors.New("deployment.bindings: unsupported managed component")
 		}
 		id := pod.Kind + "/" + b.Stack + "-" + pod.NamespaceSuffix + "/" + pod.Name
@@ -227,7 +227,7 @@ func environmentManagedImageKey(component, name string, index int) string {
 		return ""
 	}
 	switch component {
-	case "certissuer", "service-issuer", "pki-controller", "managed-api":
+	case "certissuer", "service-issuer", "pki-controller", "managed-api", "managed-mqtt-foundation":
 		return "LKE_VIDEO_CLOUD_IMAGE"
 	case "managed-mqtt":
 		return "LKE_MQTT_PKI_IMAGE"
@@ -342,13 +342,15 @@ func applyEnvironmentPodBindings(object deploymentplan.Object, b environmentIden
 
 func environmentIdentitySetting(name string) bool {
 	switch name {
+	case "VIDEO_CLOUD_MQTT_FOUNDATION_INSTANCE_ID", "VIDEO_CLOUD_MQTT_FOUNDATION_ENDPOINT_REF", "VIDEO_CLOUD_MQTT_FOUNDATION_REGISTRATION_URL", "VIDEO_CLOUD_MQTT_FOUNDATION_CLIENT_CERT", "VIDEO_CLOUD_MQTT_FOUNDATION_CLIENT_KEY", "VIDEO_CLOUD_MQTT_FOUNDATION_SERVER_CA":
+		return true
 	case "BAO_ADDR", "BAO_API_ADDR", "BAO_CLUSTER_ADDR", "BAO_CACERT", "BAO_TLS_SERVER_NAME", "CERT_ISSUER_SERVER_CERT", "CERT_ISSUER_SERVER_KEY", "CERT_ISSUER_CLIENT_CA", "CERT_ISSUER_CA_PROVIDER":
 		return true
 	}
 	if environmentControllerPolicySetting(name) {
 		return false
 	}
-	for _, prefix := range []string{"PKI_", "OPENBAO_", "EMQX_PKI_", "CERT_ISSUER_SERVICE_", "CERT_ISSUER_HOST_", "CERT_ISSUER_SERVER_PKI_", "CERT_ISSUER_MQTT_SERVER_PKI_", "FACTORY_ENROLL_CERT_ISSUER_", "VIDEO_CLOUD_API_TLS_", "VIDEO_CLOUD_AUTH_PRODUCT_PKI_", "VIDEO_CLOUD_AUTH_APP_", "VIDEO_CLOUD_SERVICE_PKI_", "VIDEO_CLOUD_SERVER_PKI_", "VIDEO_CLOUD_CONTROLLER_PKI_", "VIDEO_CLOUD_AUTH_DEVICE_CA_", "VIDEO_CLOUD_AUTH_DEVICE_ROOT_TRUST_", "VIDEO_CLOUD_AUTH_ISSUER_TRUST_", "VIDEO_CLOUD_MQTT_SERVER_PKI_", "VIDEO_CLOUD_MQTT_BUNDLE_", "APP_PKI_", "SERVER_PKI_"} {
+	for _, prefix := range []string{"ACCOUNT_MANAGER_SERVICE_REGISTRATION_SERVER_", "ACCOUNT_MANAGER_SERVICE_REGISTRATION_CLIENT_", "PKI_", "OPENBAO_", "EMQX_PKI_", "CERT_ISSUER_SERVICE_", "CERT_ISSUER_HOST_", "CERT_ISSUER_SERVER_PKI_", "CERT_ISSUER_MQTT_SERVER_PKI_", "FACTORY_ENROLL_CERT_ISSUER_", "VIDEO_CLOUD_API_TLS_", "VIDEO_CLOUD_AUTH_PRODUCT_PKI_", "VIDEO_CLOUD_AUTH_APP_", "VIDEO_CLOUD_SERVICE_PKI_", "VIDEO_CLOUD_SERVER_PKI_", "VIDEO_CLOUD_CONTROLLER_PKI_", "VIDEO_CLOUD_AUTH_DEVICE_CA_", "VIDEO_CLOUD_AUTH_DEVICE_ROOT_TRUST_", "VIDEO_CLOUD_AUTH_ISSUER_TRUST_", "VIDEO_CLOUD_MQTT_SERVER_PKI_", "VIDEO_CLOUD_MQTT_BUNDLE_", "APP_PKI_", "SERVER_PKI_"} {
 		if strings.HasPrefix(name, prefix) {
 			return true
 		}
