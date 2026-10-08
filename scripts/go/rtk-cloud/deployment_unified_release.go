@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	environmentReleaseSourceNext      = "Use a clean checkout of the selected workspace revision and its exact pinned service revisions, then repeat complete preflight."
+	environmentReleaseSourceNext      = "Select the frozen workspace revision and its exact pinned service revisions, then repeat complete preflight."
 	environmentReleasePullNext        = "Verify the maintained image reference, registry availability and selected environment pull credentials, then repeat complete preflight."
 	environmentReleasePublicationNext = "Verify selected environment GitHub access and the latest successful exact-source main CI/Release run with its unexpired formal image artifact; republish the frozen source if evidence is missing, then repeat complete preflight."
 	environmentReleaseBackupNext      = "Publish the selected workspace revision through workspace-test-baseline.yml and postgres-backup-image.yml with the selected PostgreSQL digest, then repeat complete preflight."
@@ -37,7 +37,7 @@ func verifyEnvironmentRelease(ctx context.Context, cfg deploymentConfig, release
 
 func verifyEnvironmentReleaseWithCommand(ctx context.Context, cfg deploymentConfig, release environmentRelease, run func(context.Context, string, ...string) ([]byte, error)) error {
 	if err := verifyEnvironmentReleaseCheckout(ctx, cfg.Workspace, release.WorkspaceRevision, run); err != nil {
-		return environmentReleaseFailure(err, "deployment.release.source", "workspace", "executing workspace checkout is not clean or does not match the selected immutable release", environmentReleaseSourceNext)
+		return environmentReleaseFailure(err, "deployment.release.source", "workspace", "executing workspace revision does not match the selected immutable release", environmentReleaseSourceNext)
 	}
 	keys := make([]string, 0, len(release.Images))
 	for key := range release.Images {
@@ -87,7 +87,7 @@ func verifyEnvironmentReleaseWithCommand(ctx context.Context, cfg deploymentConf
 			return environmentReleaseFailure(err, "deployment.release.source", key, "schema and startup source checkout differs from the selected image source revision", environmentReleaseSourceNext)
 		}
 		if err := verifyEnvironmentReleaseCheckout(ctx, filepath.Join(cfg.Workspace, source.RepoPath), image.SourceRevision, run); err != nil {
-			return environmentReleaseFailure(err, "deployment.release.source", key, "selected image source checkout is not clean or does not match its immutable release", environmentReleaseSourceNext)
+			return environmentReleaseFailure(err, "deployment.release.source", key, "selected image source revision does not match its immutable release", environmentReleaseSourceNext)
 		}
 		if err := verifyDeploymentUpgradeImageCIAtWithCommand(ctx, image.Reference, image.SourceRevision, run); err != nil {
 			return environmentReleaseFailure(err, "deployment.release.publication", key, "selected image OCI revision or exact-source CI and publication evidence cannot be verified", environmentReleasePublicationNext)
@@ -116,18 +116,56 @@ func verifyEnvironmentReleaseWithCommand(ctx context.Context, cfg deploymentConf
 }
 
 func verifyEnvironmentReleaseCheckout(ctx context.Context, directory, revision string, run func(context.Context, string, ...string) ([]byte, error)) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if !deploymentUpgradeSHA.MatchString(revision) || directory == "" || run == nil {
 		return environmentReleaseFailure(nil, "deployment.release.source", "", "exact source revision and checkout are required", environmentReleaseSourceNext)
 	}
 	raw, err := run(ctx, "git", "-C", directory, "rev-parse", "HEAD")
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err != nil || strings.TrimSpace(string(raw)) != revision {
 		return environmentReleaseFailure(err, "deployment.release.source", "", "executing checkout differs from the selected immutable release", environmentReleaseSourceNext)
 	}
-	raw, err = run(ctx, "git", "-C", directory, "status", "--porcelain", "--untracked-files=normal", "--ignore-submodules=none")
-	if err != nil || len(strings.TrimSpace(string(raw))) != 0 {
-		return environmentReleaseFailure(err, "deployment.release.source", "", "executing checkout has unqualified source changes", environmentReleaseSourceNext)
-	}
 	return nil
+}
+
+// Schema requirements belong to the published image's source commit. Working
+// tree additions or deletions must not change that image's migration inventory.
+func verifyEnvironmentReleaseSchemas(ctx context.Context, cfg deploymentConfig, store secretStore, release environmentRelease) error {
+	var images []string
+	for _, image := range release.Images {
+		if strings.HasPrefix(image.Reference, "ghcr.io/hkt999rtk/") && !strings.Contains(image.Reference, "/rtk_cloud_workspace/postgres-backup@") {
+			images = append(images, image.Reference)
+		}
+	}
+	return verifyDeploymentUpgradeSchemasWithInventory(store, images, func(source lkeServiceImageSource) ([]string, error) {
+		image, ok := release.Images[source.EnvKey]
+		if !ok || !deploymentUpgradeSHA.MatchString(image.SourceRevision) {
+			return nil, errors.New("candidate migration source revision is unavailable")
+		}
+		raw, err := deploymentUpgradeCommand(ctx, "git", "-C", filepath.Join(cfg.Workspace, source.RepoPath), "ls-tree", "-z", image.SourceRevision+":migrations")
+		if err != nil {
+			return nil, errors.New("candidate committed migration inventory cannot be read")
+		}
+		var versions []string
+		for _, entry := range strings.Split(string(raw), "\x00") {
+			if entry == "" {
+				continue
+			}
+			metadata, name, found := strings.Cut(entry, "\t")
+			fields := strings.Fields(metadata)
+			if !found || len(fields) != 3 || name == "" {
+				return nil, errors.New("candidate committed migration inventory is invalid")
+			}
+			if fields[1] == "blob" && strings.HasSuffix(name, ".sql") {
+				versions = append(versions, name)
+			}
+		}
+		return versions, nil
+	})
 }
 
 func verifyEnvironmentBackupPublication(ctx context.Context, image environmentReleaseImage, run func(context.Context, string, ...string) ([]byte, error)) error {

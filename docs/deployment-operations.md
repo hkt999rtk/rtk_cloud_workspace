@@ -180,7 +180,7 @@ Complete preflight derives the entire target in memory from maintained settings,
 live observed lifecycle references and an immutable formal release. It does not require
 or discover a private workload-spec plan. Preflight reads the successful exact-source `image-manifest.json` artifacts
 directly from each service's formal CI Release workflow. It builds the image
-selection in memory from the current clean workspace and its service gitlinks.
+selection in memory from the current workspace HEAD and its service gitlinks.
 No local release file is read or written. Provider image versions belong in
 maintained architecture/environment settings; registry lookup pins configured
 version tags to digests. `deployment plan` prints a sanitized plan, not GO.
@@ -1003,9 +1003,13 @@ Preflight, plan, adoption and deployment read formal service `image-manifest.jso
 artifacts directly. They freeze the executing workspace revision and service
 pointers, require successful exact-source main publication with matching run,
 attempt and immutable digests, and reject missing/expired/mismatched evidence.
-The executing checkout must be clean. A different CI image selection changes the
-plan SHA-256, so deployment refuses a previously approved plan rather than
-silently selecting a new image.
+Workspace/service HEADs must continue to match those frozen revisions. Ordinary
+tracked/untracked edits, including documentation and tests, do not automatically
+make preflight NO-GO; repository-wide Git cleanliness is not a prerequisite. Maintained
+configuration, charts, credentials and storage evidence still enter the input
+digest; edits to those inputs after compilation require a new plan. A changed
+HEAD, source revision or CI image selection invalidates the earlier qualification,
+so deployment requires a newly approved plan.
 
 Infrastructure workload versions use provider-neutral `POSTGRES_IMAGE`,
 `INGRESS_CONTROLLER_IMAGE` and `OPENBAO_IMAGE` settings in

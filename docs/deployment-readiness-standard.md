@@ -81,7 +81,7 @@ environments:
 | Gate | Current update evidence |
 | --- | --- |
 | `deployment.target` | Complete maintained target, original owners, unchanged configuration/release/bindings and durable-volume identities. |
-| `deployment.release` | Immutable images, exact clean workspace/service revisions, successful formal CI/publication and available images. |
+| `deployment.release` | Immutable images, exact frozen workspace/service revisions, successful formal CI/publication and available images. |
 | `deployment.execution` | Selected Kubernetes API access, native node-class capacity, original storage, execution prerequisites and server dry-run of the exact resource bodies; an OpenBao `OnDelete` update also requires named Pod restart rights and UID/resourceVersion conditional deletion admission in dry-run. Existing K8s upgrades do not require local Linode cluster ID or account-quota files; provider quota belongs to explicit infrastructure operations. |
 | `deployment.pki` | Original synchronized runtime Secret bindings and the maintained runtime PKI checks at the start and end of the configured rollout window; identity/mount changes require explicit migration. |
 | `deployment.compatibility` | Selected AM/Billing schema prerequisites, required restricted payment-simulator startup and migration setting, with candidate source/CI checked by the release gate. |
@@ -140,7 +140,7 @@ deployment. Its repeated reads are part of those stages' elapsed time.
 | --- | --- | --- | --- |
 | Exact plan | In-memory plan SHA-256 still matches the selected compiled plan. | Approval must refer to the actual plan being checked. | A modified plan can inherit another plan's approval. |
 | Configuration and credential snapshot | Re-resolved maintained files and private snapshot match the compiled digest, including adapter and DNS inputs and required storage evidence. | Detect edits made after planning. | Execution uses credentials/settings different from those reviewed. |
-| Release and source identity | Pinned release and clean workspace/service revisions remain unchanged. | Tie runtime configuration and candidate code to one formal release. | A newer or locally modified source runs under old release evidence. |
+| Release and source identity | Pinned release, workspace HEAD and selected service HEADs still match the frozen source revisions. | Tie runtime configuration and candidate code to one formal release. | A different commit or image inherits the original release evidence. |
 | Existing resource owners | Fresh inventory contains the original recorded owner UIDs; unknown workloads and replacement/missing owners block. | Do not overwrite another controller's replacement or omit new active work. | Concurrent changes are overwritten or active services fall outside the update. |
 | Durable-volume identity | Fresh PVC/PV allocation and binding evidence still matches the plan. | Data identity can change independently of a claim's name. | The update attaches replacement or unavailable data. |
 
@@ -151,12 +151,19 @@ the old body onto the new owner.
 
 | Check | What is checked | Why it is necessary | Consequence if ignored |
 | --- | --- | --- | --- |
-| Exact clean source | Workspace HEAD and every selected service checkout are clean and match the frozen workspace gitlinks/image revisions. | Schema/startup checks must describe the code inside the selected image. | Untested local or mismatched code is deployed. |
+| Exact source revisions | Workspace HEAD and every selected service HEAD match the frozen workspace gitlinks/image revisions. | Bind qualification to the commits that produced the selected formal artifacts. | A different commit or mismatched image borrows the selected release's evidence. |
 | Formal service publication | Successful exact-source CI/Release evidence, correct run/attempt and unexpired `image-manifest.json` bind each required RTK image digest to its source. | A tag or unrelated green CI run does not establish publication of this candidate. | Missing or differently built images are selected. |
 | Maintained provider versions | Configured upstream/provider repository versions come from maintained shared settings and are pinned to matching immutable registry digests. This check does not independently verify an official publisher or signature. | Keep PostgreSQL, ingress, OpenBao and other provider versions reproducible. | Mutable/unconfigured versions change without reviewed intent. |
 | Pullability and platform | Each unique immutable image can be pulled for `linux/amd64`; roles sharing an image do not require repeated downloads. | Detect unavailable artifacts, registry access failures and missing target-platform images. | Candidate Pods cannot obtain or execute their image. Local pull success alone does not prove node-side registry networking. |
 | OCI/source provenance | RTK image revision labels, source mapping and formal artifact evidence agree. | Verify that the pulled bytes belong to the claimed build. | A valid digest from a different source inherits the candidate's approval. |
 | Backup runner, when enabled | Runner source/publication matches the selected workspace and its base-image provenance matches the selected PostgreSQL digest. | The enabled backup tool must match the database version it protects. | Backup commands are incompatible or their recovery evidence is unreliable. |
+
+There is no repository-wide Git cleanliness requirement. Ordinary tracked or
+untracked changes, including documentation and tests, do not automatically block
+preflight. Actual maintained configuration, chart, credential and storage-evidence
+inputs still participate in the compiled digest and must remain unchanged through
+its repeated fences. Changing workspace/service HEAD or the selected image/source
+revision still invalidates that frozen qualification.
 
 Restore access or publish the missing exact-source artifact, then repeat the
 same release qualification. Do not substitute a newer SHA's CI result.
@@ -242,10 +249,16 @@ renewal, replacement or revocation business workflow.
 
 | Check | What is checked | Why it is necessary | Consequence if ignored |
 | --- | --- | --- | --- |
-| Account Manager/Billing schema prerequisites | Migration filenames from the exact candidate source all appear in the original databases' migration inventory, queried read-only. | Candidate binaries require their expected schema. | Startup or requests fail due to missing tables/columns. Filename presence is not a full schema/data compatibility proof for every service. |
+| Account Manager/Billing schema prerequisites | Committed `.sql` filenames from each selected CI image's frozen source revision all appear in the original databases' migration inventory, queried read-only. The full-update gate reads the Git tree at that revision. | Candidate binaries require the migration inventory belonging to their published source, independent of local file edits. | Startup or requests fail due to missing tables/columns. Filename presence is not a full schema/data compatibility proof for every service. |
 | Simulator target executable | Applicable payment-simulator Deployment has the maintained candidate executable/specification. | Qualify the process that the plan will actually run. | The wrong executable or an incomplete Pod specification is deployed. |
 | Simulator migration policy | Candidate resolves `BILLING_DB_MIGRATE_ON_STARTUP=false` from its explicit environment or supported Secret reference. Actual live database-role privileges are not audited by this setting check. | Runtime startup must not implicitly migrate schema. | Startup fails without CREATE rights or performs an unauthorized migration. |
 | Simulator isolated startup | Exact published candidate starts and returns healthy against disposable PostgreSQL using a role without schema CREATE privilege; task-owned containers/network are cleaned up. | Test this known startup contract without touching environment data. | The simulator cannot start with its real restricted role; failed cleanup leaves local qualification artifacts. |
+
+For this six-gate full update, local migration-file additions, edits or deletions
+do not alter the selected image's required filenames. A missing/invalid source
+revision, unreadable committed tree or empty migration inventory blocks the gate;
+it never falls back to the working tree. The separate `--operation image-upgrade`
+path retains its existing inventory behavior.
 
 Apply missing migrations through the service owner's explicit procedure, then
 repeat preflight. This gate does not reset/migrate live data and does not launch
@@ -418,10 +431,12 @@ before mutation rather than rebuilding identities through deleted templates.
 ## CI image selection
 
 Preflight reads formal service `image-manifest.json` artifacts directly for the
-selected clean workspace service revisions; the pinned selection is held in
+selected workspace HEAD and its pinned service revisions; the selection is held in
 memory and included in the plan digest. Deployment repeats selection and requires
-the approved plan SHA-256. Missing or invalid CI publication is NO-GO. Local
-`release.json` selection and freeze-release file generation are retired. Provider
+the approved plan SHA-256. Git status is not a prerequisite; exact HEAD/source
+matching and the maintained-input digests remain required. Missing or invalid CI
+publication is NO-GO. Local `release.json` selection and freeze-release file
+generation are retired. Provider
 image versions remain maintained configuration and are registry-digest pinned.
 
 ### Preflight-produced identity observations

@@ -434,6 +434,10 @@ for the remaining required trust-consumer and recovery gates.
 Service images come directly from exact-source formal CI `image-manifest.json`
 artifacts. The compiler holds their verified immutable selection in memory; a
 local release file is not a configuration input or deployment prerequisite.
+Workspace/service HEADs and gitlinks must match the frozen source selection;
+repository-wide Git cleanliness is not a prerequisite. Ordinary tracked or
+untracked changes do not automatically block qualification, while the existing
+configuration/chart/credential digests and live ownership fences remain required.
 Workload image versions use provider-neutral keys in
 `cloud_deploy/architectures/kubernetes/architecture.env`: `POSTGRES_IMAGE`,
 `INGRESS_CONTROLLER_IMAGE`, `OPENBAO_IMAGE`, `REDIS_IMAGE`, `FLEET_VALKEY_IMAGE`,

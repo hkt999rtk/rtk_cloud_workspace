@@ -56,20 +56,20 @@ func TestDirectCIImagesUseFrozenGitlinksAndExactPublicationForAllEnvironments(t 
 						directory, operation := args[1], args[2]
 						switch operation {
 						case "rev-parse":
+							if args[3] != "HEAD" {
+								t.Fatal("selection queried an unfrozen moving ref")
+							}
+							sourceChecks[directory]++
 							sha := leafSHA
 							if directory == cfg.Workspace {
 								sha = rootSHA
 							}
-							if args[3] == "origin/main" && mode == "old-main" {
+							if mode == "source-drift" && networkStarted {
 								sha = strings.Repeat("c", 40)
 							}
 							return []byte(sha + "\n"), nil
 						case "status":
-							sourceChecks[directory]++
-							if mode == "root-dirty" && directory == cfg.Workspace || mode == "leaf-dirty" && directory != cfg.Workspace || mode == "source-drift" && networkStarted {
-								return []byte(" M source.go\n"), nil
-							}
-							return nil, nil
+							t.Fatal("formal CI selection queried retired working-tree qualification")
 						case "fetch":
 							if mode == "fetch-failed" {
 								return nil, errors.New("private-fetch")
@@ -156,7 +156,7 @@ func TestDirectCIImagesUseFrozenGitlinksAndExactPublicationForAllEnvironments(t 
 					return publicationZIP(t, file, raw), nil
 				}
 				release, err := loadEnvironmentCIImages(context.Background(), cfg, run)
-				if (err == nil) != (mode == "valid" || mode == "host-published" || mode == "backups-disabled" || mode == "legacy-file-invalid") {
+				if (err == nil) != (mode == "valid" || mode == "host-published" || mode == "backups-disabled" || mode == "legacy-file-invalid" || mode == "root-dirty" || mode == "leaf-dirty") {
 					t.Fatal("release decision differs", mode, err)
 				}
 				if err != nil && strings.Contains(err.Error(), "never-public") {
@@ -195,7 +195,11 @@ func TestDirectCIImagesUseFrozenGitlinksAndExactPublicationForAllEnvironments(t 
 						}
 					}
 					for directory, count := range sourceChecks {
-						if count != 2 {
+						want := 2
+						if directory == cfg.Workspace {
+							want = 3
+						}
+						if count != want {
 							t.Fatal("source not fenced after publication", directory, count)
 						}
 					}
@@ -229,9 +233,6 @@ func TestDirectCIImagesUseFrozenGitlinksAndExactPublicationForAllEnvironments(t 
 							verifyRun := func(ctx context.Context, command string, args ...string) ([]byte, error) {
 								if err := ctx.Err(); err != nil {
 									return nil, err
-								}
-								if command == "git" && args[2] == "status" && args[1] != cfg.Workspace && verifyMode == "leaf-dirty" {
-									return []byte(" M source.go\n"), nil
 								}
 								if command == "git" && args[2] == "ls-tree" && verifyMode == "gitlink-drift" {
 									return []byte("160000 commit " + strings.Repeat("e", 40) + "\t" + args[5] + "\n"), nil
@@ -276,13 +277,13 @@ func TestDirectCIImagesUseFrozenGitlinksAndExactPublicationForAllEnvironments(t 
 								return run(ctx, command, args...)
 							}
 							err := verifyEnvironmentReleaseWithCommand(context.Background(), cfg, candidate, verifyRun)
-							if (err == nil) != (verifyMode == "valid") {
+							if (err == nil) != (verifyMode == "valid" || verifyMode == "leaf-dirty") {
 								t.Fatal("frozen release verification accepted drift or omitted evidence", err)
 							}
-							if verifyMode != "valid" {
+							if verifyMode != "valid" && verifyMode != "leaf-dirty" {
 								wantedID := "deployment.release.publication"
 								switch verifyMode {
-								case "workspace-drift", "leaf-dirty", "gitlink-drift", "shared-source-drift":
+								case "workspace-drift", "gitlink-drift", "shared-source-drift":
 									wantedID = "deployment.release.source"
 								case "pull-failed":
 									wantedID = "deployment.release.pull"

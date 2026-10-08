@@ -466,6 +466,22 @@ func deploymentUpgradePublishedJob(raw []byte) error {
 }
 
 func verifyDeploymentUpgradeSchemas(store secretStore, workspace string, images []string) error {
+	return verifyDeploymentUpgradeSchemasWithInventory(store, images, func(source lkeServiceImageSource) ([]string, error) {
+		entries, err := os.ReadDir(filepath.Join(workspace, source.RepoPath, "migrations"))
+		if err != nil {
+			return nil, errors.New("candidate migration inventory cannot be read")
+		}
+		var versions []string
+		for _, entry := range entries {
+			if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".sql") {
+				versions = append(versions, entry.Name())
+			}
+		}
+		return versions, nil
+	})
+}
+
+func verifyDeploymentUpgradeSchemasWithInventory(store secretStore, images []string, inventory func(lkeServiceImageSource) ([]string, error)) error {
 	checked := map[string]bool{}
 	for _, image := range images {
 		source, err := deploymentUpgradeImageSource(image)
@@ -476,15 +492,9 @@ func verifyDeploymentUpgradeSchemas(store secretStore, workspace string, images 
 			continue
 		}
 		checked[source.Key] = true
-		entries, err := os.ReadDir(filepath.Join(workspace, source.RepoPath, "migrations"))
+		versions, err := inventory(source)
 		if err != nil {
-			return errors.New("candidate migration inventory cannot be read")
-		}
-		var versions []string
-		for _, entry := range entries {
-			if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".sql") {
-				versions = append(versions, entry.Name())
-			}
+			return err
 		}
 		if len(versions) == 0 {
 			return errors.New("candidate migration inventory is empty")

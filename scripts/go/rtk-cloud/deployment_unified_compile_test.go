@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -115,45 +116,122 @@ func TestCommonRendererConsumesOnlyTheHashedPrivateSnapshot(t *testing.T) {
 	}
 }
 
-func TestExactReleaseRejectsDirtyOrDifferentExecutingCheckout(t *testing.T) {
+func TestExactReleaseRequiresFrozenRevisionWithoutWorkingTreeQualification(t *testing.T) {
 	sha := strings.Repeat("a", 40)
-	for _, mode := range []string{"clean", "other-head", "tracked-change", "untracked-source", "git-error"} {
+	for _, mode := range []string{"clean", "other-head", "tracked-change", "untracked-source", "edited-docs", "git-error", "invalid-revision", "invalid-directory", "missing-run", "pre-cancelled", "cancel-during-revision"} {
 		t.Run(mode, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
 			calls := 0
 			run := func(ctx context.Context, command string, args ...string) ([]byte, error) {
 				calls++
-				if command != "git" || len(args) < 3 || args[0] != "-C" || args[1] != "/reviewed/workspace" {
-					t.Fatal("source verification escaped selected checkout")
+				if command != "git" || len(args) != 4 || args[0] != "-C" || args[1] != "/reviewed/workspace" || args[2] != "rev-parse" || args[3] != "HEAD" {
+					t.Fatal("revision verification queried working-tree status or another checkout")
+				}
+				if err := ctx.Err(); err != nil {
+					return nil, err
 				}
 				if mode == "git-error" {
 					return nil, errors.New("private command output")
 				}
-				if args[2] == "rev-parse" {
-					if mode == "other-head" {
-						return []byte(strings.Repeat("b", 40)), nil
-					}
-					return []byte(sha + "\n"), nil
+				if mode == "other-head" {
+					return []byte(strings.Repeat("b", 40)), nil
 				}
-				if args[2] != "status" {
-					t.Fatal("unexpected source probe")
+				if mode == "cancel-during-revision" {
+					cancel()
 				}
-				if mode == "tracked-change" {
-					return []byte(" M private-path\n"), nil
-				}
-				if mode == "untracked-source" {
-					return []byte("?? private-source.go\n"), nil
-				}
-				return nil, nil
+				return []byte(sha + "\n"), nil
 			}
-			err := verifyEnvironmentReleaseCheckout(context.Background(), "/reviewed/workspace", sha, run)
-			if (err == nil) != (mode == "clean") {
+			directory, revision := "/reviewed/workspace", sha
+			if mode == "invalid-revision" {
+				revision = "unqualified"
+			}
+			if mode == "invalid-directory" {
+				directory = ""
+			}
+			if mode == "missing-run" {
+				run = nil
+			}
+			if mode == "pre-cancelled" {
+				cancel()
+			}
+			err := verifyEnvironmentReleaseCheckout(ctx, directory, revision, run)
+			allowed := mode == "clean" || mode == "tracked-change" || mode == "untracked-source" || mode == "edited-docs"
+			if (err == nil) != allowed {
 				t.Fatalf("unexpected %s outcome: %v", mode, err)
 			}
 			if err != nil && strings.Contains(err.Error(), "private") {
 				t.Fatal("source diagnostic leaked private paths/output")
 			}
-			if mode == "clean" && calls != 2 {
-				t.Fatal("clean source not independently verified")
+			if allowed && calls != 1 {
+				t.Fatal("selected frozen HEAD was not independently verified exactly once")
+			}
+			if (mode == "invalid-revision" || mode == "invalid-directory" || mode == "missing-run" || mode == "pre-cancelled") && calls != 0 {
+				t.Fatal("invalid or cancelled verification started a Git query")
+			}
+			if (mode == "pre-cancelled" || mode == "cancel-during-revision") && !errors.Is(err, context.Canceled) {
+				t.Fatal("revision verification lost parent cancellation", err)
+			}
+		})
+	}
+}
+
+func TestExactReleaseAllowsActualTrackedUntrackedAndDocumentationEdits(t *testing.T) {
+	for _, mode := range []string{"tracked-source", "untracked-source", "edited-docs"} {
+		t.Run(mode, func(t *testing.T) {
+			workspace := t.TempDir()
+			git := func(args ...string) []byte {
+				t.Helper()
+				cmd := exec.Command("git", append([]string{"-C", workspace}, args...)...)
+				for _, setting := range os.Environ() {
+					if !strings.HasPrefix(setting, "GIT_") {
+						cmd.Env = append(cmd.Env, setting)
+					}
+				}
+				cmd.Env = append(cmd.Env, "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null", "GIT_TERMINAL_PROMPT=0")
+				raw, err := cmd.Output()
+				if err != nil {
+					t.Fatal("isolated source fixture Git setup failed", err)
+				}
+				return raw
+			}
+			git("init", "--quiet")
+			git("config", "user.name", "Source Fixture")
+			git("config", "user.email", "source-fixture@example.invalid")
+			git("config", "core.hooksPath", "/dev/null")
+			for _, name := range []string{"source.go", "architecture.md"} {
+				if err := os.WriteFile(filepath.Join(workspace, name), []byte("committed original\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			git("add", "--", "source.go", "architecture.md")
+			git("commit", "--quiet", "--no-gpg-sign", "-m", "Frozen source fixture")
+			revision := strings.TrimSpace(string(git("rev-parse", "HEAD")))
+			name := "source.go"
+			if mode == "untracked-source" {
+				name = "untracked.go"
+			} else if mode == "edited-docs" {
+				name = "architecture.md"
+			}
+			path := filepath.Join(workspace, name)
+			const contents = "uncommitted private fixture change\n"
+			if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+				t.Fatal(err)
+			}
+			queries := 0
+			run := func(ctx context.Context, command string, args ...string) ([]byte, error) {
+				queries++
+				if command != "git" || len(args) != 4 || args[0] != "-C" || args[1] != workspace || args[2] != "rev-parse" || args[3] != "HEAD" {
+					t.Fatal("source verification queried working-tree status instead of frozen HEAD")
+				}
+				return deploymentUpgradeCommand(ctx, command, args...)
+			}
+			if err := verifyEnvironmentReleaseCheckout(context.Background(), workspace, revision, run); err != nil || queries != 1 {
+				t.Fatal("uncommitted source or documentation changed the frozen release qualification", err)
+			}
+			actual, err := os.ReadFile(path)
+			if err != nil || string(actual) != contents || strings.TrimSpace(string(git("rev-parse", "HEAD"))) != revision {
+				t.Fatal("revision verification changed user files or the committed target", err)
 			}
 		})
 	}

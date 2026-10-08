@@ -121,15 +121,9 @@ func defaultUnifiedDeploymentDependencies() unifiedDeploymentDependencies {
 					if err := c.Fence(ctx, p); err != nil {
 						return deploymentplan.GateEvidence{}, err
 					}
-					var images []string
-					for _, image := range c.Release.Images {
-						if strings.HasPrefix(image.Reference, "ghcr.io/hkt999rtk/") && !strings.Contains(image.Reference, "/rtk_cloud_workspace/postgres-backup@") {
-							images = append(images, image.Reference)
-						}
-					}
 					store := c.Store
 					store.checkRuntime = newDeploymentCheckRuntime(ctx, p.Environment)
-					if err := verifyDeploymentUpgradeSchemas(store, c.Configuration.Workspace, images); err != nil {
+					if err := verifyEnvironmentReleaseSchemas(ctx, c.Configuration, store, c.Release); err != nil {
 						return deploymentplan.GateEvidence{}, &deploymentplan.Blocker{ID: "deployment.compatibility", Cause: "selected release schema prerequisites are unavailable or unapplied", Next: "complete the service owner's explicit schema migration against the original database, then repeat preflight; deployment does not reset or migrate data implicitly"}
 					}
 					for _, resource := range p.Resources {
