@@ -95,6 +95,13 @@ Admission comparison permits only the client's refresh of
 remove that annotation from baseline drift checks, mutate the approved plan,
 or relax existing UID, consumer configuration and security-policy checks.
 
+Storage fences use fresh reads with the same frozen Kubernetes identity and
+retry a transient API read failure once. `deployment.access.storage` reports a
+sanitized read/access failure for the exact PVC or PV; it does not establish
+that data or ownership was lost. Successfully observed missing, replaced,
+terminating, unbound or changed PVC/PV bindings remain
+`deployment.execution.storage` and require verified recovery or migration.
+
 Missing or failed update evidence, changed inputs/owners, cancellation or `--fast`
 is NO-GO. Actual scheduling/startup and endpoint health are verified after rollout
 before completion is recorded. Ordinary update does not mutate bootstrap
