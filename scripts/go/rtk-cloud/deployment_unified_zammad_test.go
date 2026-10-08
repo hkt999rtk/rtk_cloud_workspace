@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -198,6 +199,9 @@ func TestFixedOfficialZammadChartCompilesSharedCompletePlan(t *testing.T) {
 				t.Fatal("missing scheduled component")
 			}
 			for _, d := range definitions {
+				if d.Object["kind"] == "StatefulSet" && deploymentplan.Map(d.Object["metadata"])["name"] == "zammad-elasticsearch-master" {
+					assertZammadElasticsearchCanonicalResources(t, d.Object, release)
+				}
 				for _, group := range []string{"containers", "initContainers"} {
 					for _, v := range certIssuerObjectList(environmentZammadPod(d.Object)[group]) {
 						if !immutableEnvironmentImage.MatchString(deploymentplan.String(deploymentplan.Map(v)["image"])) {
@@ -247,5 +251,175 @@ func TestFixedOfficialZammadChartCompilesSharedCompletePlan(t *testing.T) {
 				t.Fatal("database major change silently accepted")
 			}
 		})
+	}
+}
+
+func assertZammadElasticsearchCanonicalResources(t *testing.T, object deploymentplan.Object, release environmentRelease) {
+	t.Helper()
+	pod := environmentZammadPod(object)
+	context := deploymentplan.Map(pod["securityContext"])
+	if context["fsGroup"] != float64(1001) || context["fsGroupChangePolicy"] != "Always" {
+		t.Fatal("canonical chart target changed the original Pod security policy", context)
+	}
+	for _, key := range []string{"supplementalGroups", "sysctls"} {
+		value, exists := context[key]
+		if !exists || value != nil {
+			t.Fatalf("empty Pod security field %s lost its explicit null constraint", key)
+		}
+	}
+	wantResources := deploymentplan.Object{"requests": deploymentplan.Object{"cpu": "500m", "memory": "1Gi", "ephemeral-storage": "50Mi"}, "limits": deploymentplan.Object{"cpu": "750m", "memory": "1536Mi", "ephemeral-storage": "2Gi"}}
+	found := map[string]bool{}
+	for _, group := range []string{"containers", "initContainers"} {
+		for _, value := range certIssuerObjectList(pod[group]) {
+			container := deploymentplan.Map(value)
+			name := deploymentplan.String(container["name"])
+			if name != "elasticsearch" && name != "copy-default-plugins" {
+				continue
+			}
+			found[name] = true
+			if deploymentplan.Digest(container["resources"]) != deploymentplan.Digest(wantResources) {
+				t.Fatalf("%s changed the complete medium resource quota: %v", name, container["resources"])
+			}
+			if container["image"] != release.Images["LKE_ZAMMAD_ELASTICSEARCH_IMAGE"].Reference {
+				t.Fatalf("%s changed its formal image role", name)
+			}
+			security := deploymentplan.Map(container["securityContext"])
+			if security["runAsUser"] != float64(1001) || security["runAsGroup"] != float64(1001) || security["runAsNonRoot"] != true || security["privileged"] != false || security["allowPrivilegeEscalation"] != false || security["readOnlyRootFilesystem"] != true || deploymentplan.Map(security["seccompProfile"])["type"] != "RuntimeDefault" || deploymentplan.Digest(deploymentplan.Map(security["capabilities"])["drop"]) != deploymentplan.Digest([]any{"ALL"}) {
+				t.Fatalf("%s changed its container security policy", name)
+			}
+		}
+	}
+	if !found["elasticsearch"] || !found["copy-default-plugins"] {
+		t.Fatal("canonical resource policy missed a main or init container")
+	}
+	claims := certIssuerObjectList(deploymentplan.Map(object["spec"])["volumeClaimTemplates"])
+	if len(claims) != 1 || deploymentplan.Map(deploymentplan.Map(claims[0])["metadata"])["name"] != "data" || deploymentplan.Map(deploymentplan.Map(deploymentplan.Map(claims[0])["spec"])["resources"])["requests"].(map[string]any)["storage"] != "10Gi" {
+		t.Fatal("canonical Pod resources changed durable Elasticsearch storage")
+	}
+}
+
+func TestZammadPodSecurityCanonicalizationIsNarrow(t *testing.T) {
+	for _, kind := range []string{"Deployment", "StatefulSet", "Job", "CronJob"} {
+		for _, mode := range []string{"empty", "nonempty", "null", "missing-fields", "missing-context", "wrong-type"} {
+			t.Run(kind+"/"+mode, func(t *testing.T) {
+				security := deploymentplan.Object{"fsGroup": float64(1001), "fsGroupChangePolicy": "Always", "supplementalGroups": []any{}, "sysctls": []any{}}
+				pod := deploymentplan.Object{"securityContext": security, "containers": []any{deploymentplan.Object{"name": "app", "securityContext": deploymentplan.Object{"runAsNonRoot": true, "capabilities": deploymentplan.Object{"drop": []any{}}}}}, "volumes": []any{}}
+				object := deploymentplan.Object{"kind": kind, "spec": deploymentplan.Object{"template": deploymentplan.Object{"spec": pod}}}
+				if kind == "CronJob" {
+					object["spec"] = deploymentplan.Object{"jobTemplate": deploymentplan.Object{"spec": object["spec"]}}
+				}
+				switch mode {
+				case "nonempty":
+					security["supplementalGroups"], security["sysctls"] = []any{float64(2000)}, []any{deploymentplan.Object{"name": "kernel.shm_rmid_forced", "value": "1"}}
+				case "null":
+					security["supplementalGroups"], security["sysctls"] = nil, nil
+				case "missing-fields":
+					delete(security, "supplementalGroups")
+					delete(security, "sysctls")
+				case "missing-context":
+					delete(pod, "securityContext")
+				case "wrong-type":
+					security["supplementalGroups"], security["sysctls"] = "invalid-policy", deploymentplan.Object{}
+				}
+				expected := deploymentplan.Clone(object)
+				if mode == "empty" {
+					expectedContext := deploymentplan.Map(environmentZammadPod(expected)["securityContext"])
+					expectedContext["supplementalGroups"], expectedContext["sysctls"] = nil, nil
+				}
+				canonicalZammadPodSecurityContext(object)
+				if deploymentplan.Digest(object) != deploymentplan.Digest(expected) {
+					t.Fatal("canonicalization changed a nonempty, missing or unrelated policy")
+				}
+			})
+		}
+	}
+	service := deploymentplan.Object{"kind": "Service", "spec": deploymentplan.Object{"ports": []any{}}}
+	before := deploymentplan.Digest(service)
+	canonicalZammadPodSecurityContext(service)
+	if deploymentplan.Digest(service) != before {
+		t.Fatal("canonicalization created Pod policy on a Service")
+	}
+}
+
+type zammadSecurityAdmissionBackend struct {
+	current, request deploymentplan.Object
+	requestSHA, mode string
+	dry, persisted   int
+}
+
+func (b *zammadSecurityAdmissionBackend) Read(context.Context, string) (deploymentplan.Object, error) {
+	return deploymentplan.Clone(b.current), nil
+}
+func (b *zammadSecurityAdmissionBackend) Wait(context.Context, deploymentplan.Resource) error {
+	return nil
+}
+func (b *zammadSecurityAdmissionBackend) Write(_ context.Context, _ string, body deploymentplan.Object, dry bool) (deploymentplan.Object, error) {
+	if !dry {
+		b.persisted++
+		return nil, errors.New("admission must not persist a resource")
+	}
+	b.dry++
+	b.request, b.requestSHA = body, deploymentplan.Digest(body)
+	admitted := deploymentplan.Clone(body)
+	security := deploymentplan.Map(environmentZammadPod(admitted)["securityContext"])
+	delete(security, "supplementalGroups")
+	delete(security, "sysctls")
+	switch b.mode {
+	case "groups":
+		security["supplementalGroups"] = []any{float64(2000)}
+	case "sysctls":
+		security["sysctls"] = []any{deploymentplan.Object{"name": "kernel.shm_rmid_forced", "value": "1"}}
+	case "uid":
+		deploymentplan.Map(admitted["metadata"])["uid"] = "replacement-owner"
+	}
+	return admitted, nil
+}
+
+func TestZammadAdmissionAllowsEmptyPolicyEncodingButRejectsNewPolicy(t *testing.T) {
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		for _, mode := range []string{"absent", "groups", "sysctls", "uid"} {
+			t.Run(environment+"/"+mode, func(t *testing.T) {
+				stack := "video-cloud-" + environment
+				wanted := deploymentplan.Object{"apiVersion": "apps/v1", "kind": "StatefulSet", "metadata": deploymentplan.Object{"name": "zammad-elasticsearch-master", "namespace": stack + "-support"}, "spec": deploymentplan.Object{"serviceName": "elasticsearch-headless", "selector": deploymentplan.Object{"matchLabels": deploymentplan.Object{"app": "elasticsearch"}}, "template": deploymentplan.Object{"spec": deploymentplan.Object{"securityContext": deploymentplan.Object{"fsGroup": float64(1001), "fsGroupChangePolicy": "Always", "supplementalGroups": []any{}, "sysctls": []any{}}, "containers": []any{deploymentplan.Object{"name": "elasticsearch", "image": "registry.example/elasticsearch@sha256:" + strings.Repeat("a", 64), "securityContext": deploymentplan.Object{"runAsNonRoot": true}}}}}}}
+				canonicalZammadPodSecurityContext(wanted)
+				current := deploymentplan.Clone(wanted)
+				metadata := deploymentplan.Map(current["metadata"])
+				metadata["uid"], metadata["resourceVersion"] = "original-owner", "27"
+				metadata["labels"] = deploymentplan.Object{"rtk.realtek.com/stack": stack}
+				deploymentplan.Map(certIssuerObjectList(environmentZammadPod(current)["containers"])[0])["image"] = "registry.example/elasticsearch@sha256:" + strings.Repeat("b", 64)
+				security := deploymentplan.Map(environmentZammadPod(current)["securityContext"])
+				delete(security, "supplementalGroups")
+				delete(security, "sysctls")
+				plan, err := deploymentplan.Compile(deploymentplan.Inputs{Environment: environment, Stack: stack, Operation: "upgrade", ConfigurationSHA256: deploymentplan.Digest("cfg"), ReleaseSHA256: deploymentplan.Digest("release"), BindingsSHA256: deploymentplan.Digest("owners")}, []deploymentplan.Definition{{Object: wanted, Phase: "configuration"}}, []deploymentplan.Object{current})
+				if err != nil || len(plan.Resources) != 1 || plan.Resources[0].Action != "update" {
+					t.Fatalf("fixture did not exercise an existing owner update: %v", err)
+				}
+				backend := &zammadSecurityAdmissionBackend{current: current, mode: mode}
+				planSHA, currentSHA := plan.SHA256(), deploymentplan.Digest(current)
+				err = plan.Admit(context.Background(), backend)
+				if (err == nil) != (mode == "absent") {
+					t.Fatalf("admission allowed new security policy or rejected API encoding: %v", err)
+				}
+				if err != nil {
+					var blocker *deploymentplan.Blocker
+					if !errors.As(err, &blocker) || blocker.ID != "deployment.admission" {
+						t.Fatalf("unexpected admission blocker: %v", err)
+					}
+				}
+				if plan.SHA256() != planSHA || deploymentplan.Digest(current) != currentSHA || backend.persisted != 0 || backend.dry != 1 || deploymentplan.Digest(backend.request) != backend.requestSHA {
+					t.Fatal("admission changed the plan, current resource, request body or persisted writes")
+				}
+				requestMeta := deploymentplan.Map(backend.request["metadata"])
+				if requestMeta["uid"] != "original-owner" || requestMeta["resourceVersion"] != "27" {
+					t.Fatal("admission lost original UID/resourceVersion preconditions")
+				}
+				for _, key := range []string{"supplementalGroups", "sysctls"} {
+					value, exists := deploymentplan.Map(environmentZammadPod(backend.request)["securityContext"])[key]
+					if !exists || value != nil {
+						t.Fatal("admission removed the explicit empty-policy constraint")
+					}
+				}
+			})
+		}
 	}
 }

@@ -37,6 +37,17 @@ func environmentZammadPod(object deploymentplan.Object) deploymentplan.Object {
 	return deploymentplan.Map(deploymentplan.Map(spec["template"])["spec"])
 }
 
+func canonicalZammadPodSecurityContext(object deploymentplan.Object) {
+	security := deploymentplan.Map(environmentZammadPod(object)["securityContext"])
+	for _, field := range []string{"supplementalGroups", "sysctls"} {
+		if values, ok := security[field].([]any); ok && len(values) == 0 {
+			// The typed API omits empty optional lists. Keep an explicit null in
+			// desired intent so admission still rejects added groups or sysctls.
+			security[field] = nil
+		}
+	}
+}
+
 func validateZammadInventoryImages(object deploymentplan.Object, release environmentRelease) error {
 	if !strings.HasPrefix(deploymentplan.String(deploymentplan.Map(object["metadata"])["name"]), "zammad-") {
 		return zammadBlocker("deployment.inventory.support", deploymentplan.ID(object), "support namespace contains an unknown workload owner")
@@ -123,6 +134,7 @@ func renderEnvironmentZammad(ctx context.Context, cfg deploymentConfig, store se
 		if json.Unmarshal(raw, &object) != nil {
 			return nil, errors.New("invalid chart API shape")
 		}
+		canonicalZammadPodSecurityContext(object)
 		meta := deploymentplan.Map(object["metadata"])
 		if meta["namespace"] != release.Stack+"-support" || object["kind"] == "Ingress" || object["kind"] == "Secret" {
 			return nil, zammadBlocker("deployment.target.support", deploymentplan.ID(object), "Zammad must use only the support namespace, private Services and existing credential references")

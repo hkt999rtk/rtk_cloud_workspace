@@ -319,6 +319,12 @@ Memcached, Redis, dedicated PostgreSQL, Elasticsearch and both init image famili
 The common `zammad-values.yaml` owns topology, storage and credential references.
 All environments use these same inputs when support is enabled; Dev remains enabled.
 
+Elasticsearch declares the chart's full medium resource preset with canonical
+`1Gi` requests, preserving the same capacity for its main and plugin-copy init
+containers. The renderer represents empty `supplementalGroups` and `sysctls`
+lists as explicit nulls: API omission is equivalent, while admission adding
+groups or sysctls still fails the unchanged comparison rules.
+
 The compiler hashes chart/values with the selected configuration snapshot, uses
 Helm only for local rendering, then adds its resource definitions to the normal
 plan, exact-body server admission, execution and post-deploy verification.

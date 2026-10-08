@@ -16,6 +16,17 @@ elasticsearch:
   master:
     persistence:
       size: 10Gi
+    # Preserve the chart's complete medium preset using canonical quantities.
+    # Nonempty resources replace the entire preset for main and init containers.
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+        ephemeral-storage: 50Mi
+      limits:
+        cpu: 750m
+        memory: 1536Mi
+        ephemeral-storage: 2Gi
 secrets:
   postgresql:
     useExisting: true
