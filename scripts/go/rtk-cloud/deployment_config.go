@@ -114,6 +114,7 @@ var deploymentEnvironmentServiceKeys = keySet(
 
 func architectureKeySet() map[string]bool {
 	out := keySet(
+		"WEBRTC_SERVICE_REGISTRATION_ENABLED", "WEBRTC_SERVICE_EDGE_ENABLED", "WEBRTC_CORE_CUTOVER_ENABLED",
 		"VIDEO_STORAGE_SERVICE_REGISTRATION_ENABLED", "VIDEO_STORAGE_CORE_CUTOVER_ENABLED",
 		"SHADOW_WORKER_REGISTRATION_ENABLED", "SHADOW_HTTP_CORE_CUTOVER_ENABLED",
 		"OTA_SERVICE_REGISTRATION_ENABLED", "OTA_CORE_CUTOVER_ENABLED", "OTA_SERVICE_EDGE_ENABLED", "VIDEO_CLOUD_OTA_ENTITLEMENTS_REQUIRED",
@@ -905,6 +906,9 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 		return deploymentConfig{}, err
 	}
 	for k := range architectureOverride {
+		if sharedWebRTCDeploymentKey(k) {
+			return deploymentConfig{}, webRTCConfigurationBlocker(k, "WebRTC settings belong in shared architecture")
+		}
 		if sharedVideoStorageDeploymentKey(k) {
 			return deploymentConfig{}, videoStorageConfigurationBlocker(k, "VideoStorage settings belong in shared architecture")
 		}
@@ -925,6 +929,9 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 		}
 		values[k] = architectureOverride[k]
 	}
+	if err := validateSharedWebRTCDeploymentConfiguration(values); err != nil {
+		return deploymentConfig{}, err
+	}
 	if err := validateSharedVideoStorageDeploymentConfiguration(values); err != nil {
 		return deploymentConfig{}, err
 	}
@@ -941,6 +948,9 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 		return deploymentConfig{}, err
 	}
 	for k, v := range envIdentity {
+		if sharedWebRTCDeploymentKey(k) {
+			return deploymentConfig{}, webRTCConfigurationBlocker(k, "WebRTC settings belong in shared architecture")
+		}
 		if sharedVideoStorageDeploymentKey(k) {
 			return deploymentConfig{}, videoStorageConfigurationBlocker(k, "VideoStorage settings belong in shared architecture")
 		}
@@ -1599,6 +1609,9 @@ func deploymentLegacyLKEValues(v map[string]string, environment string) map[stri
 		return map[string]string{}
 	}
 	out := map[string]string{
+		"LKE_WEBRTC_SERVICE_REGISTRATION_ENABLED":          v["WEBRTC_SERVICE_REGISTRATION_ENABLED"],
+		"LKE_WEBRTC_SERVICE_EDGE_ENABLED":                  v["WEBRTC_SERVICE_EDGE_ENABLED"],
+		"LKE_WEBRTC_CORE_CUTOVER_ENABLED":                  v["WEBRTC_CORE_CUTOVER_ENABLED"],
 		"LKE_VIDEO_STORAGE_SERVICE_REGISTRATION_ENABLED":   v["VIDEO_STORAGE_SERVICE_REGISTRATION_ENABLED"],
 		"LKE_VIDEO_STORAGE_CORE_CUTOVER_ENABLED":           v["VIDEO_STORAGE_CORE_CUTOVER_ENABLED"],
 		"LKE_SHADOW_WORKER_REGISTRATION_ENABLED":           v["SHADOW_WORKER_REGISTRATION_ENABLED"],

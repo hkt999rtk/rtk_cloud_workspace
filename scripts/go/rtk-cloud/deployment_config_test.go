@@ -1046,7 +1046,7 @@ func TestResolveDeploymentConfigRejectsProviderKeyInEnvironment(t *testing.T) {
 	}
 }
 
-func TestResolveCheckedInDeploymentConfigsAndStagingOTAIntent(t *testing.T) {
+func TestResolveCheckedInDeploymentConfigsAndSharedServiceIntent(t *testing.T) {
 	workspace, err := workspaceRoot()
 	if err != nil {
 		t.Fatal(err)
@@ -1057,9 +1057,6 @@ func TestResolveCheckedInDeploymentConfigsAndStagingOTAIntent(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if environment != "staging" {
-				return
-			}
 			cfg.RuntimeRoot = t.TempDir()
 			if err := materializeDeploymentRuntime(cfg); err != nil {
 				t.Fatal(err)
@@ -1069,16 +1066,23 @@ func TestResolveCheckedInDeploymentConfigsAndStagingOTAIntent(t *testing.T) {
 				t.Fatal(err)
 			}
 			for key, want := range map[string]string{
-				"LKE_OTA_SERVICE_REGISTRATION_ENABLED":   "true",
-				"LKE_OTA_CORE_CUTOVER_ENABLED":           "true",
-				"LKE_OTA_SERVICE_EDGE_ENABLED":           "true",
-				"LKE_OTA_REGISTRAR_REGISTRATION_ENABLED": "false",
+				"LKE_OTA_SERVICE_REGISTRATION_ENABLED":           "true",
+				"LKE_OTA_CORE_CUTOVER_ENABLED":                   "true",
+				"LKE_OTA_SERVICE_EDGE_ENABLED":                   "true",
+				"LKE_VIDEO_STORAGE_SERVICE_REGISTRATION_ENABLED": "true",
+				"LKE_VIDEO_STORAGE_CORE_CUTOVER_ENABLED":         "false",
+				"LKE_WEBRTC_SERVICE_REGISTRATION_ENABLED":        "true",
+				"LKE_WEBRTC_SERVICE_EDGE_ENABLED":                "false",
+				"LKE_WEBRTC_CORE_CUTOVER_ENABLED":                "false",
 			} {
 				if _, found := cfg.Values[key]; found {
 					t.Fatalf("provider switch %s escaped its adapter layer", key)
 				}
-				if cfg.AdapterValues[key] != want || adapter[key] != want {
-					t.Fatalf("%s: selected=%q materialized=%q want=%q", key, cfg.AdapterValues[key], adapter[key], want)
+				if _, found := cfg.AdapterValues[key]; found {
+					t.Fatalf("shared alias %s retained a duplicate adapter source", key)
+				}
+				if deploymentLegacyLKEValues(cfg.Values, environment)[key] != want || adapter[key] != want {
+					t.Fatalf("%s: projected=%q materialized=%q want=%q", key, deploymentLegacyLKEValues(cfg.Values, environment)[key], adapter[key], want)
 				}
 			}
 		})
@@ -1417,7 +1421,7 @@ func writeDeploymentFixture(t *testing.T, environment, adapter string) string {
 	}
 	workloads.WriteString("MQTT_HARD_ANTI_AFFINITY=true\nPOSTGRES_LIMIT_MEMORY=4Gi\nCLOUD_LOGGER_LIMIT_MEMORY=2Gi\nVIDEO_CLOUD_OTA_TRUSTED_MANIFEST_KEYS_JSON={}\nCERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM=ed25519\nCERTIFICATE_APP_CSR_KEY_ALGORITHMS=ed25519,p256\nCERTIFICATE_DEVICE_CSR_KEY_ALGORITHMS=ed25519,p256\nEDGE_REPLICAS=1\nEDGE_MAX_CONNECTIONS=400000\nTURN_REPLICAS=1\nTURN_MIN_PORT=49152\nTURN_MAX_PORT=49200\n")
 	files := map[string]string{
-		"cloud_deploy/architectures/kubernetes/architecture.env":   "DEPLOYMENT_RUNTIME=kubernetes\nDEPLOYMENT_POSTGRES_BACKUP_ENABLED=false\nNODE_CLASS_LABEL_KEY=rtk.io/node-class\nDEFAULT_WORKLOAD_NODE_CLASS=general\nMQTT_FOUNDATION_REGISTRATION_ENABLED=false\nACCOUNT_MANAGER_SERVICE_REGISTRATION_ENABLED=false\nACCOUNT_MANAGER_SERVICE_REGISTRATION_PORT=9444\nOTA_SERVICE_REGISTRATION_ENABLED=false\nOTA_CORE_CUTOVER_ENABLED=false\nOTA_SERVICE_EDGE_ENABLED=false\nSHADOW_WORKER_REGISTRATION_ENABLED=false\nSHADOW_HTTP_CORE_CUTOVER_ENABLED=false\nVIDEO_STORAGE_SERVICE_REGISTRATION_ENABLED=false\nVIDEO_STORAGE_CORE_CUTOVER_ENABLED=false\n",
+		"cloud_deploy/architectures/kubernetes/architecture.env":   "DEPLOYMENT_RUNTIME=kubernetes\nDEPLOYMENT_POSTGRES_BACKUP_ENABLED=false\nNODE_CLASS_LABEL_KEY=rtk.io/node-class\nDEFAULT_WORKLOAD_NODE_CLASS=general\nMQTT_FOUNDATION_REGISTRATION_ENABLED=false\nACCOUNT_MANAGER_SERVICE_REGISTRATION_ENABLED=false\nACCOUNT_MANAGER_SERVICE_REGISTRATION_PORT=9444\nOTA_SERVICE_REGISTRATION_ENABLED=false\nOTA_CORE_CUTOVER_ENABLED=false\nOTA_SERVICE_EDGE_ENABLED=false\nSHADOW_WORKER_REGISTRATION_ENABLED=false\nSHADOW_HTTP_CORE_CUTOVER_ENABLED=false\nVIDEO_STORAGE_SERVICE_REGISTRATION_ENABLED=false\nVIDEO_STORAGE_CORE_CUTOVER_ENABLED=false\nWEBRTC_SERVICE_REGISTRATION_ENABLED=false\nWEBRTC_SERVICE_EDGE_ENABLED=false\nWEBRTC_CORE_CUTOVER_ENABLED=false\n",
 		"cloud_deploy/architectures/kubernetes/capacity.env":       "CAPACITY_TARGET_CONNECTIONS=1000\nCAPACITY_CONNECTIONS_PER_MQTT_POD=20000\nCAPACITY_ACTIVE_DEVICES=1000\nCAPACITY_ACTIVE_DEVICES_PER_API_POD=40000\nCAPACITY_SYSTEM_RESERVED_CPU_MILLI=1000\nCAPACITY_SYSTEM_RESERVED_MEMORY_MIB=1536\n",
 		"cloud_deploy/architectures/kubernetes/topology.env":       "NODE_CLASS_GENERAL_MIN_COUNT=2\nNODE_CLASS_GENERAL_MIN_VCPU=4\nNODE_CLASS_GENERAL_MIN_MEMORY_GIB=8\nNODE_CLASS_BROKER_MIN_COUNT=2\nNODE_CLASS_BROKER_MIN_VCPU=4\nNODE_CLASS_BROKER_MIN_MEMORY_GIB=8\nNODE_CLASS_DATABASE_MIN_COUNT=1\nNODE_CLASS_DATABASE_MIN_VCPU=8\nNODE_CLASS_DATABASE_MIN_MEMORY_GIB=16\n",
 		"cloud_deploy/architectures/kubernetes/workloads.env":      workloads.String(),

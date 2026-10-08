@@ -13,7 +13,9 @@ import (
 
 func completeEnvironmentRenderFixture(environment string) (map[string]string, environmentIdentityBindings, environmentRelease) {
 	stack := "video-cloud-" + environment
-	env := map[string]string{"CLOUD_STACK_NAME": stack, "CLOUD_ENV_NAME": environment, "OPENBAO_EFFECTIVE_REPLICAS": "3", "OPENBAO_REQUEST_CPU": "500m", "OPENBAO_REQUEST_MEMORY": "512Mi", "OPENBAO_NODE_CLASS": "general", "CLOUD_DNS_ROOT_DOMAIN": "example.invalid", "TEST_LAB_ENABLED": "true", "FRONTEND_DOMAIN": "www." + environment + ".example.invalid", "CONSOLE_DOMAIN": "console." + environment + ".example.invalid"}
+	env := map[string]string{
+		"VIDEO_STORAGE_SERVICE_REGISTRATION_ENABLED": "false", "VIDEO_STORAGE_CORE_CUTOVER_ENABLED": "false",
+		"WEBRTC_SERVICE_REGISTRATION_ENABLED": "false", "WEBRTC_SERVICE_EDGE_ENABLED": "false", "WEBRTC_CORE_CUTOVER_ENABLED": "false", "CLOUD_STACK_NAME": stack, "CLOUD_ENV_NAME": environment, "OPENBAO_EFFECTIVE_REPLICAS": "3", "OPENBAO_REQUEST_CPU": "500m", "OPENBAO_REQUEST_MEMORY": "512Mi", "OPENBAO_NODE_CLASS": "general", "CLOUD_DNS_ROOT_DOMAIN": "example.invalid", "TEST_LAB_ENABLED": "true", "FRONTEND_DOMAIN": "www." + environment + ".example.invalid", "CONSOLE_DOMAIN": "console." + environment + ".example.invalid"}
 	for _, role := range environmentAuthRoles {
 		for _, key := range role {
 			env[key] = "true"

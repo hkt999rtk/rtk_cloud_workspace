@@ -500,3 +500,13 @@ registration is distinct from a gateway cutover. These settings are owned only b
 shared `architecture.env`, projected into internal adapter aliases and included
 in the plan digest. Existing instance IDs, identity Secret and certificate paths
 are retained; neither setting creates credentials or proves runtime readiness.
+
+### Shared WebRTC service deployment settings
+
+`WEBRTC_SERVICE_REGISTRATION_ENABLED=true` maintains the existing independent
+signaling service through the common renderer in all environments.
+`WEBRTC_SERVICE_EDGE_ENABLED=false` and `WEBRTC_CORE_CUTOVER_ENABLED=false`
+retain the existing public/Core routing; service registration alone is not an
+edge cutover. All three settings belong only to shared `architecture.env`, are
+projected to internal aliases and hashed. Original instance and identity mounts
+are retained. Public routing changes still require their own qualified target.
