@@ -53,12 +53,17 @@ func matchesAdmission(body, admitted Object) bool {
 	if uid := String(Map(body["metadata"])["uid"]); uid != "" && uid != String(Map(admitted["metadata"])["uid"]) {
 		return false
 	}
+	want, have, ok := admissionProjections(body, admitted)
+	return ok && Matches(want, have)
+}
+
+func admissionProjections(body, admitted Object) (Object, Object, bool) {
 	want, have := Projection(body), Projection(admitted)
 	if want == nil || have == nil {
-		return false
+		return nil, nil, false
 	}
 	if !normalizeDaemonSetAdmissionGeneration(body, admitted, have) {
-		return false
+		return want, have, false
 	}
 	for _, object := range []Object{want, have} {
 		metadata := Map(object["metadata"])
@@ -71,7 +76,7 @@ func matchesAdmission(body, admitted Object) bool {
 			delete(metadata, "annotations")
 		}
 	}
-	return Matches(want, have)
+	return want, have, true
 }
 
 // DaemonSet updates increment this native counter when the Pod template changes.
@@ -128,7 +133,7 @@ func (p *Plan) Admit(ctx context.Context, backend Backend) error {
 				return blocked("deployment.admission", resource.ID, "server dry-run rejected the exact desired body", "resolve write permission, immutable fields, admission, quota and namespace prerequisites")
 			}
 			if admitted == nil || ID(admitted) != resource.ID || !matchesAdmission(body, admitted) {
-				return blocked("deployment.admission", resource.ID, "server admission changed the approved resource or consumer configuration", "declare and qualify the admission mutation or repair the policy; never deploy a different image, identity or workload body")
+				return blocked("deployment.admission", resource.ID, admissionMismatchCause("server admission changed the approved resource or consumer configuration", body, admitted), "declare and qualify the admission mutation or repair the policy; never deploy a different image, identity or workload body")
 			}
 		}
 	}
@@ -293,7 +298,7 @@ func (p *Plan) Execute(ctx context.Context, backend Backend, expectedDigest, pri
 					err = errors.New("admission mutated the selected request body")
 				}
 				if err == nil && (admitted == nil || ID(admitted) != resource.ID || !matchesAdmission(body, admitted)) {
-					err = blocked("deployment.admission", resource.ID, "admission result differs from the approved resource body", "repair or qualify the exact admission mutation before execution")
+					err = blocked("deployment.admission", resource.ID, admissionMismatchCause("admission result differs from the approved resource body", body, admitted), "repair or qualify the exact admission mutation before execution")
 				}
 				if err == nil {
 					journal.InFlight = resource.ID

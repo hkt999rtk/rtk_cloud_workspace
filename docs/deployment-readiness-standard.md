@@ -90,6 +90,12 @@ trusted time source and correct the faulty clock. `deployment.pki.registry.stale
 requires a new live inventory. These failures do not authorize replacement
 identity or a fabricated report.
 
+For core maintained workloads, an explicit empty container environment literal
+keeps its environment name and represents `value` and an absent `valueFrom` as
+null in the target projection. Kubernetes may omit these null fields without
+causing a false admission mismatch. An injected nonempty value or credential
+source still fails; this representation does not change runtime configuration.
+
 Admission comparison permits only the client's refresh of
 `kubectl.kubernetes.io/last-applied-configuration` as bookkeeping. It does not
 remove that annotation from baseline drift checks, mutate the approved plan,
@@ -101,6 +107,13 @@ requires canonical positive counters, the same original UID and the matching
 metadata generation increment; it restores the original counter only in its
 comparison copy. Other fields, baseline drift checks and the approved plan stay
 unchanged. Missing, malformed, backward or larger counter changes fail.
+
+Admission failures retain their blocker ID and add at most eight mismatch field
+paths, such as `$.spec.template.spec.containers[0].env[0].value`. Diagnostics
+show schema fields and array indexes, mask dynamic or unknown keys with `*`,
+and never print values or raw API output. If a safe bounded path cannot be
+derived, the cause says `mismatch paths unavailable`; the failure verdict and
+ownership checks remain unchanged.
 
 Storage fences use fresh reads with the same frozen Kubernetes identity and
 retry a transient API read failure once. `deployment.access.storage` reports a

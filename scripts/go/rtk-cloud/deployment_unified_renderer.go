@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"sort"
 	"strings"
 
@@ -264,6 +265,9 @@ func renderEnvironmentResources(env map[string]string, bindings environmentIdent
 		return nil, err
 	}
 	definitions = append(definitions, ingress...)
+	for _, definition := range definitions {
+		canonicalEnvironmentEmptyEnvLiterals(definition.Object)
+	}
 	if len(support) == 1 {
 		definitions = append(definitions, support[0]...)
 	}
@@ -283,6 +287,39 @@ func renderEnvironmentResources(env map[string]string, bindings environmentIdent
 		return deploymentplan.ID(definitions[i].Object) < deploymentplan.ID(definitions[j].Object)
 	})
 	return definitions, nil
+}
+
+func canonicalEnvironmentEmptyEnvLiterals(object deploymentplan.Object) {
+	switch object["kind"] {
+	case "Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob":
+	default:
+		return
+	}
+	for _, group := range []string{"containers", "initContainers"} {
+		for _, value := range certIssuerObjectList(environmentZammadPod(object)[group]) {
+			container := deploymentplan.Map(value)
+			settings := append([]any(nil), certIssuerObjectList(container["env"])...)
+			changed := false
+			for index, setting := range settings {
+				entry := deploymentplan.Map(setting)
+				literal, explicit := entry["value"].(string)
+				if !explicit || literal != "" || entry["valueFrom"] != nil {
+					continue
+				}
+				// The typed API omits an empty literal. Keep both keys so admission
+				// cannot replace the empty override with a value or credential source.
+				entry = maps.Clone(entry)
+				entry["value"] = nil
+				if _, declared := entry["valueFrom"]; !declared {
+					entry["valueFrom"] = nil
+				}
+				settings[index], changed = entry, true
+			}
+			if changed {
+				container["env"] = settings
+			}
+		}
+	}
 }
 
 func environmentResourcePhase(kind string) string {
