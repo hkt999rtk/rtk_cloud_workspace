@@ -82,6 +82,11 @@ trusted time source and correct the faulty clock. `deployment.pki.registry.stale
 requires a new live inventory. These failures do not authorize replacement
 identity or a fabricated report.
 
+Admission comparison permits only the client's refresh of
+`kubectl.kubernetes.io/last-applied-configuration` as bookkeeping. It does not
+remove that annotation from baseline drift checks, mutate the approved plan,
+or relax existing UID, consumer configuration and security-policy checks.
+
 Missing or failed update evidence, changed inputs/owners, cancellation or `--fast`
 is NO-GO. Actual scheduling/startup and endpoint health are verified after rollout
 before completion is recorded. Ordinary update does not mutate bootstrap

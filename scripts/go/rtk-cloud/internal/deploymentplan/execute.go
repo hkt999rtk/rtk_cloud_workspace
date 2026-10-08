@@ -43,6 +43,28 @@ type LeasingBackend interface {
 	AcquireExecution(context.Context, *Plan) (ExecutionLease, error)
 }
 
+// kubectl refreshes its apply bookkeeping during replace when this annotation
+// already exists. Ignore only that client metadata in admission results; the
+// baseline/current drift projection still fences the original annotation.
+func matchesAdmission(body, admitted Object) bool {
+	if uid := String(Map(body["metadata"])["uid"]); uid != "" && uid != String(Map(admitted["metadata"])["uid"]) {
+		return false
+	}
+	want, have := Projection(body), Projection(admitted)
+	for _, object := range []Object{want, have} {
+		metadata := Map(object["metadata"])
+		annotations := Map(metadata["annotations"])
+		if annotations == nil {
+			continue
+		}
+		delete(annotations, "kubectl.kubernetes.io/last-applied-configuration")
+		if len(annotations) == 0 {
+			delete(metadata, "annotations")
+		}
+	}
+	return Matches(want, have)
+}
+
 // Admit performs no persisted Kubernetes writes. The executor repeats it.
 func (p *Plan) Admit(ctx context.Context, backend Backend) error {
 	for _, resource := range p.Resources {
@@ -62,7 +84,7 @@ func (p *Plan) Admit(ctx context.Context, backend Backend) error {
 			if admitted, err = backend.Write(ctx, resource.Action, body, true); err != nil {
 				return blocked("deployment.admission", resource.ID, "server dry-run rejected the exact desired body", "resolve write permission, immutable fields, admission, quota and namespace prerequisites")
 			}
-			if admitted == nil || ID(admitted) != resource.ID || !Matches(Projection(body), Projection(admitted)) {
+			if admitted == nil || ID(admitted) != resource.ID || !matchesAdmission(body, admitted) {
 				return blocked("deployment.admission", resource.ID, "server admission changed the approved resource or consumer configuration", "declare and qualify the admission mutation or repair the policy; never deploy a different image, identity or workload body")
 			}
 		}
@@ -227,7 +249,7 @@ func (p *Plan) Execute(ctx context.Context, backend Backend, expectedDigest, pri
 				if err == nil && Digest(body) != bodyDigest {
 					err = errors.New("admission mutated the selected request body")
 				}
-				if err == nil && (admitted == nil || ID(admitted) != resource.ID || !Matches(Projection(body), Projection(admitted))) {
+				if err == nil && (admitted == nil || ID(admitted) != resource.ID || !matchesAdmission(body, admitted)) {
 					err = blocked("deployment.admission", resource.ID, "admission result differs from the approved resource body", "repair or qualify the exact admission mutation before execution")
 				}
 				if err == nil {
