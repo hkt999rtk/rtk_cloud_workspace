@@ -114,6 +114,7 @@ var deploymentEnvironmentServiceKeys = keySet(
 
 func architectureKeySet() map[string]bool {
 	out := keySet(
+		"VIDEO_STORAGE_SERVICE_REGISTRATION_ENABLED", "VIDEO_STORAGE_CORE_CUTOVER_ENABLED",
 		"SHADOW_WORKER_REGISTRATION_ENABLED", "SHADOW_HTTP_CORE_CUTOVER_ENABLED",
 		"OTA_SERVICE_REGISTRATION_ENABLED", "OTA_CORE_CUTOVER_ENABLED", "OTA_SERVICE_EDGE_ENABLED", "VIDEO_CLOUD_OTA_ENTITLEMENTS_REQUIRED",
 		"MQTT_FOUNDATION_REGISTRATION_ENABLED", "ACCOUNT_MANAGER_SERVICE_REGISTRATION_ENABLED", "ACCOUNT_MANAGER_SERVICE_REGISTRATION_PORT",
@@ -904,6 +905,9 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 		return deploymentConfig{}, err
 	}
 	for k := range architectureOverride {
+		if sharedVideoStorageDeploymentKey(k) {
+			return deploymentConfig{}, videoStorageConfigurationBlocker(k, "VideoStorage settings belong in shared architecture")
+		}
 		if sharedShadowDeploymentKey(k) {
 			return deploymentConfig{}, sharedShadowDeploymentBlocker(k, "Shadow settings belong in shared architecture, not environment overrides")
 		}
@@ -921,6 +925,9 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 		}
 		values[k] = architectureOverride[k]
 	}
+	if err := validateSharedVideoStorageDeploymentConfiguration(values); err != nil {
+		return deploymentConfig{}, err
+	}
 	if err := validateSharedShadowDeploymentConfiguration(values); err != nil {
 		return deploymentConfig{}, err
 	}
@@ -934,6 +941,9 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 		return deploymentConfig{}, err
 	}
 	for k, v := range envIdentity {
+		if sharedVideoStorageDeploymentKey(k) {
+			return deploymentConfig{}, videoStorageConfigurationBlocker(k, "VideoStorage settings belong in shared architecture")
+		}
 		if sharedShadowDeploymentKey(k) {
 			return deploymentConfig{}, sharedShadowDeploymentBlocker(k, "Shadow settings belong in shared architecture, not environment identity")
 		}
@@ -1589,6 +1599,8 @@ func deploymentLegacyLKEValues(v map[string]string, environment string) map[stri
 		return map[string]string{}
 	}
 	out := map[string]string{
+		"LKE_VIDEO_STORAGE_SERVICE_REGISTRATION_ENABLED":   v["VIDEO_STORAGE_SERVICE_REGISTRATION_ENABLED"],
+		"LKE_VIDEO_STORAGE_CORE_CUTOVER_ENABLED":           v["VIDEO_STORAGE_CORE_CUTOVER_ENABLED"],
 		"LKE_SHADOW_WORKER_REGISTRATION_ENABLED":           v["SHADOW_WORKER_REGISTRATION_ENABLED"],
 		"LKE_SHADOW_HTTP_CORE_CUTOVER_ENABLED":             v["SHADOW_HTTP_CORE_CUTOVER_ENABLED"],
 		"LKE_OTA_SERVICE_REGISTRATION_ENABLED":             v["OTA_SERVICE_REGISTRATION_ENABLED"],

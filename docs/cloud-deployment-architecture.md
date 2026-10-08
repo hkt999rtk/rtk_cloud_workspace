@@ -490,3 +490,13 @@ HTTP forwarding settings block configuration. Certificate, database, Redis,
 broker subscriptions, Platform registration and candidate/runtime readiness
 remain independent required checks. Local renderer tests do not establish
 environment GO or resolve an existing unready worker.
+
+### Shared VideoStorage deployment settings
+
+`VIDEO_STORAGE_SERVICE_REGISTRATION_ENABLED=true` maintains the independent clip
+upload/playback service in every environment through the existing renderer.
+`VIDEO_STORAGE_CORE_CUTOVER_ENABLED=false` retains current Core media handlers;
+registration is distinct from a gateway cutover. These settings are owned only by
+shared `architecture.env`, projected into internal adapter aliases and included
+in the plan digest. Existing instance IDs, identity Secret and certificate paths
+are retained; neither setting creates credentials or proves runtime readiness.
