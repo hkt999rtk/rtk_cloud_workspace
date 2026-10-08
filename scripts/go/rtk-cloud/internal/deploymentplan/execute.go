@@ -121,7 +121,7 @@ func (p *Plan) Admit(ctx context.Context, backend Backend) error {
 		}
 		current, err := backend.Read(ctx, resource.ID)
 		if err != nil {
-			return blocked("deployment.access", resource.ID, "cannot read the selected resource", "restore environment-local read access")
+			return preserveReadBlocker(err, blocked("deployment.access", resource.ID, "cannot read the selected resource", "restore environment-local read access"))
 		}
 		body, err := resource.Body(current)
 		if err != nil {
@@ -138,6 +138,17 @@ func (p *Plan) Admit(ctx context.Context, backend Backend) error {
 		}
 	}
 	return nil
+}
+
+// Native readers classify private API diagnostics before returning an access
+// blocker. Preserve only its exact-resource safe fields, never an outer error
+// wrapper or an unrelated owner/operation's diagnostic.
+func preserveReadBlocker(err, fallback error) error {
+	var failure, defaultFailure *Blocker
+	if errors.As(err, &failure) && errors.As(fallback, &defaultFailure) && failure.Resource == defaultFailure.Resource && (failure.ID == "deployment.access.resource" || failure.ID == "deployment.access.storage") {
+		return &Blocker{ID: failure.ID, Resource: failure.Resource, Cause: failure.Cause, Next: failure.Next}
+	}
+	return fallback
 }
 
 type Journal struct {
@@ -269,7 +280,7 @@ func (p *Plan) Execute(ctx context.Context, backend Backend, expectedDigest, pri
 					if !matches {
 						journal.Failed = candidate.ID
 						_ = saveJournal(directory, journal)
-						return blocked("deployment.drift", candidate.ID, "a completed stage owner or desired dependency changed", "stop dependent updates and requalify actual state; never overwrite the concurrent owner")
+						return preserveReadBlocker(err, blocked("deployment.drift", candidate.ID, "a completed stage owner or desired dependency changed", "stop dependent updates and requalify actual state; never overwrite the concurrent owner"))
 					}
 					continue
 				}
@@ -280,12 +291,15 @@ func (p *Plan) Execute(ctx context.Context, backend Backend, expectedDigest, pri
 				if err != nil {
 					journal.Failed = candidate.ID
 					_ = saveJournal(directory, journal)
-					return blocked("deployment.drift", candidate.ID, "a stage dependency changed", "repeat qualification; do not overwrite concurrent changes")
+					return preserveReadBlocker(err, blocked("deployment.drift", candidate.ID, "a stage dependency changed", "repeat qualification; do not overwrite concurrent changes"))
 				}
 			}
 			phase = resource.Phase
 		}
 		current, err := backend.Read(ctx, resource.ID)
+		if err != nil {
+			err = preserveReadBlocker(err, blocked("deployment.access", resource.ID, "cannot read the selected resource", "restore environment-local read access; preserve the execution journal and ownership fences"))
+		}
 		owner := resource.UID
 		if err == nil {
 			var body Object
@@ -390,7 +404,7 @@ func (p *Plan) Execute(ctx context.Context, backend Backend, expectedDigest, pri
 		id, owner := resource.ID, journal.Owners[resource.ID]
 		actual, err := backend.Read(ctx, id)
 		if err != nil || owner == "" || String(Map(actual["metadata"])["uid"]) != owner {
-			return blocked("deployment.ownership", id, "recorded owner changed after rollout", "inspect the private journal; do not adopt a replacement implicitly")
+			return preserveReadBlocker(err, blocked("deployment.ownership", id, "recorded owner changed after rollout", "inspect the private journal; do not adopt a replacement implicitly"))
 		}
 	}
 	if err := lease.Check(ctx); err != nil {
@@ -466,10 +480,10 @@ func (p *Plan) ReconcileOutcome(ctx context.Context, backend Backend, journal Jo
 			current, err := backend.Read(ctx, r.ID)
 			if r.Action == "retire" {
 				if err != nil || current != nil {
-					return "", blocked("deployment.drift", r.ID, "retired resource is present or unreadable", "retain fences; never remove a concurrent replacement owner")
+					return "", preserveReadBlocker(err, blocked("deployment.drift", r.ID, "retired resource is present or unreadable", "retain fences; never remove a concurrent replacement owner"))
 				}
 			} else if err != nil || current == nil || journal.Owners[r.ID] == "" || (r.UID != "" && journal.Owners[r.ID] != r.UID) || String(Map(current["metadata"])["uid"]) != journal.Owners[r.ID] || !Matches(r.Desired, current) {
-				return "", blocked("deployment.drift", r.ID, "accepted target or ownership changed", "retain fences and requalify the actual target; never overwrite a concurrent owner")
+				return "", preserveReadBlocker(err, blocked("deployment.drift", r.ID, "accepted target or ownership changed", "retain fences and requalify the actual target; never overwrite a concurrent owner"))
 			}
 			if r.Action == "retain" {
 				if _, err := r.Body(current); err != nil {
@@ -485,7 +499,7 @@ func (p *Plan) ReconcileOutcome(ctx context.Context, backend Backend, journal Jo
 	for _, r := range p.Resources {
 		current, err := backend.Read(ctx, r.ID)
 		if err != nil {
-			return "", blocked("deployment.access", r.ID, "original resource cannot be inspected", "restore read access; preserve the execution fences")
+			return "", preserveReadBlocker(err, blocked("deployment.access", r.ID, "original resource cannot be inspected", "restore read access; preserve the execution fences"))
 		}
 		if _, err := r.Body(current); err != nil {
 			return "", err
@@ -504,12 +518,12 @@ func (p *Plan) Verify(ctx context.Context, backend Backend) error {
 		current, err := backend.Read(ctx, resource.ID)
 		if resource.Action == "retire" {
 			if err != nil || current != nil {
-				return blocked("deployment.retirement", resource.ID, "retired owner still exists", "inspect termination blockers without deleting data or concurrent owners")
+				return preserveReadBlocker(err, blocked("deployment.retirement", resource.ID, "retired owner still exists", "inspect termination blockers without deleting data or concurrent owners"))
 			}
 			continue
 		}
 		if err != nil || current == nil || !Matches(resource.Desired, current) {
-			return blocked("deployment.post-deploy", resource.ID, "actual resource does not match the qualified desired state", "inspect workload health and the private rollout journal before recovery")
+			return preserveReadBlocker(err, blocked("deployment.post-deploy", resource.ID, "actual resource does not match the qualified desired state", "inspect workload health and the private rollout journal before recovery"))
 		}
 		if resource.UID != "" && String(Map(current["metadata"])["uid"]) != resource.UID {
 			return blocked("deployment.ownership", resource.ID, "owner changed after rollout", "inspect ownership; do not adopt a replacement implicitly")

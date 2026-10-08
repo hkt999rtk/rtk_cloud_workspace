@@ -244,7 +244,8 @@ type liveDeploymentBootstrapReport struct {
 // certificate/key pair stored in a Secret owned by the selected stack and makes
 // PKI-backed workload readiness part of secret verification. The latter catches
 // identities held on PVCs whose authorization can only be proven by the running
-// service. It deliberately has no CRL or OCSP dependency.
+// service. Adopted CRL consumers must retain current acknowledged evidence
+// whose expiration also covers the requested certificate validity cutoff.
 func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 	if err := verifySelectedStackMetadata(store); err != nil {
 		return err
@@ -315,7 +316,7 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 			if err := verifyCertIssuerBootstrapConfiguration(kubeconfig, namespace, deployments, store.checkRuntime); err != nil {
 				failures = append(failures, err.Error())
 			}
-			if err := verifyMountedPKICRLManifests(kubeconfig, namespace, store.Environment, deployments, "certissuer", store.checkRuntime); err != nil {
+			if err := verifyMountedPKICRLManifestsAt(kubeconfig, namespace, store.Environment, deployments, "certissuer", now, store.checkRuntime); err != nil {
 				failures = append(failures, err.Error())
 			}
 			if err := verifyAutomaticDeviceTrustConsumers(store.Environment, kubeconfig, namespace, deployments, now, store.checkRuntime); err != nil {
@@ -370,7 +371,7 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 			if err := verifyAccountManagerPKIConfiguration(deployments); err != nil {
 				failures = append(failures, err.Error())
 			}
-			if err := verifyMountedPKICRLManifests(kubeconfig, accountNamespace, store.Environment, deployments, "account-manager", store.checkRuntime); err != nil {
+			if err := verifyMountedPKICRLManifestsAt(kubeconfig, accountNamespace, store.Environment, deployments, "account-manager", now, store.checkRuntime); err != nil {
 				failures = append(failures, err.Error())
 			}
 		}

@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -255,24 +256,114 @@ func environmentResourceArguments(id string) ([]string, error) {
 }
 
 func (b environmentKubernetesBackend) Read(ctx context.Context, id string) (deploymentplan.Object, error) {
-	args, err := environmentResourceArguments(id)
-	if err != nil {
-		return nil, err
-	}
-	args = append([]string{"get"}, args...)
-	args = append(args, "--ignore-not-found=true", "-o", "json")
-	raw, err := b.command(ctx, nil, args...)
-	if err != nil {
-		return nil, err
-	}
-	if len(bytes.TrimSpace(raw)) == 0 {
-		return nil, nil
-	}
-	var object deploymentplan.Object
-	if json.Unmarshal(raw, &object) != nil || deploymentplan.ID(object) != id {
-		return nil, errors.New("Kubernetes resource identity does not match the selected owner")
+	object, failure := b.readOwner(ctx, id)
+	if failure != nil {
+		return nil, resourceReadBlocker(id, failure)
 	}
 	return object, nil
+}
+
+func resourceReadBlocker(resource string, failure *deploymentRuntimeError) error {
+	next := "verify the selected frozen Kubernetes identity, get permission for this resource and API connectivity, then repeat qualification without replacing the original owner"
+	switch failure.code {
+	case "KUBE_FORBIDDEN":
+		next = "grant the selected Kubernetes identity get permission for this resource, then repeat qualification without replacing the original owner"
+	case "KUBE_UNAUTHORIZED":
+		next = "restore the selected environment's Kubernetes authentication, then regenerate and qualify the frozen plan"
+	case "KUBE_CONFIG_UNAVAILABLE":
+		next = "restore the selected environment's private frozen Kubernetes identity and directory permissions, then regenerate and qualify the plan"
+	case "KUBE_TOOL_MISSING":
+		next = "restore the configured kubectl executable, then repeat qualification with the selected frozen Kubernetes identity"
+	case "KUBE_INVALID_RESPONSE":
+		next = "verify the Kubernetes API response and kubectl compatibility for this resource, then repeat qualification without replacing the original owner"
+	case "KUBE_TIMEOUT", "KUBE_RATE_LIMITED", "KUBE_UNAVAILABLE":
+		next = "verify cluster connectivity and API availability, then repeat qualification without replacing the original owner"
+	case "CHECK_CANCELLED":
+		next = "repeat the cancelled qualification to obtain fresh resource evidence"
+	}
+	return &deploymentplan.Blocker{ID: "deployment.access.resource", Resource: resource, Cause: "cannot read the selected resource [" + failure.code + "]", Next: next}
+}
+
+type environmentOwnerReadOutput struct {
+	environmentAPIOutput
+	cancel   context.CancelFunc
+	exceeded bool
+}
+
+func (o *environmentOwnerReadOutput) Write(p []byte) (int, error) {
+	n, err := o.environmentAPIOutput.Write(p)
+	if err != nil {
+		o.exceeded = true
+		o.cancel()
+	}
+	return n, err
+}
+
+// Resource and storage fences require a fresh GET with the frozen identity.
+// Bound native output and classify stderr in memory; only transient read
+// failures may retry once. Empty or incompatible observations are not retried.
+func (b environmentKubernetesBackend) readOwner(ctx context.Context, id string) (deploymentplan.Object, *deploymentRuntimeError) {
+	if err := ctx.Err(); err != nil {
+		return nil, classifyDeploymentRuntimeError(ctx, nil, err, false)
+	}
+	args, err := environmentResourceArguments(id)
+	if err != nil {
+		return nil, &deploymentRuntimeError{"KUBE_INVALID_RESPONSE", "invalid resource identity"}
+	}
+	path, cleanup, err := b.privateKubeconfig()
+	if err != nil {
+		return nil, &deploymentRuntimeError{"KUBE_CONFIG_UNAVAILABLE", "frozen selected Kubernetes identity is unavailable"}
+	}
+	defer cleanup()
+	runtime := newDeploymentCheckRuntime(ctx, b.Store.Environment)
+	args = append(append([]string{"--kubeconfig", path, "--request-timeout=" + runtime.requestTimeout.String(), "get"}, args...), "--ignore-not-found=true", "-o", "json")
+	for attempt := 0; ; attempt++ {
+		commandContext, cancel := context.WithTimeout(ctx, runtime.processTimeout)
+		cmd := exec.CommandContext(commandContext, lkeKubectl(), args...)
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		cmd.Cancel = func() error {
+			if cmd.Process == nil {
+				return os.ErrProcessDone
+			}
+			if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); !errors.Is(err, syscall.ESRCH) {
+				return err
+			}
+			return os.ErrProcessDone
+		}
+		cmd.WaitDelay = time.Second
+		stdout, stderr := environmentOwnerReadOutput{cancel: cancel}, environmentOwnerReadOutput{cancel: cancel}
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		err = cmd.Run()
+		var failure *deploymentRuntimeError
+		if stdout.exceeded || stderr.exceeded {
+			failure = &deploymentRuntimeError{"KUBE_INVALID_RESPONSE", "resource response exceeds the native output bound"}
+		} else if err != nil {
+			failure = classifyDeploymentRuntimeError(commandContext, stderr.buffer.Bytes(), err, false)
+		}
+		cancel()
+		if failure == nil {
+			raw := stdout.buffer.Bytes()
+			if len(bytes.TrimSpace(raw)) == 0 {
+				return nil, nil
+			}
+			var object deploymentplan.Object
+			if json.Unmarshal(raw, &object) != nil || deploymentplan.ID(object) != id {
+				return nil, &deploymentRuntimeError{"KUBE_INVALID_RESPONSE", "response does not match the selected resource"}
+			}
+			return object, nil
+		}
+		transient := failure.code == "KUBE_TIMEOUT" || failure.code == "KUBE_RATE_LIMITED" || failure.code == "KUBE_UNAVAILABLE"
+		if !transient || attempt != 0 || ctx.Err() != nil {
+			return nil, failure
+		}
+		timer := time.NewTimer(runtime.retryDelay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, classifyDeploymentRuntimeError(ctx, nil, ctx.Err(), false)
+		case <-timer.C:
+		}
+	}
 }
 
 func (b environmentKubernetesBackend) Write(ctx context.Context, action string, body deploymentplan.Object, dry bool) (deploymentplan.Object, error) {

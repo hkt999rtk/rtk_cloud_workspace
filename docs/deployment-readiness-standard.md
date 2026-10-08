@@ -90,6 +90,12 @@ trusted time source and correct the faulty clock. `deployment.pki.registry.stale
 requires a new live inventory. These failures do not authorize replacement
 identity or a fabricated report.
 
+Mounted CRL expiry is checked against the same configured rollout deadline as
+certificate expiry. The signed `NextUpdate` must be strictly later than that
+deadline. `ThisUpdate`, registry freshness and consumer acknowledgments are
+checked against the actual current time; the future deadline cannot make an
+unpublished or future-dated CRL acceptable.
+
 For core maintained workloads, an explicit empty container environment literal
 keeps its environment name and represents `value` and an absent `valueFrom` as
 null in the target projection. Kubernetes may omit these null fields without
@@ -115,10 +121,16 @@ and never print values or raw API output. If a safe bounded path cannot be
 derived, the cause says `mismatch paths unavailable`; the failure verdict and
 ownership checks remain unchanged.
 
-Storage fences use fresh reads with the same frozen Kubernetes identity and
-retry a transient API read failure once. `deployment.access.storage` reports a
-sanitized read/access failure for the exact PVC or PV; it does not establish
-that data or ownership was lost. Successfully observed missing, replaced,
+Native resource and storage reads use the same frozen Kubernetes identity and
+fresh, uncached GETs, with a 10-second request timeout, 20-second process limit
+and bounded output. Only `KUBE_TIMEOUT`, `KUBE_RATE_LIMITED` and
+`KUBE_UNAVAILABLE` retry once; permission, authentication, invalid-response and
+successful missing-resource observations are not retried.
+`deployment.access.resource` reports the exact resource and safe error code;
+admission and execution preserve that typed access blocker without raw API
+output or wrapper errors. Storage reads retain `deployment.access.storage` for
+the exact PVC or PV; a read failure does not establish that data or ownership
+was lost. Successfully observed missing, replaced,
 terminating, unbound or changed PVC/PV bindings remain
 `deployment.execution.storage` and require verified recovery or migration.
 

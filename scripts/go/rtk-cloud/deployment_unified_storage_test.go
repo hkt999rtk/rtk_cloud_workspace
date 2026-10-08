@@ -131,6 +131,7 @@ set -eu
 umask 077
 case "$*" in
  *'get PersistentVolumeClaim data --namespace '*) kind=claim; object="$RTK_STORAGE_READ_CLAIM";;
+ *'get Secret ghcr-pull --namespace '*) kind=claim; object="$RTK_STORAGE_READ_CLAIM";;
  *'get PersistentVolume pv-original '*) kind=volume; object="$RTK_STORAGE_READ_VOLUME";;
  *) printf 'unexpected-storage-operation\n' >> "$RTK_STORAGE_READ_CALLS"; exit 1;;
 esac
@@ -425,11 +426,13 @@ func TestStorageReadsRespectParentCancellationAndDeadline(t *testing.T) {
 				}
 				_, err := f.backend.storageBindings(ctx, f.plan)
 				var blocker *deploymentplan.Blocker
-				if !errors.As(err, &blocker) || blocker.ID != "deployment.access.storage" || blocker.Resource != f.claimID || !strings.Contains(blocker.Cause, "["+code+"]") || f.count(t, "claim") != calls || f.count(t, "volume") != 0 || f.plan.SHA256() != before {
-					t.Fatalf("parent cancellation/deadline was not preserved: %v", err)
+				observedCalls := f.count(t, "claim")
+				correctCalls := observedCalls == calls || mode == "deadline" && observedCalls == 0
+				if !errors.As(err, &blocker) || blocker.ID != "deployment.access.storage" || blocker.Resource != f.claimID || !strings.Contains(blocker.Cause, "["+code+"]") || !correctCalls || f.count(t, "volume") != 0 || f.plan.SHA256() != before {
+					t.Fatalf("parent cancellation/deadline was not preserved: calls=%d err=%v", observedCalls, err)
 				}
 				f.assertClean(t, err)
-				if calls == 1 {
+				if observedCalls == 1 {
 					f.assertReaped(t)
 				}
 			})

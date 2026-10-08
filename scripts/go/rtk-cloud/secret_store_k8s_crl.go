@@ -30,6 +30,10 @@ type livePKICRLManifestEntry struct {
 // settings still need their own deployment contract before secrets verify can
 // accept them.
 func verifyMountedPKICRLManifests(kubeconfig, namespace, environment string, deployments liveDeploymentList, target string, runtimes ...*deploymentCheckRuntime) error {
+	return verifyMountedPKICRLManifestsAt(kubeconfig, namespace, environment, deployments, target, time.Now().UTC(), runtimes...)
+}
+
+func verifyMountedPKICRLManifestsAt(kubeconfig, namespace, environment string, deployments liveDeploymentList, target string, validUntil time.Time, runtimes ...*deploymentCheckRuntime) error {
 	specs := map[string][]struct{ container, setting, domain string }{
 		"account-manager": {{"pkimanagement", "PKI_MANAGEMENT_ACCOUNT_SERVICE_CLIENT_SERVER_CRL_MANIFEST", "service"}},
 		"certissuer": {
@@ -119,7 +123,7 @@ func verifyMountedPKICRLManifests(kubeconfig, namespace, environment string, dep
 						}
 					}
 					for _, entry := range entries {
-						if err := verifyLivePKICRLEvidence(kubeconfig, namespace, environment, target, spec.container, entry, runtimes...); err != nil {
+						if err := verifyLivePKICRLEvidence(kubeconfig, namespace, environment, target, spec.container, entry, validUntil, runtimes...); err != nil {
 							return fmt.Errorf("%s issuer %s: %w", spec.setting, entry.Issuer.ID, err)
 						}
 					}
@@ -252,7 +256,7 @@ var livePKIIssuerIDPattern = regexp.MustCompile(`^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[
 
 // The public PVC state is checked against the registry's latest signed CRL
 // and the exact workload receipt. A valid ConfigMap alone is not acceptance.
-func verifyLivePKICRLEvidence(kubeconfig, namespace, environment, target, container string, entry livePKICRLManifestEntry, runtimes ...*deploymentCheckRuntime) error {
+func verifyLivePKICRLEvidence(kubeconfig, namespace, environment, target, container string, entry livePKICRLManifestEntry, validUntil time.Time, runtimes ...*deploymentCheckRuntime) error {
 	stateRaw, err := secretCheckKubectl(runtimes, false, "--kubeconfig", kubeconfig, "-n", namespace, "exec", "deployment/"+target, "-c", container, "--", "cat", entry.StatePath)
 	if err != nil || len(stateRaw) == 0 || len(stateRaw) > 1<<20 {
 		return secretCheckFailure(err, "current CRL PVC state is unreadable")
@@ -288,6 +292,11 @@ func verifyLivePKICRLEvidence(kubeconfig, namespace, environment, target, contai
 	now := time.Now().UTC()
 	if err != nil || crl.Number == nil || crl.Number.Sign() <= 0 || crl.CheckSignatureFrom(certificate) != nil || !bytes.Equal(crl.RawIssuer, certificate.RawSubject) || len(certificate.SubjectKeyId) == 0 || !bytes.Equal(crl.AuthorityKeyId, certificate.SubjectKeyId) || crl.ThisUpdate.After(now) || crl.ThisUpdate.Before(now.Add(-7*24*time.Hour)) || !crl.NextUpdate.After(now) || crl.NextUpdate.After(crl.ThisUpdate.Add(7*24*time.Hour)) || crl.NextUpdate.After(certificate.NotAfter) {
 		return fmt.Errorf("installed CRL signature or freshness is invalid")
+	}
+	// Future rollout qualification extends expiration only. Publication time,
+	// freshness, registry version and acknowledgments still describe actual now.
+	if !crl.NextUpdate.After(validUntil) {
+		return fmt.Errorf("installed CRL expires within the checked validity window")
 	}
 	digest := sha256.Sum256(crl.Raw)
 	if state.CRL.Digest != hex.EncodeToString(digest[:]) || state.CRL.Number != crl.Number.String() || !state.CRL.ThisUpdate.Equal(crl.ThisUpdate) || !state.CRL.NextUpdate.Equal(crl.NextUpdate) {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -10,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -95,6 +97,16 @@ func TestLivePKICRLManifestRejectsAdoptedIssuerWithoutCRL(t *testing.T) {
 
 func testLiveCRLEvidence(t *testing.T, domain string, expired bool) (string, string, string) {
 	t.Helper()
+	now := time.Now()
+	thisUpdate, nextUpdate := now.Add(-time.Minute), now.Add(time.Hour)
+	if expired {
+		thisUpdate, nextUpdate = now.Add(-2*time.Hour), now.Add(-time.Hour)
+	}
+	return testLiveCRLEvidenceAt(t, "dev", domain, thisUpdate, nextUpdate)
+}
+
+func testLiveCRLEvidenceAt(t *testing.T, environment, domain string, thisUpdate, nextUpdate time.Time) (string, string, string) {
+	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -107,10 +119,6 @@ func testLiveCRLEvidence(t *testing.T, domain string, expired bool) (string, str
 	}
 	fingerprint := sha256.Sum256(der)
 	issuerID := "64062c4a-2bdc-474c-bb11-ab1b61026574"
-	thisUpdate, nextUpdate := now.Add(-time.Minute), now.Add(time.Hour)
-	if expired {
-		thisUpdate, nextUpdate = now.Add(-2*time.Hour), now.Add(-time.Hour)
-	}
 	crlDER, err := x509.CreateRevocationList(rand.Reader, &x509.RevocationList{Number: big.NewInt(1), ThisUpdate: thisUpdate, NextUpdate: nextUpdate}, template, key)
 	if err != nil {
 		t.Fatal(err)
@@ -121,7 +129,7 @@ func testLiveCRLEvidence(t *testing.T, domain string, expired bool) (string, str
 	}
 	crlSum := sha256.Sum256(crlDER)
 	entry := []map[string]any{{
-		"issuer":     map[string]string{"issuer_id": issuerID, "environment": "dev", "trust_domain": domain, "status": "active", "certificate_fingerprint_sha256": hex.EncodeToString(fingerprint[:]), "certificate_pem": string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))},
+		"issuer":     map[string]string{"issuer_id": issuerID, "environment": environment, "trust_domain": domain, "status": "active", "certificate_fingerprint_sha256": hex.EncodeToString(fingerprint[:]), "certificate_pem": string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))},
 		"state_path": "/var/lib/pki-state/crls/issuer.json",
 	}}
 	raw, err := json.Marshal(entry)
@@ -384,4 +392,176 @@ func TestLivePKICRLManifestChecksConfigMapBeforeAcceptance(t *testing.T) {
 	if err := verifyMountedPKICRLManifests("kubeconfig", "video-cloud-dev-account-manager", "dev", liveDeploymentList{Items: []liveDeployment{deployment}}, "account-manager"); err == nil || !strings.Contains(err.Error(), "signature") {
 		t.Fatalf("altered signed CRL error = %v", err)
 	}
+}
+
+// Exercise the runtime entry point, not just a time predicate: every adopted
+// consumer must receive the supplied cutoff while public state and DB evidence
+// still come from the original issuer and its acknowledged latest CRL.
+func TestRuntimeMountedCRLCoversValidityWindowAcrossEnvironments(t *testing.T) {
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		for _, consumer := range []string{"account", "certissuer", "openbao"} {
+			for _, tc := range []struct {
+				name, fault, want string
+				this, next        time.Duration
+				validNow          bool
+			}{
+				{name: "expires during window", this: -time.Minute, next: 29 * time.Minute, validNow: true, want: "expires within the checked validity window"},
+				{name: "expires exactly at cutoff", this: -time.Minute, next: 30 * time.Minute, validNow: true, want: "expires within the checked validity window"},
+				{name: "covers cutoff", this: -time.Minute, next: 31 * time.Minute, validNow: true},
+				{name: "future publication before cutoff", this: 15 * time.Minute, next: 31 * time.Minute, want: "signature or freshness"},
+				{name: "altered signature", this: -time.Minute, next: time.Hour, fault: "signature", want: "signature or freshness"},
+				{name: "wrong state issuer", this: -time.Minute, next: time.Hour, fault: "issuer", want: "pinned issuer"},
+				{name: "wrong state pin", this: -time.Minute, next: time.Hour, fault: "pin", want: "pinned issuer"},
+				{name: "wrong manifest pin", this: -time.Minute, next: time.Hour, fault: "manifest pin", want: "fingerprint differs"},
+				{name: "unacknowledged", this: -time.Minute, next: time.Hour, fault: "ack", want: "latest acknowledged registry record"},
+				{name: "superseded registry", this: -time.Minute, next: time.Hour, fault: "registry", want: "latest acknowledged registry record"},
+			} {
+				t.Run(environment+"/"+consumer+"/"+tc.name, func(t *testing.T) {
+					now := time.Now().UTC().Truncate(time.Second)
+					cutoff := now.Add(30 * time.Minute)
+					files := map[string]string{}
+					for index, role := range []string{"account", "certissuer", "openbao"} {
+						domain := "service"
+						if role == "openbao" {
+							domain = "openbao_tls"
+						}
+						this, next := now.Add(-time.Minute), now.Add(2*time.Hour)
+						if role == consumer {
+							this, next = now.Add(tc.this), now.Add(tc.next)
+						}
+						manifest, state, registry := testLiveCRLEvidenceAt(t, environment, domain, this, next)
+						// Independent fixture issuers make it possible to detect a
+						// cutoff lost specifically at any one consumer boundary.
+						issuer := fmt.Sprintf("64062c4a-2bdc-474c-bb11-ab1b6102657%d", 4+index)
+						manifest = strings.ReplaceAll(manifest, "64062c4a-2bdc-474c-bb11-ab1b61026574", issuer)
+						state = strings.ReplaceAll(state, "64062c4a-2bdc-474c-bb11-ab1b61026574", issuer)
+						if role == "openbao" {
+							manifest = strings.ReplaceAll(manifest, "/crls/issuer.json", "/crls/openbao.json")
+						}
+						if role == consumer && tc.fault != "" {
+							var current map[string]any
+							if err := json.Unmarshal([]byte(state), &current); err != nil {
+								t.Fatal(err)
+							}
+							switch tc.fault {
+							case "signature":
+								crl := current["crl"].(map[string]any)
+								block, _ := pem.Decode([]byte(crl["crl_pem"].(string)))
+								block.Bytes[len(block.Bytes)-1] ^= 1
+								crl["crl_pem"] = string(pem.EncodeToMemory(block))
+							case "issuer":
+								current["crl"].(map[string]any)["issuer_id"] = "64062c4a-2bdc-474c-bb11-ab1b61026579"
+							case "pin":
+								current["issuer_fingerprint"] = strings.Repeat("0", 64)
+							case "manifest pin":
+								var entries []map[string]any
+								if err := json.Unmarshal([]byte(manifest), &entries); err != nil {
+									t.Fatal(err)
+								}
+								entries[0]["issuer"].(map[string]any)["certificate_fingerprint_sha256"] = strings.Repeat("0", 64)
+								raw, err := json.Marshal(entries)
+								if err != nil {
+									t.Fatal(err)
+								}
+								manifest = string(raw)
+							case "ack":
+								registry = strings.Replace(registry, `"ack":true`, `"ack":false`, 1)
+							case "registry":
+								registry = strings.Replace(registry, `"number":"1"`, `"number":"2"`, 1)
+							}
+							raw, err := json.Marshal(current)
+							if err != nil {
+								t.Fatal(err)
+							}
+							state = string(raw)
+						}
+						configMap, err := json.Marshal(map[string]any{"data": map[string]string{"crls.json": manifest}})
+						if err != nil {
+							t.Fatal(err)
+						}
+						files[role+"-manifest.json"], files[role+"-state.json"], files[role+"-registry.json"] = string(configMap), state, registry
+					}
+					store := testRuntimeMountedCRLStore(t, environment, files)
+					if tc.validNow {
+						if err := verifySecretStoreK8SRuntime(store, now); err != nil {
+							t.Fatalf("currently valid fixture rejected: %v", err)
+						}
+					}
+					// The same cached GET snapshot must still use the new cutoff;
+					// changing time does not change original state or identity.
+					err := verifySecretStoreK8SRuntime(store, cutoff)
+					if tc.want == "" {
+						if err != nil {
+							t.Fatal(err)
+						}
+					} else if err == nil || !strings.Contains(err.Error(), tc.want) {
+						t.Fatalf("runtime error = %v, want %q", err, tc.want)
+					}
+				})
+			}
+		}
+	}
+}
+
+func testRuntimeMountedCRLStore(t *testing.T, environment string, files map[string]string) secretStore {
+	t.Helper()
+	account := testLiveCRLDeployment(t, "account-manager", "pkimanagement", "PKI_MANAGEMENT_ACCOUNT_SERVICE_CLIENT_SERVER_CRL_MANIFEST", true)
+	certissuer := testLiveCRLDeployment(t, "certissuer", "certissuer", "CERT_ISSUER_SERVICE_CLIENT_SERVER_CRL_MANIFEST", true)
+	certissuer.Spec.Template.Spec.Volumes[0].ConfigMap.Name = "certissuer-service-crls"
+	pod := &certissuer.Spec.Template.Spec
+	setting, mount, volume := pod.Containers[0].Env[0], pod.Containers[0].VolumeMounts[0], pod.Volumes[0]
+	setting.Name, setting.Value = "OPENBAO_SERVER_CRL_MANIFEST", "/run/openbao-crls/crls.json"
+	mount.Name, mount.MountPath = "openbao-crls", "/run/openbao-crls"
+	volume.Name, volume.ConfigMap.Name = "openbao-crls", "openbao-crls"
+	pod.Containers[0].Env = append(pod.Containers[0].Env, setting)
+	pod.Containers[0].VolumeMounts = append(pod.Containers[0].VolumeMounts, mount)
+	pod.Volumes = append(pod.Volumes, volume)
+	for _, deployment := range []*liveDeployment{&account, &certissuer} {
+		deployment.Metadata.Generation = 1
+		deployment.Status.ObservedGeneration, deployment.Status.UpdatedReplicas, deployment.Status.AvailableReplicas = 1, 1, 1
+	}
+	for filename, deployment := range map[string]liveDeployment{"account-deployments.json": account, "video-deployments.json": certissuer} {
+		raw, err := json.Marshal(liveDeploymentList{Items: []liveDeployment{deployment}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		files[filename] = string(raw)
+	}
+	dir := t.TempDir()
+	for name, data := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stack := "video-cloud-" + environment
+	script := fmt.Sprintf(`#!/bin/sh
+case "$*" in
+ *'get secrets --all-namespaces'*) printf '%%s' '{"items":[{"metadata":{"namespace":"%s-video-cloud","name":"fixture"},"data":{}}]}' ;;
+ *'-n %s-video-cloud get deployments'*) cat "$RTK_TEST_CRL_SOURCE/video-deployments.json" ;;
+ *'-n %s-account-manager get deployments'*) cat "$RTK_TEST_CRL_SOURCE/account-deployments.json" ;;
+ *'get configmap service-crls-v2'*) cat "$RTK_TEST_CRL_SOURCE/account-manifest.json" ;;
+ *'get configmap certissuer-service-crls'*) cat "$RTK_TEST_CRL_SOURCE/certissuer-manifest.json" ;;
+ *'get configmap openbao-crls'*) cat "$RTK_TEST_CRL_SOURCE/openbao-manifest.json" ;;
+ *'get pods'*) printf '%%s' '{"items":[{"metadata":{"name":"postgresql-0"}}]}' ;;
+ *'exec deployment/account-manager'*) cat "$RTK_TEST_CRL_SOURCE/account-state.json" ;;
+ *'exec deployment/certissuer'*'openbao.json'*) cat "$RTK_TEST_CRL_SOURCE/openbao-state.json" ;;
+ *'exec deployment/certissuer'*) cat "$RTK_TEST_CRL_SOURCE/certissuer-state.json" ;;
+ *'exec postgresql-0'*'64062c4a-2bdc-474c-bb11-ab1b61026575'*) cat "$RTK_TEST_CRL_SOURCE/certissuer-registry.json" ;;
+ *'exec postgresql-0'*'64062c4a-2bdc-474c-bb11-ab1b61026576'*) cat "$RTK_TEST_CRL_SOURCE/openbao-registry.json" ;;
+ *'exec postgresql-0'*) cat "$RTK_TEST_CRL_SOURCE/account-registry.json" ;;
+ *) exit 99 ;;
+esac
+`, stack, stack, stack)
+	kubectl := filepath.Join(dir, "kubectl")
+	if err := os.WriteFile(kubectl, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	t.Setenv("RTK_TEST_CRL_SOURCE", dir)
+	store := makeIsolatedTestSecretStore(t, environment)
+	if err := store.write("kube/kubeconfig.yaml", []byte("isolated fixture"), true); err != nil {
+		t.Fatal(err)
+	}
+	store.checkRuntime = newDeploymentCheckRuntime(context.Background(), environment)
+	return store
 }
