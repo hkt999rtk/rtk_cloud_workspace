@@ -716,6 +716,16 @@ server key match, CRL issuer/currentness, file access, and every affected
 rendered workload with the protected-environment credential/TLS preflight.
 The registration URL for clients is the private Service origin on port 8443.
 Rotate the mounted CRL atomically; the listener rereads it on every request.
+Publishing a CRL in the PKI registry does not itself update this registration
+Secret. Synchronize the current approved issuer's published CRL before the
+mounted copy expires, verify signature/issuer, monotonic number and retained
+revocations, and guard the original Secret UID/resourceVersion while replacing
+only `client.crl`. Record the original public CRL and sanitized before/after
+evidence in the selected environment's
+`deployment/repairs/service-registration-crl-<YYYYMMDD>/`; preserve all other
+Secret data. Verify actual mounted-file projection and genuine service
+heartbeats/readiness before repeating complete preflight. An archived expired
+CRL is inspection evidence, not an automatic rollback target.
 Rotating the server certificate/key also requires an Account Manager rollout,
 because the listener loads that pair at startup. Do not enable plugin Pods or
 the Product-write gate until registration, denial, lease expiry, and CRL

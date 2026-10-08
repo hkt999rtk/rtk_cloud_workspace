@@ -65,6 +65,7 @@ func TestCommonPlanPermissionsMatchCollectionCreateNamedUpdatesAndWaiting(t *tes
 func TestNativePlanAccessReviewsRejectDeniedMissingOrEvaluationErrors(t *testing.T) {
 	for _, mode := range []string{"valid", "denied", "ambiguous", "missing", "evaluation-error", "unavailable"} {
 		t.Run(mode, func(t *testing.T) {
+			makeIsolatedTestSecretStore(t, "dev")
 			kube := frozenKubernetesFixture(t)
 			raw, _ := yaml.Marshal(kube)
 			backend, err := newEnvironmentKubernetesBackend(string(raw), "dev")
@@ -89,7 +90,7 @@ func TestNativePlanAccessReviewsRejectDeniedMissingOrEvaluationErrors(t *testing
 			writeTestFile(t, responsePath, string(responseRaw))
 			code := `#!/bin/sh
 case "$*" in
- *'create --raw=/apis/authorization.k8s.io/v1/selfsubjectaccessreviews -f -'*) cat >> "$RTK_TEST_REVIEW_INPUT"; printf '\n' >> "$RTK_TEST_REVIEW_INPUT"; cat "$RTK_TEST_REVIEW_RESPONSE";;
+ *'create --raw=/apis/authorization.k8s.io/v1/selfsubjectaccessreviews -f -'*) cat > "$RTK_TEST_REVIEW_INPUT.$$"; cat "$RTK_TEST_REVIEW_RESPONSE";;
  *) exit 1;;
 esac
 `
@@ -110,22 +111,27 @@ esac
 				t.Fatal("authorizer details exposed")
 			}
 			if mode == "valid" {
-				raw, _ := os.ReadFile(input)
 				requirements, _ := environmentPlanAccessRequirements(plan)
-				lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
-				if len(lines) != len(requirements) {
+				files, err := filepath.Glob(input + ".*")
+				if err != nil || len(files) != len(requirements) {
 					t.Fatal("not every execution/inventory permission was reviewed")
 				}
-				for i, line := range lines {
+				pending := map[environmentAccessRequirement]bool{}
+				for _, permission := range requirements {
+					pending[permission] = true
+				}
+				for _, file := range files {
+					raw, err := os.ReadFile(file)
 					var request struct {
 						Kind string
 						Spec struct {
 							ResourceAttributes environmentAccessRequirement `json:"resourceAttributes"`
 						}
 					}
-					if json.Unmarshal([]byte(line), &request) != nil || request.Kind != "SelfSubjectAccessReview" || request.Spec.ResourceAttributes != requirements[i] {
+					if err != nil || json.Unmarshal(raw, &request) != nil || request.Kind != "SelfSubjectAccessReview" || !pending[request.Spec.ResourceAttributes] {
 						t.Fatal("review escaped exact planned operation")
 					}
+					delete(pending, request.Spec.ResourceAttributes)
 				}
 			}
 		})

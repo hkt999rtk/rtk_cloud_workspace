@@ -137,8 +137,25 @@ func (b environmentKubernetesBackend) CheckPlanAccess(ctx context.Context, plan 
 	if err != nil {
 		return err
 	}
-	for _, permission := range requests {
-		if err := b.checkEnvironmentAccess(ctx, permission, ""); err != nil {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// Reviews are independent and persist no resources. Keep errors as ordered
+	// results so completion order cannot change the first denied permission.
+	reviews, err := boundedParallelMap(len(requests), 4, func(i int) (error, error) {
+		if err := ctx.Err(); err != nil {
+			return err, nil
+		}
+		return b.checkEnvironmentAccess(ctx, requests[i], ""), nil
+	})
+	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	for _, err := range reviews {
+		if err != nil {
 			return err
 		}
 	}

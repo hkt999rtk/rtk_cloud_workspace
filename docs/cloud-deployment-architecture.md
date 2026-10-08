@@ -23,6 +23,17 @@ executor and recovery operation uses the same explicit environment resolver;
 none may invent a location from CWD, a worktree, external disk or volume format.
 
 See the [canonical path table and migration boundary](deployment-secrets-governance.md#configuration-versus-deployment-generated-data).
+Reviewed registration-listener CRL synchronization archives only the original
+public CRL and sanitized before/after evidence under
+`deployment/repairs/service-registration-crl-<YYYYMMDD>/` in that environment
+store. The source is the selected issuer's current published registry CRL;
+validate its signature, issuer binding, validity, increasing number and retained
+revocations. Update only the original registration Secret's `client.crl` using
+UID/resourceVersion guards. Account Manager consumes the projected file and
+rereads it for each handshake/request. Preflight checks the live material, not
+an archived repair receipt. Registry publication and mounted Secret rotation
+are separate steps; the archive is not authority to restore an expired CRL.
+
 Only deterministic secret-free resolved configuration may remain under
 `cloud_env/<environment>/runtime/`. Legacy operational files there require an
 explicit validated migration. Missing evidence never authorizes identity/data
