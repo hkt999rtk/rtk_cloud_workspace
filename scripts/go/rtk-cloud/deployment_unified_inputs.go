@@ -291,6 +291,9 @@ func applyEnvironmentPodBindings(object deploymentplan.Object, b environmentIden
 				pod["initContainers"] = initializers
 			}
 		}
+		if err := applyAccountManagerSocketProfile(object, binding, b.Owners[id] != ""); err != nil {
+			return err
+		}
 		boundNames := map[string]bool{}
 		for _, bound := range binding.Containers {
 			boundNames[bound.Name] = true
@@ -402,7 +405,7 @@ func environmentIdentitySetting(name string) bool {
 	if environmentControllerPolicySetting(name) {
 		return false
 	}
-	for _, prefix := range []string{"ACCOUNT_MANAGER_SERVICE_REGISTRATION_SERVER_", "ACCOUNT_MANAGER_SERVICE_REGISTRATION_CLIENT_", "PKI_", "OPENBAO_", "EMQX_PKI_", "CERT_ISSUER_SERVICE_", "CERT_ISSUER_HOST_", "CERT_ISSUER_SERVER_PKI_", "CERT_ISSUER_MQTT_SERVER_PKI_", "FACTORY_ENROLL_CERT_ISSUER_", "VIDEO_CLOUD_API_TLS_", "VIDEO_CLOUD_AUTH_PRODUCT_PKI_", "VIDEO_CLOUD_AUTH_APP_", "VIDEO_CLOUD_SERVICE_PKI_", "VIDEO_CLOUD_SERVER_PKI_", "VIDEO_CLOUD_CONTROLLER_PKI_", "VIDEO_CLOUD_AUTH_DEVICE_CA_", "VIDEO_CLOUD_AUTH_DEVICE_ROOT_TRUST_", "VIDEO_CLOUD_AUTH_ISSUER_TRUST_", "VIDEO_CLOUD_MQTT_SERVER_PKI_", "VIDEO_CLOUD_MQTT_BUNDLE_", "APP_PKI_", "SERVER_PKI_"} {
+	for _, prefix := range []string{"ACCOUNT_MANAGER_SERVICE_REGISTRATION_SERVER_", "ACCOUNT_MANAGER_SERVICE_REGISTRATION_CLIENT_", "PKI_", "OPENBAO_", "EMQX_PKI_", "CERT_ISSUER_SERVICE_", "CERT_ISSUER_HOST_", "CERT_ISSUER_SERVER_PKI_", "CERT_ISSUER_MQTT_SERVER_PKI_", "FACTORY_ENROLL_CERT_ISSUER_", "VIDEO_CLOUD_API_TLS_", "VIDEO_CLOUD_AUTH_PRODUCT_PKI_", "VIDEO_CLOUD_AUTH_APP_", "VIDEO_CLOUD_SERVICE_PKI_", "VIDEO_CLOUD_SERVER_PKI_", "VIDEO_CLOUD_CONTROLLER_PKI_", "VIDEO_CLOUD_AUTH_DEVICE_CA_", "VIDEO_CLOUD_AUTH_DEVICE_ROOT_TRUST_", "VIDEO_CLOUD_AUTH_ISSUER_TRUST_", "VIDEO_CLOUD_MQTT_SERVER_PKI_", "VIDEO_CLOUD_MQTT_BUNDLE_", "APP_PKI_", "APP_CERT_ISSUER_", "SERVER_PKI_"} {
 		if strings.HasPrefix(name, prefix) {
 			return true
 		}

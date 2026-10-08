@@ -555,3 +555,13 @@ A lifecycle-qualified, fully stopped legacy OTA registrar retirement is recogniz
 before PKI consumer parsing. This narrow exception never permits active or
 unknown consumer retirement; owner, drain, replacement and cutover checks remain
 mandatory, and shared OTA identity/data remain retained.
+
+### Account Manager managed issuer socket
+
+An observed App issuer socket is retained with its matching `pkimanagement` owner,
+shared socket mount and durable identity. Original `APP_CERT_ISSUER_*` references
+are lifecycle inputs. The common target omits the uninstalled static client-leaf
+volume only for this verified socket profile; it does not create replacement
+credentials. Existing static mounts are retained. One managed writer uses
+Recreate. See Account Manager
+[`pki-controller-integration.md`](../repos/rtk_account_manager/docs/pki-controller-integration.md).
