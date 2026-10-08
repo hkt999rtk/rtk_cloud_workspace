@@ -41,7 +41,7 @@ func verifyDeploymentPublicCertIssuer(ctx context.Context, cfg deploymentConfig,
 	if err := validateRequiredCertIssuerPublicIngress("video-cloud-"+cfg.Environment, policy.PublicHost, policy.HTTPSPort, ingresses); err != nil {
 		return err
 	}
-	return runDeploymentCertIssuerPublicProbe(ctx, cfg.Workspace, cfg.Environment, store.KubeconfigPath(), policy.PublicHost)
+	return runDeploymentCertIssuerPublicProbe(ctx, cfg.Workspace, cfg.Environment, store.ConfigRoot, store.KubeconfigPath(), policy.PublicHost)
 }
 
 func validateRequiredCertIssuerPublicIngress(stack, host string, port int, ingresses certIssuerIngressList) error {
@@ -69,13 +69,14 @@ func validateRequiredCertIssuerPublicIngress(stack, host string, port int, ingre
 
 var deploymentCertIssuerProbeCode = regexp.MustCompile(`FAIL \[([A-Z_]+)\]`)
 
-// The existing probe executes inside the AM Pod with its own mounted identity.
-// Keys stay in the Pod; both calls are incomplete, non-issuing requests.
-func runDeploymentCertIssuerPublicProbe(ctx context.Context, workspace, environment, kubeconfig, host string) error {
+// The probe uses the AM Pod's original identity, including the managed owner
+// when the app uses a private socket. It connects to the explicit public origin;
+// keys stay in the Pod and both calls are incomplete, non-issuing requests.
+func runDeploymentCertIssuerPublicProbe(ctx context.Context, workspace, environment, configRoot, kubeconfig, host string) error {
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "bash", filepath.Join(workspace, "scripts", "check-certissuer-app-mtls.sh"), environment, "--public-host", host)
-	cmd.Env = append(os.Environ(), "RTK_CLOUD_KUBECONFIG="+kubeconfig, "RTK_CERTISSUER_CHECK_TIMEOUT_SECONDS=20")
+	cmd.Env = append(os.Environ(), "RTK_CLOUD_CONFIG_ROOT="+configRoot, "RTK_CLOUD_KUBECONFIG="+kubeconfig, "RTK_CERTISSUER_CHECK_TIMEOUT_SECONDS=20")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM) }
 	cmd.WaitDelay = time.Second

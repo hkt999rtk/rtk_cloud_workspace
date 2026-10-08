@@ -70,7 +70,7 @@ func TestDeploymentPublicCertIssuerProbeRejectsPartialSuccessAndRedacts(t *testi
 				ctx, cancel = context.WithTimeout(ctx, 50*time.Millisecond)
 				defer cancel()
 			}
-			err := runDeploymentCertIssuerPublicProbe(ctx, root, "staging", "selected-kube", "issuer.example")
+			err := runDeploymentCertIssuerPublicProbe(ctx, root, "staging", filepath.Join(root, "config"), "selected-kube", "issuer.example")
 			if tc.want == "" {
 				if err != nil {
 					t.Fatal(err)

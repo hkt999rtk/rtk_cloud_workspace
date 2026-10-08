@@ -74,6 +74,14 @@ environments:
 | `deployment.compatibility` | Selected AM/Billing schema prerequisites, required restricted payment-simulator startup and migration setting, with candidate source/CI checked by the release gate. |
 | `deployment.network` | Configured public CertIssuer ingress, authenticated mTLS and anonymous TLS denial; planned Kubernetes network objects also pass exact-body admission. |
 
+For the managed Account Manager socket profile, the public probe uses the
+original `pkimanagement` owner identity in memory and connects to the explicit
+public hostname. It fences the validated identity snapshot, verifies server
+trust/SAN and anonymous client-certificate denial, and issues no certificate.
+An internal socket response cannot qualify this public route. Probe scratch
+belongs to the selected environment's private `deployment/tmp/` and is removed
+on completion; private keys are never exported into files, arguments or reports.
+
 Live Service registry evidence must match the selected environment, domain,
 issuer and Root. Its timestamp may be at most five minutes old and at most five
 seconds ahead of the checking machine. `deployment.pki.clock` identifies a
