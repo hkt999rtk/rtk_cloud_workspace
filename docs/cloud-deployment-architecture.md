@@ -2,6 +2,17 @@
 
 ## Contract
 
+### Preflight checks and failure consequences
+
+The [detailed preflight checklist](deployment-readiness-standard.md#detailed-preflight-checklist)
+is the maintained per-item design for the default existing-environment update.
+It explains each input/compilation prerequisite and the six required gates,
+what is verified, why it is required and the failure consequence that NO-GO
+prevents. It also defines drift, canonical evidence paths, bounded side effects
+and the limits of dry-run, capacity and PKI checks. Keep that checklist aligned
+with the common compiler and gate callbacks; a successful preflight qualifies
+one exact plan, while deployment completion requires separate runtime acceptance.
+
 ### Preflight bucket preparation
 
 For `RUNTIME_MEDIA_STORAGE_CUTOVER_REQUIRED=false`, preflight verifies the
@@ -59,8 +70,9 @@ do not establish PVC contents, issuer lineage, storage backend or seal health.
 Those facts require their own authoritative source/check and remain explicit
 blockers when unavailable; preflight never fabricates them.
 
-At the beginning of preflight, any previous GO bindings record is replaced with
-NO-GO. Successfully compiled observations are saved privately, and only complete
+After invocation, configuration, report-path and recovery-guard validation,
+preflight replaces any previous GO bindings record with NO-GO before preparation
+or compilation. Successfully compiled observations are saved privately, and only complete
 qualification promotes the record to GO with its exact plan and bindings hashes.
 A failed/fast check cannot leave old evidence eligible for execution. Plan alone
 never publishes GO. Deployment re-observes the same environment through the same
