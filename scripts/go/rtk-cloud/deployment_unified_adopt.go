@@ -130,7 +130,7 @@ func observeEnvironmentBindings(environment string, release environmentRelease, 
 			}
 		}
 		groups := []string{"containers"}
-		if component == "managed-openbao" || component == "managed-turn" || component == "managed-app-api" || component == "managed-mqtt" || component == "existing-workload" && name == "video-cloud-api" {
+		if component == "managed-openbao" || component == "managed-turn" || component == "managed-app-api" || component == "managed-mqtt" || component == "managed-api" || component == "existing-workload" && name == "video-cloud-api" {
 			groups = append(groups, "initContainers")
 		}
 		for _, group := range groups {
@@ -161,6 +161,12 @@ func observeEnvironmentBindings(environment string, release environmentRelease, 
 					default:
 						return b, openBaoCompatibilityBlocker(id, "existing OpenBao contains an unsupported container")
 					}
+				}
+				if component == "managed-api" && group == "initContainers" {
+					if err := observeDeviceInitializer(&binding, container, release, id); err != nil {
+						return b, err
+					}
+					bound.ImageKey = "LKE_VIDEO_CLOUD_IMAGE"
 				}
 				if component == "existing-workload" && name == "video-cloud-api" && group == "initContainers" {
 					if err := validateObservedCoreMQTTInitializer(id, container, release); err != nil {

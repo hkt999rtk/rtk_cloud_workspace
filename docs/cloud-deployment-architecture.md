@@ -543,3 +543,10 @@ a maintained permission-only recipe and the formal API image role. It prepares
 existing private CRL/identity directories and never rewrites their contents.
 Its lifecycle mounts and trust references are observed separately from ordinary
 API configuration; unknown recipes block qualification.
+
+Device API `initialize-trust-state` and `initialize-controller-identity` use
+maintained recipes and formal API images. Observations record only the original
+Root-specific trust-state filename and mount references, not workload commands.
+Trust initialization writes only a missing file via a private temporary file;
+existing trust and controller identity contents are never overwritten. Unknown
+recipes, image sources or state paths block qualification.

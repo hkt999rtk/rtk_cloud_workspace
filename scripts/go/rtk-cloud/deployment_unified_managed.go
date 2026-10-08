@@ -115,6 +115,20 @@ func renderManagedEnvironmentAPI(env map[string]string, binding environmentPodBi
 	for _, value := range certIssuerObjectList(pod["topologySpreadConstraints"]) {
 		deploymentplan.Map(value)["labelSelector"] = map[string]any{"matchLabels": map[string]any{"app.kubernetes.io/name": binding.Name}}
 	}
+	if binding.Component == "managed-api" {
+		var initializers []any
+		for _, bound := range binding.InitContainers {
+			c, err := maintainedDeviceInitializer(bound.Name, binding.DeviceTrustStateFile)
+			if err != nil {
+				return nil, err
+			}
+			c["image"] = env["LKE_VIDEO_CLOUD_IMAGE"]
+			initializers = append(initializers, c)
+		}
+		if len(initializers) > 0 {
+			pod["initContainers"] = initializers
+		}
+	}
 	if binding.Component == "managed-app-api" {
 		if err := validateEnvironmentAppBinding(binding); err != nil {
 			return nil, err
