@@ -148,3 +148,8 @@ a new renderer, old image publication or retired temporary credentials. Pod
 lineage must match the original Job UID/API version. Running, partial, scheduled,
 foreign or ambiguous owners remain NO-GO; no online cleanup is performed by
 preflight and no historical commands are imported into the candidate plan.
+
+A terminal standalone Pod is likewise historical only when it has no owner
+references and `restartPolicy=Never`. Running, restartable or ambiguous Pods
+remain required inventory blockers; historical inspection Pods are not deleted
+or replayed by preflight.

@@ -32,7 +32,10 @@ func historicalTerminalJob(id string, live map[string]Object, stack string) bool
 				owner = r
 			}
 		}
-		if owner == nil || owner["kind"] != "Job" {
+		if owner == nil {
+			return len(refs) == 0 && Map(object["spec"])["restartPolicy"] == "Never"
+		}
+		if owner["kind"] != "Job" {
 			return false
 		}
 		parentID := "Job/" + String(meta["namespace"]) + "/" + String(owner["name"])
