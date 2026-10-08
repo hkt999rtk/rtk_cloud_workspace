@@ -22,6 +22,16 @@ func TestOriginalHelmIngressAdmissionRetainedAcrossEnvironments(t *testing.T) {
 					meta := deploymentplan.Map(object["metadata"])
 					meta["uid"] = "original-" + deploymentplan.String(meta["name"])
 					delete(meta, "labels")
+					if object["kind"] == "Deployment" {
+						for _, c := range certIssuerObjectList(environmentPKIPod(object)["containers"]) {
+							for _, v := range certIssuerObjectList(deploymentplan.Map(c)["volumeMounts"]) {
+								mount := deploymentplan.Map(v)
+								if mount["mountPath"] == "/usr/local/certificates" {
+									mount["mountPath"] = "/usr/local/certificates/"
+								}
+							}
+						}
+					}
 					live = append(live, object)
 				}
 			}

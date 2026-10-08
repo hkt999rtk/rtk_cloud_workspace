@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -81,7 +82,7 @@ func observeEnvironmentBindings(environment string, release environmentRelease, 
 			for _, item := range certIssuerObjectList(pod["containers"]) {
 				for _, value := range certIssuerObjectList(deploymentplan.Map(item)["volumeMounts"]) {
 					mount := deploymentplan.Map(value)
-					if mount["mountPath"] == "/usr/local/certificates" {
+					if path.Clean(deploymentplan.String(mount["mountPath"])) == "/usr/local/certificates" && mount["readOnly"] == true {
 						mounted[deploymentplan.String(mount["name"])] = true
 					}
 				}
