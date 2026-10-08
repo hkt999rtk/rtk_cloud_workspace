@@ -201,7 +201,7 @@ func TestDirectCIImagesUseFrozenGitlinksAndExactPublicationForAllEnvironments(t 
 					}
 					// Exercise the verifier used by real preflight against the complete
 					// frozen release, including every shared-image consumer and backup.
-					for _, verifyMode := range []string{"valid", "workspace-drift", "leaf-dirty", "gitlink-drift", "pull-failed", "OCI-drift", "CI-failed", "backup-source", "backup-base", "private-error"} {
+					for _, verifyMode := range []string{"valid", "workspace-drift", "leaf-dirty", "gitlink-drift", "pull-failed", "OCI-drift", "CI-failed", "backup-source", "backup-base", "shared-source-drift", "typed-blocker", "private-error"} {
 						t.Run("verify/"+verifyMode, func(t *testing.T) {
 							candidate := release
 							candidate.Images = map[string]environmentReleaseImage{}
@@ -216,7 +216,16 @@ func TestDirectCIImagesUseFrozenGitlinksAndExactPublicationForAllEnvironments(t 
 								image.SourceRevision = leafSHA
 								candidate.Images["LKE_POSTGRES_BACKUP_RUNNER_IMAGE"] = image
 							}
-							pulled := map[string]bool{}
+							if verifyMode == "valid" {
+								candidate.Images["LKE_REDIS_IMAGE"] = candidate.Images["LKE_FLEET_VALKEY_IMAGE"]
+							}
+							if verifyMode == "shared-source-drift" {
+								image := candidate.Images["LKE_VIDEO_CLOUD_IMAGE"]
+								image.SourceRevision = strings.Repeat("e", 40)
+								candidate.Images["LKE_ZZZ_SHARED_SOURCE_IMAGE"] = image
+							}
+							pulled := map[string]int{}
+							originalBlocker := &deploymentplan.Blocker{ID: "deployment.release.publication", Resource: "LKE_ACCOUNT_MANAGER_IMAGE", Cause: "managed publication proof is unavailable", Next: "Restore the existing managed publication proof and repeat complete preflight."}
 							verifyRun := func(ctx context.Context, command string, args ...string) ([]byte, error) {
 								if err := ctx.Err(); err != nil {
 									return nil, err
@@ -232,7 +241,7 @@ func TestDirectCIImagesUseFrozenGitlinksAndExactPublicationForAllEnvironments(t 
 										if len(args) != 4 || args[1] != "--platform" || args[2] != "linux/amd64" {
 											t.Fatal("release pull did not select the qualified platform", args)
 										}
-										pulled[args[3]] = true
+										pulled[args[3]]++
 										if verifyMode == "pull-failed" {
 											return nil, errors.New("private-pull-output")
 										}
@@ -251,6 +260,9 @@ func TestDirectCIImagesUseFrozenGitlinksAndExactPublicationForAllEnvironments(t 
 									return json.Marshal(map[string]string{"org.opencontainers.image.revision": sha, "org.opencontainers.image.base.name": base})
 								}
 								if command == "gh" {
+									if verifyMode == "typed-blocker" {
+										return nil, originalBlocker
+									}
 									if verifyMode == "private-error" {
 										return nil, errors.New("credential=never-public")
 									}
@@ -267,12 +279,56 @@ func TestDirectCIImagesUseFrozenGitlinksAndExactPublicationForAllEnvironments(t 
 							if (err == nil) != (verifyMode == "valid") {
 								t.Fatal("frozen release verification accepted drift or omitted evidence", err)
 							}
+							if verifyMode != "valid" {
+								wantedID := "deployment.release.publication"
+								switch verifyMode {
+								case "workspace-drift", "leaf-dirty", "gitlink-drift", "shared-source-drift":
+									wantedID = "deployment.release.source"
+								case "pull-failed":
+									wantedID = "deployment.release.pull"
+								case "backup-source", "backup-base":
+									wantedID = "deployment.release.backup"
+								}
+								var blocker *deploymentplan.Blocker
+								if !errors.As(err, &blocker) || blocker.ID != wantedID || blocker.Cause == "" || blocker.Next == "" || blocker.Resource == "" {
+									t.Fatal("release failure lost actionable static diagnostics", err)
+								}
+								if verifyMode == "workspace-drift" {
+									if blocker.Resource != "workspace" {
+										t.Fatal("workspace failure reported another resource", blocker)
+									}
+								} else if _, ok := candidate.Images[blocker.Resource]; !ok {
+									t.Fatal("release failure did not identify its maintained image role", blocker)
+								}
+								if verifyMode == "typed-blocker" && err != originalBlocker {
+									t.Fatal("existing release Blocker was replaced", err)
+								}
+								raw, _ := json.Marshal(blocker)
+								if strings.Contains(string(raw), "never-public") || strings.Contains(string(raw), "private-pull-output") {
+									t.Fatal("private command output became release diagnostics")
+								}
+							}
 							if verifyMode == "valid" {
+								shared := candidate.Images["LKE_FLEET_VALKEY_IMAGE"].Reference
+								if shared == "" || candidate.Images["LKE_REDIS_IMAGE"].Reference != shared || pulled[shared] != 1 {
+									t.Fatal("shared Redis/Fleet image was not pulled exactly once", pulled[shared])
+								}
 								for _, image := range candidate.Images {
-									if !pulled[image.Reference] {
-										t.Fatal("release consumer image was not verified", image.Reference)
+									if pulled[image.Reference] != 1 {
+										t.Fatal("release consumer image was not pulled exactly once", image.Reference, pulled[image.Reference])
 									}
 								}
+								if err := verifyEnvironmentReleaseWithCommand(context.Background(), cfg, candidate, verifyRun); err != nil {
+									t.Fatal("second release verification failed", err)
+								}
+								for _, image := range candidate.Images {
+									if pulled[image.Reference] != 2 {
+										t.Fatal("second invocation reused an earlier pull", image.Reference, pulled[image.Reference])
+									}
+								}
+							}
+							if verifyMode == "shared-source-drift" && pulled[candidate.Images["LKE_VIDEO_CLOUD_IMAGE"].Reference] != 1 {
+								t.Fatal("shared source drift was not checked after the original image pull")
 							}
 							if verifyMode == "private-error" {
 								plan := &deploymentplan.Plan{}

@@ -83,7 +83,7 @@ func parseDeploymentCheckOptions(args []string, out io.Writer) (deploymentCheckO
 	fs.StringVar(&o.environmentRoot, "environment-root", "", "explicit environment root")
 	fs.StringVar(&o.workspace, "workspace", "", "workspace root")
 	fs.StringVar(&o.report, "report", "", "write a sanitized JSON report (0600)")
-	fs.DurationVar(&o.timeout, "timeout", 0, "overall deadline (default: fast 2m, standard 10m)")
+	fs.DurationVar(&o.timeout, "timeout", 0, "overall deadline (default: complete pre-deploy 45m, fast 2m, other checks 10m)")
 	fs.BoolVar(&o.requireMigration, "require-pki-migration", false, "require PKI migration-owner binding")
 	fs.BoolVar(&o.requireProduct, "require-product-pki", false, "require active pinned Product Device Root")
 	q := &o.qualification
@@ -144,6 +144,9 @@ func parseDeploymentCheckOptions(args []string, out io.Writer) (deploymentCheckO
 	}
 	if o.timeout == 0 {
 		o.timeout = 10 * time.Minute
+		if o.phase == deploymentCheckPreDeploy && o.operation != "image-upgrade" {
+			o.timeout = defaultCompleteDeploymentTimeout
+		}
 		if q.fast {
 			o.timeout = 2 * time.Minute
 		}

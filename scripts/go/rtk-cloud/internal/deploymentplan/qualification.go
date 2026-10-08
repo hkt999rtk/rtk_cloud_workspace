@@ -69,32 +69,47 @@ func (p *Plan) Qualify(ctx context.Context, options QualificationOptions, checks
 	for _, gate := range gates {
 		row := GateResult{ID: gate.id, Status: "BLOCKED", Required: true, Next: gate.next, Impact: gate.impact, Recheck: "repeat full preflight for the same release and review the newly compiled plan SHA-256"}
 		check := checks[gate.id]
+		var interrupted error
 		switch {
 		case ctx.Err() != nil:
-			row.Status, row.Cause = "ERROR", "qualification deadline or cancellation interrupted this required gate"
+			interrupted = ctx.Err()
 		case options.Fast:
 			row.Status, row.Cause = "SKIPPED", "--fast cannot qualify a complete environment update"
 		case check == nil:
 			row.Cause = "required capability has no complete qualification adapter"
 		default:
 			evidence, err := check(ctx, p)
-			if err != nil {
-				row.Status, row.Cause = "FAIL", "required evidence could not be verified"
-				var blocker *Blocker
-				if errors.As(err, &blocker) {
-					row.Cause, row.Next = blocker.Cause, blocker.Next
-					if blocker.Resource != "" {
-						row.Cause += " (" + blocker.Resource + ")"
-					}
-				}
-			} else if p.SHA256() != result.PlanSHA256 {
-				row.Status, row.Cause = "ERROR", "the selected plan changed during qualification"
-			} else if !evidenceSHA256.MatchString(evidence.SHA256) {
-				row.Cause = "required evidence is absent or incomplete"
-			} else {
-				row.Status, row.EvidenceSHA256 = "PASS", evidence.SHA256
-				row.Next, row.Impact, row.Recheck = "", "", ""
+			interrupted = ctx.Err()
+			if interrupted == nil && (errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)) {
+				interrupted = err
 			}
+			if interrupted == nil {
+				if err != nil {
+					row.Status, row.Cause = "FAIL", "required evidence could not be verified"
+					var blocker *Blocker
+					if errors.As(err, &blocker) {
+						row.Cause, row.Next = blocker.Cause, blocker.Next
+						if blocker.Resource != "" {
+							row.Cause += " (" + blocker.Resource + ")"
+						}
+					}
+				} else if p.SHA256() != result.PlanSHA256 {
+					row.Status, row.Cause = "ERROR", "the selected plan changed during qualification"
+				} else if !evidenceSHA256.MatchString(evidence.SHA256) {
+					row.Cause = "required evidence is absent or incomplete"
+				} else {
+					row.Status, row.EvidenceSHA256 = "PASS", evidence.SHA256
+					row.Next, row.Impact, row.Recheck = "", "", ""
+				}
+			}
+		}
+		switch {
+		case errors.Is(interrupted, context.DeadlineExceeded):
+			row.Status, row.Cause = "ERROR", "qualification deadline exceeded before this required gate completed"
+			row.Next = "repeat full preflight for the same release with a timeout long enough to complete all required checks"
+		case errors.Is(interrupted, context.Canceled):
+			row.Status, row.Cause = "ERROR", "qualification was canceled before this required gate completed"
+			row.Next = "repeat full preflight for the same release when qualification can run to completion"
 		}
 		if row.Status != "PASS" {
 			passed = false

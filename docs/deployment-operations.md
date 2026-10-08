@@ -316,7 +316,8 @@ pull that may reuse cached layers, and a cluster rollout provide different
 evidence. A controller pull does not prove cold-node downloads or matching live
 `imagePullSecret` credentials. Supply each affected immutable image explicitly.
 
-`--timeout` defaults to **2m for fast mode and 10m otherwise**, measured after
+`--timeout` defaults to **45m for complete pre-deploy qualification, 2m for fast
+mode, and 10m for health or image-upgrade checks**, measured after
 CLI/configuration validation and any shell build. The checker limits independent
 read probes to four and full pulls to two; provider writes remain sequential.
 Individual HTTP, Kubernetes, SQL and pull operations have shorter deadlines.

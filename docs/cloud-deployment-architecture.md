@@ -562,6 +562,11 @@ An observed App issuer socket is retained with its matching `pkimanagement` owne
 shared socket mount and durable identity. Original `APP_CERT_ISSUER_*` references
 are lifecycle inputs. The common target omits the uninstalled static client-leaf
 volume only for this verified socket profile; it does not create replacement
-credentials. Existing static mounts are retained. One managed writer uses
-Recreate. See Account Manager
+credentials. Existing static mounts are retained. The observed
+`management-socket-directory` initializer must match a reviewed permission-only
+recipe; the target creates `/socket/private` with mode 0700 using the maintained
+immutable `ALPINE_IMAGE`. Original socket mounts and process UID/security context
+are retained. Unknown initializers block compilation, and a shared `emptyDir`
+socket requires this initializer. Existing identity-state contents are untouched.
+One managed writer uses Recreate. See Account Manager
 [`pki-controller-integration.md`](../repos/rtk_account_manager/docs/pki-controller-integration.md).

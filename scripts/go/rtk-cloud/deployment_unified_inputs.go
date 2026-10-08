@@ -118,7 +118,7 @@ func validateEnvironmentIdentityBindings(b environmentIdentityBindings, environm
 			return errors.New("deployment.bindings: duplicate or empty managed component")
 		}
 		seen[id] = true
-		if pod.Component != "managed-openbao" && pod.OpenBao != nil || pod.Component != "managed-openbao" && pod.Component != "managed-turn" && pod.Component != "managed-app-api" && pod.Component != "managed-mqtt" && pod.Component != "managed-api" && !(existingMQTTStateConsumer(pod.Component, pod.Name)) && len(pod.InitContainers) != 0 {
+		if pod.Component != "managed-openbao" && pod.OpenBao != nil || pod.Component != "managed-openbao" && pod.Component != "managed-turn" && pod.Component != "managed-app-api" && pod.Component != "managed-mqtt" && pod.Component != "managed-api" && !(existingMQTTStateConsumer(pod.Component, pod.Name)) && !accountManagerSocketConsumer(pod.Component, pod.Name) && len(pod.InitContainers) != 0 {
 			return errors.New("deployment.bindings: OpenBao lifecycle references require the managed OpenBao component")
 		}
 		if pod.DeviceTrustStateFile != "" && (pod.Component != "managed-api" || !deviceTrustStatePath.MatchString(pod.DeviceTrustStateFile)) {
@@ -214,6 +214,9 @@ func environmentPrivateFileMount(pod environmentPodBindings, container environme
 }
 
 func environmentManagedImageKey(component, name string, index int) string {
+	if component == "existing-workload" && name == "management-socket-directory" {
+		return "LKE_ALPINE_IMAGE"
+	}
 	if component == "managed-api" && (name == "initialize-trust-state" || name == "initialize-controller-identity") {
 		return "LKE_VIDEO_CLOUD_IMAGE"
 	}
@@ -291,7 +294,7 @@ func applyEnvironmentPodBindings(object deploymentplan.Object, b environmentIden
 				pod["initContainers"] = initializers
 			}
 		}
-		if err := applyAccountManagerSocketProfile(object, binding, b.Owners[id] != ""); err != nil {
+		if err := applyAccountManagerSocketProfile(object, binding, b.Owners[id] != "", release); err != nil {
 			return err
 		}
 		boundNames := map[string]bool{}

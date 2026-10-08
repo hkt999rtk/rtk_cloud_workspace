@@ -129,8 +129,13 @@ func observeEnvironmentBindings(environment string, release environmentRelease, 
 				binding.PodFields[field] = value
 			}
 		}
+		if accountManagerSocketConsumer(component, name) {
+			if value, ok := pod["securityContext"]; ok {
+				binding.PodFields["securityContext"] = value
+			}
+		}
 		groups := []string{"containers"}
-		if component == "managed-openbao" || component == "managed-turn" || component == "managed-app-api" || component == "managed-mqtt" || component == "managed-api" || existingMQTTStateConsumer(component, name) {
+		if component == "managed-openbao" || component == "managed-turn" || component == "managed-app-api" || component == "managed-mqtt" || component == "managed-api" || existingMQTTStateConsumer(component, name) || accountManagerSocketConsumer(component, name) {
 			groups = append(groups, "initContainers")
 		}
 		for _, group := range groups {
@@ -173,6 +178,12 @@ func observeEnvironmentBindings(environment string, release environmentRelease, 
 						return b, err
 					}
 					bound.ImageKey = "LKE_VIDEO_CLOUD_IMAGE"
+				}
+				if accountManagerSocketConsumer(component, name) && group == "initContainers" {
+					if err := validateObservedAccountManagerSocketInitializer(id, container, release); err != nil {
+						return b, err
+					}
+					bound.ImageKey = "LKE_ALPINE_IMAGE"
 				}
 				if component == "managed-mqtt" && group == "initContainers" {
 					if err := validateObservedMQTTInitializer(id, container, release); err != nil {
@@ -218,7 +229,7 @@ func observeEnvironmentBindings(environment string, release environmentRelease, 
 				if len(settings) > 0 {
 					bound.Fields["env"] = settings
 				}
-				if component == "managed-openbao" {
+				if component == "managed-openbao" || accountManagerSocketConsumer(component, name) {
 					if value, ok := container["securityContext"]; ok {
 						bound.Fields["securityContext"] = value
 					}

@@ -221,8 +221,12 @@ credentials containing CR/LF fail. Never put tokens in tracked files or logs.
 The checker runs at most four independent read probes and two full image pulls
 at once; DNS/storage mutations stay sequential. It shares inventory reads within
 one invocation. Re-run after changing credentials, configuration, environment or
-image inputs. `--timeout` sets the check execution deadline: default **2m with
-`--fast`, 10m otherwise**. CLI/configuration validation and the shell's binary
+image inputs. `--timeout` sets the check execution deadline: default **45m for
+complete pre-deploy qualification, 2m with `--fast`, and 10m for health or image-upgrade checks**.
+Complete qualification checks all selected images, per-resource permissions,
+server dry-run admission and ownership fences. Identical immutable images are
+pulled once per release verification; each role retains its source/CI checks.
+CLI/configuration validation and the shell's binary
 build precede that deadline.
 
 Individual operations also have bounded deadlines, capped by the remaining

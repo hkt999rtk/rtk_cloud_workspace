@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -142,5 +143,181 @@ func TestExistingUpdateRequiresEveryUpdateGateWithoutActivationOrRestoreProjects
 				t.Fatal("fast mode authorized update")
 			}
 		})
+	}
+}
+
+// Turn synchronous cancellation into deadline expiration for these tests;
+// waiting for a real deadline would make callback invocation race a timer.
+type qualificationDeadlineContext struct{ context.Context }
+
+func (ctx qualificationDeadlineContext) Err() error {
+	if ctx.Context.Err() != nil {
+		return context.DeadlineExceeded
+	}
+	return nil
+}
+
+func TestQualificationInterruptionDuringCheckTakesPrecedenceOverEveryResult(t *testing.T) {
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		for _, interruption := range []string{"deadline", "cancellation"} {
+			for _, outcome := range []string{"private error", "typed blocker", "success evidence"} {
+				t.Run(environment+"/"+interruption+"/"+outcome, func(t *testing.T) {
+					in, definition, live := fixture(t, environment, "Deployment")
+					plan, err := Compile(in, []Definition{definition}, []Object{live})
+					if err != nil {
+						t.Fatal(err)
+					}
+					baseContext, cancel := context.WithCancel(context.Background())
+					defer cancel()
+					var ctx context.Context = baseContext
+					if interruption == "deadline" {
+						ctx = qualificationDeadlineContext{baseContext}
+					}
+					production := environment == "prod"
+					ids := RequiredGateIDs(production)
+					checks := map[string]GateCheck{}
+					var invoked []string
+					for _, id := range ids {
+						checks[id] = func(context.Context, *Plan) (GateEvidence, error) {
+							invoked = append(invoked, id)
+							evidence := GateEvidence{Digest("verified before interruption")}
+							if id != "deployment.release" {
+								return evidence, nil
+							}
+							cancel()
+							switch outcome {
+							case "private error":
+								return evidence, errors.New("credential=never-display-this")
+							case "typed blocker":
+								return evidence, &Blocker{Cause: "credential=never-display-this", Next: "private-repair-instruction"}
+							default:
+								return evidence, nil
+							}
+						}
+					}
+					result, err := plan.Qualify(ctx, QualificationOptions{Production: production}, checks)
+					if err == nil || result.Decision != "NO-GO" || result.PlanSHA256 != plan.SHA256() || len(result.Gates) != len(ids) {
+						t.Fatal("interrupted qualification was approved or lost its scope", err, result)
+					}
+					if strings.Join(invoked, ",") != "deployment.target,deployment.release" {
+						t.Fatal("interrupted qualification invoked a later gate", invoked)
+					}
+					for i, gate := range result.Gates {
+						if gate.ID != ids[i] || !gate.Required {
+							t.Fatal("interruption changed required gates or their order", result.Gates)
+						}
+						if i == 0 {
+							if gate.Status != "PASS" || gate.EvidenceSHA256 != Digest("verified before interruption") || gate.Cause != "" || gate.Next != "" {
+								t.Fatal("interruption discarded a completed gate", gate)
+							}
+							continue
+						}
+						cause := "qualification was canceled before this required gate completed"
+						next := "repeat full preflight for the same release when qualification can run to completion"
+						if interruption == "deadline" {
+							cause = "qualification deadline exceeded before this required gate completed"
+							next = "repeat full preflight for the same release with a timeout long enough to complete all required checks"
+						}
+						if gate.Status != "ERROR" || gate.Cause != cause || gate.Next != next || gate.EvidenceSHA256 != "" || gate.Impact == "" || gate.Recheck == "" {
+							t.Fatal("interruption was reported as a gate failure or accepted evidence", gate)
+						}
+					}
+					raw, marshalErr := json.Marshal(result)
+					if marshalErr != nil {
+						t.Fatal(marshalErr)
+					}
+					if strings.Contains(string(raw)+err.Error(), "credential=") || strings.Contains(string(raw), "private-repair-instruction") {
+						t.Fatal("interruption report leaked callback details")
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestQualificationCanceledBeforeStartingDoesNotInvokeChecks(t *testing.T) {
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		for _, deadline := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/deadline=%t", environment, deadline), func(t *testing.T) {
+				in, definition, live := fixture(t, environment, "Deployment")
+				plan, err := Compile(in, []Definition{definition}, []Object{live})
+				if err != nil {
+					t.Fatal(err)
+				}
+				baseContext, cancel := context.WithCancel(context.Background())
+				cancel()
+				var ctx context.Context = baseContext
+				if deadline {
+					ctx = qualificationDeadlineContext{baseContext}
+				}
+				production := environment == "prod"
+				ids := RequiredGateIDs(production)
+				checks := map[string]GateCheck{}
+				for _, id := range ids {
+					checks[id] = func(context.Context, *Plan) (GateEvidence, error) {
+						t.Fatal("an already interrupted qualification invoked a callback")
+						return GateEvidence{}, nil
+					}
+				}
+				result, err := plan.Qualify(ctx, QualificationOptions{Production: production}, checks)
+				if err == nil || result.Decision != "NO-GO" || len(result.Gates) != len(ids) {
+					t.Fatal("already interrupted qualification was approved or lost gates", err, result)
+				}
+				for i, gate := range result.Gates {
+					if gate.ID != ids[i] || gate.Status != "ERROR" || gate.EvidenceSHA256 != "" || !gate.Required {
+						t.Fatal("already interrupted qualification changed gate order or status", gate)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestQualificationRecognizesWrappedInterruptionErrorsWithoutExpiredContext(t *testing.T) {
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		for _, interruption := range []error{context.DeadlineExceeded, context.Canceled} {
+			t.Run(environment+"/"+interruption.Error(), func(t *testing.T) {
+				in, definition, live := fixture(t, environment, "Deployment")
+				plan, err := Compile(in, []Definition{definition}, []Object{live})
+				if err != nil {
+					t.Fatal(err)
+				}
+				production := environment == "prod"
+				ids := RequiredGateIDs(production)
+				checks := map[string]GateCheck{}
+				for _, id := range ids {
+					checks[id] = func(context.Context, *Plan) (GateEvidence, error) {
+						evidence := GateEvidence{Digest("verified")}
+						if id == "deployment.release" {
+							return evidence, errors.Join(fmt.Errorf("credential=never-display-this: %w", interruption), &Blocker{Cause: "private-blocker", Next: "private-repair"})
+						}
+						return evidence, nil
+					}
+				}
+				result, err := plan.Qualify(context.Background(), QualificationOptions{Production: production}, checks)
+				if err == nil || result.Decision != "NO-GO" || len(result.Gates) != len(ids) {
+					t.Fatal("wrapped interruption was approved or lost gates", err, result)
+				}
+				for i, gate := range result.Gates {
+					if gate.ID != ids[i] {
+						t.Fatal("wrapped interruption changed gate order", result.Gates)
+					}
+					if gate.ID == "deployment.release" {
+						if gate.Status != "ERROR" || gate.EvidenceSHA256 != "" || !strings.HasPrefix(gate.Next, "repeat full preflight") {
+							t.Fatal("wrapped interruption used blocker repair advice or accepted evidence", gate)
+						}
+					} else if gate.Status != "PASS" {
+						t.Fatal("a callback error interrupted an otherwise live context", gate)
+					}
+				}
+				raw, marshalErr := json.Marshal(result)
+				if marshalErr != nil {
+					t.Fatal(marshalErr)
+				}
+				if strings.Contains(string(raw)+err.Error(), "credential=") || strings.Contains(string(raw), "private-") {
+					t.Fatal("wrapped interruption leaked callback details")
+				}
+			})
+		}
 	}
 }

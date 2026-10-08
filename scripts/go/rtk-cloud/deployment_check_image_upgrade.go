@@ -243,10 +243,24 @@ func verifyDeploymentUpgradeRelease(ctx context.Context, workspace string, store
 }
 
 func deploymentUpgradeSimulatorContainer(target deploymentUpgradeTarget) (map[string]any, error) {
-	pod := target.Spec["template"].(map[string]any)["spec"].(map[string]any)
+	template, ok := target.Spec["template"].(map[string]any)
+	if !ok || target.Kind != "Deployment" {
+		return nil, errors.New("payment simulator target must be a Deployment with a Pod template")
+	}
+	pod, ok := template["spec"].(map[string]any)
+	if !ok {
+		return nil, errors.New("payment simulator Pod specification is unavailable")
+	}
+	containers, ok := pod["containers"].([]any)
+	if !ok || len(containers) == 0 {
+		return nil, errors.New("payment simulator containers are unavailable")
+	}
 	var selected map[string]any
-	for _, item := range pod["containers"].([]any) {
-		container := item.(map[string]any)
+	for _, item := range containers {
+		container, ok := item.(map[string]any)
+		if !ok {
+			return nil, errors.New("payment simulator container specification is invalid")
+		}
 		command, _ := container["command"].([]any)
 		if len(command) == 0 || command[0] != "/rtk-billing-payment-simulator" {
 			continue

@@ -22,6 +22,10 @@ type unifiedDeploymentOptions struct {
 	Fast                                                                                    bool
 	Timeout                                                                                 time.Duration
 }
+
+// Complete qualification includes every image, resource admission and phase fence.
+const defaultCompleteDeploymentTimeout = 45 * time.Minute
+
 type unifiedDeploymentDependencies struct {
 	PublishBindings func(deploymentConfig, *compiledEnvironmentDeployment, string) error
 	RequireBindings func(*compiledEnvironmentDeployment) error
@@ -118,23 +122,22 @@ func defaultUnifiedDeploymentDependencies() unifiedDeploymentDependencies {
 						return deploymentplan.GateEvidence{}, &deploymentplan.Blocker{ID: "deployment.compatibility", Cause: "selected release schema prerequisites are unavailable or unapplied", Next: "complete the service owner's explicit schema migration against the original database, then repeat preflight; deployment does not reset or migrate data implicitly"}
 					}
 					for _, resource := range p.Resources {
-						if resource.Action == "retire" || deploymentplan.Map(resource.Desired["metadata"])["name"] != "payment-simulator" {
-							continue
-						}
-						var target deploymentUpgradeTarget
-						raw, _ := json.Marshal(resource.Desired)
-						if json.Unmarshal(raw, &target) != nil {
-							return deploymentplan.GateEvidence{}, errors.New("simulator target unavailable")
-						}
-						container, err := deploymentUpgradeSimulatorContainer(target)
+						target, err := environmentPaymentSimulatorTarget(resource)
 						if err != nil {
 							return deploymentplan.GateEvidence{}, err
 						}
-						if err := verifyDeploymentSimulatorMigrationSetting(store, target); err != nil {
-							return deploymentplan.GateEvidence{}, err
+						if target == nil {
+							continue
+						}
+						container, err := deploymentUpgradeSimulatorContainer(*target)
+						if err != nil {
+							return deploymentplan.GateEvidence{}, environmentSimulatorCompatibilityBlocker(resource.ID, "candidate simulator executable or Pod specification is invalid")
+						}
+						if err := verifyDeploymentSimulatorMigrationSetting(store, *target); err != nil {
+							return deploymentplan.GateEvidence{}, environmentSimulatorCompatibilityBlocker(resource.ID, "candidate simulator does not prove startup schema migration is disabled")
 						}
 						if err := verifyDeploymentSimulatorStartup(ctx, deploymentplan.String(container["image"])); err != nil {
-							return deploymentplan.GateEvidence{}, err
+							return deploymentplan.GateEvidence{}, environmentSimulatorCompatibilityBlocker(resource.ID, "candidate simulator startup could not be verified with its restricted database identity")
 						}
 					}
 					if err := c.Fence(ctx, p); err != nil {
@@ -193,6 +196,26 @@ func defaultUnifiedDeploymentDependencies() unifiedDeploymentDependencies {
 	}
 }
 
+func environmentSimulatorCompatibilityBlocker(resource, cause string) error {
+	return &deploymentplan.Blocker{ID: "deployment.compatibility.simulator", Resource: resource, Cause: cause, Next: "maintain the simulator Deployment and BILLING_DB_MIGRATE_ON_STARTUP=false; verify the exact candidate image startup with the restricted runtime database role, then repeat full preflight"}
+}
+
+// A Service shares this name but has no Pod template or executable to qualify.
+func environmentPaymentSimulatorTarget(resource deploymentplan.Resource) (*deploymentUpgradeTarget, error) {
+	if resource.Action == "retire" || resource.Desired["kind"] != "Deployment" || deploymentplan.Map(resource.Desired["metadata"])["name"] != "payment-simulator" {
+		return nil, nil
+	}
+	var target deploymentUpgradeTarget
+	raw, err := json.Marshal(resource.Desired)
+	if err != nil || json.Unmarshal(raw, &target) != nil {
+		return nil, environmentSimulatorCompatibilityBlocker(resource.ID, "candidate simulator Deployment cannot be read")
+	}
+	if _, err := deploymentUpgradeSimulatorContainer(target); err != nil {
+		return nil, environmentSimulatorCompatibilityBlocker(resource.ID, "candidate simulator executable or Pod specification is invalid")
+	}
+	return &target, nil
+}
+
 // Rollout acceptance reuses the maintained health checker. Target image/owner
 // verification is already performed by Execute; these are its required runtime
 // Secret, PKI, workload and public-mTLS checks, without provider write canaries.
@@ -219,7 +242,7 @@ func runUnifiedEnvironmentDeployment(action string, args []string) error {
 }
 
 func parseUnifiedDeploymentOptions(action string, args []string, out io.Writer) (unifiedDeploymentOptions, error) {
-	o := unifiedDeploymentOptions{Action: action, Operation: "upgrade", Timeout: 10 * time.Minute}
+	o := unifiedDeploymentOptions{Action: action, Operation: "upgrade", Timeout: defaultCompleteDeploymentTimeout}
 	if action == "create" {
 		o.Operation = "create"
 	}
@@ -239,12 +262,18 @@ func parseUnifiedDeploymentOptions(action string, args []string, out io.Writer) 
 	if err := fs.Parse(args); err != nil {
 		return o, err
 	}
-	readOnlyVisited := false
+	readOnlyVisited, timeoutVisited := false, false
 	fs.Visit(func(f *flag.Flag) {
 		if f.Name == "read-only" {
 			readOnlyVisited = true
 		}
+		if f.Name == "timeout" {
+			timeoutVisited = true
+		}
 	})
+	if o.Fast && !timeoutVisited {
+		o.Timeout = 2 * time.Minute
+	}
 	if readOnlyVisited && (action != "preflight" || !readOnly) {
 		return o, errors.New("--read-only applies only to preflight and cannot be false")
 	}
