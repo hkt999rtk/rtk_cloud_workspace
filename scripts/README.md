@@ -93,6 +93,11 @@ LINODE_OBJ_BUCKET=artifact bucket name
 
 ## Existing Environment Deployment Checks
 
+For the pending v2 update engine, see the [V2 Deployment Script Flow](../docs/deployment-script-flow.md),
+including its Mermaid flow chart, integrated final health check and standalone
+health recheck. This draft reference describes reviewed local code and requires
+separate implementation delivery before it becomes active operator guidance.
+
 Deployment checks have two explicit phases. Every shell entry first prints a
 short explanation of its purpose and when to use it, then builds and executes
 the Go checker once, preserving its exit status.
