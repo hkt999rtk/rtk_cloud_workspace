@@ -1,5 +1,5 @@
 {
-  "captured_at": "2026-10-05T12:41:49.735771+00:00",
+  "captured_at": "2026-10-10T18:51:17.523727+00:00",
   "environment": null,
   "format_version": 1,
   "revisions": {
@@ -7,9 +7,9 @@
     "Billing": "aedaafe4eeae",
     "Cloud Admin": "4035e920404d",
     "Cloud Frontend": "475b9fe80d6c",
-    "Video Cloud": "82fa7d08141f"
+    "Video Cloud": "b5ea63ae8b39"
   },
-  "schema_hash": "fccd9354a7c1343cdf9168fcc4c0c1fbb0039c66c548c639286081c97414d47f",
+  "schema_hash": "eaa5e254ed4a11e16cd1b624243fad932909034ab40997e4afdedcc2d1f05a07",
   "source_dirty": {
     "Account Manager": false,
     "Billing": false,
@@ -32987,6 +32987,33 @@
         },
         {
           "details": {
+            "description": "Digest of verified removal of the exact bootstrap authorization owners; no credentials are stored."
+          },
+          "kind": "column",
+          "name": "pki_deployment_bootstrap_sessions.cleanup_sha256",
+          "schema": "public",
+          "version": 1
+        },
+        {
+          "details": {
+            "description": "UTC completion time after workload receipts, bootstrap revocation, CRL consumer receipts and verified credential cleanup."
+          },
+          "kind": "column",
+          "name": "pki_deployment_bootstrap_sessions.finalized_at",
+          "schema": "public",
+          "version": 1
+        },
+        {
+          "details": {
+            "description": "Digest of the acknowledged CRL recorded at bootstrap completion; preserved across retries."
+          },
+          "kind": "column",
+          "name": "pki_deployment_bootstrap_sessions.finalized_crl_sha256",
+          "schema": "public",
+          "version": 1
+        },
+        {
+          "details": {
             "critical": "key",
             "description": "References pki_issuers.id within this database."
           },
@@ -40770,6 +40797,27 @@
               "name": "created_at",
               "not_null": true,
               "type": "timestamp with time zone"
+            },
+            {
+              "comment": "UTC completion time after workload receipts, bootstrap revocation, CRL consumer receipts and verified credential cleanup.",
+              "default": null,
+              "name": "finalized_at",
+              "not_null": false,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "Digest of the acknowledged CRL recorded at bootstrap completion; preserved across retries.",
+              "default": null,
+              "name": "finalized_crl_sha256",
+              "not_null": false,
+              "type": "text"
+            },
+            {
+              "comment": "Digest of verified removal of the exact bootstrap authorization owners; no credentials are stored.",
+              "default": null,
+              "name": "cleanup_sha256",
+              "not_null": false,
+              "type": "text"
             }
           ],
           "comment": "Progress installing initial trust roots and subjects in a deployment.",
