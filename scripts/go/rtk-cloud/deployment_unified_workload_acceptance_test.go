@@ -48,6 +48,55 @@ func targetWorkloadFixture(t *testing.T, environment, kind string) (*deploymentp
 	return plan, objects, digest
 }
 
+func TestTargetWorkloadAcceptanceRetainsOnlyVerifiedHistoricalStandalonePods(t *testing.T) {
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		for _, mode := range []string{"succeeded", "failed", "running", "pending", "restart-always", "foreign-stack", "missing-uid", "planned-terminal"} {
+			t.Run(environment+"/"+mode, func(t *testing.T) {
+				plan, objects, digest := targetWorkloadFixture(t, environment, "Deployment")
+				namespace := deploymentplan.Map(objects[0]["metadata"])["namespace"]
+				probe := deploymentplan.Object{
+					"apiVersion": "v1", "kind": "Pod",
+					"metadata": map[string]any{"name": "sqlite-migration-probe", "namespace": namespace, "uid": "historical-probe"},
+					"spec":     map[string]any{"restartPolicy": "Never", "containers": []any{map[string]any{"name": "probe", "image": "busybox:old-probe"}}},
+					"status":   map[string]any{"phase": "Succeeded"},
+				}
+				switch mode {
+				case "failed":
+					deploymentplan.Map(probe["status"])["phase"] = "Failed"
+				case "running":
+					deploymentplan.Map(probe["status"])["phase"] = "Running"
+				case "pending":
+					deploymentplan.Map(probe["status"])["phase"] = "Pending"
+				case "restart-always":
+					deploymentplan.Map(probe["spec"])["restartPolicy"] = "Always"
+				case "foreign-stack":
+					deploymentplan.Map(probe["metadata"])["labels"] = map[string]any{"rtk.realtek.com/stack": "another-stack"}
+				case "missing-uid":
+					delete(deploymentplan.Map(probe["metadata"]), "uid")
+				case "planned-terminal":
+					plan.Resources = append(plan.Resources, deploymentplan.Resource{ID: deploymentplan.ID(probe), UID: "historical-probe", Desired: deploymentplan.Projection(probe), Action: "retain", Phase: "workload"})
+				}
+				objects = append(objects, probe)
+				calls := 0
+				err := verifyEnvironmentTargetWorkloads(context.Background(), plan, objects, func(_ context.Context, image string) (map[string]bool, error) {
+					calls++
+					if strings.Contains(image, "old-probe") {
+						t.Fatal("historical probe must not be counted as a candidate replica or image")
+					}
+					return map[string]bool{digest: true}, nil
+				})
+				validHistory := mode == "succeeded" || mode == "failed"
+				if validHistory && (err != nil || calls != 1) {
+					t.Fatalf("valid retained history blocked healthy application proof: calls=%d err=%v", calls, err)
+				}
+				if !validHistory && err == nil {
+					t.Fatal("unverified or explicitly planned terminal Pod was accepted as history")
+				}
+			})
+		}
+	}
+}
+
 func TestTargetWorkloadAcceptanceRejectsReadyButWrongOrIncompleteRuntime(t *testing.T) {
 	for _, environment := range []string{"dev", "staging", "prod"} {
 		for _, kind := range []string{"Deployment", "StatefulSet", "DaemonSet"} {
@@ -131,7 +180,7 @@ func TestTargetWorkloadAcceptanceRejectsReadyButWrongOrIncompleteRuntime(t *test
 
 func TestTargetAcceptanceRequiresPlannedJobsToComplete(t *testing.T) {
 	for _, environment := range []string{"dev", "staging", "prod"} {
-		for _, mode := range []string{"complete", "failed", "unfinished"} {
+		for _, mode := range []string{"complete", "complete-missing-pod", "complete-wrong-owner", "complete-wrong-image", "complete-bad-exit", "failed", "unfinished"} {
 			t.Run(environment+"/"+mode, func(t *testing.T) {
 				plan, objects, digest := targetWorkloadFixture(t, environment, "Deployment")
 				job := deploymentplan.Object{"apiVersion": "batch/v1", "kind": "Job", "metadata": map[string]any{"namespace": plan.Stack + "-application", "name": "bootstrap-cleanup", "uid": "original-job"}, "spec": map[string]any{"template": map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"name": "cleanup", "image": "ghcr.io/hkt999rtk/runtime@" + digest}}}}}}
@@ -144,6 +193,24 @@ func TestTargetAcceptanceRequiresPlannedJobsToComplete(t *testing.T) {
 					job["status"] = map[string]any{"conditions": []any{map[string]any{"type": condition, "status": "True"}}}
 				}
 				objects = append(objects, job)
+				if strings.HasPrefix(mode, "complete") && mode != "complete-missing-pod" {
+					jobPod := deploymentplan.Object{
+						"apiVersion": "v1", "kind": "Pod",
+						"metadata": map[string]any{"namespace": plan.Stack + "-application", "name": "bootstrap-cleanup-pod", "uid": "original-job-pod", "ownerReferences": []any{map[string]any{"apiVersion": "batch/v1", "kind": "Job", "name": "bootstrap-cleanup", "uid": "original-job", "controller": true}}},
+						"spec":     deploymentplan.Clone(deploymentplan.Map(deploymentplan.Map(job["spec"])["template"])["spec"].(map[string]any)),
+						"status":   map[string]any{"phase": "Succeeded", "containerStatuses": []any{map[string]any{"name": "cleanup", "containerID": "containerd://original-job-container", "imageID": "docker-pullable://ghcr.io/hkt999rtk/runtime@" + digest, "state": map[string]any{"terminated": map[string]any{"exitCode": float64(0)}}}}},
+					}
+					switch mode {
+					case "complete-wrong-owner":
+						deploymentplan.Map(certIssuerObjectList(deploymentplan.Map(jobPod["metadata"])["ownerReferences"])[0])["uid"] = "foreign-job"
+					case "complete-wrong-image":
+						deploymentplan.Map(certIssuerObjectList(deploymentplan.Map(jobPod["spec"])["containers"])[0])["image"] = "runtime:old"
+					case "complete-bad-exit":
+						status := deploymentplan.Map(certIssuerObjectList(deploymentplan.Map(jobPod["status"])["containerStatuses"])[0])
+						deploymentplan.Map(deploymentplan.Map(status["state"])["terminated"])["exitCode"] = float64(1)
+					}
+					objects = append(objects, jobPod)
+				}
 				err := verifyEnvironmentTargetWorkloads(context.Background(), plan, objects, func(context.Context, string) (map[string]bool, error) { return map[string]bool{digest: true}, nil })
 				if (err == nil) != (mode == "complete") {
 					t.Fatal(err)

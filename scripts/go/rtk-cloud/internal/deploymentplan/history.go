@@ -2,10 +2,10 @@ package deploymentplan
 
 import "strings"
 
-// Finished standalone Jobs are historical execution records, not enabled
-// candidate workloads. Retain them without importing old commands/credentials.
-// Parent identity, terminal conditions and every owned Pod must agree.
-func historicalTerminalJob(id string, live map[string]Object, stack string) bool {
+// HistoricalTerminalWorkload classifies finished standalone Jobs and probe
+// Pods consistently during qualification and acceptance. Parent identity,
+// terminal conditions and every owned Pod must agree before history is retained.
+func HistoricalTerminalWorkload(id string, live map[string]Object, stack string) bool {
 	object := live[id]
 	if object == nil {
 		return false
@@ -43,7 +43,7 @@ func historicalTerminalJob(id string, live map[string]Object, stack string) bool
 		if parent == nil || owner["uid"] != Map(parent["metadata"])["uid"] || owner["apiVersion"] != parent["apiVersion"] {
 			return false
 		}
-		return historicalTerminalJob(parentID, live, stack)
+		return HistoricalTerminalWorkload(parentID, live, stack)
 	}
 	if object["kind"] != "Job" {
 		return false

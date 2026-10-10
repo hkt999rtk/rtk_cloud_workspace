@@ -98,10 +98,15 @@ func verifyEnvironmentTargetWorkloads(ctx context.Context, plan *deploymentplan.
 		owner := deploymentplan.ID(pod)
 		var err error
 		if controllers[owner] == nil {
+			// Existing terminal probes are retained by preflight's same strict
+			// classifier. Planned Pods and Job-owned Pods still require runtime proof.
+			if len(certIssuerObjectList(meta["ownerReferences"])) == 0 && deploymentplan.HistoricalTerminalWorkload(owner, live, plan.Stack) {
+				continue
+			}
 			owner, err = environmentPodController(pod, live)
 		}
 		if err != nil {
-			return targetWorkloadBlocker("", "Pod controller UID lineage cannot be verified")
+			return targetWorkloadBlocker(deploymentplan.ID(pod), "Pod controller UID lineage cannot be verified")
 		}
 		controller := controllers[owner]
 		if job := completedJobs[owner]; job != nil {
