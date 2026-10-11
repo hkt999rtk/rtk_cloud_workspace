@@ -32,6 +32,11 @@ Adapter resolution is deterministic. LKE maps the logical location to an LKE reg
 
 ## Resolution and lifecycle
 
+The [V2 Deployment Script Flow](deployment-script-flow.md) maps the reviewed local
+v2 existing-environment update to script dispatch, plan qualification, execution,
+integrated final checks and independent health rechecks. It remains a draft
+implementation reference until the v2 engine is delivered separately.
+
 The directory name under `cloud_env/` is the environment identity. Configuration is resolved in this order: architecture defaults, adapter defaults, environment stack/selection, environment architecture overrides, environment adapter overrides, and allow-listed explicit overrides. Cross-layer duplicate keys, unknown keys, invalid types, and provider keys in architecture config are errors.
 
 The [environment DNS naming source](environment-dns-naming.md) defines how the

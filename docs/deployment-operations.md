@@ -13,6 +13,11 @@ creating a new environment, taking over an existing environment from another
 controller, and accepting an existing deployment. Linode staging uses only
 LKE/Kubernetes; the legacy VM runtime is not an active deployment path.
 
+The [V2 Deployment Script Flow](deployment-script-flow.md) preserves the reviewed
+local v2 preflight/deployment flow chart and integrated final-check boundaries.
+It is a draft implementation reference requiring separate v2 delivery before
+promotion to active operator instructions.
+
 ## Select the Operation First
 
 | Scenario | Correct entry point | Modifies cloud resources? |
