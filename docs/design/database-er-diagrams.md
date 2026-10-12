@@ -41,7 +41,7 @@ workspace; it is not necessarily a pure snapshot of those commits.
 | --- | --- |
 | Account Manager | `4341a05ec727` |
 | Billing | `aedaafe4eeae` |
-| Video Cloud | `48707dc15206` |
+| Video Cloud | `aec198d21120` |
 | Cloud Admin | `4035e920404d` |
 | Cloud Frontend | `475b9fe80d6c` |
 
