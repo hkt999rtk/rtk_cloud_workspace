@@ -2,9 +2,12 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"path"
 	"reflect"
 	"sort"
+	"strconv"
+	"strings"
 
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 )
@@ -83,7 +86,85 @@ func maintainedControllerIdentityInitializer(object deploymentplan.Object, image
 	}, nil
 }
 
+// A retained static serving profile has no private identity directory to
+// prepare or inspect. Absence alone is not evidence: require the maintained
+// read-only Secret mapping and reject residual native state or PVCs.
+func controllerStaticIdentityProfile(object deploymentplan.Object) (bool, error) {
+	bad := func() (bool, error) {
+		return false, controllerIdentityPermissionBlocker(deploymentplan.ID(object), "static Controller requires complete read-only serving Secret references without private identity state or initializers")
+	}
+	pod := environmentPKIPod(object)
+	containers, err := environmentPKINamedFields(pod["containers"])
+	if err != nil || containers["pki-controller"] == nil {
+		return bad()
+	}
+	container := containers["pki-controller"]
+	settings, err := environmentPKINamedFields(container["env"])
+	if err != nil {
+		return bad()
+	}
+	if settings["PKI_HOST_IDENTITY_STATE"] != nil || settings["PKI_SERVICE_CLIENT_IDENTITY_STATE"] != nil {
+		if settings["PKI_SERVER_CERT"] != nil || settings["PKI_SERVER_KEY"] != nil {
+			return bad()
+		}
+		return false, nil // Even a partial native declaration retains strict preparation.
+	}
+	if inherited := container["envFrom"]; inherited != nil {
+		sources, ok := inherited.([]any)
+		if !ok || len(sources) != 0 {
+			return bad() // Inherited settings cannot prove absence of native identity state.
+		}
+	}
+	for name := range settings {
+		if strings.HasPrefix(name, "PKI_HOST_") || strings.HasPrefix(name, "PKI_SERVICE_CLIENT_") {
+			return bad()
+		}
+	}
+	uid := deploymentplan.Map(pod["securityContext"])["runAsUser"]
+	if value, ok := deploymentplan.Map(container["securityContext"])["runAsUser"]; ok {
+		uid = value
+	}
+	runtimeUID, uidErr := strconv.ParseInt(fmt.Sprint(uid), 10, 64)
+	initializers, initErr := environmentPKINamedFields(pod["initContainers"])
+	if uidErr != nil || runtimeUID != 10001 || initErr != nil || len(initializers) != 0 {
+		return bad()
+	}
+	volumes, err := environmentPKINamedFields(pod["volumes"])
+	if err != nil {
+		return bad()
+	}
+	for _, volume := range volumes {
+		if volume["persistentVolumeClaim"] != nil {
+			return bad()
+		}
+	}
+	mounts, err := environmentPKINamedFields(container["volumeMounts"])
+	if err != nil {
+		return bad()
+	}
+	volume, mount := volumes["pki-tls"], mounts["pki-tls"]
+	if volume == nil || deploymentplan.String(deploymentplan.Map(volume["secret"])["secretName"]) == "" || mount == nil || mount["mountPath"] != "/run/pki-tls" || mount["readOnly"] != true || mount["subPath"] != nil || mount["subPathExpr"] != nil {
+		return bad()
+	}
+	for _, other := range mounts {
+		mountPath := deploymentplan.String(other["mountPath"])
+		if other["name"] != "pki-tls" && (mountPath == "/run/pki-tls" || strings.HasPrefix(mountPath, "/run/pki-tls/")) {
+			return bad()
+		}
+	}
+	for name, value := range map[string]string{"PKI_SERVER_CERT": "/run/pki-tls/tls.crt", "PKI_SERVER_KEY": "/run/pki-tls/tls.key", "PKI_CLIENT_CA": "/run/pki-tls/ca.crt"} {
+		setting := settings[name]
+		if setting == nil || setting["value"] != value || setting["valueFrom"] != nil {
+			return bad()
+		}
+	}
+	return true, nil
+}
+
 func applyControllerIdentityPreparation(object deploymentplan.Object, release environmentRelease) error {
+	if static, err := controllerStaticIdentityProfile(object); err != nil || static {
+		return err
+	}
 	expected, err := maintainedControllerIdentityInitializer(object, release.Images["LKE_ALPINE_IMAGE"].Reference)
 	if err != nil {
 		return err
@@ -131,6 +212,9 @@ func validateObservedControllerIdentityInitializer(object, c deploymentplan.Obje
 }
 
 func controllerIdentityTargetPolicy(r deploymentplan.Resource, image string) error {
+	if static, err := controllerStaticIdentityProfile(r.Desired); err != nil || static {
+		return err
+	}
 	if _, set := deploymentplan.Map(environmentPKIPod(r.Desired)["securityContext"])["fsGroup"]; set {
 		if err := validateControllerIdentityInitializer(r.Desired, image); err != nil {
 			return controllerIdentityPermissionBlocker(r.ID, "target fsGroup can widen identity permissions without the exact pinned permission-only initializer")

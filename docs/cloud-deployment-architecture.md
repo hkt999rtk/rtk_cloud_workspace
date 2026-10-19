@@ -1612,6 +1612,17 @@ proved by their existing receipts, not by the presence of these notes.
 
 ### PKI Controller private identity permission qualification
 
+This permission check applies to Controllers using a private identity store.
+A retained static serving profile is qualified separately by its complete
+read-only TLS Secret mapping and serving-chain checks; it has no private identity
+PVC to prepare or inspect. The common renderer preserves that profile without
+adding an identity initializer. This exception requires the maintained static
+certificate/key/CA paths, explicit runtime UID `10001`, and no identity PVC, native
+identity settings or initializer. Missing state alone is not a static profile:
+partial native declarations, mixed static/native references and ambiguous mounts
+still fail qualification. Original native identity references and their strict
+filesystem checks remain unchanged.
+
 The shared `deployment.pki.identity-permissions` gate runs in preflight and
 deployment's current PKI checks. The original identity PVC and explicit non-root
 UID/GID 10001 remain unchanged. The Controller needs `fsGroup` to read its

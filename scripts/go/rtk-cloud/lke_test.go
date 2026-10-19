@@ -1243,7 +1243,7 @@ func TestLKEVideoCloudAppVersionSupportsDigestAndOverride(t *testing.T) {
 	}
 }
 
-func TestRunProvisionLKEMergesEnvironmentProfileObjectStorageCredentials(t *testing.T) {
+func TestLKEConfigurationMergesEnvironmentProfileObjectStorageCredentials(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	fakeKubectl(t)
 	home := t.TempDir()
@@ -1267,17 +1267,14 @@ func TestRunProvisionLKEMergesEnvironmentProfileObjectStorageCredentials(t *test
 	t.Setenv("LKE_CLOUD_LOGGER_IMAGE", "registry.example.test/cloud-logger:test")
 	t.Setenv("LKE_RUNTIME_SECRET_SEED", "test-seed")
 
-	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
-		t.Fatal(err)
-	}
-	if got := lkeObjectStorageCredential(map[string]string{"LINODE_OBJ_ACCESS_KEY_ID": "test-access"}, "LINODE_OBJ_ACCESS_KEY_ID"); got != "test-access" {
+	_, env := loadLKEIsolatedHelperFixture(t, workspace, envRoot)
+	if got := lkeObjectStorageCredential(env, "LINODE_MEDIA_OBJ_ACCESS_KEY_ID"); got != "test-access" {
 		t.Fatalf("merged access key not available to manifest, got %q", got)
 	}
 }
 
-func TestRunProvisionLKEUsesCanonicalRuntimeBlobConfiguration(t *testing.T) {
+func TestLKEWorkloadRendererUsesCanonicalRuntimeBlobConfiguration(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
-	logPath := fakeKubectl(t)
 	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), `CLOUD_ENV_NAME=staging
 CLOUD_PROVIDER=lke
 CLOUD_REGION=us-sea
@@ -1308,10 +1305,8 @@ VIDEO_CLOUD_BLOB_BUCKET=runtime-bucket
 	t.Setenv("LKE_CLOUD_LOGGER_IMAGE", "registry.example.test/cloud-logger:test")
 	t.Setenv("LKE_RUNTIME_SECRET_SEED", "test-seed")
 
-	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
-		t.Fatal(err)
-	}
-	log := readTestFile(t, logPath)
+	_, env := loadLKEIsolatedHelperFixture(t, workspace, envRoot)
+	log := renderLKESelectedWorkloadFixture(env, provisionOptions{})
 	for _, want := range []string{
 		`VIDEO_CLOUD_BLOB_ENDPOINT
               value: "https://runtime-objects.example.test"`,
@@ -1326,10 +1321,9 @@ VIDEO_CLOUD_BLOB_BUCKET=runtime-bucket
 	}
 }
 
-func TestRunProvisionLKEDeployUsesImageManifestDefaults(t *testing.T) {
+func TestLKEWorkloadRendererUsesImageManifestDefaults(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	t.Setenv("LKE_BILLING_IMAGE", "")
-	logPath := fakeKubectl(t)
 	writeTestFile(t, filepath.Join(envRoot, "artifacts", "lke-images", "lke-image-manifest.json"), `{
   "env": {
     "LKE_POSTGRES_IMAGE": "postgres:16-alpine",
@@ -1342,11 +1336,9 @@ func TestRunProvisionLKEDeployUsesImageManifestDefaults(t *testing.T) {
   }
 }`)
 
-	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
-		t.Fatal(err)
-	}
+	_, env := loadLKEIsolatedHelperFixture(t, workspace, envRoot)
 
-	log := readTestFile(t, logPath)
+	log := renderLKESelectedWorkloadFixture(env, provisionOptions{})
 	for _, want := range []string{
 		"image: registry.example.test/rtk/video-cloud:manifest",
 		"image: registry.example.test/rtk/account-manager:manifest",
@@ -1649,204 +1641,23 @@ func TestRunLKEResolveImagesFailsWhenServiceImageIsMissing(t *testing.T) {
 	}
 }
 
-func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
-	workspace, envRoot := makeLKETestEnv(t)
-	logPath := fakeKubectl(t)
-	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/rtk/video-cloud:test")
-	t.Setenv("LKE_CLOUD_LOGGER_IMAGE", "registry.example.test/rtk/cloud-logger:test")
-	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/rtk/account-manager:test")
-	t.Setenv("LKE_CLOUD_ADMIN_IMAGE", "registry.example.test/rtk/cloud-admin:test")
-	t.Setenv("LKE_FRONTEND_IMAGE", "registry.example.test/rtk/frontend:test")
-	t.Setenv("LKE_CLOUD_LOGGER_IMAGE", "registry.example.test/rtk/cloud-logger:test")
-	t.Setenv("LKE_RUNTIME_SECRET_SEED", "test-seed")
-
-	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
-		t.Fatal(err)
-	}
-
-	log := readTestFile(t, logPath)
-	for _, want := range []string{
-		"kind: StatefulSet\nmetadata:\n  name: postgresql",
-		"kind: Deployment\nmetadata:\n  name: redis",
-		"image: valkey/valkey:8-alpine",
-		"containerPort: 6379",
-		"kind: Service\nmetadata:\n  name: redis",
-		"kind: Deployment\nmetadata:\n  name: redis-exporter",
-		"image: oliver006/redis_exporter:v1.74.0",
-		"REDIS_ADDR\n              value: \"redis://redis.video-cloud-staging-platform.svc.cluster.local:6379\"",
-		"containerPort: 9121",
-		"kind: Service\nmetadata:\n  name: redis-exporter",
-		"kind: NetworkPolicy\nmetadata:\n  name: allow-redis-clients",
-		"kind: StatefulSet\nmetadata:\n  name: fleet-valkey",
-		"--appendonly",
-		"--maxmemory-policy",
-		"kind: NetworkPolicy\nmetadata:\n  name: allow-fleet-valkey-clients",
-		"kind: NetworkPolicy\nmetadata:\n  name: allow-prometheus-scrape",
-		"kind: Secret\nmetadata:\n  name: openbao-tls",
-		"namespace: video-cloud-staging-secrets",
-		"ca.crt:",
-		"ARGS -n video-cloud-staging-secrets get pod/openbao-0 -o jsonpath={.status.phase}",
-		"kind: Secret\nmetadata:\n  name: account-manager-runtime",
-		"FACTORY_PRODUCTION_JWT_SECRET: \"test-seed-factory-production-jwt\"",
-		"FACTORY_PRODUCTION_JWT_AUDIENCE: \"factory-enroll\"",
-		"kind: Job\nmetadata:\n  name: account-manager-migrate",
-		"imagePullSecrets:\n        - name: ghcr-pull",
-		"envFrom:\n            - secretRef:\n                name: account-manager-runtime",
-		"postgres://postgres:test-seed-postgres@postgresql.video-cloud-staging-platform.svc.cluster.local:5432/rtk_account_manager?sslmode=disable",
-		"ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL: \"platform-admin@video-cloud-staging.local\"",
-		"ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD: \"test-seed-platform-admin\"",
-		"ACCOUNT_MANAGER_USER_CACHE_ENABLED: \"true\"",
-		"ACCOUNT_MANAGER_USER_CACHE_ADDR: \"redis.video-cloud-staging-platform.svc.cluster.local:6379\"",
-		"ACCOUNT_MANAGER_USER_CACHE_PREFIX: \"account_manager:user\"",
-		"ACCOUNT_MANAGER_ALLOW_IMMEDIATE_BRAND_ACCOUNTS: \"true\"",
-		"CHIPSET_PROVIDER_ALLOWED_HOSTS: \"admin.video-cloud-staging.realtekconnect.com\"",
-		"SOCIAL_LOGIN_CALLBACK_URL: \"https://admin.video-cloud-staging.realtekconnect.com/api/auth/social/callback\"",
-		"SOCIAL_OAUTH_STATE_SECRET: \"test-seed-social-oauth-state-secret\"",
-		"GOOGLE_LOGIN_ENABLED: \"true\"",
-		"GOOGLE_OAUTH_CLIENT_ID: \"client.apps.googleusercontent.com\"",
-		"GOOGLE_OAUTH_CLIENT_SECRET: \"test-seed-google-oauth-client-secret\"",
-		"GITHUB_LOGIN_ENABLED: \"true\"",
-		"GITHUB_OAUTH_CLIENT_ID: \"github-client\"",
-		"GITHUB_OAUTH_CLIENT_SECRET: \"test-seed-github-oauth-client-secret\"",
-		"command: [\"/app/rtk-account-manager-migrate\"]",
-		"PGDATA\n              value: /var/lib/postgresql/data/pgdata",
-		"name: postgresql-runtime\n                  key: POSTGRES_PASSWORD",
-		"kind: Secret\nmetadata:\n  name: certissuer-runtime",
-		"root-ca.crt: \"-----BEGIN CERTIFICATE-----\\ntest-root-ca\\n-----END CERTIFICATE-----\\n\"",
-		"device-ca.crt: \"-----BEGIN CERTIFICATE-----\\ntest-device-ca\\n-----END CERTIFICATE-----\\n\"",
-		"app-ca.crt: \"-----BEGIN CERTIFICATE-----\\ntest-app-ca\\n-----END CERTIFICATE-----\\n\"",
-		"kind: Secret\nmetadata:\n  name: certissuer-openbao-auth",
-		"role_id: \"test-role-id\"",
-		"secret_id: \"test-secret-id\"",
-		"kind: Secret\nmetadata:\n  name: account-manager-certissuer-client",
-		"kind: Deployment\nmetadata:\n  name: certissuer",
-		"command: [\"/app/certissuer\"]",
-		"containerPort: 9443",
-		"CERT_ISSUER_SIGNER_PROVIDER\n              value: openbao",
-		"CERT_ISSUER_OPENBAO_PKI_MOUNT\n              value: pki/device",
-		"CERT_ISSUER_OPENBAO_PKI_ROLE\n              value: factory-device",
-		"CERT_ISSUER_APP_SIGNER_PROVIDER\n              value: openbao",
-		"CERT_ISSUER_APP_CLIENT_CN_PATTERN\n              value: \"^(account-manager|service:account-manager)$\"",
-		"OPENBAO_ADDR\n              value: \"https://openbao.video-cloud-staging-secrets.svc.cluster.local:8200\"",
-		"OPENBAO_ROLE_ID_FILE\n              value: /etc/video-cloud/openbao/role_id",
-		"name: certissuer-openbao-auth",
-		"APP_CERT_ISSUER_BASE_URL: \"https://certissuer.video-cloud-staging-video-cloud.svc.cluster.local:9443\"",
-		"APP_CERT_ISSUER_CLIENT_CERT: \"/etc/rtk-account-manager/certissuer/client.crt\"",
-		"name: account-manager-certissuer-client",
-		"kind: Secret\nmetadata:\n  name: factoryenroll-runtime",
-		"FACTORY_ENROLL_PRODUCTION_JWT_SECRET: \"test-seed-factory-production-jwt\"",
-		"FACTORY_ENROLL_PRODUCTION_JWT_AUDIENCE: \"factory-enroll\"",
-		"kind: Secret\nmetadata:\n  name: factoryenroll-certissuer-client",
-		"kind: Deployment\nmetadata:\n  name: factoryenroll",
-		"rtk.realtek.com/runtime-checksum",
-		"command: [\"/app/factoryenroll\"]",
-		"FACTORY_ENROLL_CERT_ISSUER_URL\n              value: \"https://certissuer.video-cloud-staging-video-cloud.svc.cluster.local:9443\"",
-		"FACTORY_ENROLL_AUTH_KEY",
-		"kind: Secret\nmetadata:\n  name: video-cloud-runtime",
-		"VIDEO_CLOUD_AUTH_SECRET: \"test-seed-video-auth\"",
-		"VIDEO_CLOUD_OTA_BFF_TOKEN: \"test-seed-ota-bff-token\"",
-		"VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN",
-		"VIDEO_CLOUD_DB_DSN",
-		"VIDEO_CLOUD_AUTH_SECRET\n              valueFrom:\n                secretKeyRef:\n                  name: video-cloud-runtime\n                  key: VIDEO_CLOUD_AUTH_SECRET",
-		"VIDEO_CLOUD_OTA_BFF_TOKEN\n              valueFrom:\n                secretKeyRef:\n                  name: video-cloud-runtime\n                  key: VIDEO_CLOUD_OTA_BFF_TOKEN",
-		"VIDEO_CLOUD_API_ADDR\n              value: \":8080\"",
-		"VIDEO_CLOUD_AUTH_TRUSTED_CLIENT_CERT_HEADERS\n              value: \"true\"",
-		"VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_URL\n              value: \"http://account-manager.video-cloud-staging-account-manager.svc.cluster.local:80\"",
-		"VIDEO_CLOUD_MQTT_ENABLED\n              value: \"true\"",
-		"VIDEO_CLOUD_MQTT_ADDR\n              value: \"mqtt.video-cloud-staging-video-cloud.svc.cluster.local:1883\"",
-		"POD_NAME\n              valueFrom:",
-		"fieldPath: metadata.name",
-		"POD_IP\n              valueFrom:",
-		"fieldPath: status.podIP",
-		"VIDEO_CLOUD_MQTT_CLIENT_ID\n              value: \"video-cloud-api-$(POD_NAME)\"",
-		"VIDEO_CLOUD_MQTT_TOPIC_ROOT\n              value: \"devices\"",
-		"VIDEO_CLOUD_MQTT_HANDLER_CONCURRENCY\n              value: \"64\"",
-		"VIDEO_CLOUD_MQTT_SHADOW_HANDLER_CONCURRENCY\n              value: \"64\"",
-		"VIDEO_CLOUD_MQTT_SHADOW_QUEUE_SIZE\n              value: \"8192\"",
-		"VIDEO_CLOUD_MQTT_MESSAGE_HANDLER_CONCURRENCY\n              value: \"128\"",
-		"VIDEO_CLOUD_MQTT_MESSAGE_QUEUE_SIZE\n              value: \"16384\"",
-		"VIDEO_CLOUD_MQTT_LOG_HANDLER_CONCURRENCY\n              value: \"32\"",
-		"VIDEO_CLOUD_MQTT_LOG_QUEUE_SIZE\n              value: \"8192\"",
-		"VIDEO_CLOUD_MQTT_OUTBOUND_CONNECTIONS\n              value: \"16\"",
-		"VIDEO_CLOUD_MQTT_OUTBOUND_QUEUE_SIZE\n              value: \"8192\"",
-		"VIDEO_CLOUD_MQTT_OUTBOUND_WRITE_TIMEOUT\n              value: \"10s\"",
-		"VIDEO_CLOUD_SHADOW_CACHE_ENABLED\n              value: \"true\"",
-		"VIDEO_CLOUD_SHADOW_CACHE_ADDR\n              value: \"redis.video-cloud-staging-platform.svc.cluster.local:6379\"",
-		"VIDEO_CLOUD_SHADOW_CACHE_WRITE_BEHIND_ENABLED\n              value: \"true\"",
-		"VIDEO_CLOUD_SHADOW_CACHE_FLUSH_INTERVAL\n              value: \"1s\"",
-		"VIDEO_CLOUD_SHADOW_CACHE_FLUSH_BATCH_SIZE\n              value: \"500\"",
-		"VIDEO_CLOUD_SHADOW_CACHE_BUFFER_MAX_DOCS\n              value: \"10000\"",
-		"VIDEO_CLOUD_SHADOW_CACHE_RECOVERY_INTERVAL\n              value: \"5s\"",
-		"VIDEO_CLOUD_WEBRTC_SIGNALING_STORE_ENABLED\n              value: \"true\"",
-		"VIDEO_CLOUD_TURN_REGISTRY_ADDR\n              value: \"http://video-cloud-turnregistry.video-cloud-staging-video-cloud.svc.cluster.local:18190\"",
-		"VIDEO_CLOUD_TURN_REGISTRY_CLIENT_NODE_ID\n              value: \"video-cloud-api\"",
-		"VIDEO_CLOUD_TURN_REGISTRY_NODE_AUTH_KEY\n              valueFrom:",
-		"VIDEO_CLOUD_WEBRTC_SIGNALING_STORE_ADDR\n              value: \"redis.video-cloud-staging-platform.svc.cluster.local:6379\"",
-		"kind: Secret\nmetadata:\n  name: mqtt-runtime",
-		"cert.pem:",
-		"key.pem:",
-		"cacert.pem:",
-		"kind: ConfigMap\nmetadata:\n  name: mqtt-config",
-		"broker: emqx",
-		"kind: StatefulSet\nmetadata:\n  name: mqtt",
-		"serviceName: mqtt-headless",
-		"replicas: 1",
-		"podManagementPolicy: Parallel",
-		"updateStrategy:",
-		"image: emqx/emqx:",
-		"EMQX_NODE__NAME",
-		"EMQX_CLUSTER__DISCOVERY_STRATEGY",
-		`value: "static"`,
-		"EMQX_CLUSTER__STATIC__SEEDS",
-		"emqx@mqtt-0.mqtt-headless.video-cloud-staging-video-cloud.svc.cluster.local",
-		"whenUnsatisfiable: DoNotSchedule",
-		"requiredDuringSchedulingIgnoredDuringExecution:",
-		"EMQX_LISTENERS__SSL__DEFAULT__ACCEPTORS",
-		`value: "128"`,
-		"EMQX_LISTENERS__SSL__DEFAULT__TCP_OPTIONS__BACKLOG",
-		`value: "8192"`,
-		"emqx ctl cluster status",
-		"EMQX_LISTENERS__TCP__DEFAULT__BIND",
-		"EMQX_LISTENERS__SSL__DEFAULT__BIND",
-		"EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__CERTFILE",
-		"EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__CACERTFILE",
-		"mountPath: /opt/emqx/etc/certs",
-		"containerPort: 8883",
-		"kind: Service\nmetadata:\n  name: mqtt",
-		"kind: Service\nmetadata:\n  name: mqtt-headless",
-		"kind: NetworkPolicy\nmetadata:\n  name: allow-emqx-cluster",
-		"kind: NetworkPolicy\nmetadata:\n  name: allow-video-cloud-mqtt-clients",
-		"kind: NetworkPolicy\nmetadata:\n  name: allow-video-cloud-api-internal",
-		"port: 4369",
-		"port: 4370",
-		"port: 5369",
-	} {
-		if !strings.Contains(log, want) {
-			t.Fatalf("expected %q in kubectl manifests, got:\n%s", want, log)
-		}
-	}
-	clientPolicyIndex := strings.Index(log, "kind: NetworkPolicy\nmetadata:\n  name: allow-video-cloud-mqtt-clients")
-	mqttStatefulSetIndex := strings.Index(log, "kind: StatefulSet\nmetadata:\n  name: mqtt")
-	if clientPolicyIndex < 0 || mqttStatefulSetIndex < 0 || clientPolicyIndex > mqttStatefulSetIndex {
-		t.Fatalf("MQTT client policy must be applied before the broker starts:\n%s", log)
-	}
-	if strings.Contains(log, "device-ca.key") || strings.Contains(log, "app-ca.key") {
-		t.Fatalf("certissuer runtime must not mount CA private keys, got:\n%s", log)
-	}
-	for _, want := range []string{
-		"ARGS -n video-cloud-staging-platform rollout status deployment/redis",
-		"ARGS -n video-cloud-staging-platform rollout status deployment/redis-exporter",
-		"ARGS -n video-cloud-staging-platform rollout status statefulset/fleet-valkey",
-		"ARGS -n video-cloud-staging-platform rollout status deployment/fleet-valkey-exporter",
-	} {
-		if !strings.Contains(log, want) {
-			t.Fatalf("expected rollout check %q in kubectl calls, got:\n%s", want, log)
-		}
-	}
-	openBaoIndex := strings.Index(log, "name: openbao-tls")
-	certIssuerIndex := strings.Index(log, "name: certissuer-runtime")
-	if openBaoIndex < 0 || certIssuerIndex < 0 || openBaoIndex > certIssuerIndex {
-		t.Fatalf("expected OpenBao resources before certissuer runtime secret, got:\n%s", log)
+func TestLKERetiredStaticProvisionRejectsBeforeRuntimeMutation(t *testing.T) {
+	for _, entry := range []struct {
+		name string
+		run  func(provisionPaths, map[string]string, provisionOptions) error
+	}{{"runtime-dependencies", lkeApplyRuntimeDependencies}, {"full-workloads", lkeDeployWorkloads}} {
+		t.Run(entry.name, func(t *testing.T) {
+			workspace, envRoot := makeLKETestEnv(t)
+			logPath := fakeKubectl(t)
+			paths, env := loadLKEIsolatedHelperFixture(t, workspace, envRoot)
+			if err := entry.run(paths, env, provisionOptions{}); err == nil || !strings.Contains(err.Error(), "static PKI templates are retired") || !strings.Contains(err.Error(), "--plan-sha256") {
+				t.Fatal("retired static bootstrap remained executable", err)
+			}
+			raw, err := os.ReadFile(logPath)
+			if err != nil && !os.IsNotExist(err) || len(raw) != 0 {
+				t.Fatal("retired static bootstrap contacted Kubernetes before refusal", err)
+			}
+		})
 	}
 }
 
@@ -1951,7 +1762,7 @@ fi
 	}
 }
 
-func TestRunProvisionLKEDeployCanExposePublicMQTTNodePort(t *testing.T) {
+func TestLKEPublicMQTTNodePortAppliesOnlyTLSService(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	logPath := fakeKubectl(t)
 	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/rtk/video-cloud:test")
@@ -1961,7 +1772,8 @@ func TestRunProvisionLKEDeployCanExposePublicMQTTNodePort(t *testing.T) {
 	t.Setenv("LKE_CLOUD_LOGGER_IMAGE", "registry.example.test/rtk/cloud-logger:test")
 	t.Setenv("LKE_PUBLIC_MQTT_LOADBALANCER", "1")
 
-	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
+	_, env := loadLKEIsolatedHelperFixture(t, workspace, envRoot)
+	if err := lkeApplyPublicMQTTNodePort(env); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2009,7 +1821,7 @@ func TestLKEMQTTRewritePreservesSharedPhysicalSubscriptions(t *testing.T) {
 	}
 }
 
-func TestRunProvisionLKEDeployRejectsMultiplePublicMQTTNodePortsForV1(t *testing.T) {
+func TestLKEPublicMQTTNodePortRejectsMultipleForV1(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	fakeKubectl(t)
 	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/rtk/video-cloud:test")
@@ -2020,7 +1832,8 @@ func TestRunProvisionLKEDeployRejectsMultiplePublicMQTTNodePortsForV1(t *testing
 	t.Setenv("LKE_PUBLIC_MQTT_LOADBALANCER", "1")
 	t.Setenv("LKE_PUBLIC_MQTT_LOADBALANCER_COUNT", "3")
 
-	err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"})
+	_, env := loadLKEIsolatedHelperFixture(t, workspace, envRoot)
+	err := lkeApplyPublicMQTTNodePort(env)
 	if err == nil || !strings.Contains(err.Error(), "LKE_PUBLIC_MQTT_LOADBALANCER_COUNT>1 is not supported") {
 		t.Fatalf("expected unsupported multiple public MQTT NodePorts error, got %v", err)
 	}
@@ -4590,7 +4403,7 @@ func TestLKEEMQXClusterStatusNodesSeparatesRunningAndStoppedNodes(t *testing.T) 
 	}
 }
 
-func TestRunProvisionLKEDeployAppliesVideoCloudAuxiliaryServices(t *testing.T) {
+func TestLKEAuxiliaryRendererAppliesServicesAndWaitsForRollout(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	logPath := fakeKubectl(t)
 	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/rtk/video-cloud:test")
@@ -4600,7 +4413,8 @@ func TestRunProvisionLKEDeployAppliesVideoCloudAuxiliaryServices(t *testing.T) {
 	t.Setenv("LKE_CLOUD_LOGGER_IMAGE", "registry.example.test/rtk/cloud-logger:test")
 	t.Setenv("LKE_RUNTIME_SECRET_SEED", "test-seed")
 
-	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
+	_, env := loadLKEIsolatedHelperFixture(t, workspace, envRoot)
+	if err := lkeApplyVideoCloudAuxiliaryServices(env, provisionOptions{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -4627,7 +4441,6 @@ func TestRunProvisionLKEDeployAppliesVideoCloudAuxiliaryServices(t *testing.T) {
 		"kind: Deployment\nmetadata:\n  name: video-cloud-logingester",
 		"command: [\"/app/logingester\"]",
 		"containerPort: 19300",
-		"VIDEO_CLOUD_MQTT_ADDR\n              value: \"mqtt.video-cloud-staging-video-cloud.svc.cluster.local:1883\"",
 		"kind: Deployment\nmetadata:\n  name: video-cloud-mqttusage",
 		"command: [\"/app/mqttusage\"]",
 		"containerPort: 19400",
@@ -4731,7 +4544,7 @@ func TestLKEPrometheusDeploymentChecksumTracksScrapeConfig(t *testing.T) {
 	}
 }
 
-func TestRunProvisionLKEDeployAppliesPrivateGrafana(t *testing.T) {
+func TestLKEObservabilityHelpersKeepGrafanaPrivate(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	logPath := fakeKubectl(t)
 	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/rtk/video-cloud:test")
@@ -4741,11 +4554,17 @@ func TestRunProvisionLKEDeployAppliesPrivateGrafana(t *testing.T) {
 	t.Setenv("LKE_CLOUD_LOGGER_IMAGE", "registry.example.test/rtk/cloud-logger:test")
 	t.Setenv("LKE_RUNTIME_SECRET_SEED", "test-seed")
 
-	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
+	_, env := loadLKEIsolatedHelperFixture(t, workspace, envRoot)
+	grafanaImage := "registry.example.test/grafana@sha256:" + strings.Repeat("a", 64)
+	env["LKE_GRAFANA_IMAGE"] = grafanaImage
+	if err := lkeApplyCloudLogger(env, provisionOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := lkeApplyGrafana(env); err != nil {
 		t.Fatal(err)
 	}
 
-	log := readTestFile(t, logPath)
+	log := readTestFile(t, logPath) + renderLKESelectedWorkloadFixture(env, provisionOptions{workloads: []string{"cloud-admin"}})
 	for _, want := range []string{
 		"kind: ConfigMap\nmetadata:\n  name: video-cloud-loki-config",
 		"kind: Deployment\nmetadata:\n  name: video-cloud-loki",
@@ -4767,7 +4586,7 @@ func TestRunProvisionLKEDeployAppliesPrivateGrafana(t *testing.T) {
 		"RTK LKE Staging Overview",
 		"sum by(brand_cloud_id) (rate(mqtt_brand_publish_total[$__rate_interval]))",
 		"kind: Deployment\nmetadata:\n  name: video-cloud-grafana",
-		"image: grafana/grafana:13.0.2",
+		"image: " + grafanaImage,
 		"emptyDir: {}",
 		"kind: Service\nmetadata:\n  name: video-cloud-grafana",
 		"type: ClusterIP",
@@ -4888,7 +4707,7 @@ func TestLKEPrometheusConfigHonorsSelectedWorkloads(t *testing.T) {
 	}
 }
 
-func TestRunProvisionLKEDeployUsesExternalCoturnVMConfig(t *testing.T) {
+func TestLKEExternalCoturnHelpersPreserveRuntimeConfiguration(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	logPath := fakeKubectl(t)
 	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/rtk/video-cloud:test")
@@ -4898,11 +4717,15 @@ func TestRunProvisionLKEDeployUsesExternalCoturnVMConfig(t *testing.T) {
 	t.Setenv("LKE_CLOUD_LOGGER_IMAGE", "registry.example.test/rtk/cloud-logger:test")
 	t.Setenv("LKE_RUNTIME_SECRET_SEED", "test-seed")
 
-	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
+	paths, env := loadLKEIsolatedHelperFixture(t, workspace, envRoot)
+	if err := lkeRemoveK8sCoturnRuntime(env); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeLKECompatibilityArtifacts(paths, env); err != nil {
 		t.Fatal(err)
 	}
 
-	log := readTestFile(t, logPath)
+	log := readTestFile(t, logPath) + renderLKESelectedWorkloadFixture(env, provisionOptions{videoOnly: true})
 	for _, want := range []string{
 		"ARGS -n video-cloud-staging-video-cloud delete deployment/coturn --ignore-not-found=true",
 		"ARGS -n video-cloud-staging-video-cloud delete service/coturn --ignore-not-found=true",
@@ -5025,7 +4848,7 @@ func TestLKEEMQXBillingJobUsesRuntimeCredentialsAndEnvironmentNamespace(t *testi
 	}
 }
 
-func TestRunProvisionLKEDeployWritesLegacyStackAndVideoState(t *testing.T) {
+func TestLegacyLKECompatibilityWriterPreservesStackAndVideoState(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	fakeKubectl(t)
 	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/rtk/video-cloud:test")
@@ -5034,7 +4857,8 @@ func TestRunProvisionLKEDeployWritesLegacyStackAndVideoState(t *testing.T) {
 	t.Setenv("LKE_FRONTEND_IMAGE", "registry.example.test/rtk/frontend:test")
 	t.Setenv("LKE_CLOUD_LOGGER_IMAGE", "registry.example.test/rtk/cloud-logger:test")
 
-	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
+	paths, env := loadLKEIsolatedHelperFixture(t, workspace, envRoot)
+	if err := writeLKECompatibilityArtifacts(paths, env); err != nil {
 		t.Fatal(err)
 	}
 
@@ -5142,7 +4966,7 @@ func TestWriteLKECompatibilityArtifactsPreservesRuntimeCoverageConfig(t *testing
 	}
 }
 
-func TestRunProvisionLKEDeployPreservesOperatorStackOverrides(t *testing.T) {
+func TestLegacyLKECompatibilityWriterPreservesOperatorStackOverrides(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	fakeKubectl(t)
 	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), `CLOUD_ENV_NAME=staging
@@ -5174,7 +4998,8 @@ LINODE_OBJ_SECRET_ACCESS_KEY=test-secret-key
 	t.Setenv("LKE_FRONTEND_IMAGE", "registry.example.test/rtk/frontend:test")
 	t.Setenv("LKE_CLOUD_LOGGER_IMAGE", "registry.example.test/rtk/cloud-logger:test")
 
-	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
+	paths, env := loadLKEIsolatedHelperFixture(t, workspace, envRoot)
+	if err := writeLKECompatibilityArtifacts(paths, env); err != nil {
 		t.Fatal(err)
 	}
 
@@ -5201,7 +5026,7 @@ LINODE_OBJ_SECRET_ACCESS_KEY=test-secret-key
 	}
 }
 
-func TestRunProvisionLKEDeployWritesPlatformAdminEnv(t *testing.T) {
+func TestLegacyLKEPlatformAdminWriterUsesPrivateFileMode(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	fakeKubectl(t)
 	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/rtk/video-cloud:test")
@@ -5211,7 +5036,8 @@ func TestRunProvisionLKEDeployWritesPlatformAdminEnv(t *testing.T) {
 	t.Setenv("LKE_CLOUD_LOGGER_IMAGE", "registry.example.test/rtk/cloud-logger:test")
 	t.Setenv("LKE_RUNTIME_SECRET_SEED", "test-seed")
 
-	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
+	paths, env := loadLKEIsolatedHelperFixture(t, workspace, envRoot)
+	if err := writeLKEPlatformAdminEnv(paths, env); err != nil {
 		t.Fatal(err)
 	}
 
@@ -5229,7 +5055,7 @@ func TestRunProvisionLKEDeployWritesPlatformAdminEnv(t *testing.T) {
 	}
 }
 
-func TestRunProvisionLKEDeployWritesVideoCloudRuntimeEnv(t *testing.T) {
+func TestLegacyLKEVideoRuntimeWriterUsesPrivateFileMode(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	fakeKubectl(t)
 	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/rtk/video-cloud:test")
@@ -5239,7 +5065,8 @@ func TestRunProvisionLKEDeployWritesVideoCloudRuntimeEnv(t *testing.T) {
 	t.Setenv("LKE_CLOUD_LOGGER_IMAGE", "registry.example.test/rtk/cloud-logger:test")
 	t.Setenv("LKE_RUNTIME_SECRET_SEED", "test-seed")
 
-	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
+	paths, env := loadLKEIsolatedHelperFixture(t, workspace, envRoot)
+	if err := writeLKEVideoCloudRuntimeEnv(paths, env); err != nil {
 		t.Fatal(err)
 	}
 
@@ -5259,7 +5086,7 @@ func TestRunProvisionLKEDeployWritesVideoCloudRuntimeEnv(t *testing.T) {
 	}
 }
 
-func TestRunProvisionLKEDeployWritesAccountManagerRuntimeEnv(t *testing.T) {
+func TestLegacyLKEAccountRuntimeWriterUsesPrivateFileMode(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	fakeKubectl(t)
 	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/rtk/video-cloud:test")
@@ -5269,7 +5096,8 @@ func TestRunProvisionLKEDeployWritesAccountManagerRuntimeEnv(t *testing.T) {
 	t.Setenv("LKE_CLOUD_LOGGER_IMAGE", "registry.example.test/rtk/cloud-logger:test")
 	t.Setenv("LKE_RUNTIME_SECRET_SEED", "test-seed")
 
-	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
+	paths, env := loadLKEIsolatedHelperFixture(t, workspace, envRoot)
+	if err := writeLKEAccountManagerRuntimeEnv(paths, env); err != nil {
 		t.Fatal(err)
 	}
 
@@ -5562,19 +5390,20 @@ func TestAccountManagerOutboxWorkerUsesDirectLifecycleAPI(t *testing.T) {
 	}
 }
 
-func TestRunDeployLKEVideoOnlyUsesVideoImage(t *testing.T) {
+func TestLKESelectedVideoWorkloadUsesOnlySelectedImage(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
-	logPath := fakeKubectl(t)
 	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/rtk/video-cloud:test")
 	t.Setenv("LKE_CLOUD_LOGGER_IMAGE", "registry.example.test/rtk/cloud-logger:test")
 
-	if err := runDeploy([]string{"--workspace", workspace, "--env-root", envRoot, "--video-only"}); err != nil {
+	_, env := loadLKEIsolatedHelperFixture(t, workspace, envRoot)
+	opts := provisionOptions{videoOnly: true}
+	if err := ensureLKEDeployImages(env, opts); err != nil {
 		t.Fatal(err)
 	}
 
-	log := readTestFile(t, logPath)
-	if !strings.Contains(log, "ARGS version --client") {
-		t.Fatalf("expected preflight kubectl version, got:\n%s", log)
+	log := renderLKESelectedWorkloadFixture(env, opts)
+	if !strings.Contains(log, "image: registry.example.test/rtk/video-cloud:test") {
+		t.Fatal("selected Video Cloud image was not rendered")
 	}
 	if !strings.Contains(log, "name: video-cloud-api") {
 		t.Fatalf("expected video-cloud deployment manifest, got:\n%s", log)
@@ -5591,7 +5420,7 @@ func TestRunDeployLKEVideoOnlyUsesVideoImage(t *testing.T) {
 	}
 }
 
-func TestRunDeployLKEFleetTokenRotationRetainsSurgeThroughManifestRollout(t *testing.T) {
+func TestLKEFleetTokenHelpersRetainSurgeThroughManifestRollout(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	logPath := fakeKubectl(t)
 	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/rtk/video-cloud:test")
@@ -5601,7 +5430,30 @@ func TestRunDeployLKEFleetTokenRotationRetainsSurgeThroughManifestRollout(t *tes
 	t.Setenv("LKE_VIDEO_CLOUD_REPLICAS", "2")
 	t.Setenv("FAKE_FLEET_READ_TOKEN_B64", base64.StdEncoding.EncodeToString([]byte("fleet-token-before-deploy")))
 
-	if err := runDeploy([]string{"--workspace", workspace, "--env-root", envRoot, "--video-only"}); err != nil {
+	_, env := loadLKEIsolatedHelperFixture(t, workspace, envRoot)
+	lkeRuntimeSecretCache["fleet-read-token"] = "fleet-token-after-deploy"
+	previous, err := lkeCurrentFleetReadToken(env)
+	if err != nil || previous != "fleet-token-before-deploy" {
+		t.Fatal("original token not preserved", err)
+	}
+	opts := provisionOptions{videoOnly: true, fleetReadTemporarySurge: true}
+	if err := lkeSyncFleetReadTokenConsumers(env, previous, opts); err != nil {
+		t.Fatal(err)
+	}
+	handoff := readTestFile(t, logPath)
+	if !strings.Contains(handoff, `"maxSurge":1,"maxUnavailable":0`) || strings.Contains(handoff, `"maxSurge":0,"maxUnavailable":1`) {
+		t.Fatal("token synchronization did not retain the temporary surge for the workload renderer")
+	}
+	workloads := lkeSelectedWorkloads(env, opts)
+	for _, workload := range workloads {
+		if err := kubectlApply(lkeDeploymentManifestWithVideoSurge(env, workload, nil, opts.fleetReadTemporarySurge)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := lkeWaitForRollouts(k8sRolloutTargetsFromEnv(workloads)); err != nil {
+		t.Fatal(err)
+	}
+	if err := lkeRestoreVideoCloudTokenRolloutStrategy(env, opts); err != nil {
 		t.Fatal(err)
 	}
 
@@ -6796,6 +6648,38 @@ JSON
 	if calls := readTestFile(t, counter); calls != "2" {
 		t.Fatalf("expected two curl attempts, got %s", calls)
 	}
+}
+
+// These component tests use disposable legacy-format inputs explicitly. They
+// never re-enable the retired full provision entry or use an operator store.
+func loadLKEIsolatedHelperFixture(t *testing.T, workspace, envRoot string) (provisionPaths, map[string]string) {
+	t.Helper()
+	loaded, err := envroot.Load(envRoot, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mergeObjectStorageCredentialDefaults(envRoot, loaded.Values); err != nil {
+		t.Fatal(err)
+	}
+	if err := loadLKEImageManifestDefaults(envRoot, loaded.Values); err != nil {
+		t.Fatal(err)
+	}
+	oldCanonical, oldDirectory, oldCache := activeCanonicalSecretStore, lkeRuntimeSecretStateDir, lkeRuntimeSecretCache
+	activeCanonicalSecretStore = false
+	lkeRuntimeSecretStateDir = filepath.Join(envRoot, "state", "secrets")
+	lkeRuntimeSecretCache = map[string]string{}
+	t.Cleanup(func() {
+		activeCanonicalSecretStore, lkeRuntimeSecretStateDir, lkeRuntimeSecretCache = oldCanonical, oldDirectory, oldCache
+	})
+	return newProvisionPaths(workspace, envRoot, provisionOptions{}), loaded.Values
+}
+
+func renderLKESelectedWorkloadFixture(env map[string]string, opts provisionOptions) string {
+	var manifests strings.Builder
+	for _, workload := range lkeSelectedWorkloads(env, opts) {
+		manifests.WriteString(lkeDeploymentManifest(env, workload, nil))
+	}
+	return manifests.String()
 }
 
 func makeLKETestEnv(t *testing.T) (string, string) {

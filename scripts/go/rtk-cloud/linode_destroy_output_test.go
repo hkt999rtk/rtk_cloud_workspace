@@ -59,7 +59,8 @@ for arg do printf 'arg:%s\n' "$arg" >> "$DESTROY_WRAPPER_CALLS"; done
 		t.Fatalf("wrapper failed: %v %s", err, out)
 	}
 	got := readTestFile(t, log)
-	want := "cwd:" + workspace + "\narg:run\narg:./scripts/go/rtk-cloud\narg:--\narg:destroy-linode-staging-resources\narg:--workspace\narg:" + workspace + "\narg:--env-root\narg:cloud_env/dev/runtime\narg:--loadtest-prefix\narg:\n"
+	// Go runs from its module; the absolute workspace flag anchors relative environment inputs.
+	want := "cwd:" + filepath.Join(workspace, "scripts", "go") + "\narg:run\narg:./rtk-cloud\narg:--\narg:destroy-linode-staging-resources\narg:--workspace\narg:" + workspace + "\narg:--env-root\narg:cloud_env/dev/runtime\narg:--loadtest-prefix\narg:\n"
 	if got != want {
 		t.Fatalf("relative environment would select the wrong workspace: %q", got)
 	}

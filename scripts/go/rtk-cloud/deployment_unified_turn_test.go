@@ -52,7 +52,7 @@ func TestManagedTurnObservationAndSharedRenderingPreserveLifecycle(t *testing.T)
 			bindings.Pods = append(bindings.Pods, observed.Pods...)
 			bindings.IngressAdmission = &environmentAdmissionBinding{SecretName: "ingress-nginx-admission", CABundle: base64.StdEncoding.EncodeToString(testOpenBaoCAPEM(t))}
 			store := makeIsolatedTestSecretStore(t, environment)
-			err = withEnvironmentRenderInputs(deploymentConfig{Environment: environment, Values: env}, store, release, environmentDeploymentSnapshot{Secrets: map[string]string{"emqx-dashboard-password": "isolated-dashboard", "mqtt-broker-auth": "isolated-callback", "emqx-handoff-api-key": "isolated-api-key", "emqx-handoff-api-secret": "isolated-api-secret"}}, func(values map[string]string) error {
+			err = withEnvironmentRenderInputs(deploymentConfig{Environment: environment, Values: env}, store, release, environmentDeploymentSnapshot{Secrets: map[string]string{"emqx-dashboard-password": "isolated-dashboard", "mqtt-broker-auth": "isolated-callback", "emqx-handoff-api-key": "isolated-api-key", "emqx-handoff-api-secret": "isolated-api-secret", "payment-reference-encryption": base64.StdEncoding.EncodeToString(make([]byte, 32))}}, func(values map[string]string) error {
 				definitions, err := renderEnvironmentResources(values, bindings, release)
 				if err != nil {
 					return err

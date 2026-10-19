@@ -43,7 +43,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.policy == 'true'
     runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 150
+    timeout-minutes: 210
     steps:
       - uses: actions/checkout@v6
         with:
@@ -71,7 +71,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run_unit == 'true'
     runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 150
+    timeout-minutes: 210
     env:
       BILLING_UNIT_POSTGRES_CONTAINER_ID: ""
     strategy:

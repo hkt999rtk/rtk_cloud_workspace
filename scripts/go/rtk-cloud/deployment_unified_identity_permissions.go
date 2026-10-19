@@ -41,6 +41,9 @@ func controllerIdentityDirectories(r deploymentplan.Resource) ([]controllerIdent
 			return nil, nil
 		}
 	}
+	if static, err := controllerStaticIdentityProfile(r.Desired); err != nil || static {
+		return nil, err
+	}
 	pod := environmentPKIPod(r.Desired)
 	var result []controllerIdentityDirectory
 	for _, raw := range identityPermissionList(pod["containers"]) {
