@@ -324,7 +324,11 @@ func renderEnvironmentResourceCatalog(env map[string]string, bindings environmen
 		}
 		canonicalEnvironmentEmptyEnvLiterals(definition.Object)
 	}
-	definitions, err = bindEnvironmentCertIssuerPublicTransport(env, definitions)
+	if intent == nil {
+		definitions, err = bindEnvironmentCertIssuerPublicTransport(env, definitions)
+	} else {
+		definitions, err = bindEnvironmentCreateDependencyPublicTransport(env, definitions, intent)
+	}
 	if err != nil {
 		return nil, err
 	}

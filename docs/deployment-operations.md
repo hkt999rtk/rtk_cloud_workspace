@@ -4,17 +4,18 @@ Status: active
 
 Owner: `rtk_cloud_workspace`
 
-Last reviewed: 2026-10-11
+Last reviewed: 2026-10-20
 
 Audience: internal deployment operators and new maintainers
 
-Current implementation delivery is the two-script existing-environment update
-workflow in [the current script delivery scope](deployment-readiness-standard.md#current-script-delivery-scope):
-preflight, deployment of that same checked target, and required rollout health
-verification. Actual environment checks and deployment are run by the operator.
-Fresh bootstrap and Production custody/backup/restore activation work are separate
-from this delivery. Use the existing-environment update instructions below for
-the two-script handoff; fresh-create material is a separate runbook.
+The public deployment workflow covers existing-environment updates and explicitly
+selected new-environment creation, including continuation of an interrupted
+create. Both qualify the selected target before execution and require final
+runtime acceptance. See the [current script delivery scope](deployment-readiness-standard.md#current-script-delivery-scope),
+[create instructions](#create-a-new-environment) and
+[staged continuation](#create-and-resume-as-one-staged-program). The operator
+authorizes live checks and deployment. Production custody, backup/restore and
+activation retain their separate qualification requirements.
 
 The deployment wrapper builds and runs the native CLI so exit codes 0/1/2 are
 preserved, including when called outside the workspace. Its temporary directory
@@ -35,7 +36,8 @@ Complete-environment GO/NO-GO is defined by the accepted
 The public plan/preflight/upgrade entries select the shared v2 engine and report
 `scope=existing-environment-update` for routine updates. All six required update
 gates must pass; Production activation and restore qualification are separate
-operations. Fresh bootstrap remains outside the current delivery. Legacy schema-1 preparation
+operations. Explicit create uses the qualified identity lifecycle and staged
+recovery described below. Legacy schema-1 preparation
 and complete provision entries are retired. The narrower image-only and current
 health checks do not replace complete qualification. No production activation
 qualification has been completed by these documentation/code changes.

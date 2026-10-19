@@ -168,6 +168,15 @@ func newProductExpiryE2EFixture(t *testing.T, runtimeCorrection ...bool) *produc
 		}
 		for _, d := range managedMQTTConsumersFixture(t) {
 			name := deploymentplan.String(deploymentplan.Map(d.Object["metadata"])["name"])
+			if d.Object["kind"] == "Service" && name == "certissuer" {
+				// This lifecycle adopts the native bootstrap issuer on 18445;
+				// the generic MQTT donor uses the static issuer port 9443.
+				// Match the declared native listener before freezing any plan.
+				for _, raw := range certIssuerObjectList(deploymentplan.Map(d.Object["spec"])["ports"]) {
+					port := deploymentplan.Map(raw)
+					port["port"], port["targetPort"] = float64(18445), float64(18445)
+				}
+			}
 			if d.Object["kind"] == "Deployment" && strings.HasPrefix(name, "pki-product-") {
 				continue
 			}
@@ -182,6 +191,73 @@ func newProductExpiryE2EFixture(t *testing.T, runtimeCorrection ...bool) *produc
 				pod["containers"] = append(certIssuerObjectList(pod["containers"]), broker)
 			}
 			add(d, name != "video-cloud-api-pki" && name != "video-cloud-mqttfoundation" && name != "video-cloud-shadowworker")
+		}
+		if !postCleanup {
+			// The ordinary healthy history includes the public route required by
+			// the current complete compiler. The correction case adds its own
+			// deliberately stale route below so its rejection remains covered.
+			values := deploymentEndpointValues(f.cfg)
+			host := lkeResolveCertIssuerTLSConfig(values).PublicHost
+			publicServingProfile := func(definitions []deploymentplan.Definition) {
+				for _, d := range definitions {
+					if deploymentplan.ID(d.Object) != "Deployment/"+ns+"/certissuer" {
+						continue
+					}
+					c := managedNamedField(environmentPKIPod(d.Object)["containers"], "certissuer")
+					names := strings.Split(mqttFoundationEnv(c, "CERT_ISSUER_HOST_DNS_NAMES"), ",")
+					if !slices.Contains(names, host) {
+						names = append(names, host)
+					}
+					slices.Sort(names)
+					c["env"] = mergeEnvironmentNamedFields(c["env"], environmentCreateEnv(map[string]string{"CERT_ISSUER_HOST_DNS_NAMES": strings.Join(names, ",")}))
+				}
+			}
+			// Model an already healthy serving identity in this history. Keep
+			// that exact declared profile when the native boundary renders its
+			// existing issuer controls for later enrollment/renewal stages.
+			publicServingProfile(f.l.SourceDefinitions)
+			issuerID := "Deployment/" + ns + "/certissuer"
+			publicServingProfile([]deploymentplan.Definition{{Object: f.b.objects[issuerID]}})
+			originalControls := f.controls
+			f.controls = func(ceremony environmentCreateServiceCeremony, provision bool) ([]deploymentplan.Definition, error) {
+				definitions, err := originalControls(ceremony, provision)
+				if err == nil {
+					publicServingProfile(definitions)
+				}
+				return definitions, err
+			}
+			controller, err := renderEnvironmentIngress(values, &environmentAdmissionBinding{SecretName: "ingress-nginx-admission", CABundle: base64.StdEncoding.EncodeToString([]byte(testOpenBaoCAPEM(t)))}, p.Release)
+			if err != nil {
+				t.Fatal("maintained original ingress class", err)
+			}
+			for _, d := range controller {
+				if d.Object["kind"] == "IngressClass" {
+					add(d, true)
+				}
+			}
+			ingresses, err := decodeEnvironmentCreateManifests(lkeCertIssuerPassthroughIngressManifest(values, lkeResolveCertIssuerTLSConfig(values).PublicRoute()))
+			if err != nil {
+				t.Fatal("maintained original public issuer ingress", err)
+			}
+			for _, d := range ingresses {
+				deploymentplan.Map(d.Object["spec"])["ingressClassName"] = environmentIngressClass(values)
+				if err := environmentCertIssuerPublicIngress(d.Object, lkeResolveCertIssuerTLSConfig(values).PublicHost, 18445, true); err != nil {
+					t.Fatal("native issuer public transport", err)
+				}
+				d.Phase = environmentResourcePhase(deploymentplan.String(d.Object["kind"]))
+				add(d, true)
+				// Resolve the complete route DAG before Program freezing. Direct
+				// passthrough references its Service and Class, not a TLS Secret.
+				for _, ref := range environmentResourceReferences(d.Object) {
+					if !known[ref.ID] || f.b.objects[ref.ID] == nil {
+						t.Fatal("original public transport dependency absent", ref.ID)
+					}
+				}
+			}
+			add(environmentCertIssuerPublicPolicy(values, 18445), true)
+			if err := validateEnvironmentCertIssuerPublicTransport(values, f.l.SourceDefinitions); err != nil {
+				t.Fatal("complete original public issuer cohort before Program freeze", err)
+			}
 		}
 		policies, err := decodeEnvironmentCreateManifests(lkeAllowPostgresClientsNetworkPolicyManifest(map[string]string{"CLOUD_STACK_NAME": f.p.Stack}))
 		if err != nil {
@@ -559,8 +635,10 @@ func newProductExpiryE2EFixture(t *testing.T, runtimeCorrection ...bool) *produc
 	}
 	if billingRuntime {
 		installProductRuntimeNativeVolumes(t, f)
-		completeProductNativeStatefulSetObservations(t, f)
 	}
+	// Every full compiler observation includes controller revisions and owned
+	// Pods, including the expiry-only case without Billing storage changes.
+	completeProductNativeStatefulSetObservations(t, f)
 	var live []deploymentplan.Object
 	for _, o := range f.b.objects {
 		live = append(live, o)
@@ -1443,7 +1521,8 @@ func (x *productExpiryE2EFixture) readyACKs(t *testing.T, r *productSessionRenew
 func (x *productExpiryE2EFixture) verifyPython(t *testing.T) {
 	t.Helper()
 	helper := os.Getenv("RTK_PRODUCT_FINAL_READER")
-	if helper == "" {
+	export := os.Getenv("RTK_PRODUCT_EXPIRY_EXPORT")
+	if helper == "" && export == "" {
 		// The maintained Go assertions above exercise the complete producer and
 		// recovery flow. An independently supplied operator verifier is an
 		// additional qualification and is not a dependency of repository tests.
@@ -1453,7 +1532,7 @@ func (x *productExpiryE2EFixture) verifyPython(t *testing.T) {
 	f := x.f
 	payload := filepath.Join(t.TempDir(), "expiry-reader.json")
 	root, directory := f.store.Root, f.e.Directory
-	if destination := os.Getenv("RTK_PRODUCT_EXPIRY_EXPORT"); destination != "" {
+	if destination := export; destination != "" {
 		if !productSyntheticExportDestination(destination) {
 			t.Fatal("synthetic export must use isolated local test directory")
 		}
@@ -1493,6 +1572,10 @@ func (x *productExpiryE2EFixture) verifyPython(t *testing.T) {
 	}
 	if err := os.WriteFile(payload, mustProviderRecoveryJSON(deploymentplan.Object{"root": root, "directory": directory, "owner": deploymentplan.Digest(f.e.owner), "journal": f.e.Journal}), 0600); err != nil {
 		t.Fatal(err)
+	}
+	if helper == "" {
+		t.Log("explicit synthetic history export retained; independent Python verifier not selected")
+		return
 	}
 	script := `import importlib.util,json,pathlib,sys
 s=importlib.util.spec_from_file_location("final_reader",sys.argv[1]);m=importlib.util.module_from_spec(s);s.loader.exec_module(m)

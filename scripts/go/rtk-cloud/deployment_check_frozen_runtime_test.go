@@ -107,7 +107,11 @@ func TestQualifiedPublicProbeReceivesFrozenPrivateKubeconfigAndCleansIt(t *testi
 			list.Items[0].Metadata.Namespace = "video-cloud-" + environment + "-video-cloud"
 			list.Items[0].Spec.Rules[0].Host = "certissuer.video-cloud-" + environment + ".example.test"
 			inventory, _ := json.Marshal(list)
-			calls := deploymentRuntimeTestKubectl(t, `cat "$RTK_FROZEN_PUBLIC_INVENTORY"`)
+			calls := deploymentRuntimeTestKubectl(t, `case " $* " in
+ *" get deployments "*) printf '%s' '{"items":[{"apiVersion":"apps/v1","kind":"Deployment","metadata":{"name":"certissuer","namespace":"video-cloud-`+environment+`-video-cloud"},"spec":{"template":{"spec":{"containers":[{"name":"certissuer","env":[{"name":"CERT_ISSUER_LISTEN_ADDR","value":":9443"}],"ports":[{"containerPort":9443,"name":"https"}]}]}}}}]}';;
+ *" get service "*) printf '%s' '{"apiVersion":"v1","kind":"Service","metadata":{"name":"certissuer","namespace":"video-cloud-`+environment+`-video-cloud"},"spec":{"ports":[{"port":9443,"targetPort":"https","protocol":"TCP"}]}}';;
+ *) cat "$RTK_FROZEN_PUBLIC_INVENTORY" ;;
+esac`)
 			directory := filepath.Dir(calls)
 			inventoryPath := filepath.Join(directory, "inventory.json")
 			writeTestFile(t, inventoryPath, string(inventory))

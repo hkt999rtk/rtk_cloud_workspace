@@ -108,7 +108,12 @@ func bindEnvironmentCertIssuerPublicTransport(env map[string]string, definitions
 	if err != nil {
 		return nil, err
 	}
-	id := "Ingress/" + stack + "-video-cloud/certissuer-public-mtls"
+	return bindEnvironmentCertIssuerPublicRoute(env, definitions, port)
+}
+
+func bindEnvironmentCertIssuerPublicRoute(env map[string]string, definitions []deploymentplan.Definition, port int) ([]deploymentplan.Definition, error) {
+	host := lkeResolveCertIssuerTLSConfig(env).PublicHost
+	id := "Ingress/" + env["CLOUD_STACK_NAME"] + "-video-cloud/certissuer-public-mtls"
 	ingress, err := certIssuerPublicObject(definitions, id)
 	if err != nil {
 		return nil, err

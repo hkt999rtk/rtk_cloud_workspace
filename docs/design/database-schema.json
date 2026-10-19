@@ -1,21 +1,21 @@
 {
-  "captured_at": "2026-10-18T05:10:36.575310+00:00",
+  "captured_at": "2026-10-19T22:55:27.137688+00:00",
   "environment": null,
   "format_version": 1,
   "revisions": {
     "Account Manager": "4341a05ec727",
-    "Billing": "aedaafe4eeae",
-    "Cloud Admin": "4035e920404d",
-    "Cloud Frontend": "475b9fe80d6c",
+    "Billing": "ff166d4effd3",
+    "Cloud Admin": "18ee6ba39409",
+    "Cloud Frontend": "153b95a9583b",
     "Video Cloud": "0429fe118b30"
   },
   "schema_hash": "eaa5e254ed4a11e16cd1b624243fad932909034ab40997e4afdedcc2d1f05a07",
   "source_dirty": {
-    "Account Manager": true,
-    "Billing": true,
-    "Cloud Admin": true,
-    "Cloud Frontend": true,
-    "Video Cloud": true
+    "Account Manager": false,
+    "Billing": false,
+    "Cloud Admin": false,
+    "Cloud Frontend": false,
+    "Video Cloud": false
   },
   "stores": [
     {

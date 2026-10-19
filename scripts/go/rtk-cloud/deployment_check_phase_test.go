@@ -179,7 +179,7 @@ chmod +x "$3"
 	}{
 		{"check-deployment-preflight.sh", deploymentCheckPreDeploy, true},
 		{"check-deployment-health.sh", deploymentCheckPostDeploy, true},
-		{"shell/deployment/check-deployment-credentials.sh", deploymentCheckPostDeploy, false},
+		{"check-deployment-credentials.sh", deploymentCheckPostDeploy, false},
 	} {
 		t.Run(tc.script, func(t *testing.T) {
 			path := filepath.Join(workspace, "scripts", tc.script)

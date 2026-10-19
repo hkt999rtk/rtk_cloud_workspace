@@ -27,7 +27,10 @@ func loadNestedRuntimeReadFixture(t *testing.T) *nestedRuntimeReadFixture {
 	t.Helper()
 	path := os.Getenv("RTK_NESTED_RUNTIME_READER_EXPORT")
 	if path == "" {
-		t.Skip("explicit retained synthetic two-renewal export required")
+		if os.Getenv("RTK_NESTED_RUNTIME_READER_COMPLETE_EXPORT") != "" {
+			t.Fatal("completed archive replay also requires the interrupted synthetic export")
+		}
+		t.Skip("optional retained synthetic two-renewal export not selected")
 	}
 	fixtureRoot := filepath.Dir(path)
 	if !productHistoricalCRLFixturePath(fixtureRoot, path) {

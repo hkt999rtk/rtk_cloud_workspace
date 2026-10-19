@@ -11,8 +11,9 @@ import (
 // This private render input is constructed only from the initial bootstrap
 // recipe. The executable renderer never accepts it or its graph projection.
 type environmentCreateDependencyRender struct {
-	managed map[string]bool
-	outputs map[string]string
+	managed              map[string]bool
+	outputs              map[string]string
+	publicCertIssuerHost string
 }
 
 func environmentCreateDependencyOutputs(cfg deploymentConfig, p environmentCreateBootstrapPlan, values map[string]string) (*environmentCreateDependencyRender, error) {
@@ -23,7 +24,11 @@ func environmentCreateDependencyOutputs(cfg deploymentConfig, p environmentCreat
 	if err != nil || len(products) != len(p.ProductIdentities) {
 		return nil, environmentCreateBootstrapBlocker("enabled product consumers lack their declared native identity producers")
 	}
-	intent := &environmentCreateDependencyRender{managed: map[string]bool{}, outputs: map[string]string{}}
+	host := lkeResolveCertIssuerTLSConfig(values).PublicHost
+	if p.PublicCertIssuerHost != host {
+		return nil, environmentCreateBootstrapBlocker("fresh public transport differs from its declared native bootstrap host")
+	}
+	intent := &environmentCreateDependencyRender{managed: map[string]bool{}, outputs: map[string]string{}, publicCertIssuerHost: host}
 	add := func(id, stage string) {
 		intent.outputs[id] = deploymentplan.Digest(struct {
 			Recipe          environmentCreateBootstrapPlan
@@ -72,6 +77,33 @@ func environmentCreateDependencyOutputs(cfg deploymentConfig, p environmentCreat
 		add("ServiceAccount/"+namespace.Name+"/default", "namespace-controller")
 	}
 	return intent, nil
+}
+
+// Fresh dependency qualification has a declared native issuer producer, not an
+// installed Deployment or identity. Project only its public Service/route edges;
+// executable rendering must still derive the port from the actual issuer owner.
+func bindEnvironmentCreateDependencyPublicTransport(env map[string]string, definitions []deploymentplan.Definition, intent *environmentCreateDependencyRender) ([]deploymentplan.Definition, error) {
+	host := lkeResolveCertIssuerTLSConfig(env).PublicHost
+	if host == "" {
+		return definitions, nil
+	}
+	owner := "Deployment/" + env["CLOUD_STACK_NAME"] + "-video-cloud/certissuer"
+	if intent == nil || !intent.managed["certissuer"] || !environmentPreflightDigest.MatchString(intent.outputs[owner]) || intent.publicCertIssuerHost != host {
+		return nil, certIssuerPublicBlock(owner, "fresh public transport requires its exact declared native issuer producer and host")
+	}
+	for _, d := range definitions {
+		if deploymentplan.ID(d.Object) == owner {
+			return nil, certIssuerPublicBlock(owner, "fresh dependency projection cannot substitute an installed issuer owner")
+		}
+	}
+	service, err := certIssuerPublicObject(definitions, "Service/"+env["CLOUD_STACK_NAME"]+"-video-cloud/certissuer")
+	if err != nil {
+		return nil, err
+	}
+	// The maintained native bootstrap listener is 18445, independent of any
+	// future certificate, private key, provider allocation or Kubernetes UID.
+	deploymentplan.Map(service["spec"])["ports"] = []any{deploymentplan.Object{"name": "https", "port": float64(18445), "targetPort": float64(18445), "protocol": "TCP"}}
+	return bindEnvironmentCertIssuerPublicRoute(env, definitions, 18445)
 }
 
 // Check the complete maintained consumer catalog before any native create.

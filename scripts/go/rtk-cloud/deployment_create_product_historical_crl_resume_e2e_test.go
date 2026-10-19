@@ -171,10 +171,13 @@ func (x *productExpiryE2EFixture) resumeLinkedCRLsInFreshProcess(t *testing.T, c
 
 func TestProductHistoricalCRLLinkedResumeFreshProcess(t *testing.T) {
 	path := os.Getenv("RTK_PRODUCT_HISTORICAL_CRL_CHILD")
+	root := os.Getenv("RTK_PRODUCT_HISTORICAL_CRL_FIXTURE_ROOT")
 	if path == "" {
+		if root != "" {
+			t.Fatal("selected synthetic child fixture root requires its payload")
+		}
 		return
 	}
-	root := os.Getenv("RTK_PRODUCT_HISTORICAL_CRL_FIXTURE_ROOT")
 	if !productHistoricalCRLFixturePath(root, path) {
 		t.Fatal("child payload must be inside the parent's isolated synthetic fixture")
 	}

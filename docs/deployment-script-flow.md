@@ -1,6 +1,6 @@
 # V2 Deployment Script Flow
 
-Status: draft implementation reference; requires the separately delivered v2 engine.
+Status: historical design snapshot; current operations are maintained in the Deployment Operations Guide.
 
 Owner: `rtk_cloud_workspace`.
 
@@ -10,12 +10,11 @@ Applies to: the local v2 existing-environment update implementation reviewed on
 2026-10-09, based on workspace commit `c68f042ecacbf3b3a7250b87e17676a1ca937233`
 plus its uncommitted deployment changes.
 
-The reviewed engine is not present in remote `main` at the PR base
-`9ba108e1`. This documentation-only change preserves its flow chart and completion
-boundaries for review without publishing the pending code. Use the
-[Deployment Operations Guide](deployment-operations.md) for the currently
-published implementation. Reconcile this reference with the final v2 code before
-promoting it to active operator instructions.
+This document preserves the flow reviewed on 2026-10-09. The shared engine and
+create/recovery lifecycle are now included in this change. Use the maintained
+[Deployment Operations Guide](deployment-operations.md#current-script-flow) for
+current execution and acceptance behavior; the historical sequence below does
+not supersede those instructions.
 
 ## Reviewed script flow
 

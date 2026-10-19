@@ -1,10 +1,10 @@
 # Unified Deployment Readiness Standard
 
-Status: accepted deployment policy; existing-update checks implemented; qualification is specific to an environment, release and plan.
+Status: accepted deployment policy; update and explicit create/recovery checks implemented; qualification is specific to an environment, release and plan.
 
 Owner: `rtk_cloud_workspace`; service owners supply candidate and recovery checks.
 
-Last reviewed: 2026-10-09.
+Last reviewed: 2026-10-20.
 
 Authority: deployment scope and readiness policy. The [deployment architecture](cloud-deployment-architecture.md)
 owns configuration/provider boundaries, and [Platform PKI](../repos/rtk_cloud_contracts_doc/platform_pki.md)

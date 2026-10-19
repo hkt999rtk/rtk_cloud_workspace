@@ -50,7 +50,11 @@ func TestDeploymentCheckRuntimeSharesSelectedSecretInventory(t *testing.T) {
 	}
 	secrets := map[string]map[string]string{}
 	for _, entry := range rtkSecretCatalog() {
-		if err := store.write(filepath.Join("runtime", entry.ID), []byte("canonical"), true); err != nil {
+		value := "canonical"
+		if entry.ID == "payment-reference-encryption" {
+			value = base64.StdEncoding.EncodeToString(make([]byte, 32))
+		}
+		if err := store.write(filepath.Join("runtime", entry.ID), []byte(value), true); err != nil {
 			t.Fatal(err)
 		}
 		for _, binding := range entry.K8SBinding {
@@ -58,7 +62,7 @@ func TestDeploymentCheckRuntimeSharesSelectedSecretInventory(t *testing.T) {
 			if secrets[label] == nil {
 				secrets[label] = map[string]string{}
 			}
-			secrets[label][binding.Key] = base64.StdEncoding.EncodeToString([]byte("canonical"))
+			secrets[label][binding.Key] = base64.StdEncoding.EncodeToString([]byte(value))
 		}
 	}
 	secrets["video-cloud-staging-account-manager/account-manager-runtime"]["ACCOUNT_MANAGER_ENV"] = base64.StdEncoding.EncodeToString([]byte("staging"))

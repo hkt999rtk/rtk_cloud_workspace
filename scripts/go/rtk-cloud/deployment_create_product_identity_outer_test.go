@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -193,6 +194,91 @@ func newProductOuterTargetFixtureWithSetup(t *testing.T, successor bool, setup f
 	return f, p, formal, start, apply
 }
 
+// This healthy outer history starts with the complete original public issuer
+// transport. Freeze it before the product protocol so its native controls and
+// source definitions preserve the same serving identity throughout retirement.
+func installProductOuterPublicTransportFixture(t *testing.T, f *productProtocolFixture, p *createNormalTailProgram) {
+	t.Helper()
+	values := deploymentEndpointValues(f.cfg)
+	host := lkeResolveCertIssuerTLSConfig(values).PublicHost
+	issuerID := "Deployment/" + f.p.Stack + "-video-cloud/certissuer"
+	servingProfile := func(definitions []deploymentplan.Definition) {
+		for _, d := range definitions {
+			if deploymentplan.ID(d.Object) != issuerID {
+				continue
+			}
+			container := managedNamedField(environmentPKIPod(d.Object)["containers"], "certissuer")
+			names := strings.Split(mqttFoundationEnv(container, "CERT_ISSUER_HOST_DNS_NAMES"), ",")
+			if !slices.Contains(names, host) {
+				names = append(names, host)
+			}
+			slices.Sort(names)
+			container["env"] = mergeEnvironmentNamedFields(container["env"], environmentCreateEnv(map[string]string{"CERT_ISSUER_HOST_DNS_NAMES": strings.Join(names, ",")}))
+		}
+	}
+	servingProfile(f.l.SourceDefinitions)
+	servingProfile([]deploymentplan.Definition{{Object: f.b.objects[issuerID]}})
+	controls := f.controls
+	f.controls = func(ceremony environmentCreateServiceCeremony, provision bool) ([]deploymentplan.Definition, error) {
+		definitions, err := controls(ceremony, provision)
+		if err == nil {
+			servingProfile(definitions)
+		}
+		return definitions, err
+	}
+	definitions, err := decodeEnvironmentCreateManifests(lkeCertIssuerServiceManifest(values), lkeCertIssuerPassthroughIngressManifest(values, lkeResolveCertIssuerTLSConfig(values).PublicRoute()))
+	if err != nil {
+		t.Fatal("original public issuer manifests", err)
+	}
+	for _, d := range definitions {
+		spec := deploymentplan.Map(d.Object["spec"])
+		if d.Object["kind"] == "Service" {
+			for _, raw := range certIssuerObjectList(spec["ports"]) {
+				port := deploymentplan.Map(raw)
+				port["port"], port["targetPort"] = float64(18445), float64(18445)
+			}
+		}
+		if d.Object["kind"] == "Ingress" {
+			spec["ingressClassName"] = environmentIngressClass(values)
+			if err := environmentCertIssuerPublicIngress(d.Object, host, 18445, true); err != nil {
+				t.Fatal("original native public issuer route", err)
+			}
+		}
+	}
+	controller, err := renderEnvironmentIngress(values, &environmentAdmissionBinding{SecretName: "ingress-nginx-admission", CABundle: base64.StdEncoding.EncodeToString([]byte(testOpenBaoCAPEM(t)))}, p.Release)
+	if err != nil {
+		t.Fatal("original native ingress class", err)
+	}
+	for _, d := range controller {
+		if d.Object["kind"] == "IngressClass" {
+			definitions = append(definitions, d)
+		}
+	}
+	definitions = append(definitions, environmentCertIssuerPublicPolicy(values, 18445))
+	for _, d := range definitions {
+		id := deploymentplan.ID(d.Object)
+		if f.b.objects[id] != nil || f.l.SourceOwners[id] != "" {
+			t.Fatal("public fixture must not replace an existing original owner", id)
+		}
+		object := deploymentplan.Clone(d.Object)
+		metadata := deploymentplan.Map(object["metadata"])
+		uid := "73737373-aaaa-4aaa-8aaa-" + deploymentplan.Digest(id)[:12]
+		metadata["uid"], metadata["resourceVersion"] = uid, "1"
+		f.b.objects[id], f.l.SourceOwners[id] = object, uid
+		f.l.SourceDefinitions = append(f.l.SourceDefinitions, deploymentplan.Definition{Object: deploymentplan.Projection(object), Phase: environmentResourcePhase(deploymentplan.String(object["kind"])), Retain: true})
+	}
+	for _, d := range definitions {
+		for _, ref := range environmentResourceReferences(d.Object) {
+			if f.b.objects[ref.ID] == nil || f.l.SourceOwners[ref.ID] == "" {
+				t.Fatal("original public transport dependency absent", ref.ID)
+			}
+		}
+	}
+	if err := validateEnvironmentCertIssuerPublicTransport(values, f.l.SourceDefinitions); err != nil {
+		t.Fatal("complete original public transport before Program freeze", err)
+	}
+}
+
 func TestProductOuterTargetCompilesRealProtocolAndRetiresOnlyFinishedProducers(t *testing.T) {
 	compileCfg, snapshotStore, _, _ := maintainedDeploymentSnapshotFixture(t, "dev")
 	architecture := filepath.Join(compileCfg.Workspace, "cloud_deploy/architectures/kubernetes/architecture.env")
@@ -224,7 +310,9 @@ func TestProductOuterTargetCompilesRealProtocolAndRetiresOnlyFinishedProducers(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	f, program, formal, start, apply := newProductOuterTargetFixture(t, false, compileCfg)
+	f, program, formal, start, apply := newProductOuterTargetFixtureWithSetup(t, false, func(f *productProtocolFixture, p *createNormalTailProgram) {
+		installProductOuterPublicTransportFixture(t, f, p)
+	}, compileCfg)
 	ctx := withCreateNormalTailHandoff(t.Context(), f.h)
 	if err := executeProductIdentityProtocol(ctx, f.cfg, f.p, f.store, f.runtime, f.l, apply); err != nil {
 		t.Fatal("real native protocol", err)

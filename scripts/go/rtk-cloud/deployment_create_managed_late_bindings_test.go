@@ -109,7 +109,13 @@ func TestManagedLateFinalBindingsChooseAcceptedCurrentCMAndPreserveOld(t *testin
 	controllerID := "Deployment/video-cloud-dev-video-cloud/pki-controller"
 	controller := deploymentplan.Clone(late.Owners[controllerID].Desired)
 	deploymentplan.Map(controller["metadata"])["uid"] = late.Owners[controllerID].UID
-	deploymentplan.Map(managedNamedField(environmentPKIPod(controller)["volumes"], "bootstrap-cleanup")["configMap"])["name"] = service.CleanupBinding.ConfigMapName
+	// Ordinary observation also verifies the actual Controller's complete cleanup
+	// mount and projected-token topology. The generic owner fixture above uses a
+	// placeholder container, so materialize the maintained current profile here.
+	managedNamedField(environmentPKIPod(controller)["containers"], "native")["name"] = "pki-controller"
+	if _, err := applyEnvironmentBootstrapCleanup(map[string]string{"CLOUD_ENV_NAME": "dev", "CLOUD_STACK_NAME": e.Journal.Stack}, controller, service.CleanupBinding); err != nil {
+		t.Fatal(err)
+	}
 	live = append(live, controller)
 	live = append(live, deploymentplan.Object{"apiVersion": "v1", "kind": "Namespace", "metadata": deploymentplan.Object{"name": e.Journal.Stack + "-video-cloud", "uid": service.CleanupBinding.NamespaceUID}})
 	// Old immutable CM remains an original retained owner, but cannot select the
@@ -179,9 +185,17 @@ func TestManagedLateFinalBindingsChooseAcceptedCurrentCMAndPreserveOld(t *testin
 		t.Fatal(err)
 	}
 
+	liveBefore := deploymentplan.Digest(live)
+	ordinary, observeErr := observeEnvironmentTargetBindings(context.Background(), cfg, release, "upgrade", live)
+	if observeErr != nil || deploymentplan.Digest(ordinary.BootstrapCleanup) != deploymentplan.Digest(current.BootstrapCleanup) {
+		t.Fatal("ordinary adoption lost the mounted current cleanup record", observeErr)
+	}
 	unchanged, observeErr := observeEnvironmentTargetBindings(withEnvironmentCreateBootstrapRuntime(context.Background(), runtime), cfg, release, "upgrade", live)
-	if observeErr != nil || deploymentplan.Digest(unchanged) != deploymentplan.Digest(plain) {
+	if observeErr != nil || deploymentplan.Digest(unchanged) != deploymentplan.Digest(ordinary) {
 		t.Fatal("late create adapter changed ordinary adoption", observeErr)
+	}
+	if deploymentplan.Digest(live) != liveBefore {
+		t.Fatal("ordinary observation changed current or historical cleanup owners")
 	}
 	bindings := environmentIdentityBindings{Environment: "dev", Stack: "video-cloud-dev", Owners: map[string]string{}, BootstrapCleanup: &late.SourceCeremony.CleanupBinding}
 	for _, object := range live {

@@ -1065,8 +1065,9 @@ one maintained target in preflight and qualify the exact execution plan.
 Deployment consumes its active immutable proof and frozen target. Existing resources
 are ownership/identity/concurrency evidence, not desired configuration templates.
 An environment-local schema-1 snapshot must not select a different renderer.
-The replacement is in progress; legacy prerequisite PASS does not establish
-complete-environment GO under the accepted standard.
+The shared deployment engine implements this contract for updates and explicit
+create/recovery. Legacy prerequisite PASS does not establish complete-environment
+GO under the accepted standard.
 
 The directory name under `cloud_env/` is the environment identity. Configuration is resolved in this order: architecture defaults, adapter defaults, environment stack/selection, environment architecture overrides, environment adapter overrides, and allow-listed explicit overrides. Cross-layer duplicate keys, unknown keys, invalid types, and provider keys in architecture config are errors.
 

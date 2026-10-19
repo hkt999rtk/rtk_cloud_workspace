@@ -43,9 +43,17 @@ func workloadVolumeHistoryDigest(t *testing.T, root string) string {
 // the allocation reader used by capture, including product and literal failed
 // workload ancestors, without constructing any positive journal or receipt.
 func TestWorkloadVolumeReadEpochGenuineHistory(t *testing.T) {
+	interrupted := os.Getenv("RTK_NESTED_RUNTIME_READER_EXPORT")
+	completed := os.Getenv("RTK_NESTED_RUNTIME_READER_COMPLETE_EXPORT")
+	if interrupted == "" && completed == "" {
+		t.Skip("optional interrupted/completed synthetic history exports not selected")
+	}
+	if interrupted == "" || completed == "" {
+		t.Fatal("both genuine synthetic exports are required when archive replay is selected")
+	}
 	for _, item := range []struct{ name, path string }{
-		{"interrupted", os.Getenv("RTK_NESTED_RUNTIME_READER_EXPORT")},
-		{"completed", os.Getenv("RTK_NESTED_RUNTIME_READER_COMPLETE_EXPORT")},
+		{"interrupted", interrupted},
+		{"completed", completed},
 	} {
 		t.Run(item.name, func(t *testing.T) {
 			if item.path == "" {
