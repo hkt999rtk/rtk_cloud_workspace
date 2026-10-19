@@ -33,7 +33,6 @@ func TestAdmissionDiagnosticPathsAreExactAndPrivateForEveryEnvironment(t *testin
 			mutate func(Object)
 			path   string
 		}{
-			{"empty-env-value-removed", func(o Object) { delete(Map(diagnosticContainer(o)["env"].([]any)[0]), "value") }, "$.spec.template.spec.containers[0].env[0].value"},
 			{"env-value", func(o Object) { Map(diagnosticContainer(o)["env"].([]any)[0])["value"] = "private-marker" }, "$.spec.template.spec.containers[0].env[0].value"},
 			{"env-name", func(o Object) { Map(diagnosticContainer(o)["env"].([]any)[0])["name"] = "private-marker" }, "$.spec.template.spec.containers[0].env[0].name"},
 			{"image", func(o Object) { diagnosticContainer(o)["image"] = "private-marker" }, "$.spec.template.spec.containers[0].image"},
@@ -239,7 +238,7 @@ func (b *diagnosticAdmissionBackend) Write(ctx context.Context, action string, b
 	b.dryCalls++
 	actual = Clone(actual)
 	if !b.stage || b.dryCalls > 1 {
-		delete(Map(diagnosticContainer(actual)["env"].([]any)[0]), "value")
+		Map(diagnosticContainer(actual)["env"].([]any)[0])["value"] = "unexpected-enabled-value"
 	}
 	return actual, nil
 }

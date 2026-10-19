@@ -17,12 +17,15 @@ deployment implementation. Missing state is NO-GO until explicitly recovered.
 
 This is the operational entry point for adding `dev`, `staging`, `prod`, `qa`, or another deployment environment. See [`docs/environment-dns-naming.md`](../docs/environment-dns-naming.md) for environment-to-DNS mappings and endpoint naming rules, [`docs/cloud-deployment-architecture.md`](../docs/cloud-deployment-architecture.md) for architecture responsibilities and resolution rules, [`cloud_deploy/README.md`](../cloud_deploy/README.md) for shared defaults and adapter keys, [`docs/storage-credential-lifecycle.md`](../docs/storage-credential-lifecycle.md) for storage operations and credentials, and [`docs/object-storage-policy.md`](../docs/object-storage-policy.md) for canonical naming, namespaces and retention.
 
-The existing [`staging-from-scratch.md`](../docs/staging-from-scratch.md) describes
-the legacy fresh-create and acceptance procedure. Complete create/bootstrap
-replacement is still in progress; that runbook is not qualification evidence
-for the unified engine. For an existing cluster, restore its original private
-`~/.config/rtk_cloud/<environment>/` store and use the explicit owner/state
-migrations. Restoring checkout `runtime/` cannot restore deployment authority.
+Use `scripts/check-deployment-preflight.sh --environment <environment>
+--operation create` to qualify a brand new dev/staging target. This explicit mode
+uses maintained configuration and selected canonical operator credentials;
+deployment generates the new kubeconfig and runtime state after qualification.
+The existing [`staging-from-scratch.md`](../docs/staging-from-scratch.md) is legacy
+bootstrap history, not current qualification evidence. For an existing cluster,
+restore its original private `~/.config/rtk_cloud/<environment>/` store and use
+explicit owner/state migrations. Restoring checkout `runtime/` cannot restore
+deployment authority.
 
 ## Create the Minimal Configuration
 

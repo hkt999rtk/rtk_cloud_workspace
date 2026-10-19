@@ -17,7 +17,7 @@ import (
 // Completed state is owned by the environment, independently of a checkout.
 // Legacy runtime files are read only by an explicitly selected import operation.
 func deploymentStorageStatePath(environment, name string) (string, error) {
-	if !keySet("storage-cutover.json", "storage-cutover-ota.json", "storage-migration.json", "storage-migration-ota.json", "storage-migration-artifacts.json", "storage-preflight.json", "storage-preflight-ota.json", "storage-preflight-release-artifacts.json", "storage-consumers.json")[name] {
+	if !keySet("storage-cutover.json", "storage-cutover-ota.json", "storage-migration.json", "storage-migration-ota.json", "storage-migration-artifacts.json", "storage-preflight.json", "storage-preflight-ota.json", "storage-preflight-release-artifacts.json", "storage-consumers.json", "create-allocation.json")[name] {
 		return "", errors.New("unknown environment storage state file")
 	}
 	return privateDeploymentStatePath(environment, filepath.Join("deployment", "storage", name))
@@ -74,7 +74,7 @@ func deploymentStorageEvidenceDigest(cfg deploymentConfig) (string, error) {
 		return "", err
 	}
 	evidence := map[string]string{}
-	for _, name := range []string{"storage-cutover.json", "storage-cutover-ota.json", "storage-migration.json", "storage-migration-ota.json", "storage-migration-artifacts.json", "storage-preflight.json", "storage-preflight-ota.json", "storage-preflight-release-artifacts.json"} {
+	for _, name := range []string{"storage-cutover.json", "storage-cutover-ota.json", "storage-migration.json", "storage-migration-ota.json", "storage-migration-artifacts.json", "storage-preflight.json", "storage-preflight-ota.json", "storage-preflight-release-artifacts.json", "create-allocation.json"} {
 		body, err := readDeploymentStorageState(cfg.Environment, name)
 		if errors.Is(err, os.ErrNotExist) {
 			continue

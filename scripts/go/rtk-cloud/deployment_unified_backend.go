@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -24,13 +25,20 @@ import (
 )
 
 type environmentKubernetesBackend struct {
-	Store             secretStore
-	KubeconfigContent []byte
+	Store                   secretStore
+	KubeconfigContent       []byte
+	RolloutTimeout          time.Duration
+	SchemaWorkspace         string
+	OpenBaoReplacementReady func(context.Context, deploymentplan.Object, deploymentplan.Object) error
 }
 
-// Only independent, non-persisting admission checks run concurrently. Actual
-// deployment mutations retain the plan's dependency and phase ordering.
-func (b environmentKubernetesBackend) AdmissionConcurrency() int { return 8 }
+const environmentDeploymentCheckConcurrency = deploymentplan.MaxCheckConcurrency
+
+// Independent, non-persisting checks share one bounded concurrency limit.
+// Deployment mutations retain the plan's dependency and phase ordering.
+func (b environmentKubernetesBackend) AdmissionConcurrency() int {
+	return environmentDeploymentCheckConcurrency
+}
 
 func (b environmentKubernetesBackend) AdmissionProgress(ctx context.Context, checked, total int) {
 	environmentDeploymentAdmissionProgress(ctx, checked, total)
@@ -38,19 +46,40 @@ func (b environmentKubernetesBackend) AdmissionProgress(ctx context.Context, che
 
 // Kubernetes inventories can be larger than one resource, but subprocess output
 // must not grow without a bound while private material is being captured.
-type environmentAPIOutput struct{ buffer bytes.Buffer }
+type environmentAPIOutput struct {
+	buffer   bytes.Buffer
+	exceeded bool
+}
 
 func (b *environmentAPIOutput) Write(p []byte) (int, error) {
 	if b.buffer.Len()+len(p) > 32<<20 {
+		b.exceeded = true
 		return 0, errors.New("deployment.access: Kubernetes response exceeds the inventory bound")
 	}
 	return b.buffer.Write(p)
+}
+
+// Retain only a bounded private prefix for error classification, draining the
+// remainder without exposing it or letting diagnostics grow in memory.
+type environmentPrivateAPIErrorOutput struct{ buffer bytes.Buffer }
+
+func (b *environmentPrivateAPIErrorOutput) Write(p []byte) (int, error) {
+	if remaining := (64 << 10) - b.buffer.Len(); remaining > 0 {
+		_, _ = b.buffer.Write(p[:min(remaining, len(p))])
+	}
+	return len(p), nil
 }
 
 // Freeze the single selected API/authentication identity. External credential
 // files, token refresh commands and alternate contexts would introduce inputs
 // that were not hashed with the approved plan.
 func newEnvironmentKubernetesBackend(raw, environment string) (environmentKubernetesBackend, error) {
+	return newEnvironmentKubernetesBackendAt(raw, environment, time.Now())
+}
+
+// Historical metadata recovery validates archived credentials at their original
+// qualification time. It never uses them to contact the removed Kubernetes API.
+func newEnvironmentKubernetesBackendAt(raw, environment string, checkedAt time.Time) (environmentKubernetesBackend, error) {
 	if !secretEnvironmentPattern.MatchString(environment) {
 		return environmentKubernetesBackend{}, errors.New("deployment.access: explicit selected environment required")
 	}
@@ -126,7 +155,7 @@ func newEnvironmentKubernetesBackend(raw, environment string) (environmentKubern
 	if (token == "") == (cert == "" || key == "") || ((cert == "") != (key == "")) {
 		return environmentKubernetesBackend{}, errors.New("deployment.access: one complete embedded Kubernetes authentication method is required")
 	}
-	if err := validateEnvironmentKubernetesCertificates(deploymentplan.String(cluster["certificate-authority-data"]), cert, key, time.Now()); err != nil {
+	if err := validateEnvironmentKubernetesCertificates(deploymentplan.String(cluster["certificate-authority-data"]), cert, key, checkedAt); err != nil {
 		return environmentKubernetesBackend{}, err
 	}
 	if token != "" && (strings.TrimSpace(token) != token || strings.ContainsAny(token, "\x00\r\n\t ")) {
@@ -229,26 +258,184 @@ func (b environmentKubernetesBackend) privateKubeconfig() (string, func(), error
 // Admission errors can contain Secret values. Only sanitized operation and
 // resource identities cross this boundary; private payloads stay in memory.
 func (b environmentKubernetesBackend) command(ctx context.Context, input []byte, args ...string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-	defer cancel()
+	commandIndex := 0
+	for commandIndex < len(args) {
+		if args[commandIndex] == "--namespace" && commandIndex+1 < len(args) {
+			commandIndex += 2
+			continue
+		}
+		if strings.HasPrefix(args[commandIndex], "--namespace=") {
+			commandIndex++
+			continue
+		}
+		break
+	}
+	waitCommand := commandIndex < len(args) && (args[commandIndex] == "wait" || args[commandIndex] == "rollout" && commandIndex+1 < len(args) && args[commandIndex+1] == "status")
+	readOnlyGet := len(input) == 0 && deploymentKubectlGetIndex(args) >= 0
+	requestTimeout, processTimeout := "90s", 2*time.Minute
+	readRuntime := newDeploymentCheckRuntime(ctx, b.Store.Environment)
+	if readOnlyGet {
+		requestTimeout, processTimeout = readRuntime.requestTimeout.String(), readRuntime.processTimeout
+	}
+	if waitCommand {
+		if b.RolloutTimeout <= 0 || b.RolloutTimeout > time.Duration(1<<63-1)-30*time.Second {
+			return nil, errors.New("deployment.access: positive configured rollout timeout required")
+		}
+		requestTimeout, processTimeout = b.RolloutTimeout.String(), b.RolloutTimeout+30*time.Second
+	}
+	if !readOnlyGet {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, processTimeout)
+		defer cancel()
+	}
+	// Derive only Kubernetes metadata/collection identities for the reporter.
+	// Never expose raw command arguments, request bodies or provider output.
+	namespace := ""
+	dry := false
+	for i, arg := range args {
+		if arg == "--namespace" && i+1 < len(args) {
+			namespace = args[i+1]
+		}
+		if strings.HasPrefix(arg, "--namespace=") {
+			namespace = strings.TrimPrefix(arg, "--namespace=")
+		}
+		if arg == "--dry-run=server" {
+			dry = true
+		}
+	}
+	action, resourceID := "", ""
+	if len(args) >= 2 {
+		switch args[0] {
+		case "get":
+			action = "read"
+			if args[1] == environmentNamespacedInventoryKinds {
+				action, resourceID = "inventory", environmentProgressResourceID("Namespace", "", namespace)
+			} else if args[1] == environmentClusterInventoryKinds {
+				action, resourceID = "inventory", environmentProgressResourceID("ClusterRole", "", "")
+			} else {
+				name := ""
+				if len(args) > 2 && !strings.HasPrefix(args[2], "-") {
+					name = args[2]
+				} else {
+					action = "inventory"
+				}
+				resourceID = environmentProgressResourceID(args[1], namespace, name)
+			}
+		case "create", "replace", "delete":
+			action = "apply"
+			if dry {
+				action = "dry-run"
+			}
+			var body deploymentplan.Object
+			if json.Unmarshal(input, &body) == nil {
+				if body["kind"] == "SelfSubjectAccessReview" {
+					attributes := deploymentplan.Map(deploymentplan.Map(body["spec"])["resourceAttributes"])
+					action = environmentProgressPermissionAction(deploymentplan.String(attributes["verb"]))
+					resourceID = environmentProgressResourceID(deploymentplan.String(attributes["resource"]), deploymentplan.String(attributes["namespace"]), deploymentplan.String(attributes["name"]))
+				} else {
+					metadata := deploymentplan.Map(body["metadata"])
+					resourceID = environmentProgressResourceID(deploymentplan.String(body["kind"]), deploymentplan.String(metadata["namespace"]), deploymentplan.String(metadata["name"]))
+				}
+			}
+			if args[0] == "delete" {
+				for _, arg := range args {
+					if !strings.HasPrefix(arg, "--raw=") {
+						continue
+					}
+					path, err := url.Parse(strings.TrimPrefix(arg, "--raw="))
+					if err != nil || path.Host != "" || path.User != nil {
+						continue
+					}
+					parts := strings.Split(strings.Trim(path.Path, "/"), "/")
+					if len(parts) < 2 {
+						continue
+					}
+					if path.Query().Get("dryRun") != "" {
+						action = "dry-run"
+					}
+					namespace := ""
+					for index := 0; index+1 < len(parts); index++ {
+						if parts[index] == "namespaces" {
+							namespace = parts[index+1]
+						}
+					}
+					resourceID = environmentProgressResourceID(parts[len(parts)-2], namespace, parts[len(parts)-1])
+				}
+			}
+		case "auth":
+			if len(args) > 3 && args[1] == "can-i" {
+				parts := strings.SplitN(args[3], "/", 2)
+				name := ""
+				if len(parts) == 2 {
+					name = parts[1]
+				}
+				action, resourceID = environmentProgressPermissionAction(args[2]), environmentProgressResourceID(parts[0], namespace, name)
+			}
+		}
+	}
+	if waitCommand {
+		action = "wait"
+		for _, arg := range args[commandIndex+1:] {
+			if strings.HasPrefix(arg, "-") {
+				continue
+			}
+			parts := strings.SplitN(arg, "/", 2)
+			if len(parts) == 2 {
+				resourceID = environmentProgressResourceID(parts[0], namespace, parts[1])
+				break
+			}
+		}
+	}
+	finished := environmentDeploymentOperation(ctx, action, resourceID)
+	defer finished()
 	path, cleanup, err := b.privateKubeconfig()
 	if err != nil {
 		return nil, err
 	}
 	defer cleanup()
-	argv := append([]string{"--kubeconfig", path, "--request-timeout=90s"}, args...)
-	cmd := exec.CommandContext(ctx, "kubectl", argv...)
-	cmd.WaitDelay = time.Second
-	cmd.Stdin = bytes.NewReader(input)
-	var stdout environmentAPIOutput
-	cmd.Stdout = &stdout
-	if err := cmd.Run(); err != nil {
+	argv := append([]string{"--kubeconfig", path, "--request-timeout=" + requestTimeout}, args...)
+	for attempt := 0; ; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		commandContext, cancel := context.WithTimeout(ctx, processTimeout)
+		cmd := exec.CommandContext(commandContext, "kubectl", argv...)
+		cmd.WaitDelay = time.Second
+		cmd.Stdin = bytes.NewReader(input)
+		var stdout environmentAPIOutput
+		var stderr environmentPrivateAPIErrorOutput
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		measured := beginDeploymentQuery(ctx, "kubectl")
+		err := cmd.Run()
+		measured(err)
+		var failure *deploymentRuntimeError
+		if readOnlyGet && stdout.exceeded {
+			failure = &deploymentRuntimeError{"KUBE_INVALID_RESPONSE", "inventory response exceeds the native output bound"}
+		} else if err != nil {
+			failure = classifyDeploymentRuntimeError(commandContext, stderr.buffer.Bytes(), err, false)
+		}
+		cancel()
+		if failure == nil {
+			capturePreflightGateResponse(ctx, stdout.buffer.Bytes())
+			return stdout.buffer.Bytes(), nil
+		}
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, errors.New("selected Kubernetes API operation failed; inspect sanitized admission events with environment-local access")
+		if !readOnlyGet || !transientDeploymentReadError(failure) || attempt+1 >= deploymentReadMaxAttempts {
+			if failure.code != "KUBE_COMMAND_FAILED" {
+				return nil, failure
+			}
+			return nil, errors.New("selected Kubernetes API operation failed; inspect sanitized admission events with environment-local access")
+		}
+		timer := time.NewTimer(readRuntime.retryDelay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
 	}
-	return stdout.buffer.Bytes(), nil
 }
 
 func environmentResourceArguments(id string) ([]string, error) {
@@ -309,7 +496,8 @@ func (o *environmentOwnerReadOutput) Write(p []byte) (int, error) {
 
 // Resource and storage fences require a fresh GET with the frozen identity.
 // Bound native output and classify stderr in memory; only transient read
-// failures may retry once. Empty or incompatible observations are not retried.
+// failures may retry at most three attempts. Empty or incompatible observations
+// are not retried, and every success still proves the selected original owner.
 func (b environmentKubernetesBackend) readOwner(ctx context.Context, id string) (deploymentplan.Object, *deploymentRuntimeError) {
 	if err := ctx.Err(); err != nil {
 		return nil, classifyDeploymentRuntimeError(ctx, nil, err, false)
@@ -318,6 +506,8 @@ func (b environmentKubernetesBackend) readOwner(ctx context.Context, id string) 
 	if err != nil {
 		return nil, &deploymentRuntimeError{"KUBE_INVALID_RESPONSE", "invalid resource identity"}
 	}
+	finished := environmentDeploymentOperation(ctx, "read", id)
+	defer finished()
 	path, cleanup, err := b.privateKubeconfig()
 	if err != nil {
 		return nil, &deploymentRuntimeError{"KUBE_CONFIG_UNAVAILABLE", "frozen selected Kubernetes identity is unavailable"}
@@ -326,6 +516,9 @@ func (b environmentKubernetesBackend) readOwner(ctx context.Context, id string) 
 	runtime := newDeploymentCheckRuntime(ctx, b.Store.Environment)
 	args = append(append([]string{"--kubeconfig", path, "--request-timeout=" + runtime.requestTimeout.String(), "get"}, args...), "--ignore-not-found=true", "-o", "json")
 	for attempt := 0; ; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, classifyDeploymentRuntimeError(ctx, nil, err, false)
+		}
 		commandContext, cancel := context.WithTimeout(ctx, runtime.processTimeout)
 		cmd := exec.CommandContext(commandContext, lkeKubectl(), args...)
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -360,8 +553,7 @@ func (b environmentKubernetesBackend) readOwner(ctx context.Context, id string) 
 			}
 			return object, nil
 		}
-		transient := failure.code == "KUBE_TIMEOUT" || failure.code == "KUBE_RATE_LIMITED" || failure.code == "KUBE_UNAVAILABLE"
-		if !transient || attempt != 0 || ctx.Err() != nil {
+		if !transientDeploymentReadError(failure) || attempt+1 >= deploymentReadMaxAttempts || ctx.Err() != nil {
 			return nil, failure
 		}
 		timer := time.NewTimer(runtime.retryDelay)
@@ -403,29 +595,54 @@ func (b environmentKubernetesBackend) Write(ctx context.Context, action string, 
 	return object, nil
 }
 
-func (b environmentKubernetesBackend) Wait(ctx context.Context, resource deploymentplan.Resource) error {
+func (b environmentKubernetesBackend) Wait(ctx context.Context, resource deploymentplan.Resource) (resultErr error) {
 	parts := strings.Split(resource.ID, "/")
+	onDeleteOpenBao := environmentOnDeleteOpenBao(resource) && (resource.Action == "update" || resource.Action == "retain")
+	waits := resource.Action == "retire" || onDeleteOpenBao
+	switch parts[0] {
+	case "Deployment", "StatefulSet", "DaemonSet", "Job", "Pod", "PersistentVolumeClaim":
+		waits = true
+	}
+	if waits {
+		if b.RolloutTimeout <= 0 {
+			return &deploymentplan.Blocker{ID: "deployment.configuration.rollout-timeout", Resource: resource.ID, Cause: "a positive shared rollout timeout is required", Next: "set DEPLOYMENT_ROLLOUT_TIMEOUT_SECONDS in the common architecture configuration and repeat full preflight"}
+		}
+		restore := environmentExecutionWaitProgress(ctx, resource.Phase)
+		// Explicit returns replace this value; a panic cannot report readiness OK.
+		resultErr = errors.New("resource readiness wait did not complete")
+		defer func() { restore(resultErr) }()
+		defer func() { resultErr = environmentRolloutFailure(ctx, resource, resultErr, b.RolloutTimeout) }()
+	}
+	waitTimeout := fmt.Sprintf("--timeout=%ds", int64(b.RolloutTimeout/time.Second))
 	args := []string{"--namespace", parts[1]}
 	if resource.Action == "retire" {
-		args = append(args, "wait", "--for=delete", parts[0]+"/"+parts[2], "--timeout=90s")
+		args = append(args, "wait", "--for=delete", parts[0]+"/"+parts[2], waitTimeout)
 		_, err := b.command(ctx, nil, args...)
 		return err
 	}
-	if environmentOnDeleteUpdate(resource) {
-		return b.waitOnDeleteOpenBao(ctx, resource)
+	if onDeleteOpenBao {
+		return b.waitWithRolloutProgress(ctx, resource, func() error { return b.waitOnDeleteOpenBao(ctx, resource) })
 	}
 	switch parts[0] {
 	case "Deployment", "StatefulSet", "DaemonSet":
-		args = append(args, "rollout", "status", parts[0]+"/"+parts[2], "--timeout=90s")
+		args = append(args, "rollout", "status", parts[0]+"/"+parts[2], waitTimeout)
 	case "Job":
-		args = append(args, "wait", "--for=condition=complete", "Job/"+parts[2], "--timeout=90s")
+		args = append(args, "wait", "--for=condition=complete", "Job/"+parts[2], waitTimeout)
+		if err := b.waitJobTerminal(ctx, resource, args); err != nil {
+			return err
+		}
+		return b.verifySchemaOwnerJob(ctx, resource)
+	case "Pod":
+		args = append(args, "wait", "--for=condition=Ready", "Pod/"+parts[2], waitTimeout)
 	case "PersistentVolumeClaim":
-		args = append(args, "wait", "--for=jsonpath={.status.phase}=Bound", "PersistentVolumeClaim/"+parts[2], "--timeout=90s")
+		args = append(args, "wait", "--for=jsonpath={.status.phase}=Bound", "PersistentVolumeClaim/"+parts[2], waitTimeout)
 	default:
 		return nil
 	}
-	_, err := b.command(ctx, nil, args...)
-	return err
+	return b.waitWithRolloutProgress(ctx, resource, func() error {
+		_, err := b.command(ctx, nil, args...)
+		return err
+	})
 }
 
 func (b environmentKubernetesBackend) Inventory(ctx context.Context, stack string) ([]deploymentplan.Object, error) {
@@ -439,22 +656,77 @@ func (b environmentKubernetesBackend) Inventory(ctx context.Context, stack strin
 	if json.Unmarshal(raw, &list) != nil {
 		return nil, errors.New("cannot decode namespace inventory")
 	}
-	var resources []deploymentplan.Object
+	var namespaces []deploymentplan.Object
 	for _, namespace := range list.Items {
 		name := deploymentplan.String(deploymentplan.Map(namespace["metadata"])["name"])
 		if !strings.HasPrefix(name, stack+"-") {
 			continue
 		}
-		resources = append(resources, namespace)
-		raw, err = b.command(ctx, nil, "get", environmentNamespacedInventoryKinds, "--namespace", name, "-o", "json")
+		namespaces = append(namespaces, namespace)
+	}
+	// Namespace collections are independent reads. Preserve their API order,
+	// stop new dispatch on failure/cancellation and join every started process.
+	type namespaceResult struct {
+		index int
+		items []deploymentplan.Object
+		err   error
+	}
+	workers := min(environmentDeploymentCheckConcurrency, len(namespaces))
+	completed := make(chan namespaceResult, workers)
+	itemsByIndex := make([][]deploymentplan.Object, len(namespaces))
+	errorsByIndex := make([]error, len(namespaces))
+	var joined sync.WaitGroup
+	next, active := 0, 0
+	dispatch := func() {
+		index := next
+		next++
+		active++
+		joined.Add(1)
+		go func() {
+			defer joined.Done()
+			name := deploymentplan.String(deploymentplan.Map(namespaces[index]["metadata"])["name"])
+			raw, err := b.command(ctx, nil, "get", environmentNamespacedInventoryKinds, "--namespace", name, "-o", "json")
+			var collection struct {
+				Items []deploymentplan.Object `json:"items"`
+			}
+			if err != nil {
+				if ctx.Err() != nil {
+					err = ctx.Err()
+				} else {
+					err = fmt.Errorf("deployment.inventory: cannot enumerate resources in %s", name)
+				}
+			} else if json.Unmarshal(raw, &collection) != nil {
+				err = errors.New("cannot decode complete environment inventory")
+			}
+			completed <- namespaceResult{index, collection.Items, err}
+		}()
+	}
+	for next < len(namespaces) && active < workers && ctx.Err() == nil {
+		dispatch()
+	}
+	failed := false
+	for active > 0 {
+		result := <-completed
+		active--
+		itemsByIndex[result.index], errorsByIndex[result.index] = result.items, result.err
+		failed = failed || result.err != nil
+		if !failed && next < len(namespaces) && ctx.Err() == nil {
+			dispatch()
+		}
+	}
+	joined.Wait()
+	for _, err := range errorsByIndex {
 		if err != nil {
-			return nil, fmt.Errorf("deployment.inventory: cannot enumerate resources in %s", name)
+			return nil, err
 		}
-		list.Items = nil
-		if json.Unmarshal(raw, &list) != nil {
-			return nil, errors.New("cannot decode complete environment inventory")
-		}
-		resources = append(resources, list.Items...)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	var resources []deploymentplan.Object
+	for index, namespace := range namespaces {
+		resources = append(resources, namespace)
+		resources = append(resources, itemsByIndex[index]...)
 	}
 	raw, err = b.command(ctx, nil, "get", environmentClusterInventoryKinds, "-l", "rtk.realtek.com/stack="+stack, "-o", "json")
 	if err != nil {
@@ -537,7 +809,13 @@ func (b environmentKubernetesBackend) retire(ctx context.Context, body deploymen
 	if dry {
 		path += "?dryRun=All"
 	}
-	raw, _ := json.Marshal(map[string]any{"apiVersion": "v1", "kind": "DeleteOptions", "propagationPolicy": "Foreground", "preconditions": map[string]string{"uid": uid, "resourceVersion": rv}})
+	options := map[string]any{"apiVersion": "v1", "kind": "DeleteOptions", "propagationPolicy": "Foreground", "preconditions": map[string]string{"uid": uid, "resourceVersion": rv}}
+	if dry {
+		// With a request body, the API server decodes DeleteOptions from that
+		// body rather than the URL query. Query-only dryRun can delete the Pod.
+		options["dryRun"] = []string{"All"}
+	}
+	raw, _ := json.Marshal(options)
 	if _, err := b.command(ctx, raw, "delete", "--raw="+path, "-f", "-"); err != nil {
 		return nil, err
 	}

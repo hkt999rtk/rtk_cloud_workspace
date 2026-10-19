@@ -161,6 +161,12 @@ func TestMQTTFoundationQualificationValidatesRetainedMutualTLSAndCRL(t *testing.
 			if err != nil && strings.Contains(err.Error(), "private-provider-output-canary") {
 				t.Fatal("private provider output leaked")
 			}
+			if scenario == "wrong-service" && !strings.Contains(err.Error(), "wrong identity or purpose") {
+				t.Fatal("checker-owned identity failure was hidden")
+			}
+			if scenario == "expired" && !strings.Contains(err.Error(), "registration identity validation failed:") {
+				t.Fatal("checker-owned expiration cause was hidden")
+			}
 		})
 	}
 }

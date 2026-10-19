@@ -31,7 +31,7 @@ func TestCompleteQualificationTimeoutDefaults(t *testing.T) {
 			{"create", []string{"--phase", "pre-deploy", "--operation", "create"}, defaultCompleteDeploymentTimeout},
 			{"health", nil, 10 * time.Minute},
 			{"image-upgrade", []string{"--phase", "pre-deploy", "--operation", "image-upgrade", "--image", image, "--manifest", manifest}, 10 * time.Minute},
-			{"fast", []string{"--phase", "pre-deploy", "--fast"}, 2 * time.Minute},
+			{"fast-health", []string{"--phase", "post-deploy", "--fast"}, 2 * time.Minute},
 			{"explicit", []string{"--phase", "pre-deploy", "--timeout", "3m"}, 3 * time.Minute},
 		} {
 			t.Run(environment+"/"+tc.name, func(t *testing.T) {
@@ -41,18 +41,50 @@ func TestCompleteQualificationTimeoutDefaults(t *testing.T) {
 				}
 			})
 		}
-		for _, args := range [][]string{nil, {"--fast"}, {"--fast", "--timeout", "3m"}} {
+		for _, args := range [][]string{nil, {"--timeout", "3m"}} {
 			o, err := parseUnifiedDeploymentOptions("preflight", append([]string{"--environment", environment}, args...), io.Discard)
 			want := defaultCompleteDeploymentTimeout
-			if len(args) == 1 {
-				want = 2 * time.Minute
-			}
-			if len(args) > 1 {
+			if len(args) > 0 {
 				want = 3 * time.Minute
 			}
 			if err != nil || o.Timeout != want {
 				t.Fatalf("direct options=%+v err=%v", o, err)
 			}
+		}
+	}
+}
+
+func TestPreflightRejectsRemovedFastOptionBeforeAnyWork(t *testing.T) {
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		for _, option := range []string{"--fast", "-fast", "--fast=true", "--fast=false", "-fast=false"} {
+			t.Run(environment+"/"+option, func(t *testing.T) {
+				for _, operation := range []string{"full-deployment", "create", "image-upgrade"} {
+					args := []string{"--environment", environment, "--phase", "pre-deploy", "--operation", operation, option}
+					deps := deploymentCheckDependencies{guard: func([]string) error {
+						t.Fatal("removed option reached operator state")
+						return nil
+					}, resolve: func(string, string, string) (deploymentConfig, error) {
+						t.Fatal("removed option reached configuration")
+						return deploymentConfig{}, nil
+					}}
+					if err := runDeploymentCheckWithDependencies(t.Context(), args, io.Discard, io.Discard, deps); err != exitCode(2) {
+						t.Fatalf("operation=%s err=%v", operation, err)
+					}
+				}
+				for _, operation := range []string{"create", "upgrade"} {
+					args := []string{"--environment", environment, "--operation", operation, option}
+					deps := unifiedDeploymentDependencies{Guard: func([]string) error {
+						t.Fatal("removed option reached operator state")
+						return nil
+					}, Resolve: func(string, string, string) (deploymentConfig, error) {
+						t.Fatal("removed option reached configuration")
+						return deploymentConfig{}, nil
+					}}
+					if err := runUnifiedEnvironmentDeploymentWithDependencies(t.Context(), "preflight", args, io.Discard, io.Discard, deps); err != exitCode(2) {
+						t.Fatalf("direct operation=%s err=%v", operation, err)
+					}
+				}
+			})
 		}
 	}
 }

@@ -173,9 +173,9 @@ func run(args []string) error {
 		return nil
 	}
 	args = normalizeLegacyPathArgs(args)
-	// The deployment-check facade validates all arguments before consulting
-	// the same maintenance fence. Other commands retain their existing order.
-	if !(len(args) > 1 && args[0] == "deployment" && args[1] == "check") {
+	// Deployment check and direct preflight validate all arguments before
+	// consulting the same maintenance fence. Other commands retain their order.
+	if !(len(args) > 1 && args[0] == "deployment" && (args[1] == "check" || args[1] == "preflight")) {
 		if err := recoveryMutationGuard(args); err != nil {
 			return err
 		}

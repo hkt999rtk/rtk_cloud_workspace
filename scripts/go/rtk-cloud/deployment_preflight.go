@@ -70,6 +70,16 @@ func validateDeploymentPreflightDNS(ctx context.Context, cfg deploymentConfig) e
 // Preflight only discovers the existing cluster. It never creates resources,
 // writes kubeconfig or changes the operator's confirmed provider state.
 func discoverDeploymentPreflightLKECluster(ctx context.Context, token string, paths provisionPaths, env map[string]string, allowCreate bool) (lkeCluster, error) {
+	return discoverDeploymentPreflightLKEClusterForOperation(ctx, token, paths, env, allowCreate, false)
+}
+
+// Fresh creation also checks exact stack tags to fence renamed provider owners.
+// A tag match is a conflict, never permission to adopt or replace the cluster.
+func discoverDeploymentPreflightLKECreateTarget(ctx context.Context, token string, paths provisionPaths, env map[string]string) (lkeCluster, error) {
+	return discoverDeploymentPreflightLKEClusterForOperation(ctx, token, paths, env, false, true)
+}
+
+func discoverDeploymentPreflightLKEClusterForOperation(ctx context.Context, token string, paths provisionPaths, env map[string]string, allowCreate, fresh bool) (lkeCluster, error) {
 	if err := ctx.Err(); err != nil {
 		return lkeCluster{}, err
 	}
@@ -113,16 +123,22 @@ func discoverDeploymentPreflightLKECluster(ctx context.Context, token string, pa
 	pages, results := 0, 0
 	for page := 1; ; page++ {
 		raw, err := deploymentPreflightLKERead(ctx, token, fmt.Sprintf("/lke/clusters?page_size=500&page=%d", page))
-		if err != nil {
+		if err != nil || len(raw) > 32<<20 {
+			if err == nil {
+				err = errors.New("LKE cluster inventory exceeds the read-only discovery bound")
+			}
 			return lkeCluster{}, err
 		}
 		var inventory struct {
-			Data    []lkeCluster `json:"data"`
-			Page    int          `json:"page"`
-			Pages   *int         `json:"pages"`
-			Results *int         `json:"results"`
+			Data []struct {
+				lkeCluster
+				Tags *[]string `json:"tags"`
+			} `json:"data"`
+			Page    int  `json:"page"`
+			Pages   *int `json:"pages"`
+			Results *int `json:"results"`
 		}
-		if err := json.Unmarshal(raw, &inventory); err != nil || inventory.Data == nil || inventory.Page != page || inventory.Pages == nil || inventory.Results == nil || *inventory.Results < 0 {
+		if err := json.Unmarshal(raw, &inventory); err != nil || inventory.Data == nil || inventory.Page != page || inventory.Pages == nil || inventory.Results == nil || *inventory.Pages > 1000 || *inventory.Results < 0 || *inventory.Results > 500000 {
 			return lkeCluster{}, errors.New("LKE cluster inventory pagination or data is incomplete; cluster absence is not confirmed")
 		}
 		// The published pagination schema does not constrain empty inventories
@@ -139,13 +155,29 @@ func discoverDeploymentPreflightLKECluster(ctx context.Context, token string, pa
 		} else if *inventory.Pages != pages || *inventory.Results != results {
 			return lkeCluster{}, errors.New("LKE cluster inventory changed during pagination; repeat qualification before assuming the environment is absent")
 		}
-		for _, cluster := range inventory.Data {
+		for _, entry := range inventory.Data {
+			cluster := entry.lkeCluster
 			if cluster.ID <= 0 || strings.TrimSpace(cluster.Label) == "" || seen[cluster.ID] {
 				return lkeCluster{}, errors.New("LKE cluster inventory has invalid or repeated identities; cluster absence is not confirmed")
 			}
 			seen[cluster.ID] = true
-			if cluster.Label == label {
+			matchedStackTag := false
+			if fresh {
+				if entry.Tags == nil {
+					return lkeCluster{}, errors.New("LKE cluster tags are unavailable; renamed stack ownership cannot be excluded")
+				}
+				for _, tag := range *entry.Tags {
+					if strings.TrimSpace(tag) == "" {
+						return lkeCluster{}, errors.New("LKE cluster tags are invalid; renamed stack ownership cannot be excluded")
+					}
+					matchedStackTag = matchedStackTag || tag == env["CLOUD_STACK_NAME"]
+				}
+			}
+			if cluster.Label == label || matchedStackTag {
 				if matched.ID != 0 {
+					if fresh {
+						return lkeCluster{}, errors.New("resolved LKE label or exact stack tag selects multiple IDs; reconcile the target before create qualification")
+					}
 					return lkeCluster{}, errors.New("resolved LKE cluster label selects multiple IDs; reconcile the target before deployment qualification")
 				}
 				matched = cluster

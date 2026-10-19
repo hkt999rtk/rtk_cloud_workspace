@@ -116,6 +116,16 @@ func renderManagedEnvironmentAPI(env map[string]string, binding environmentPodBi
 		deploymentplan.Map(value)["labelSelector"] = map[string]any{"matchLabels": map[string]any{"app.kubernetes.io/name": binding.Name}}
 	}
 	if binding.Component == "managed-api" {
+		// The formal API image owns UID 10001. Supplementary group 0 reads
+		// the original root:root 0440 TLS Secret without fsGroup changing any
+		// private identity PVC metadata or copying the mounted key material.
+		pod["securityContext"] = map[string]any{"supplementalGroups": []any{float64(0)}}
+		security := deploymentplan.Map(container["securityContext"])
+		if security == nil {
+			security = deploymentplan.Object{}
+			container["securityContext"] = security
+		}
+		security["runAsNonRoot"], security["runAsUser"], security["runAsGroup"] = true, float64(10001), float64(10001)
 		var initializers []any
 		for _, bound := range binding.InitContainers {
 			c, err := maintainedDeviceInitializer(bound.Name, binding.DeviceTrustStateFile)
@@ -123,6 +133,10 @@ func renderManagedEnvironmentAPI(env map[string]string, binding environmentPodBi
 				return nil, err
 			}
 			c["image"] = env["LKE_VIDEO_CLOUD_IMAGE"]
+			if binding.NativeTrustInitialization && bound.Name == "initialize-trust-state" {
+				c["command"] = []any{"/bin/sh", "-ec", deviceNativeTrustPreparation(binding.DeviceTrustStateFile)}
+				c["volumeMounts"] = []any{map[string]any{"name": "pki-state", "mountPath": "/run/pki-state"}}
+			}
 			initializers = append(initializers, c)
 		}
 		if len(initializers) > 0 {
@@ -134,10 +148,20 @@ func renderManagedEnvironmentAPI(env map[string]string, binding environmentPodBi
 			return nil, err
 		}
 		pod["securityContext"] = map[string]any{"fsGroup": float64(10001), "fsGroupChangePolicy": "OnRootMismatch"}
+		if binding.NativeTrustInitialization {
+			// The fresh native owner already installed private Service state.
+			// Preserve that state and read the original root:root 0440 TLS
+			// Secret through group 0 without a recursive PVC fsGroup rewrite.
+			pod["securityContext"] = map[string]any{"runAsNonRoot": true, "runAsUser": float64(10001), "runAsGroup": float64(10001), "supplementalGroups": []any{float64(0)}, "seccompProfile": map[string]any{"type": "RuntimeDefault"}}
+		}
 		spec["strategy"] = map[string]any{"type": "Recreate"}
 		container["ports"] = []any{map[string]any{"name": "https", "containerPort": float64(8443)}}
-		container["env"] = mergeEnvironmentNamedFields(container["env"], []any{map[string]any{"name": "VIDEO_CLOUD_MQTT_ENABLED", "value": "false"}, map[string]any{"name": "VIDEO_CLOUD_MQTT_AUTH_ADDR", "value": ""}})
-		pod["initContainers"] = []any{map[string]any{"name": "initialize-app-trust-state", "command": []any{"/bin/sh", "-ec", environmentAppTrustInitialize}, "volumeMounts": []any{map[string]any{"name": "pki-state", "mountPath": "/run/pki-state"}, map[string]any{"name": "pki-app", "mountPath": "/run/pki-app", "readOnly": true}}}}
+		container["env"] = mergeEnvironmentNamedFields(container["env"], []any{map[string]any{"name": "VIDEO_CLOUD_MQTT_ENABLED", "value": "false"}, map[string]any{"name": "VIDEO_CLOUD_MQTT_AUTH_ADDR", "value": ""}, map[string]any{"name": "VIDEO_CLOUD_TURN_CREDENTIAL_TTL", "value": "1m"}})
+		trustInitialize := environmentAppTrustInitialize
+		if binding.NativeTrustInitialization {
+			trustInitialize = environmentAppNativeTrustInitialize
+		}
+		pod["initContainers"] = []any{map[string]any{"name": "initialize-app-trust-state", "command": []any{"/bin/sh", "-ec", trustInitialize}, "volumeMounts": []any{map[string]any{"name": "pki-state", "mountPath": "/run/pki-state"}, map[string]any{"name": "pki-app", "mountPath": "/run/pki-app", "readOnly": true}}}}
 	}
 	if err := applyEnvironmentAuthRole(env, object); err != nil {
 		return nil, err
@@ -170,10 +194,13 @@ func applyManagedBrokerDefaults(env map[string]string, object deploymentplan.Obj
 	for _, name := range sortedMapKeys(credentials) {
 		mqtt["env"] = append(mqtt["env"].([]any), map[string]any{"name": name, "valueFrom": map[string]any{"secretKeyRef": map[string]any{"name": "mqtt-pki-runtime", "key": credentials[name]}}})
 	}
-	database := map[string]any{"name": "PKI_DATABASE_URL", "valueFrom": map[string]any{"secretKeyRef": map[string]any{"name": "mqtt-pki-database", "key": "url"}}}
+	database := map[string]any{"name": "PKI_DATABASE_URL", "valueFrom": map[string]any{"secretKeyRef": map[string]any{"name": "pki-verifier-database", "key": "url"}}}
 	mqtt["env"] = append(mqtt["env"].([]any), database)
 	broker["env"] = []any{database, map[string]any{"name": "PKI_ENVIRONMENT", "value": env["CLOUD_ENV_NAME"]}, map[string]any{"name": "PKI_BROKER_API_URL", "value": "http://127.0.0.1:18083/api/v5"}}
-	broker["envFrom"] = []any{map[string]any{"secretRef": map[string]any{"name": "mqtt-pki-worker"}}}
+	broker["env"] = append(broker["env"].([]any),
+		map[string]any{"name": "PKI_BROKER_API_KEY", "valueFrom": map[string]any{"secretKeyRef": map[string]any{"name": "video-cloud-workers-runtime", "key": "VIDEO_CLOUD_EMQX_API_KEY"}}},
+		map[string]any{"name": "PKI_BROKER_API_SECRET", "valueFrom": map[string]any{"secretKeyRef": map[string]any{"name": "video-cloud-workers-runtime", "key": "VIDEO_CLOUD_EMQX_API_SECRET"}}},
+	)
 	volumes := []any{
 		map[string]any{"name": "data", "persistentVolumeClaim": map[string]any{"claimName": "mqtt-pki-data"}},
 		map[string]any{"name": "pki-state", "persistentVolumeClaim": map[string]any{"claimName": "mqtt-pki-trust"}},
@@ -202,7 +229,7 @@ func applyManagedControllerDefaults(env map[string]string, object deploymentplan
 	container["readinessProbe"] = map[string]any{"tcpSocket": map[string]any{"port": "https"}, "periodSeconds": float64(10)}
 	pod["serviceAccountName"], pod["automountServiceAccountToken"] = "pki-controller", false
 	pod["imagePullSecrets"] = []any{map[string]any{"name": "ghcr-pull"}}
-	pod["securityContext"] = map[string]any{"runAsNonRoot": true, "runAsUser": float64(10001), "runAsGroup": float64(10001), "fsGroup": float64(10001), "seccompProfile": map[string]any{"type": "RuntimeDefault"}}
+	pod["securityContext"] = map[string]any{"runAsNonRoot": true, "runAsUser": float64(10001), "runAsGroup": float64(10001), "fsGroup": float64(10001), "fsGroupChangePolicy": "OnRootMismatch", "seccompProfile": map[string]any{"type": "RuntimeDefault"}}
 	volumes := []any{
 		map[string]any{"name": "pki-tls", "secret": map[string]any{"secretName": "pki-controller-tls", "defaultMode": float64(288)}},
 		map[string]any{"name": "account-key", "configMap": map[string]any{"name": "pki-account-manager-public-key"}},
@@ -250,4 +277,62 @@ func environmentManagedConsumerDependencies(env map[string]string) []deploymentp
 		)
 	}
 	return definitions
+}
+
+// Full ordinary workload intent extends the already accepted native endpoint.
+// Keep the bootstrap recipe unchanged for historical receipt authentication.
+func environmentFullManagedConsumerDependencies(env map[string]string) []deploymentplan.Definition {
+	namespace := lkeNamespaceName(env, "video-cloud")
+	meta := func(name string) map[string]any { return map[string]any{"name": name, "namespace": namespace} }
+	selector := func(name string) map[string]any {
+		return map[string]any{"matchLabels": map[string]any{"app.kubernetes.io/name": name}}
+	}
+	ingress := map[string]any{"namespaceSelector": map[string]any{"matchLabels": map[string]any{"kubernetes.io/metadata.name": lkeNamespaceName(env, "ingress")}}}
+	clients := []any{ingress}
+	for _, name := range []string{"video-cloud-api", "video-cloud-logingester", "video-cloud-mqttusage"} {
+		clients = append(clients, map[string]any{"podSelector": selector(name)})
+	}
+	for _, client := range []struct {
+		name    string
+		enabled bool
+	}{{"video-cloud-mqttfoundation", lkeMQTTFoundationRegistrationEnabled(env)}, {"video-cloud-shadowworker", lkeShadowWorkerRegistrationEnabled(env)}} {
+		if client.enabled {
+			clients = append(clients, map[string]any{"podSelector": selector(client.name)})
+		}
+	}
+	management := map[string]any{"podSelector": selector("video-cloud-mqttusage")}
+
+	definitions := environmentManagedConsumerDependencies(env)
+	for _, d := range definitions {
+		if deploymentplan.ID(d.Object) == "NetworkPolicy/"+namespace+"/allow-mqtt-pki" {
+			deploymentplan.Map(d.Object["spec"])["ingress"] = []any{
+				map[string]any{"from": clients, "ports": []any{map[string]any{"protocol": "TCP", "port": float64(8883)}}},
+				map[string]any{"from": []any{management}, "ports": []any{map[string]any{"protocol": "TCP", "port": float64(18083)}}},
+			}
+		}
+	}
+	// Existing billing and enabled Test Lab endpoints route to the native owner.
+	// The legacy plaintext broker and headless cluster are not target producers.
+	ports := []any{map[string]any{"name": "dashboard", "port": float64(18083), "targetPort": float64(18083)}}
+	if lkeTestLabEnabled(env) {
+		ports = append(ports, map[string]any{"name": "testlab-ws", "port": float64(8083), "targetPort": float64(8085)})
+		for _, d := range definitions {
+			if deploymentplan.ID(d.Object) == "NetworkPolicy/"+namespace+"/allow-mqtt-pki" {
+				spec := deploymentplan.Map(d.Object["spec"])
+				spec["ingress"] = append(certIssuerObjectList(spec["ingress"]), map[string]any{"from": []any{map[string]any{"namespaceSelector": map[string]any{"matchLabels": map[string]any{"kubernetes.io/metadata.name": lkeNamespaceName(env, "admin")}}, "podSelector": selector("cloud-admin")}}, "ports": []any{map[string]any{"protocol": "TCP", "port": float64(8085)}}})
+			}
+		}
+	}
+	definitions = append(definitions, deploymentplan.Definition{Object: deploymentplan.Object{"apiVersion": "v1", "kind": "Service", "metadata": meta("mqtt"), "spec": map[string]any{"type": "ClusterIP", "selector": selector("mqtt-pki")["matchLabels"], "ports": ports}}, Phase: "configuration"})
+	return definitions
+}
+
+func managedNamedField(values any, name string) map[string]any {
+	for _, value := range certIssuerObjectList(values) {
+		item := deploymentplan.Map(value)
+		if item["name"] == name {
+			return item
+		}
+	}
+	return nil
 }

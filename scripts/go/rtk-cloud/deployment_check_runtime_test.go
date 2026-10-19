@@ -135,7 +135,7 @@ esac
 		t.Fatal("cache reused a different kubeconfig")
 	}
 	var wg sync.WaitGroup
-	for range 8 {
+	for range environmentDeploymentCheckConcurrency {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -158,9 +158,9 @@ func TestDeploymentCheckRuntimeClassifiesAndBoundsRetries(t *testing.T) {
 		{"forbidden", "Error from server (Forbidden): password=private-marker", "KUBE_FORBIDDEN", 1},
 		{"unauthorized", "Unauthorized token=private-marker", "KUBE_UNAUTHORIZED", 1},
 		{"missing", "Error from server (NotFound): private-marker", "KUBE_NOT_FOUND", 1},
-		{"rate limit", "TooManyRequests private-marker", "KUBE_RATE_LIMITED", 2},
-		{"unavailable", "Service Unavailable private-marker", "KUBE_UNAVAILABLE", 2},
-		{"timeout", "TLS handshake timeout private-marker", "KUBE_TIMEOUT", 2},
+		{"rate limit", "TooManyRequests private-marker", "KUBE_RATE_LIMITED", 6},
+		{"unavailable", "Service Unavailable private-marker", "KUBE_UNAVAILABLE", 6},
+		{"timeout", "TLS handshake timeout private-marker", "KUBE_TIMEOUT", 6},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			calls := deploymentRuntimeTestKubectl(t, "printf '%s' \"$RTK_CHECK_DIAGNOSTIC\" >&2\nexit 1\n")
@@ -257,7 +257,7 @@ func TestDeploymentCheckRuntimeCancellationStopsDescendants(t *testing.T) {
 			}
 			started := time.Now()
 			_, err := runtime.kubectl(false, "get", "configmap", "trust", "-o", "json")
-			want, attempts := "KUBE_TIMEOUT", 2
+			want, attempts := "KUBE_TIMEOUT", 3
 			if cancelRun {
 				want, attempts = "CHECK_CANCELLED", 1
 			}

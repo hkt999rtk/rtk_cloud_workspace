@@ -34,7 +34,18 @@ func TestLKEDevLoggerCutoverPersistsThroughPlainConfigRender(t *testing.T) {
 		"LKE_LOGGER_MQTT_CORE_CUTOVER_ENABLED",
 		"LKE_LOGGER_RETENTION_STORAGE_ENABLED",
 		"LKE_LOGGER_BILLING_FACTS_ENABLED",
-		"LKE_OTA_REGISTRAR_REGISTRATION_ENABLED",
+	}
+	const retiredOTARegistrarFlag = "LKE_OTA_REGISTRAR_REGISTRATION_ENABLED"
+	for _, values := range []map[string]string{defaultValues, current} {
+		if _, present := values[retiredOTARegistrarFlag]; present {
+			t.Fatal("retired OTA registrar enablement must be absent from maintained configuration")
+		}
+	}
+	t.Setenv(retiredOTARegistrarFlag, "")
+	for _, service := range lkeVideoCloudAuxiliaryServices() {
+		if service.Name == "video-cloud-otaregistrar" || service.Binary == "otaregistrar" {
+			t.Fatal("plain Logger rendering must not retain an enabled legacy OTA registrar")
+		}
 	}
 	for _, flag := range flags {
 		if defaultValues[flag] != "false" {
@@ -66,12 +77,18 @@ func TestLKEDevLoggerCutoverPersistsThroughPlainConfigRender(t *testing.T) {
 			t.Fatal(err)
 		}
 		env := loaded.Values
+		if _, present := env[retiredOTARegistrarFlag]; present {
+			t.Fatalf("plain config pass %d restored retired OTA registrar enablement", pass+1)
+		}
 		if !lkeLoggerServiceRegistrationEnabled(env) || !lkeLoggerHTTPCoreCutoverEnabled(env) ||
 			!lkeLoggerMQTTCoreCutoverEnabled(env) || !lkeLoggerRetentionStorageEnabled(env) {
-			t.Fatalf("plain config pass %d lost persisted Logger/OTA gates", pass+1)
+			t.Fatalf("plain config pass %d lost persisted Logger gates", pass+1)
 		}
 		workload := lkeWorkload{Key: "video-cloud", Name: "video-cloud-api", Namespace: lkeNamespaceName(env, "video-cloud"), Port: 8080, Image: "example.test/video-cloud:reviewed"}
 		manifest := lkeDeploymentManifest(env, workload, nil)
+		if strings.Contains(manifest, "video-cloud-otaregistrar") || strings.Contains(manifest, "OTA_REGISTRAR_REGISTRATION_ENABLED") {
+			t.Fatalf("plain config pass %d restored the retired OTA registrar", pass+1)
+		}
 		for _, setting := range []string{
 			"name: VIDEO_CLOUD_LOGGER_HTTP_SERVICE_CUTOVER_ENABLED\n              value: \"true\"",
 			"name: VIDEO_CLOUD_LOGGER_MQTT_CUTOVER_ENABLED\n              value: \"true\"",

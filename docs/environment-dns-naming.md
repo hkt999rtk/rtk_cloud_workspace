@@ -1,4 +1,4 @@
-# Environment DNS Naming Policy
+# Environment, Infrastructure and DNS Naming Policy
 
 Status: active workspace policy.
 
@@ -6,14 +6,14 @@ Classification: source.
 
 Owner: `rtk_cloud_workspace`.
 
-Last reviewed: 2026-10-01.
+Last reviewed: 2026-10-12.
 
 Audience: deployment operators, service integrators, and workspace maintainers.
 
 ## Scope and authority
 
 This document owns the relationship between environment identity, stack identity,
-and public DNS names. It applies to the workspace deployment flow for `dev`,
+provider display names and public DNS names. It applies to the workspace deployment flow for `dev`,
 `staging`, `prod`, and additional named environments, independently of the cloud
 provider or DNS provider.
 
@@ -74,6 +74,58 @@ fit 253 characters. Store root domains and hostname inputs without a trailing
 dot, scheme, port, or path. Names must be unique within the root domain. Before
 adding an environment, compare its namespace and
 explicit exceptions with existing tracked environments and owned DNS records.
+
+## LKE cluster, pools and worker display names
+
+Environment identity must be visible in every managed LKE cluster, node pool and
+worker Linode display label. A provider cluster ID alone does not identify `dev`,
+`staging` or `prod` to an operator. Class-only labels such as `general` are not
+the naming target for new pools.
+
+| Resource | Required rule | Dev example |
+| --- | --- | --- |
+| LKE cluster label | `<stack>-lke` | `video-cloud-dev-lke` |
+| Node pool label | `<stack>-<node-class>` | `video-cloud-dev-general` |
+| Worker Linode display label | `<stack>-lke-<node-class>-<NN>` | `video-cloud-dev-lke-general-01` |
+| Kubernetes placement label | `rtk.io/node-class=<node-class>` | `rtk.io/node-class=general` |
+
+The node classes are `general`, `broker` and `database`. `NN` is a zero-padded
+ordinal, starting at `01`, unique within the selected stack and node class.
+Persist the ordinal-to-instance-ID binding; do not renumber surviving workers
+when another worker is added or removed. Provider cluster IDs and opaque worker
+suffixes belong in API identity and private deployment evidence, not the readable
+Linode display label. LKE may initially allocate a provider-generated name; the
+adapter verifies native ownership and assigns the maintained display label before
+claiming naming completion.
+Bindings use `deployment/adapters/lke/worker-labels.json` in the canonical selected
+environment store (0700 directories, 0600 file). The create adapter writes and
+verifies this mapping before bootstrap; later additions or replacements require
+reviewed mapping updates and must preserve surviving assignments.
+Use the same formulas for staging, prod and additional named environments.
+Validate the provider's pool-label limit (currently 32 characters) and worker
+display-label limit (currently 64 characters) before allocation; reject an
+overlong name rather than truncating away the environment or changing the stack.
+The LKE API's singular `label` is the pool/display name; plural `labels` contains
+Kubernetes placement labels. They are separate fields. See the official
+[node-pool API](https://techdocs.akamai.com/linode-api/reference/post-lke-cluster-pools)
+and [Linode display-label API](https://techdocs.akamai.com/linode-api/reference/put-linode-instance).
+
+For a pre-existing provider-generated worker display name, qualify its exact selected cluster,
+pool ID, worker instance ID and original Kubernetes Node UID before renaming the
+Linode display label. Record the original and new labels, native responses and
+readback privately under `deployment/repairs/lke-{naming,readable-name}-<UTC-time>/` in the selected
+environment store. A display-label repair must preserve instance and disk IDs,
+addresses, kubeconfig and deployment identities. Do not infer ownership from
+spelling. Never recycle or recreate a node merely to change a display label when
+an in-place label update suffices.
+
+`Node.metadata.name` and `kubernetes.io/hostname` remain provider/runtime identity;
+their provider-generated spelling is distinct from the operator-facing Linode label.
+A Linode display-label rename does not authorize changing those Kubernetes names
+or editing workload placement. Existing pools whose singular label cannot be
+updated in place require a separately qualified pool migration; their original
+pool ID and old label remain recorded until that operation completes. Node
+replacements and new pools must be checked against this naming target again.
 
 Cloud provider names, region codes, VM IDs, pod IDs, and release versions are not
 part of the default public service name. Changes to deployment location or
@@ -211,6 +263,7 @@ out of long-lived policy and supporting deployment documents.
 | Shared stack/service-name derivation and runtime validation | [`internal/envroot/envroot.go`](../scripts/go/rtk-cloud/internal/envroot/envroot.go) |
 | Effective public HTTPS routes and frontend exception | [`lke.go`](../scripts/go/rtk-cloud/lke.go) |
 | TURN node naming and count | [`k8s_coturn_vm.go`](../scripts/go/rtk-cloud/k8s_coturn_vm.go) |
+| Fresh LKE cluster and environment-bearing pool labels | [`deployment_create_provider.go`](../scripts/go/rtk-cloud/deployment_create_provider.go) |
 | Generic DNS plan, adapter boundary, and record ownership | [`dns_adapter.go`](../scripts/go/rtk-cloud/dns_adapter.go) |
 | Tracked configuration entry point | [`cloud_env/README.md`](../cloud_env/README.md) |
 | Directory/responsibility layout | [Cloud Environment Layout](cloud-env-layout.md) |

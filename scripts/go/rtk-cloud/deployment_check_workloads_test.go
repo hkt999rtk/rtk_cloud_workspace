@@ -184,3 +184,42 @@ func TestDeploymentWorkloadHealthOnDeleteRequiresReadyOwnedPodsAtDeclaredImages(
 		})
 	}
 }
+
+func TestWorkloadHealthSeparatesTerminalOneShotEvidenceFromServiceFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name, phase, restart string
+		owned, fail          bool
+	}{
+		{"completed inspection", "Succeeded", "Never", false, false},
+		{"failed historical probe", "Failed", "Never", false, false},
+		{"active inspection pending", "Pending", "Never", false, true},
+		{"standalone runtime failed", "Failed", "Always", false, true},
+		{"owned runtime failed", "Failed", "Never", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			items := deploymentHealthyInventory(t)
+			var oneShot deploymentHealthResource
+			raw, _ := json.Marshal(items[1])
+			_ = json.Unmarshal(raw, &oneShot)
+			oneShot.Metadata.Name = "retained-probe"
+			oneShot.Metadata.OwnerReferences = nil
+			if tc.owned {
+				_ = json.Unmarshal([]byte(`{"metadata":{"ownerReferences":[{"kind":"ReplicaSet"}]}}`), &oneShot)
+			}
+			oneShot.Spec.RestartPolicy = tc.restart
+			oneShot.Status.Phase = tc.phase
+			oneShot.Status.Conditions = nil
+			oneShot.Status.ContainerStatuses = nil
+			items = append(items, oneShot)
+			raw, _ = json.Marshal(map[string]any{"items": items})
+			if err := validateDeploymentWorkloadHealth("staging", raw); (err != nil) != tc.fail {
+				t.Fatal("one-shot evidence changed service health classification", err)
+			}
+			items[0].Status.ReadyReplicas = 0
+			raw, _ = json.Marshal(map[string]any{"items": items})
+			if err := validateDeploymentWorkloadHealth("staging", raw); err == nil {
+				t.Fatal("retained evidence hid a real controller failure")
+			}
+		})
+	}
+}

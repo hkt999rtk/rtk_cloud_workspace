@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -69,8 +71,10 @@ type deploymentOperations struct {
 }
 
 var deploymentIntegerKeys = map[string]bool{
-	"DEPLOYMENT_UPGRADE_WINDOW_SECONDS": true,
-	"CAPACITY_TARGET_CONNECTIONS":       true, "CAPACITY_CONNECTIONS_PER_MQTT_POD": true,
+	"DEPLOYMENT_PREFLIGHT_VALIDITY_SECONDS": true,
+	"DEPLOYMENT_UPGRADE_WINDOW_SECONDS":     true,
+	"DEPLOYMENT_ROLLOUT_TIMEOUT_SECONDS":    true,
+	"CAPACITY_TARGET_CONNECTIONS":           true, "CAPACITY_CONNECTIONS_PER_MQTT_POD": true,
 	"CAPACITY_ACTIVE_DEVICES": true, "CAPACITY_ACTIVE_DEVICES_PER_API_POD": true,
 	"CAPACITY_SYSTEM_RESERVED_CPU_MILLI": true, "CAPACITY_SYSTEM_RESERVED_MEMORY_MIB": true,
 	"NODE_CLASS_GENERAL_MIN_COUNT": true, "NODE_CLASS_BROKER_MIN_COUNT": true,
@@ -122,7 +126,7 @@ func architectureKeySet() map[string]bool {
 		"DEVICE_API_AUTH_APP_PKI_ENABLED", "DEVICE_API_AUTH_PRODUCT_PKI_ENABLED", "DEVICE_API_AUTH_MTLS_REQUIRED",
 		"APP_API_AUTH_APP_PKI_ENABLED", "APP_API_AUTH_PRODUCT_PKI_ENABLED", "APP_API_AUTH_MTLS_REQUIRED",
 		"CERT_ISSUER_PRODUCT_PKI_ENABLED", "CERT_ISSUER_APP_PKI_ENABLED", "FACTORY_ENROLL_PRODUCT_PKI_ENABLED",
-		"DEPLOYMENT_RUNTIME", "DEPLOYMENT_PROTECTION_PROFILE", "DEPLOYMENT_UPGRADE_WINDOW_SECONDS", "DEPLOYMENT_POSTGRES_BACKUP_ENABLED", "NODE_CLASS_LABEL_KEY", "DEFAULT_WORKLOAD_NODE_CLASS", "POD_SPREAD_TOPOLOGY_KEY",
+		"DEPLOYMENT_RUNTIME", "DEPLOYMENT_PROTECTION_PROFILE", "DEPLOYMENT_PREFLIGHT_VALIDITY_SECONDS", "DEPLOYMENT_UPGRADE_WINDOW_SECONDS", "DEPLOYMENT_ROLLOUT_TIMEOUT_SECONDS", "DEPLOYMENT_POSTGRES_BACKUP_ENABLED", "NODE_CLASS_LABEL_KEY", "DEFAULT_WORKLOAD_NODE_CLASS", "POD_SPREAD_TOPOLOGY_KEY",
 		"DURABLE_DATA_STORAGE_CLASS", "REDIS_DATA_STORAGE", "PROMETHEUS_DATA_STORAGE",
 		"ZAMMAD_CHART_VERSION", "ZAMMAD_CHART_SHA256",
 		"OPENBAO_STORAGE_BACKEND", "OPENBAO_DATA_STORAGE", "OPENBAO_AUDIT_STORAGE", "OPENBAO_POD_MANAGEMENT_POLICY", "OPENBAO_UPDATE_STRATEGY",
@@ -162,6 +166,32 @@ func keySet(keys ...string) map[string]bool {
 func runDeployment(args []string) error {
 	if len(args) > 0 {
 		switch args[0] {
+		case "capture-runtime-configuration-source":
+			return runCreateNormalTailRuntimeSourceCapture(args[1:])
+		case "recover-create-provider":
+			return runEnvironmentCreateProviderRecovery(args[1:])
+		case "recover-create-foundation":
+			return runEnvironmentCreateFoundationRecovery(args[1:])
+		case "recover-create-service-root-crl-installed":
+			return runEnvironmentCreateRootCRLInstalled(args[1:])
+		case "recover-create-mqtt-root-crl":
+			return runEnvironmentCreateMQTTRootCRL(args[1:])
+		case "recover-create-mqtt-root-crl-completion":
+			return runEnvironmentCreateMQTTRootCRLCompletion(args[1:])
+		case "recover-create-openbao-tls-root-crl":
+			return runEnvironmentCreateOpenBaoTLSRootCRL(args[1:])
+		case "recover-create-device-root-crl":
+			return runEnvironmentCreateDeviceRootCRLRecovery(args[1:])
+		case "recover-create-app-root-crl":
+			return runEnvironmentCreateAppRootCRLRecovery(args[1:])
+		case "recover-create-app-root-crl-completion":
+			return runEnvironmentCreateAppRootCRLCompletion(args[1:])
+		case "recover-create-service-root-crl":
+			return runEnvironmentCreateRootCRLRecovery(args[1:])
+		case "recover-create-active-transports":
+			return runEnvironmentCreateActiveTransportRenewal(args[1:])
+		case "recover-create-openbao":
+			return runEnvironmentCreateOpenBaoRecovery(args[1:])
 		case "plan", "create", "upgrade", "preflight":
 			return runUnifiedEnvironmentDeployment(args[0], args[1:])
 		case "freeze-release":
@@ -174,8 +204,12 @@ func runDeployment(args []string) error {
 			return runDeploymentStorageImport(args[1:])
 		case "dns-import-state":
 			return runDeploymentDNSImport(args[1:])
+		case "dns-reconcile-state":
+			return runDeploymentDNSReconcile(args[1:])
 		case "provider-import-state":
 			return runDeploymentProviderImport(args[1:])
+		case "reconcile-removal-volumes":
+			return runDeploymentRemovalRecovery(args[1:])
 		case "prepare-upgrade":
 			return errors.New("prepare-upgrade and schema-1 workload plans are retired; use formal CI image manifests, maintain identity bindings, then use deployment plan and full preflight")
 		case "provision", "test":
@@ -549,12 +583,69 @@ func validateExistingDeploymentEnvironment(cfg deploymentConfig) error {
 
 func cleanupDeploymentEnvironment(cfg deploymentConfig) error {
 	stack := cfg.Values["CLOUD_STACK_NAME"]
-	volumeIDs, volumeCaptureErr := deploymentPersistentVolumeIDs(cfg)
-	k8sErr := purgeDeploymentK8s(cfg)
-	dnsErr := removeOwnedDNSRecords(
-		newProvisionPaths(cfg.Workspace, cfg.RuntimeRoot, provisionOptions{}),
-		appendMap(cfg.Values, cfg.DNSValues),
-	)
+	if _, _, _, err := readLKEStateForTarget(provisionPaths{EnvRoot: cfg.RuntimeRoot}, map[string]string{"CLOUD_ENV_NAME": cfg.Environment, "CLOUD_STACK_NAME": stack}); err != nil {
+		return wrapDeploymentPhaseError("environment ownership", err)
+	}
+	volumeIDs, err := deploymentPersistentVolumeIDs(cfg)
+	if err != nil {
+		return wrapDeploymentPhaseError("persistent volume ownership capture", err)
+	}
+	_, volumeOwnershipKnown, err := readDeploymentRemovalVolumes(cfg)
+	if err != nil {
+		return wrapDeploymentPhaseError("persistent volume ownership", err)
+	}
+	paths := newProvisionPaths(cfg.Workspace, cfg.RuntimeRoot, provisionOptions{})
+	dnsValues := appendMap(cfg.Values, cfg.DNSValues)
+	dnsValues["CLOUD_ENV_NAME"] = cfg.Environment
+	if err := validateDNSLocalState(dnsContext(paths, dnsValues), cfg.DNSAdapter); err != nil {
+		return wrapDeploymentPhaseError("DNS ownership", err)
+	}
+	adapter, err := newDNSAdapter(cfg.DNSAdapter)
+	if err != nil {
+		return wrapDeploymentPhaseError("DNS ownership", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	err = validateDeploymentDNSReconciliation(ctx, cfg, readRemovalRecoveryNative, adapter)
+	cancel()
+	if err != nil {
+		return wrapDeploymentPhaseError("DNS reconciliation", err)
+	}
+	if err := removeOwnedDNSRecords(paths, dnsValues); err != nil {
+		return wrapDeploymentPhaseError("DNS cleanup", err)
+	}
+	if err := purgeDeploymentK8s(cfg); err != nil {
+		return wrapDeploymentPhaseError("Kubernetes storage cleanup", err)
+	}
+	if volumeOwnershipKnown {
+		proof, _, err := readDeploymentRemovalVolumes(cfg)
+		if err != nil {
+			return wrapDeploymentPhaseError("persistent volume ownership", err)
+		}
+		if proof.Schema == 2 {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+			err := validateRecoveredRemovalTarget(ctx, cfg, proof, readRemovalRecoveryNative)
+			cancel()
+			if err != nil {
+				return wrapDeploymentPhaseError("recovered original volume ownership", err)
+			}
+		} else {
+			_, kubeSHA256, err := deploymentRemovalKubeconfig(cfg)
+			if err != nil {
+				return wrapDeploymentPhaseError("environment ownership", err)
+			}
+			if err := validateDeploymentRemovalGeneration(cfg, proof, kubeSHA256); err != nil {
+				return wrapDeploymentPhaseError("environment ownership", err)
+			}
+		}
+	}
+	// Kubernetes cleanup can take time. Fence reviewed numeric DNS/provider
+	// identities again after that phase and immediately before provider deletion.
+	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Minute)
+	err = validateDeploymentDNSReconciliation(ctx, cfg, readRemovalRecoveryNative, adapter)
+	cancel()
+	if err != nil {
+		return wrapDeploymentPhaseError("DNS reconciliation before provider cleanup", err)
+	}
 	resourceErr := runDestroyEnvironmentResources([]string{
 		"--workspace", cfg.Workspace,
 		"--env-root", cfg.RuntimeRoot,
@@ -568,30 +659,165 @@ func cleanupDeploymentEnvironment(cfg deploymentConfig) error {
 	if resourceErr == nil {
 		resourceErr = waitForDeploymentEnvironmentRemoval(cfg)
 	}
-	return errors.Join(
-		wrapDeploymentPhaseError("persistent volume ownership capture", volumeCaptureErr),
-		wrapDeploymentPhaseError("Kubernetes storage cleanup", k8sErr),
-		wrapDeploymentPhaseError("DNS cleanup", dnsErr),
-		wrapDeploymentPhaseError("provider cleanup", resourceErr),
-	)
+	if resourceErr != nil {
+		return wrapDeploymentPhaseError("provider cleanup", resourceErr)
+	}
+	fmt.Printf("[VERIFIED] environment=%s matched LKE clusters, Linode instances, firewalls, VPCs and configured runtime/OTA buckets are absent\n", cfg.Environment)
+	if !volumeOwnershipKnown {
+		return errors.New("persistent volume cleanup cannot be verified: the LKE cluster is already absent and original volume ownership evidence is missing; inspect retained pvc-* volumes and reconcile exact original volume IDs")
+	}
+	return nil
 }
 
 func deploymentPersistentVolumeIDs(cfg deploymentConfig) ([]string, error) {
-	kubeconfig := filepath.Join(cfg.RuntimeRoot, "state", "kubeconfig.yaml")
-	if _, err := os.Stat(kubeconfig); os.IsNotExist(err) {
-		return nil, nil
-	} else if err != nil {
+	previous, known, err := readDeploymentRemovalVolumes(cfg)
+	if err != nil {
 		return nil, err
 	}
+	if known && previous.Schema == 2 {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+		if err := validateRecoveredRemovalTarget(ctx, cfg, previous, readRemovalRecoveryNative); err != nil {
+			return nil, err
+		}
+		return previous.VolumeIDs, nil
+	}
+	backend, kubeSHA256, err := deploymentRemovalKubeconfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	_, _, state, err := readLKEStateForTarget(provisionPaths{EnvRoot: cfg.RuntimeRoot}, map[string]string{"CLOUD_ENV_NAME": cfg.Environment, "CLOUD_STACK_NAME": cfg.Values["CLOUD_STACK_NAME"]})
+	if err != nil {
+		return nil, err
+	}
+	clusterID := state["LKE_CLUSTER_ID"]
+	if known && clusterID != "" && previous.ClusterID != clusterID {
+		return nil, errors.New("original volume ownership belongs to another cluster generation; reconcile the original removal before deleting resources")
+	}
+	if len(backend.KubeconfigContent) == 0 {
+		token := resolveLinodeToken(cfg.RuntimeRoot)
+		if token == "" {
+			return nil, errors.New("selected environment Linode credentials are required to verify an absent LKE cluster")
+		}
+		values := appendMap(cfg.Values, nil)
+		values["CLOUD_ENV_NAME"] = cfg.Environment
+		clusters, err := listDestroyLKEClusters(token, linodeDestroyMatcher(values, cfg.Values["CLOUD_STACK_NAME"], ""))
+		if err != nil {
+			return nil, errors.New("cannot verify that the selected LKE cluster is absent; restore its original canonical kubeconfig before removal")
+		}
+		if len(clusters) != 0 {
+			return nil, errors.New("selected LKE cluster still exists but its canonical kubeconfig is missing; restore the original environment kubeconfig before capturing volume ownership")
+		}
+		return previous.VolumeIDs, nil
+	}
+	if known && previous.KubeSHA256 != kubeSHA256 {
+		return nil, errors.New("original volume ownership belongs to another Kubernetes identity generation; reconcile the original removal before deleting resources")
+	}
+	kubeconfig, cleanup, err := backend.privateKubeconfig()
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
 	cmd := exec.Command("kubectl", "--kubeconfig", kubeconfig, "get", "persistentvolume", "-o", "json")
 	body, err := cmd.Output()
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok && len(exitErr.Stderr) > 0 {
-			return nil, fmt.Errorf("list persistent volumes: %s", strings.TrimSpace(string(exitErr.Stderr)))
-		}
-		return nil, fmt.Errorf("list persistent volumes: %w", err)
+		return nil, errors.New("cannot capture selected environment persistent volume ownership; provider resources were not removed")
 	}
-	return persistentVolumeIDsForStack(body, cfg.Values["CLOUD_STACK_NAME"])
+	ids, err := persistentVolumeIDsForStack(body, cfg.Values["CLOUD_STACK_NAME"])
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	for _, id := range append(previous.VolumeIDs, ids...) {
+		seen[id] = true
+	}
+	ids = make([]string, 0, len(seen))
+	for id := range seen {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	if clusterID == "" && known {
+		clusterID = previous.ClusterID
+	}
+	proof := deploymentRemovalVolumes{Schema: 1, Environment: cfg.Environment, Stack: cfg.Values["CLOUD_STACK_NAME"], ClusterID: clusterID, KubeSHA256: kubeSHA256, VolumeIDs: ids}
+	raw, err := json.Marshal(proof)
+	if err != nil {
+		return nil, err
+	}
+	if err := writePrivateDeploymentState(cfg.Environment, "deployment/remove-volume-ownership.json", append(raw, '\n')); err != nil {
+		return nil, errors.New("original persistent volume ownership could not be saved before removal")
+	}
+	return ids, nil
+}
+
+type deploymentRemovalVolumes struct {
+	Schema      int                        `json:"schema"`
+	Environment string                     `json:"environment"`
+	Stack       string                     `json:"stack"`
+	ClusterID   string                     `json:"cluster_id,omitempty"`
+	KubeSHA256  string                     `json:"kubeconfig_sha256"`
+	VolumeIDs   []string                   `json:"volume_ids"`
+	Recovery    *deploymentRemovalRecovery `json:"recovery,omitempty"`
+}
+
+func readDeploymentRemovalVolumes(cfg deploymentConfig) (deploymentRemovalVolumes, bool, error) {
+	var proof deploymentRemovalVolumes
+	path, err := privateDeploymentStatePath(cfg.Environment, "deployment/remove-volume-ownership.json")
+	if err != nil {
+		return proof, false, err
+	}
+	raw, err := readStorageEvidenceFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return proof, false, nil
+	}
+	if err != nil {
+		return proof, false, errors.New("original persistent volume ownership evidence cannot be read")
+	}
+	if decodeEnvironmentJSON(raw, &proof) != nil || (proof.Schema != 1 && proof.Schema != 2) || proof.Environment != cfg.Environment || proof.Stack != cfg.Values["CLOUD_STACK_NAME"] || proof.VolumeIDs == nil {
+		return proof, false, errors.New("persistent volume ownership evidence does not match the selected environment and stack")
+	}
+	if digest, err := hex.DecodeString(proof.KubeSHA256); err != nil || len(digest) != sha256.Size {
+		return proof, false, errors.New("original persistent volume ownership has no valid Kubernetes identity binding")
+	}
+	if proof.ClusterID != "" {
+		if _, err := positiveIntValue("cluster_id", proof.ClusterID); err != nil {
+			return proof, false, errors.New("original persistent volume ownership has an invalid cluster binding")
+		}
+	}
+	for _, id := range proof.VolumeIDs {
+		if _, err := positiveIntValue("volume_id", id); err != nil {
+			return proof, false, errors.New("persistent volume ownership evidence contains an invalid original volume ID")
+		}
+	}
+	if proof.Schema == 2 {
+		if err := validateRecoveredRemovalProof(cfg, proof); err != nil {
+			return proof, false, err
+		}
+	} else if proof.Recovery != nil {
+		return proof, false, errors.New("regular CSI capture cannot contain declared recovery authority")
+	}
+	return proof, true, nil
+}
+
+func deploymentRemovalKubeconfig(cfg deploymentConfig) (environmentKubernetesBackend, string, error) {
+	var backend environmentKubernetesBackend
+	path, err := privateDeploymentStatePath(cfg.Environment, "kube/kubeconfig.yaml")
+	if err != nil {
+		return backend, "", err
+	}
+	raw, err := readStorageEvidenceFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return backend, "", nil
+	}
+	if err != nil {
+		return backend, "", errors.New("selected canonical environment kubeconfig cannot be read")
+	}
+	backend, err = newEnvironmentKubernetesBackend(string(raw), cfg.Environment)
+	if err != nil {
+		return backend, "", err
+	}
+	digest := sha256.Sum256(raw)
+	return backend, hex.EncodeToString(digest[:]), nil
 }
 
 func persistentVolumeIDsForStack(body []byte, stack string) ([]string, error) {
@@ -602,6 +828,7 @@ func persistentVolumeIDsForStack(body []byte, stack string) ([]string, error) {
 					Namespace string `json:"namespace"`
 				} `json:"claimRef"`
 				CSI struct {
+					Driver       string `json:"driver"`
 					VolumeHandle string `json:"volumeHandle"`
 				} `json:"csi"`
 			} `json:"spec"`
@@ -617,14 +844,14 @@ func persistentVolumeIDsForStack(body []byte, stack string) ([]string, error) {
 			continue
 		}
 		id := strings.TrimSpace(item.Spec.CSI.VolumeHandle)
-		if id == "" {
-			continue
+		if id == "" || item.Spec.CSI.Driver != "" && item.Spec.CSI.Driver != "linodebs.csi.linode.com" {
+			return nil, fmt.Errorf("stack %s persistent volume has no supported Linode CSI ownership handle", stack)
 		}
 		volumeID := id
 		if numericID, suffix, ok := strings.Cut(id, "-"); ok && strings.HasPrefix(suffix, "pvc-") {
 			volumeID = numericID
 		}
-		if _, err := strconv.Atoi(volumeID); err != nil {
+		if _, err := positiveIntValue("volume_id", volumeID); err != nil {
 			return nil, fmt.Errorf("stack %s persistent volume has unsupported Linode volume handle %q", stack, id)
 		}
 		if !seen[volumeID] {
@@ -637,29 +864,61 @@ func persistentVolumeIDsForStack(body []byte, stack string) ([]string, error) {
 }
 
 func purgeDeploymentK8s(cfg deploymentConfig) error {
-	kubeconfig := filepath.Join(cfg.RuntimeRoot, "state", "kubeconfig.yaml")
-	if _, err := os.Stat(kubeconfig); os.IsNotExist(err) {
+	proof, known, err := readDeploymentRemovalVolumes(cfg)
+	if err != nil {
+		return err
+	}
+	if known && proof.Schema == 2 {
+		// The removed cluster is checked through native metadata; archived
+		// authentication is never restored or used for Kubernetes mutations.
 		return nil
-	} else if err != nil {
+	}
+	backend, kubeSHA256, err := deploymentRemovalKubeconfig(cfg)
+	if err != nil {
 		return err
 	}
-	old, hadOld := os.LookupEnv("CLOUD_STAGING_E2E_K8S_DESTRUCTIVE_RESET")
-	if err := os.Setenv("CLOUD_STAGING_E2E_K8S_DESTRUCTIVE_RESET", "1"); err != nil {
+	if len(backend.KubeconfigContent) == 0 {
+		// Recheck absence if the canonical file disappeared after capture.
+		_, err := deploymentPersistentVolumeIDs(cfg)
 		return err
 	}
-	defer func() {
-		if hadOld {
-			_ = os.Setenv("CLOUD_STAGING_E2E_K8S_DESTRUCTIVE_RESET", old)
-		} else {
-			_ = os.Unsetenv("CLOUD_STAGING_E2E_K8S_DESTRUCTIVE_RESET")
+	if !known {
+		return errors.New("original volume ownership does not match the Kubernetes identity generation before cleanup")
+	}
+	if err := validateDeploymentRemovalGeneration(cfg, proof, kubeSHA256); err != nil {
+		return err
+	}
+	kubeconfig, cleanup, err := backend.privateKubeconfig()
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	for _, namespace := range k8sStagingNamespaces(cfg.Values["CLOUD_STACK_NAME"]) {
+		if err := resetK8SNamespaceResources(kubeconfig, namespace); err != nil {
+			return err
 		}
-	}()
-	return runRemoveK8s([]string{
-		"--workspace", cfg.Workspace,
-		"--env-root", cfg.RuntimeRoot,
-		"--yes",
-		"--purge-storage",
-	})
+		if err := runK8SKubectl(kubeconfig, "-n", namespace, "delete", "pvc", "--all", "--ignore-not-found=true"); err != nil {
+			return err
+		}
+		if err := runK8SKubectl(kubeconfig, "delete", "namespace", namespace, "--ignore-not-found=true"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateDeploymentRemovalGeneration(cfg deploymentConfig, proof deploymentRemovalVolumes, kubeSHA256 string) error {
+	if kubeSHA256 != "" && proof.KubeSHA256 != kubeSHA256 {
+		return errors.New("original volume ownership belongs to another Kubernetes identity generation; provider resources were not removed")
+	}
+	_, _, state, err := readLKEStateForTarget(provisionPaths{EnvRoot: cfg.RuntimeRoot}, map[string]string{"CLOUD_ENV_NAME": cfg.Environment, "CLOUD_STACK_NAME": cfg.Values["CLOUD_STACK_NAME"]})
+	if err != nil {
+		return err
+	}
+	if state["LKE_CLUSTER_ID"] != "" && proof.ClusterID != state["LKE_CLUSTER_ID"] {
+		return errors.New("original volume ownership belongs to another cluster generation; provider resources were not removed")
+	}
+	return nil
 }
 
 func validateEphemeralDeploymentEnvironmentAbsent(cfg deploymentConfig) error {
@@ -785,7 +1044,8 @@ func validateLKEEnvironmentStateBeforeMutationWithDiscovery(cfg deploymentConfig
 
 func printDeploymentUsage() {
 	fmt.Fprint(os.Stdout, `Usage:
-  rtk-cloud deployment check --environment NAME [--phase pre-deploy|post-deploy] [--fast] [--timeout 2m] [--report PATH]
+  rtk-cloud deployment check --environment NAME --phase pre-deploy [--timeout 45m] [--report PATH]
+  rtk-cloud deployment check --environment NAME [--phase post-deploy] [--fast] [--timeout 10m] [--report PATH]
   rtk-cloud deployment credentials-check --environment NAME
   rtk-cloud deployment credentials-check --environment NAME --read-only [--checks ghcr,tls,mounts] [--image GHCR_DIGEST] [--manifest WORKLOAD_JSON]
   rtk-cloud deployment credentials-check --environment NAME --create-missing-object-storage-bucket
@@ -799,6 +1059,8 @@ func printDeploymentUsage() {
   rtk-cloud deployment reconcile-execution --environment NAME --confirm STACK --plan-sha256 ORIGINAL_SHA256
   rtk-cloud deployment storage-import-state --environment NAME --purpose media|ota|artifacts --source-runtime ORIGINAL_RUNTIME --confirm STACK
   rtk-cloud deployment dns-import-state --environment NAME --source-runtime ORIGINAL_RUNTIME --confirm STACK
+  rtk-cloud deployment dns-reconcile-state --environment NAME [--report CANONICAL_JSON]
+  rtk-cloud deployment dns-reconcile-state --environment NAME --confirm STACK --review-sha256 REVIEW_SHA256
   rtk-cloud deployment provider-import-state --environment NAME --source-runtime ORIGINAL_RUNTIME --confirm STACK [--source-kubeconfig ORIGINAL_KUBECONFIG]
   rtk-cloud deployment acceptance --environment NAME --confirm STACK
   rtk-cloud deployment remove --environment NAME --confirm STACK

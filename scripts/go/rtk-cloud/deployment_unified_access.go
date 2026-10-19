@@ -27,7 +27,8 @@ var environmentAPIResources = map[string]environmentAccessRequirement{
 	"job": {Group: "batch", Resource: "jobs"}, "cronjob": {Group: "batch", Resource: "cronjobs"},
 	"service": {Resource: "services"}, "configmap": {Resource: "configmaps"}, "secret": {Resource: "secrets"},
 	"persistentvolumeclaim": {Resource: "persistentvolumeclaims"}, "serviceaccount": {Resource: "serviceaccounts"},
-	"role": {Group: "rbac.authorization.k8s.io", Resource: "roles"}, "rolebinding": {Group: "rbac.authorization.k8s.io", Resource: "rolebindings"},
+	"storageclass": {Group: "storage.k8s.io", Resource: "storageclasses"},
+	"role":         {Group: "rbac.authorization.k8s.io", Resource: "roles"}, "rolebinding": {Group: "rbac.authorization.k8s.io", Resource: "rolebindings"},
 	"clusterrole": {Group: "rbac.authorization.k8s.io", Resource: "clusterroles"}, "clusterrolebinding": {Group: "rbac.authorization.k8s.io", Resource: "clusterrolebindings"},
 	"networkpolicy": {Group: "networking.k8s.io", Resource: "networkpolicies"}, "ingress": {Group: "networking.k8s.io", Resource: "ingresses"},
 	"ingressclass":                   {Group: "networking.k8s.io", Resource: "ingressclasses"},
@@ -142,7 +143,7 @@ func (b environmentKubernetesBackend) CheckPlanAccess(ctx context.Context, plan 
 	}
 	// Reviews are independent and persist no resources. Keep errors as ordered
 	// results so completion order cannot change the first denied permission.
-	reviews, err := boundedParallelMap(len(requests), 4, func(i int) (error, error) {
+	reviews, err := boundedParallelMap(len(requests), environmentDeploymentCheckConcurrency, func(i int) (error, error) {
 		if err := ctx.Err(); err != nil {
 			return err, nil
 		}

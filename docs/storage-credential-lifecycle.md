@@ -30,6 +30,12 @@ When a configured media target has been prepared but the live workloads still us
 
 Credentials are individual `0600` files below `~/.config/rtk_cloud/<environment>/operator/env/`. Media uses `LINODE_MEDIA_OBJ_ACCESS_KEY_ID` / `LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY`; OTA uses `LINODE_OTA_OBJ_ACCESS_KEY_ID` / `LINODE_OTA_OBJ_SECRET_ACCESS_KEY`. Each key is limited to its bucket. The OTA pod receives the OTA key through the `ota-object-storage` Kubernetes Secret; API and clip workers keep the media key. Shared release uses `LINODE_ARTIFACT_OBJ_*`. Never commit secrets.
 
+The independent VideoStorage role receives the selected media pair through
+`video-storage-object-storage`. Its database, tokens and clip key retain their
+original shared Secret references. Creating that dedicated mirror does not
+rotate the original Core/clip `video-cloud-runtime` data or switch an existing
+consumer; an existing reference change still requires its explicit lifecycle.
+
 ## Operator lifecycle
 
 ### Environment-owned receipts and proof location

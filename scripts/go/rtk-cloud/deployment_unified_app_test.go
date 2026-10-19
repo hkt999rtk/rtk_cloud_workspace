@@ -59,7 +59,7 @@ func TestAppPKICommonPlanPreservesRolesReferencesAndOriginalRoute(t *testing.T) 
 					t.Fatal("App main/initializer is not formal CI pinned")
 				}
 			}
-			for name, want := range map[string]string{"VIDEO_CLOUD_AUTH_APP_PKI_ENABLED": "true", "VIDEO_CLOUD_AUTH_PRODUCT_PKI_ENABLED": "false", "VIDEO_CLOUD_AUTH_MTLS_REQUIRED": "true", "VIDEO_CLOUD_MQTT_ENABLED": "false"} {
+			for name, want := range map[string]string{"VIDEO_CLOUD_AUTH_APP_PKI_ENABLED": "true", "VIDEO_CLOUD_AUTH_PRODUCT_PKI_ENABLED": "false", "VIDEO_CLOUD_AUTH_MTLS_REQUIRED": "true", "VIDEO_CLOUD_MQTT_ENABLED": "false", "VIDEO_CLOUD_TURN_CREDENTIAL_TTL": "1m"} {
 				if managedNamedField(main["env"], name)["value"] != want {
 					t.Fatal("wrong App policy", name)
 				}
@@ -113,6 +113,37 @@ func TestAppPKICommonPlanPreservesRolesReferencesAndOriginalRoute(t *testing.T) 
 			}
 			if err = validateEnvironmentPKITransition([]deploymentplan.Definition{{Object: target}}, []deploymentplan.Object{app}); err == nil {
 				t.Fatal("role change silently accepted")
+			}
+		})
+	}
+}
+
+func TestAppTURNPolicyRejectsUnexecutableCandidate(t *testing.T) {
+	for _, ttl := range []string{"1m", "30s", "10m", "61s", "0s", "-1s", "", "invalid", "reference"} {
+		t.Run(ttl, func(t *testing.T) {
+			setting := deploymentplan.Object{"name": "VIDEO_CLOUD_TURN_CREDENTIAL_TTL", "value": ttl}
+			if ttl == "reference" {
+				setting = deploymentplan.Object{"name": "VIDEO_CLOUD_TURN_CREDENTIAL_TTL", "valueFrom": deploymentplan.Object{"secretKeyRef": deploymentplan.Object{"name": "private-token", "key": "ttl"}}}
+			}
+			object := deploymentplan.Object{"kind": "Deployment", "metadata": deploymentplan.Object{"name": "video-cloud-api-app-pki"}, "spec": deploymentplan.Object{"template": deploymentplan.Object{"spec": deploymentplan.Object{"containers": []any{deploymentplan.Object{"name": "app", "env": []any{deploymentplan.Object{"name": "VIDEO_CLOUD_AUTH_APP_PKI_ENABLED", "value": "true"}, deploymentplan.Object{"name": "VIDEO_CLOUD_WEBRTC_TURN_URLS", "value": "turn:relay.example.invalid:3478"}, setting}}}}}}}
+			err := validateEnvironmentAppTURNPolicy([]deploymentplan.Definition{{Object: object}})
+			planErr := checkEnvironmentAppTURNPlan(&deploymentplan.Plan{Resources: []deploymentplan.Resource{{ID: deploymentplan.ID(object), Desired: object}}})
+			if (err == nil) != (planErr == nil) {
+				t.Fatal("execution qualification and renderer policy differ")
+			}
+			if ttl == "1m" || ttl == "30s" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				var blocker *deploymentplan.Blocker
+				if !errors.As(err, &blocker) || blocker.ID != "deployment.configuration.app-turn-ttl" || strings.Contains(err.Error(), "private-token") {
+					t.Fatal("unexecutable App candidate was not safely blocked", err)
+				}
+			}
+			deploymentplan.Map(object["metadata"])["name"] = "video-cloud-api"
+			if err := validateEnvironmentAppTURNPolicy([]deploymentplan.Definition{{Object: object}}); err != nil {
+				t.Fatal("working core API policy was changed", err)
 			}
 		})
 	}

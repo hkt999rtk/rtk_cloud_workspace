@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/envroot"
 )
 
@@ -38,10 +39,39 @@ func verifyDeploymentPublicCertIssuer(ctx context.Context, cfg deploymentConfig,
 	if json.Unmarshal(raw, &ingresses) != nil || ingresses.Items == nil {
 		return errors.New("required public CertIssuer route inventory is invalid")
 	}
-	if err := validateRequiredCertIssuerPublicIngress("video-cloud-"+cfg.Environment, policy.PublicHost, policy.HTTPSPort, ingresses); err != nil {
+	var definitions []deploymentplan.Definition
+	for _, kind := range []string{"deployment", "service"} {
+		raw, readErr := secretCheckKubectl([]*deploymentCheckRuntime{store.checkRuntime}, false, "--kubeconfig", store.KubeconfigPath(), "-n", "video-cloud-"+cfg.Environment+"-video-cloud", "get", kind, "certissuer", "-o", "json")
+		var object deploymentplan.Object
+		if readErr != nil || json.Unmarshal(raw, &object) != nil {
+			return errors.New("required public CertIssuer native listener graph is unavailable")
+		}
+		definitions = append(definitions, deploymentplan.Definition{Object: object})
+	}
+	port, err := environmentCertIssuerPublicPort(definitions, "video-cloud-"+cfg.Environment)
+	if err != nil {
 		return err
 	}
-	return runDeploymentCertIssuerPublicProbe(ctx, cfg.Workspace, cfg.Environment, store.ConfigRoot, store.KubeconfigPath(), policy.PublicHost)
+	if err := validateRequiredCertIssuerPublicIngress("video-cloud-"+cfg.Environment, policy.PublicHost, port, ingresses); err != nil {
+		return err
+	}
+	kubeconfig := store.KubeconfigPath()
+	if store.checkRuntime != nil && store.checkRuntime.frozenBackend != nil {
+		path, cleanup, err := store.checkRuntime.frozenBackend.privateKubeconfig()
+		if err != nil {
+			return errors.New("qualified frozen Kubernetes identity cannot be prepared for the public CertIssuer probe")
+		}
+		defer cleanup()
+		kubeconfig = path
+	}
+	return runDeploymentCertIssuerPublicProbe(ctx, cfg.Workspace, cfg.Environment, store.ConfigRoot, kubeconfig, policy.PublicHost)
+}
+
+// Existing installations may still use the original nginx class before the
+// reviewed update. The shared renderer targets only this stack's scoped class.
+// Both retain every route and actual authenticated/anonymous TLS check below.
+func deploymentSupportedIngressClass(stack, class string) bool {
+	return class == "nginx" || class == environmentIngressClass(map[string]string{"CLOUD_STACK_NAME": stack})
 }
 
 func validateRequiredCertIssuerPublicIngress(stack, host string, port int, ingresses certIssuerIngressList) error {
@@ -52,8 +82,9 @@ func validateRequiredCertIssuerPublicIngress(stack, host string, port int, ingre
 				continue
 			}
 			for _, path := range rule.HTTP.Paths {
-				if ingress.Spec.IngressClassName != "nginx" || ingress.Metadata.Namespace != stack+"-video-cloud" ||
+				if !deploymentSupportedIngressClass(stack, ingress.Spec.IngressClassName) || ingress.Metadata.Namespace != stack+"-video-cloud" ||
 					ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/ssl-passthrough"] != "true" ||
+					ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/backend-protocol"] != "HTTPS" ||
 					path.Backend.Service.Name != "certissuer" || path.Backend.Service.Port.Number != port || path.Path != "/" || path.PathType != "Prefix" {
 					return errors.New("required public CertIssuer route has conflicting ownership, path, port or direct-mTLS policy")
 				}

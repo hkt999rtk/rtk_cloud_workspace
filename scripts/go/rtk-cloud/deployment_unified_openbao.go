@@ -163,10 +163,13 @@ func renderEnvironmentOpenBao(env map[string]string, binding environmentPodBindi
 	if err != nil {
 		return nil, err
 	}
+	pod := environmentPKIPod(object)
+	// Both provider and native host images use the selected namespace's already
+	// installed registry identity. Ambient process settings are not authority.
+	pod["imagePullSecrets"] = []any{deploymentplan.Object{"name": environmentOpenBaoImagePullSecretName(env)}}
 	if env["OPENBAO_STORAGE_BACKEND"] == "raft" {
 		return object, nil
 	}
-	pod := environmentPKIPod(object)
 	delete(pod, "affinity")
 	delete(pod, "volumes") // All file backend references come from observed lifecycle owners.
 	main := deploymentplan.Map(certIssuerObjectList(pod["containers"])[0])
@@ -176,13 +179,15 @@ func renderEnvironmentOpenBao(env map[string]string, binding environmentPodBindi
 	launch := "exec bao server -config=" + shellQuote("/openbao/config/"+profile.ConfigKey)
 	ready := "bao status -address=https://127.0.0.1:8200 -tls-skip-verify"
 	if profile.RuntimeDir != "" {
-		launch = "umask 077; printf '%s\\n' \"$$\" > " + shellQuote(profile.PIDFile) + "; " + launch
+		// Kubernetes expands $$ to $ before the shell sees this command. Escape
+		// both shell PID dollars so the marker names the process that execs bao.
+		launch = "umask 077; printf '%s\\n' \"$$$$\" > " + shellQuote(profile.PIDFile) + "; " + launch
 		ready = "test -f " + shellQuote(profile.RuntimeDir+"/ready") + " && " + ready
 		pod["shareProcessNamespace"] = true
 		sidecar := func(name string, install bool) map[string]any {
 			command := []any{"/usr/local/bin/openbaopkihost"}
 			if install {
-				command = append(command, "install")
+				command = []any{"/bin/sh", "-ec", "umask 077; mkdir -p " + environmentCreateServiceState + "/private/crl; chmod 700 " + environmentCreateServiceState + "/private " + environmentCreateServiceState + "/private/crl; exec /usr/local/bin/openbaopkihost install"}
 			}
 			return map[string]any{"name": name, "image": env["LKE_OPENBAO_PKI_IMAGE"], "command": command, "securityContext": map[string]any{"runAsNonRoot": true, "allowPrivilegeEscalation": false, "readOnlyRootFilesystem": true, "capabilities": map[string]any{"drop": []any{"ALL"}}}}
 		}

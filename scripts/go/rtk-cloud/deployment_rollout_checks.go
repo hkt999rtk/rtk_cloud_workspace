@@ -219,13 +219,17 @@ func checkRolloutTLS(options rolloutTLSOptions) deploymentCredentialCheck {
 }
 
 type rolloutSecurityContext struct {
-	RunAsUser *int64 `json:"runAsUser"`
-	FSGroup   *int64 `json:"fsGroup"`
+	RunAsUser          *int64  `json:"runAsUser"`
+	RunAsGroup         *int64  `json:"runAsGroup"`
+	RunAsNonRoot       *bool   `json:"runAsNonRoot"`
+	SupplementalGroups []int64 `json:"supplementalGroups"`
+	FSGroup            *int64  `json:"fsGroup"`
 }
 type rolloutContainer struct {
 	SecurityContext rolloutSecurityContext `json:"securityContext"`
 	VolumeMounts    []struct {
-		Name string `json:"name"`
+		Name     string `json:"name"`
+		ReadOnly bool   `json:"readOnly"`
 	} `json:"volumeMounts"`
 }
 type rolloutPod struct {
@@ -242,6 +246,20 @@ type rolloutPod struct {
 			} `json:"items"`
 		} `json:"secret"`
 	} `json:"volumes"`
+}
+
+func rolloutOriginalRootGroupTLSReader(pod, container rolloutSecurityContext) bool {
+	uid, gid, nonRoot := container.RunAsUser, container.RunAsGroup, container.RunAsNonRoot
+	if uid == nil {
+		uid = pod.RunAsUser
+	}
+	if gid == nil {
+		gid = pod.RunAsGroup
+	}
+	if nonRoot == nil {
+		nonRoot = pod.RunAsNonRoot
+	}
+	return uid != nil && *uid == 10001 && gid != nil && *gid == 10001 && nonRoot != nil && *nonRoot && pod.FSGroup == nil && len(pod.SupplementalGroups) == 1 && pod.SupplementalGroups[0] == 0
 }
 
 func includeStatefulSetClaimVolumes(value any) {
@@ -380,10 +398,10 @@ func checkRolloutMountsJSON(raw []byte, name string, requireDirectSecret bool) d
 								if m < 0 || m > 0o777 {
 									return errors.New("invalid Secret file mode")
 								}
-								if m&0o004 != 0 || (uid != nil && *uid == 0 && m&0o400 != 0) || (pod.SecurityContext.FSGroup != nil && *pod.SecurityContext.FSGroup >= 0 && m&0o040 != 0) {
+								if m&0o004 != 0 || (uid != nil && *uid == 0 && m&0o400 != 0) || (pod.SecurityContext.FSGroup != nil && *pod.SecurityContext.FSGroup >= 0 && m&0o040 != 0) || (m == 0o440 && mount.ReadOnly && rolloutOriginalRootGroupTLSReader(pod.SecurityContext, container.SecurityContext)) {
 									continue
 								}
-								return errors.New("restricted Secret mount lacks provable read access; declare matching Pod fsGroup and group-read mode")
+								return errors.New("restricted Secret mount lacks provable read access; declare matching Pod fsGroup or the reviewed non-root supplementary-root-group TLS profile and group-read mode")
 							}
 						}
 					}

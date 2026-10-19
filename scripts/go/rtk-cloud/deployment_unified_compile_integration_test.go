@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 )
@@ -24,7 +26,8 @@ func TestCompleteCompilerUsesMaintainedCatalogAndFencesNativeSnapshot(t *testing
 			if environment == "prod" {
 				profile = "production"
 			}
-			architecture := "DEPLOYMENT_RUNTIME=kubernetes\nNODE_CLASS_LABEL_KEY=rtk.io/node-class\nDEFAULT_WORKLOAD_NODE_CLASS=general\nDEPLOYMENT_PROTECTION_PROFILE=" + profile + "\nDEPLOYMENT_POSTGRES_BACKUP_ENABLED=true\nREDIS_DATA_STORAGE=5Gi\nPROMETHEUS_DATA_STORAGE=20Gi\n"
+			architecture := "DEPLOYMENT_RUNTIME=kubernetes\nNODE_CLASS_LABEL_KEY=rtk.io/node-class\nDEFAULT_WORKLOAD_NODE_CLASS=general\nDEPLOYMENT_PROTECTION_PROFILE=" + profile + "\nDEPLOYMENT_PREFLIGHT_VALIDITY_SECONDS=3600\nDEPLOYMENT_UPGRADE_WINDOW_SECONDS=3600\nDEPLOYMENT_ROLLOUT_TIMEOUT_SECONDS=300\nDEPLOYMENT_POSTGRES_BACKUP_ENABLED=true\nREDIS_DATA_STORAGE=5Gi\nPROMETHEUS_DATA_STORAGE=20Gi\n"
+			architecture += "DURABLE_DATA_STORAGE_CLASS=" + settings["DURABLE_DATA_STORAGE_CLASS"] + "\n"
 			for key, value := range settings {
 				if sharedWebRTCDeploymentKey(key) || sharedVideoStorageDeploymentKey(key) || sharedShadowDeploymentKey(key) || sharedOTADeploymentKey(key) || key == "MQTT_FOUNDATION_REGISTRATION_ENABLED" || key == "ACCOUNT_MANAGER_SERVICE_REGISTRATION_ENABLED" || key == "ACCOUNT_MANAGER_SERVICE_REGISTRATION_PORT" || environmentAuthArchitectureKey(key) || environmentControllerPolicySetting(key) || key == "OPENBAO_STORAGE_BACKEND" || key == "OPENBAO_DATA_STORAGE" || key == "OPENBAO_AUDIT_STORAGE" || key == "OPENBAO_POD_MANAGEMENT_POLICY" || key == "OPENBAO_UPDATE_STRATEGY" {
 					architecture += key + "=" + value + "\n"
@@ -39,6 +42,49 @@ func TestCompleteCompilerUsesMaintainedCatalogAndFencesNativeSnapshot(t *testing
 			cfg, err := resolveDeploymentConfig(cfg.Workspace, environment, "")
 			if err != nil {
 				t.Fatal(err)
+			}
+			// Observe the real maintained native Controller recipe. The generic
+			// renderer fixture's illustrative state paths are not an admitted
+			// permanent identity once this test assigns original live owners.
+			var nativeExisting []deploymentplan.Object
+			if environment != "prod" {
+				nativeConfig, nativePlan, nativeRuntime, nativeService := createServiceRecipeFixture(t, environment)
+				nativeDefinitions, err := renderEnvironmentCreateManagedServiceDefinitions(context.Background(), nativeConfig, nativePlan, nativeRuntime, nativeService)
+				if err != nil {
+					t.Fatal("maintained native Controller recipe", err)
+				}
+				for index, id := range []string{"Deployment/" + bindings.Stack + "-video-cloud/pki-controller", "ConfigMap/" + bindings.Stack + "-video-cloud/pki-bootstrap-cleanup-binding"} {
+					object := deploymentplan.Clone(createRecipeObject(t, nativeDefinitions, id))
+					deploymentplan.Map(object["metadata"])["uid"] = []string{"11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"}[index]
+					deploymentplan.Map(object["metadata"])["resourceVersion"] = "1"
+					nativeExisting = append(nativeExisting, object)
+				}
+				nativeExisting = append(nativeExisting, deploymentplan.Object{"apiVersion": "v1", "kind": "Namespace", "metadata": deploymentplan.Object{"name": bindings.Stack + "-video-cloud", "uid": nativeService.CleanupBinding.NamespaceUID}})
+				t.Setenv("RTK_CLOUD_CONFIG_ROOT", store.ConfigRoot)
+				nativeBindings, err := observeEnvironmentBindings(environment, release, nativeExisting)
+				if err != nil {
+					t.Fatal("maintained native Controller fixture", err)
+				}
+				bindings.BootstrapCleanup = nativeBindings.BootstrapCleanup
+				for _, native := range nativeBindings.Pods {
+					for index := range bindings.Pods {
+						if bindings.Pods[index].Component == native.Component {
+							bindings.Pods[index] = native
+						}
+					}
+				}
+				for id, uid := range nativeBindings.Owners {
+					bindings.Owners[id] = uid
+				}
+			} else {
+				// Production upgrades retain the supported static serving recipe;
+				// the non-production fresh ceremony cannot mint a prod fixture.
+				for index := range bindings.Pods {
+					if bindings.Pods[index].Component == "pki-controller" {
+						bindings.Pods[index].PodFields = nil
+						bindings.Pods[index].Containers[0].Fields = map[string]any{"env": environmentCreateEnv(map[string]string{"PKI_ENVIRONMENT": environment})}
+					}
+				}
 			}
 			attachEnvironmentAppFixture(&bindings)
 			bindings.IngressAdmission = &environmentAdmissionBinding{SecretName: "ingress-nginx-admission", CABundle: base64.StdEncoding.EncodeToString(testOpenBaoCAPEM(t))}
@@ -65,6 +111,11 @@ func TestCompleteCompilerUsesMaintainedCatalogAndFencesNativeSnapshot(t *testing
 					t.Fatal(err)
 				}
 			}
+			for _, key := range []string{"GHCR_PULL_USERNAME", "GHCR_PULL_TOKEN"} {
+				if err := store.write("operator/env/"+key, []byte("isolated-registry-fixture"), true); err != nil {
+					t.Fatal(err)
+				}
+			}
 			bindings.IngressAdmission.WebhookName = "original-ingress-admission"
 			// Original Account Manager state is a retained dependency, not a template.
 			secret := deploymentplan.Object{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": "account-manager-runtime", "namespace": bindings.Stack + "-account-manager", "uid": "original-runtime", "resourceVersion": "1", "labels": map[string]any{"rtk.realtek.com/stack": bindings.Stack}}, "data": map[string]any{"DATABASE_URL": base64.StdEncoding.EncodeToString([]byte("postgres://runtime@postgresql." + bindings.Stack + "-platform.svc.cluster.local/rtk_account_manager"))}}
@@ -88,6 +139,13 @@ func TestCompleteCompilerUsesMaintainedCatalogAndFencesNativeSnapshot(t *testing
 					}
 					definitions, err = renderEnvironmentPostgresProtection(definitions, protection, release)
 				}
+				if err == nil {
+					produced, pe := renderEnvironmentRuntimeDependencyDefinitions(values, snapshot.Secrets, snapshot.Operator)
+					if pe != nil {
+						return pe
+					}
+					definitions = append(definitions, produced...)
+				}
 				return err
 			})
 			if err != nil {
@@ -98,11 +156,25 @@ func TestCompleteCompilerUsesMaintainedCatalogAndFencesNativeSnapshot(t *testing
 				declared[deploymentplan.ID(d.Object)] = true
 			}
 			dependencies := map[string]deploymentplan.Object{deploymentplan.ID(secret): secret}
+			for _, object := range nativeExisting {
+				dependencies[deploymentplan.ID(object)] = object
+			}
 			for _, d := range definitions {
 				for _, ref := range environmentResourceReferences(d.Object) {
 					if !declared[ref.ID] && dependencies[ref.ID] == nil {
 						dependencies[ref.ID] = deploymentplan.Object{"apiVersion": "v1", "kind": ref.Kind, "metadata": map[string]any{"namespace": ref.Namespace, "name": ref.Name, "uid": "fixture-" + ref.Name, "resourceVersion": "1", "labels": map[string]any{"rtk.realtek.com/stack": bindings.Stack}}}
 					}
+				}
+			}
+			// Observe the original issuer role keys, rather than accepting an
+			// empty Secret placeholder as evidence of runtime configuration.
+			for name, keys := range map[string][]string{"certissuer-runtime": {"POSTGRES_PASSWORD", "device-ca.crt", "client-ca.crt"}, "factoryenroll-runtime": {"POSTGRES_PASSWORD", "FACTORY_ENROLL_AUTH_KEY"}} {
+				if secret := dependencies["Secret/"+bindings.Stack+"-video-cloud/"+name]; secret != nil {
+					data := map[string]any{}
+					for _, key := range keys {
+						data[key] = base64.StdEncoding.EncodeToString([]byte("isolated-issuer-fixture"))
+					}
+					secret["data"] = data
 				}
 			}
 			// Give managed controllers actual native owners, so a successful full
@@ -120,7 +192,7 @@ func TestCompleteCompilerUsesMaintainedCatalogAndFencesNativeSnapshot(t *testing
 				}
 				id := deploymentplan.ID(object)
 				metadata := deploymentplan.Map(object["metadata"])
-				metadata["uid"], metadata["resourceVersion"] = "original-managed-"+name, "1"
+				metadata["uid"], metadata["resourceVersion"] = firstNonEmpty(bindings.Owners[id], "original-managed-"+name), "1"
 				bindings.Owners[id] = deploymentplan.String(metadata["uid"])
 				dependencies[id] = object
 			}
@@ -151,7 +223,7 @@ func TestCompleteCompilerUsesMaintainedCatalogAndFencesNativeSnapshot(t *testing
 			namespaces := []any{}
 			for _, d := range definitions {
 				if d.Object["kind"] == "Namespace" {
-					namespace := deploymentplan.Object{"apiVersion": "v1", "kind": "Namespace", "metadata": map[string]any{"name": deploymentplan.Map(d.Object["metadata"])["name"], "uid": "namespace-" + deploymentplan.String(deploymentplan.Map(d.Object["metadata"])["name"]), "resourceVersion": "1"}}
+					namespace := deploymentplan.Object{"apiVersion": "v1", "kind": "Namespace", "metadata": map[string]any{"name": deploymentplan.Map(d.Object["metadata"])["name"], "uid": firstNonEmpty(bindings.Owners[deploymentplan.ID(d.Object)], "namespace-"+deploymentplan.String(deploymentplan.Map(d.Object["metadata"])["name"])), "resourceVersion": "1"}}
 					namespaces = append(namespaces, namespace)
 					dependencies[deploymentplan.ID(namespace)] = namespace
 				}
@@ -197,9 +269,22 @@ esac
 			if _, err := observeEnvironmentBindings(environment, release, fixtureLive); err != nil {
 				t.Fatal("fixture observations", err)
 			}
-			compiled, err := compileEnvironmentDeploymentWithImages(context.Background(), cfg, "upgrade", release, nil)
+			var progressOutput, progressLog bytes.Buffer
+			progress := &environmentProgress{out: &progressOutput, log: &progressLog, resources: -1}
+			progressCtx := context.WithValue(context.Background(), environmentProgressKey{}, progress)
+			compiled, err := compileEnvironmentDeploymentWithImages(progressCtx, cfg, "upgrade", release, nil)
+			if err == nil {
+				for _, stage := range []string{"deployment.inputs", "deployment.inventory.read", "deployment.pki.observation", "deployment.renderer.support", "deployment.renderer.target", "deployment.ownership", "deployment.compatibility.transition", "deployment.dependencies", "deployment.plan.compile", "deployment.storage.observation", "deployment.inputs.fence"} {
+					if !strings.Contains(progressOutput.String(), "[RUNNING] "+stage) || !strings.Contains(progressLog.String(), "[OK] "+stage) || strings.Contains(progressOutput.String(), "[OK]") {
+						t.Fatal("compiler lost running work or success evidence, or printed success", stage, progressOutput.String(), progressLog.String())
+					}
+				}
+			}
 			if err != nil {
 				t.Fatal("complete compiler failed", err)
+			}
+			if compiled.Backend.RolloutTimeout != 300*time.Second {
+				t.Fatal("compiler did not bind the maintained rollout timeout")
 			}
 			planned := map[string]deploymentplan.Resource{}
 			for _, resource := range compiled.Plan.Resources {
@@ -214,6 +299,18 @@ esac
 				if resource.Action == "create" && (resource.UID != "" || compiled.Bindings.Owners[resource.ID] != "") {
 					t.Fatal("preflight invented an owner UID for a new resource", resource.ID)
 				}
+			}
+			registrationTLS := "Secret/" + bindings.Stack + "-account-manager/account-manager-service-registration-tls"
+			registrationResource, retained := planned[registrationTLS]
+			if !retained || registrationResource.Action != "retain" || registrationResource.UID != deploymentplan.Map(dependencies[registrationTLS]["metadata"])["uid"] || !deploymentplan.Matches(registrationResource.Desired, dependencies[registrationTLS]) || deploymentplan.Digest(registrationResource.Baseline) != deploymentplan.Digest(deploymentplan.Projection(dependencies[registrationTLS])) {
+				t.Fatal("full workload DAG lost the original registration TLS Secret owner or body")
+			}
+			registrationDependency := false
+			for _, id := range planned["Deployment/"+bindings.Stack+"-account-manager/account-manager"].Dependencies {
+				registrationDependency = registrationDependency || id == registrationTLS
+			}
+			if !registrationDependency {
+				t.Fatal("full workload DAG dropped the retained registration TLS prerequisite")
 			}
 			appServiceID := "Service/" + bindings.Stack + "-video-cloud/video-cloud-api-app-pki"
 			serviceResource := planned[appServiceID]

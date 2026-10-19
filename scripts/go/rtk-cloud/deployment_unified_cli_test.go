@@ -19,7 +19,7 @@ import (
 
 func TestUnifiedCompilationErrorsExposeSafeCauseAndResource(t *testing.T) {
 	for _, environment := range []string{"dev", "staging", "prod"} {
-		for _, action := range []string{"preflight", "upgrade"} {
+		for _, action := range []string{"preflight"} {
 			for _, mode := range []string{"missing-renderer", "unknown-sidecar", "provider-error", "unclassified"} {
 				t.Run(environment+"/"+action+"/"+mode, func(t *testing.T) {
 					c, deps, writes := unifiedCLIProfile(t, environment)
@@ -71,6 +71,43 @@ func TestUnifiedCompilationErrorsExposeSafeCauseAndResource(t *testing.T) {
 	}
 }
 
+func TestUnifiedQualifiedLoaderErrorsExposeSafeCauseAndResource(t *testing.T) {
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		for _, mode := range []string{"missing-proof", "expired-proof", "baseline-drift", "unclassified"} {
+			t.Run(environment+"/"+mode, func(t *testing.T) {
+				c, deps, writes := unifiedCLIProfile(t, environment)
+				id, cause, next, resource := "deployment.preflight.proof", "complete GO evidence is unavailable", "run complete preflight", ""
+				if mode == "expired-proof" {
+					cause = "qualified preflight evidence has expired"
+				} else if mode == "baseline-drift" {
+					id, cause, next, resource = "deployment.drift", "original resource baseline changed after preflight", "repeat preflight against the current selected owner", "Secret/video-cloud-"+environment+"-platform/original-identity"
+				} else if mode == "unclassified" {
+					cause = "qualified execution evidence could not be loaded"
+				}
+				deps.Compile = func(context.Context, deploymentConfig, string) (*compiledEnvironmentDeployment, error) {
+					t.Fatal("deployment compiled instead of loading qualified evidence")
+					return nil, nil
+				}
+				deps.Checks = func(*compiledEnvironmentDeployment) map[string]deploymentplan.GateCheck {
+					t.Fatal("loader failure reached full preflight qualification")
+					return nil
+				}
+				deps.LoadQualified = func(context.Context, deploymentConfig, string, string) (*compiledEnvironmentDeployment, error) {
+					if mode == "unclassified" {
+						return nil, errors.New("private loader output: never-public-password")
+					}
+					return nil, fmt.Errorf("never-public-wrapper: %w", &deploymentplan.Blocker{ID: id, Resource: resource, Cause: cause, Next: next})
+				}
+				var out bytes.Buffer
+				err := runUnifiedEnvironmentDeploymentWithDependencies(context.Background(), "upgrade", []string{"--environment", environment, "--confirm", c.Plan.Stack, "--plan-sha256", c.Plan.SHA256()}, &out, &out, deps)
+				if err != exitCode(1) || *writes != 0 || !strings.Contains(out.String(), id) || !strings.Contains(out.String(), cause) || !strings.Contains(out.String(), next) || resource != "" && !strings.Contains(out.String(), resource) || strings.Contains(out.String(), "never-public") || strings.Contains(out.String(), "compiler") {
+					t.Fatal("public loader diagnosis lost actionable metadata or exposed private data", err, out.String())
+				}
+			})
+		}
+	}
+}
+
 func unifiedCLIProfile(t *testing.T, environment string) (*compiledEnvironmentDeployment, unifiedDeploymentDependencies, *int) {
 	t.Helper()
 	makeIsolatedTestSecretStore(t, environment)
@@ -79,9 +116,13 @@ func unifiedCLIProfile(t *testing.T, environment string) (*compiledEnvironmentDe
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := &compiledEnvironmentDeployment{Plan: plan, Configuration: deploymentConfig{Environment: environment, Values: map[string]string{"CLOUD_STACK_NAME": stack, "DEPLOYMENT_UPGRADE_WINDOW_SECONDS": "1800", "DEPLOYMENT_PROTECTION_PROFILE": map[bool]string{true: "production", false: "standard"}[environment == "prod"]}}}
+	c := &compiledEnvironmentDeployment{Plan: plan, Configuration: deploymentConfig{Environment: environment, Values: map[string]string{"CLOUD_STACK_NAME": stack, "DEPLOYMENT_PREFLIGHT_VALIDITY_SECONDS": "1800", "DEPLOYMENT_UPGRADE_WINDOW_SECONDS": "1800", "DEPLOYMENT_PROTECTION_PROFILE": map[bool]string{true: "production", false: "standard"}[environment == "prod"]}}}
 	writes := 0
 	deps := unifiedDeploymentDependencies{
+		InvalidateProof: func(deploymentConfig) (string, error) { return "fixture-generation", nil },
+		PublishObservations: func(cfg deploymentConfig, c *compiledEnvironmentDeployment, _ string, publish func(deploymentConfig, *compiledEnvironmentDeployment, string) error) error {
+			return publish(cfg, c, "NO-GO")
+		},
 		Resolve: func(string, string, string) (deploymentConfig, error) { return c.Configuration, nil },
 		Compile: func(ctx context.Context, cfg deploymentConfig, operation string) (*compiledEnvironmentDeployment, error) {
 			if operation != "upgrade" {
@@ -110,6 +151,23 @@ func unifiedCLIProfile(t *testing.T, environment string) (*compiledEnvironmentDe
 		},
 		Accept: func(context.Context, *compiledEnvironmentDeployment) error { return nil },
 	}
+	setFixtureProof := func(q deploymentplan.Qualification) {
+		now := time.Now().UTC()
+		c.Proof = &environmentPreflightProof{Schema: environmentPreflightProofSchema, Environment: environment, Stack: stack, Operation: "upgrade", PlanSHA256: plan.SHA256(), QualifiedAt: now, ValidUntil: now.Add(30 * time.Minute), Qualification: q}
+	}
+	var fixtureGates []deploymentplan.GateResult
+	for _, id := range deploymentplan.RequiredGateIDs(false)[:6] {
+		fixtureGates = append(fixtureGates, deploymentplan.GateResult{ID: id, Status: "PASS", Required: true, EvidenceSHA256: deploymentplan.Digest("isolated fixture evidence")})
+	}
+	setFixtureProof(deploymentplan.Qualification{PlanSHA256: plan.SHA256(), Decision: "GO", Gates: fixtureGates})
+	deps.PublishProof = func(_ context.Context, _ *compiledEnvironmentDeployment, q deploymentplan.Qualification) error {
+		setFixtureProof(q)
+		return nil
+	}
+	deps.LoadQualified = func(context.Context, deploymentConfig, string, string) (*compiledEnvironmentDeployment, error) {
+		return c, nil
+	}
+	deps.LiveChecks = func(c *compiledEnvironmentDeployment) map[string]deploymentplan.GateCheck { return deps.Checks(c) }
 	return c, deps, &writes
 }
 
@@ -145,6 +203,19 @@ func TestUnifiedPublicFlowUsesSamePlanAndRequiredGatesForAllEnvironments(t *test
 				if report.Scope != "existing-environment-update" || action == "plan" && report.Decision != "PLANNED" || action != "plan" && report.Decision != "GO" || report.Completed != (action == "upgrade") {
 					t.Fatal("scope or completion changed")
 				}
+				if strings.Contains(out.String(), "[OK]") || strings.Contains(out.String(), "[PASS]") || !strings.Contains(out.String(), report.Decision+" environment="+environment) {
+					t.Fatal("success rows were displayed or final verdict was lost", out.String())
+				}
+				if action != "plan" {
+					if len(report.Gates) != map[string]int{"preflight": 6, "upgrade": 11}[action] || report.ReusedPreflight != (action == "upgrade") {
+						t.Fatal("saved qualification or current execution evidence was removed from the report")
+					}
+					for _, gate := range report.Gates {
+						if gate.Status != "PASS" || len(gate.EvidenceSHA256) != 64 {
+							t.Fatal("successful gate lost its evidence", gate)
+						}
+					}
+				}
 			}
 			if *writes != 1 {
 				t.Fatal("planning/preflight wrote resources")
@@ -163,7 +234,7 @@ func TestPublicUpdateHasEveryRuntimeGateAndAcceptanceAdapter(t *testing.T) {
 				t.Fatal("required public update adapter absent", environment, id)
 			}
 		}
-		if deps.Accept == nil || deps.Execute == nil || deps.PrepareStorage == nil || deps.PublishBindings == nil || deps.RequireBindings == nil {
+		if deps.Accept == nil || deps.Execute == nil || deps.CheckExecutionAvailable == nil || deps.PrepareStorage == nil || deps.PublishBindings == nil || deps.RequireBindings == nil || deps.InvalidateProof == nil || deps.PublishProof == nil || deps.LoadQualified == nil || deps.LiveChecks == nil {
 			t.Fatal("public update cannot execute or accept")
 		}
 	}
@@ -246,11 +317,11 @@ func TestRolloutAcceptanceReusesRequiredReadOnlyHealthChecksAcrossEnvironments(t
 
 func TestUnifiedPublicFlowNeverExecutesIncompleteEvidenceOrUnreviewedPlan(t *testing.T) {
 	for _, environment := range []string{"dev", "staging", "prod"} {
-		for _, mode := range []string{"missing-gate", "failed-gate", "missing-acceptance", "wrong-plan", "partial-failure", "acceptance-failure", "fast"} {
+		for _, mode := range []string{"missing-gate", "failed-gate", "missing-acceptance", "wrong-plan", "partial-failure", "acceptance-failure"} {
 			t.Run(environment+"/"+mode, func(t *testing.T) {
 				c, deps, writes := unifiedCLIProfile(t, environment)
 				original := deps.Checks
-				deps.Checks = func(c *compiledEnvironmentDeployment) map[string]deploymentplan.GateCheck {
+				deps.LiveChecks = func(c *compiledEnvironmentDeployment) map[string]deploymentplan.GateCheck {
 					checks := original(c)
 					if mode == "missing-gate" {
 						delete(checks, "deployment.pki")
@@ -266,7 +337,10 @@ func TestUnifiedPublicFlowNeverExecutesIncompleteEvidenceOrUnreviewedPlan(t *tes
 					deps.Accept = nil
 				}
 				if mode == "partial-failure" {
-					deps.Execute = func(context.Context, *compiledEnvironmentDeployment, string, func(context.Context, *deploymentplan.Plan) error, func(context.Context, *compiledEnvironmentDeployment) error) error {
+					deps.Execute = func(ctx context.Context, compiled *compiledEnvironmentDeployment, _ string, recheck func(context.Context, *deploymentplan.Plan) error, _ func(context.Context, *compiledEnvironmentDeployment) error) error {
+						if err := recheck(ctx, compiled.Plan); err != nil {
+							return err
+						}
 						*writes++
 						return errors.New("private partial=never-public")
 					}
@@ -280,13 +354,9 @@ func TestUnifiedPublicFlowNeverExecutesIncompleteEvidenceOrUnreviewedPlan(t *tes
 				}
 				action := "upgrade"
 				args := []string{"--environment", environment, "--confirm", "video-cloud-" + environment, "--plan-sha256", sha}
-				if mode == "fast" {
-					action = "preflight"
-					args = []string{"--environment", environment, "--fast"}
-				}
 				var out, diagnostics bytes.Buffer
 				err := runUnifiedEnvironmentDeploymentWithDependencies(context.Background(), action, args, &out, &diagnostics, deps)
-				if err != exitCode(1) || !strings.Contains(out.String(), "NO-GO") || strings.Contains(out.String(), "never-public") || strings.Contains(out.String(), "completed=true") {
+				if err != exitCode(1) || !strings.Contains(out.String(), "NO-GO") || strings.Contains(out.String(), "never-public") || strings.Contains(out.String(), "completed=true") || strings.Contains(out.String(), "[OK]") {
 					t.Fatal(mode, err, out.String())
 				}
 				if mode != "partial-failure" && mode != "acceptance-failure" && *writes != 0 {
@@ -350,7 +420,7 @@ func TestUnifiedReportsRejectWorktreesOtherEnvironmentsAndSymlinkParents(t *test
 
 func TestUnifiedReportsRetainSanitizedAcceptanceResourceAndRepair(t *testing.T) {
 	c, deps, _ := unifiedCLIProfile(t, "dev")
-	deps.Execute = func(context.Context, *compiledEnvironmentDeployment, string, func(context.Context, *deploymentplan.Plan) error, func(context.Context, *compiledEnvironmentDeployment) error) error {
+	deps.Accept = func(context.Context, *compiledEnvironmentDeployment) error {
 		return &deploymentplan.Blocker{ID: "deployment.post-deploy.workloads", Resource: "Deployment/video-cloud-dev-application/application", Cause: "runtime image cannot be verified", Next: "repair the original planned runtime"}
 	}
 	var out, diagnostics bytes.Buffer
@@ -360,46 +430,41 @@ func TestUnifiedReportsRetainSanitizedAcceptanceResourceAndRepair(t *testing.T) 
 	}
 }
 
-func TestDefaultUnifiedExecutionUsesReviewedValidityWindowAndCallerDeadline(t *testing.T) {
+func TestDefaultUnifiedExecutionKeepsAdmittedCallerDeadline(t *testing.T) {
 	for _, environment := range []string{"dev", "staging", "prod"} {
-		for _, mode := range []string{"window", "earlier-caller", "missing-window"} {
-			t.Run(environment+"/"+mode, func(t *testing.T) {
+		for _, duration := range []time.Duration{time.Minute, 90 * time.Minute} {
+			t.Run(environment+"/"+duration.String(), func(t *testing.T) {
 				c, _, _ := unifiedCLIProfile(t, environment)
-				c.Configuration.Values["DEPLOYMENT_UPGRADE_WINDOW_SECONDS"] = "1800"
-				if mode == "missing-window" {
-					delete(c.Configuration.Values, "DEPLOYMENT_UPGRADE_WINDOW_SECONDS")
-				}
-				duration := time.Hour
-				if mode == "earlier-caller" {
-					duration = time.Minute
-				}
+				c.Proof.ValidUntil = time.Now().Add(50 * time.Millisecond)
 				ctx, cancel := context.WithTimeout(context.Background(), duration)
 				defer cancel()
 				parentDeadline, _ := ctx.Deadline()
-				called := false
+				ctx, admission, err := admitQualifiedEnvironmentExecution(ctx, c, time.Now().UTC())
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer admission.active.Store(false)
+				time.Sleep(time.Until(c.Proof.ValidUntil) + time.Millisecond)
+				called := 0
 				stop := errors.New("qualification-stop")
-				start := time.Now()
-				err := defaultUnifiedDeploymentDependencies().Execute(ctx, c, c.Plan.SHA256(), func(ctx context.Context, _ *deploymentplan.Plan) error {
-					called = true
+				qualify := func(ctx context.Context, _ *deploymentplan.Plan) error {
+					called++
 					deadline, ok := ctx.Deadline()
-					if !ok || deadline.After(parentDeadline) || deadline.After(start.Add(1800*time.Second+time.Second)) {
-						t.Fatal("execution exceeds reviewed window or caller deadline")
-					}
-					if mode == "window" && deadline.Before(start.Add(1799*time.Second)) {
-						t.Fatal("reviewed window silently changed")
+					if !ok || !deadline.Equal(parentDeadline) {
+						t.Fatal("native execution replaced the admitted caller deadline")
 					}
 					return stop
-				}, func(context.Context, *compiledEnvironmentDeployment) error {
-					t.Fatal("acceptance ran after failed qualification")
+				}
+				accept := func(context.Context, *compiledEnvironmentDeployment) error {
+					t.Fatal("acceptance ran after failed live checks")
 					return nil
-				})
-				if mode == "missing-window" {
-					var block *deploymentplan.Blocker
-					if called || !errors.As(err, &block) || block.ID != "deployment.pki.validity-window" {
-						t.Fatal("missing window reached execution", err)
-					}
-				} else if !called || !errors.Is(err, stop) {
-					t.Fatal("fenced qualification not reached", err)
+				}
+				execute := defaultUnifiedDeploymentDependencies().Execute
+				if err = execute(ctx, c, c.Plan.SHA256(), qualify, accept); called != 1 || !errors.Is(err, stop) {
+					t.Fatal("admitted live checks not reached", err)
+				}
+				if err = execute(ctx, c, c.Plan.SHA256(), qualify, accept); err == nil || called != 1 {
+					t.Fatal("admission token was replayed", err)
 				}
 			})
 		}
@@ -474,7 +539,7 @@ func TestPublicDeploymentHasNoLegacyPKIRenderer(t *testing.T) {
 
 func TestPreflightProducesBindingsAndDeploymentConsumesExactEvidence(t *testing.T) {
 	for _, environment := range []string{"dev", "staging", "prod"} {
-		for _, mode := range []string{"valid", "missing", "failed-recheck", "compiler-failure", "fast", "tampered", "plan-drift"} {
+		for _, mode := range []string{"valid", "missing", "failed-recheck", "compiler-failure", "tampered", "plan-drift"} {
 			t.Run(environment+"/"+mode, func(t *testing.T) {
 				c, deps, writes := unifiedCLIProfile(t, environment)
 				c.Store, _ = newSecretStore("", environment)
@@ -482,6 +547,15 @@ func TestPreflightProducesBindingsAndDeploymentConsumesExactEvidence(t *testing.
 				c.Plan.BindingsSHA256 = deploymentplan.Digest(c.Bindings)
 				defaults := defaultUnifiedDeploymentDependencies()
 				deps.PublishBindings, deps.RequireBindings = defaults.PublishBindings, defaults.RequireBindings
+				publishProof := deps.PublishProof
+				deps.PublishProof = func(ctx context.Context, compiled *compiledEnvironmentDeployment, qualification deploymentplan.Qualification) error {
+					if err := publishProof(ctx, compiled, qualification); err != nil {
+						return err
+					}
+					// Native proof publication owns the matching GO observation.
+					// This isolated fixture models that publication boundary too.
+					return defaults.PublishBindings(compiled.Configuration, compiled, "GO")
+				}
 				path := filepath.Join(c.Store.Root, "deployment", "identity-bindings.json")
 				if _, err := os.Stat(path); !os.IsNotExist(err) {
 					t.Fatal("fixture already had bindings")
@@ -505,11 +579,8 @@ func TestPreflightProducesBindingsAndDeploymentConsumesExactEvidence(t *testing.
 					}
 				}
 				switch mode {
-				case "failed-recheck", "fast", "compiler-failure":
+				case "failed-recheck", "compiler-failure":
 					args := []string{"--environment", environment}
-					if mode == "fast" {
-						args = append(args, "--fast")
-					}
 					if mode == "failed-recheck" {
 						deps.Checks = func(*compiledEnvironmentDeployment) map[string]deploymentplan.GateCheck {
 							return map[string]deploymentplan.GateCheck{}
@@ -533,7 +604,7 @@ func TestPreflightProducesBindingsAndDeploymentConsumesExactEvidence(t *testing.
 				case "plan-drift":
 					c.Plan.ConfigurationSHA256 = "changed"
 				}
-				// Restore compilation/checks after deliberately failed requalification.
+				// Deployment consumes qualification and checks only current mutable prerequisites.
 				cleanChecks := func(*compiledEnvironmentDeployment) map[string]deploymentplan.GateCheck {
 					checks := map[string]deploymentplan.GateCheck{}
 					for _, id := range deploymentplan.RequiredGateIDs(environment == "prod") {
@@ -543,8 +614,11 @@ func TestPreflightProducesBindingsAndDeploymentConsumesExactEvidence(t *testing.
 					}
 					return checks
 				}
-				deps.Compile = func(context.Context, deploymentConfig, string) (*compiledEnvironmentDeployment, error) { return c, nil }
-				deps.Checks = cleanChecks
+				deps.Compile = func(context.Context, deploymentConfig, string) (*compiledEnvironmentDeployment, error) {
+					t.Fatal("deployment recompiled after preflight")
+					return nil, nil
+				}
+				deps.LiveChecks = cleanChecks
 				err := runUnifiedEnvironmentDeploymentWithDependencies(context.Background(), "upgrade", []string{"--environment", environment, "--confirm", c.Plan.Stack, "--plan-sha256", c.Plan.SHA256()}, &out, &diagnostics, deps)
 				if (err == nil) != (mode == "valid") || *writes != map[bool]int{true: 1, false: 0}[mode == "valid"] {
 					t.Fatal("deployment consumed invalid evidence", err, *writes, out.String())

@@ -19,6 +19,9 @@ func deviceInitializerBlocker(id, cause string) error {
 func deviceTrustPreparation(file string) string {
 	return fmt.Sprintf("if [ ! -e %s ]; then cp /run/pki-initial/root-trust.json %s.new; chmod 600 %s.new; mv %s.new %s; fi", file, file, file, file, file)
 }
+func deviceNativeTrustPreparation(file string) string {
+	return fmt.Sprintf("umask 077; mkdir -p /run/pki-state; chmod 700 /run/pki-state; if [ -e %s ]; then chmod 600 %s; fi", file, file)
+}
 func normalizedDevicePreparation(script string) string {
 	script = strings.ReplaceAll(strings.ReplaceAll(script, "\"", ""), "'", "")
 	return strings.Join(strings.Fields(strings.ReplaceAll(script, ";", " ; ")), " ")
@@ -40,7 +43,9 @@ func observeDeviceInitializer(binding *environmentPodBindings, c map[string]any,
 				return deviceInitializerBlocker(id, "trust initializer references multiple state files")
 			}
 		}
-		if normalizedDevicePreparation(script) != normalizedDevicePreparation(deviceTrustPreparation(paths[0])) {
+		if normalizedDevicePreparation(script) == normalizedDevicePreparation(deviceNativeTrustPreparation(paths[0])) {
+			binding.NativeTrustInitialization = true
+		} else if normalizedDevicePreparation(script) != normalizedDevicePreparation(deviceTrustPreparation(paths[0])) {
 			return deviceInitializerBlocker(id, "trust initializer differs from preserve-on-retry recipe")
 		}
 		binding.DeviceTrustStateFile = paths[0]

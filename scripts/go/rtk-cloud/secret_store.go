@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -462,7 +463,7 @@ func catalogK8SBindings(id string) []secretK8SBinding {
 
 func runSecrets(args []string) error {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
-		fmt.Fprintln(os.Stdout, "Usage: rtk-cloud secrets <init|ensure|plan|migrate|verify|inventory|sync-missing-bindings> --environment NAME [--config-root PATH]")
+		fmt.Fprintln(os.Stdout, "Usage: rtk-cloud secrets <init|ensure|plan|migrate|verify|inventory|sync-missing-bindings|init-deployment-ssh> --environment NAME [--config-root PATH]; init-deployment-ssh requires --confirm video-cloud-NAME")
 		return nil
 	}
 	action := args[0]
@@ -498,6 +499,12 @@ func runSecrets(args []string) error {
 		}
 	}
 	switch action {
+	case "init-deployment-ssh":
+		if err := initializeEnvironmentDeploymentSSH(store, *confirm); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stdout, "Initialized new deployment SSH identity for environment=%s in its canonical private store.\n", store.Environment)
+		return nil
 	case "init":
 		if err := store.ensureLayout(); err != nil {
 			return err
@@ -573,7 +580,11 @@ func ensureMissingRuntimeSecrets(out io.Writer, store secretStore) error {
 				return errors.New("Account Manager bootstrap credentials are retired or their lifecycle marker is unavailable; ensure cannot regenerate the seed")
 			}
 		}
-		if err := store.write(filepath.Join("runtime", entry.ID), []byte(randomSecret()+"\n"), false); err != nil {
+		value, err := generateCatalogRuntimeSecret(entry.ID)
+		if err != nil {
+			return err
+		}
+		if err := store.write(filepath.Join("runtime", entry.ID), []byte(value+"\n"), false); err != nil {
 			return err
 		}
 		created = append(created, entry.ID)
@@ -637,7 +648,11 @@ func ensureSecretStoreCatalogAdditions(out io.Writer, store secretStore) error {
 		} else if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
 			return readErr
 		}
-		if err := store.write(filepath.Join("runtime", entry.ID), []byte(randomSecret()+"\n"), false); err != nil {
+		value, err := generateCatalogRuntimeSecret(entry.ID)
+		if err != nil {
+			return err
+		}
+		if err := store.write(filepath.Join("runtime", entry.ID), []byte(value+"\n"), false); err != nil {
 			return err
 		}
 		created = append(created, entry.ID)
@@ -654,6 +669,17 @@ func ensureSecretStoreCatalogAdditions(out io.Writer, store secretStore) error {
 	sort.Strings(created)
 	fmt.Fprintf(out, "created newly cataloged runtime credentials for %s: %s\n", store.Environment, strings.Join(created, ", "))
 	return nil
+}
+
+func generateCatalogRuntimeSecret(id string) (string, error) {
+	if id == "email-outbox-encryption" || id == "payment-reference-encryption" {
+		key := make([]byte, 32)
+		if _, err := rand.Read(key); err != nil {
+			return "", err
+		}
+		return base64.StdEncoding.EncodeToString(key), nil
+	}
+	return randomSecret(), nil
 }
 
 // ensureLegacyMigrationCatalogAdditions seeds credentials introduced after the
@@ -1017,10 +1043,12 @@ func verifySecretStore(out io.Writer, store secretStore, workspace string) error
 // update the canonical store outside the explicit migration command.
 func verifySecretStoreK8SBindings(store secretStore) error {
 	kubeconfig := store.KubeconfigPath()
-	if _, err := os.Stat(kubeconfig); errors.Is(err, os.ErrNotExist) {
-		return nil
-	} else if err != nil {
-		return err
+	if store.checkRuntime == nil || store.checkRuntime.frozenBackend == nil {
+		if _, err := os.Stat(kubeconfig); errors.Is(err, os.ErrNotExist) {
+			return nil
+		} else if err != nil {
+			return err
+		}
 	}
 	if store.checkRuntime != nil {
 		if _, err := store.checkRuntime.secretInventory(kubeconfig); err != nil {
@@ -1047,12 +1075,31 @@ func verifySecretStoreK8SBindings(store secretStore) error {
 			failures = append(failures, fmt.Sprintf("read canonical secret %s", entry.ID))
 			continue
 		}
+		canonical, err = environmentRuntimeBindingValue(entry.ID, canonical)
+		if err != nil {
+			failures = append(failures, err.Error())
+			continue
+		}
 		for _, binding := range entry.K8SBinding {
+			if entry.ID == "emqx-dashboard-password" {
+				var err error
+				binding, err = secretStoreMQTTDashboardBinding(store, binding)
+				if err != nil {
+					failures = append(failures, err.Error())
+					continue
+				}
+			}
 			if !billingLifecycleBindingRequired(store, entry.ID, binding) {
 				continue
 			}
 			secretName := stack + binding.NamespaceSuffix + "/" + binding.Secret
 			bindingName := secretName + ":" + binding.Key
+			if planned, err := verifyPlannedSecretStoreBinding(store, secretName, binding.Key, canonical); err != nil {
+				failures = append(failures, err.Error())
+				continue
+			} else if planned {
+				continue
+			}
 			data, loaded := seen[secretName]
 			if !loaded && !unreadable[secretName] {
 				var out []byte
@@ -1140,6 +1187,32 @@ func handoffOnlySecret(id string) bool {
 	}
 }
 
+// Concurrent native reads own only these private temporary API identities.
+// A disappearing enumeration entry is not missing canonical deployment state.
+func disappearedNativeKubernetesTemporaryEntry(root, path string, entry os.DirEntry, err error) bool {
+	if !errors.Is(err, os.ErrNotExist) || entry == nil || entry.Type()&os.ModeSymlink != 0 {
+		return false
+	}
+	relative, relErr := filepath.Rel(filepath.Join(root, "deployment", "tmp"), path)
+	parts := strings.Split(relative, string(filepath.Separator))
+	if relErr != nil || len(parts) < 1 || len(parts) > 2 || !strings.HasPrefix(parts[0], "kubernetes-api-") {
+		return false
+	}
+	suffix := strings.TrimPrefix(parts[0], "kubernetes-api-")
+	if suffix == "" {
+		return false
+	}
+	for _, digit := range suffix {
+		if digit < '0' || digit > '9' {
+			return false
+		}
+	}
+	if len(parts) == 1 {
+		return entry.IsDir()
+	}
+	return parts[1] == "kubeconfig.yaml" && entry.Type().IsRegular()
+}
+
 func verifySecretStoreContents(store secretStore) error {
 	rootInfo, err := os.Lstat(store.Root)
 	if err != nil {
@@ -1150,10 +1223,16 @@ func verifySecretStoreContents(store secretStore) error {
 	}
 	if err := filepath.WalkDir(store.Root, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
+			if disappearedNativeKubernetesTemporaryEntry(store.Root, path, entry, walkErr) {
+				return nil
+			}
 			return walkErr
 		}
 		info, err := os.Lstat(path)
 		if err != nil {
+			if disappearedNativeKubernetesTemporaryEntry(store.Root, path, entry, err) {
+				return nil
+			}
 			return err
 		}
 		if info.Mode()&os.ModeSymlink != 0 {

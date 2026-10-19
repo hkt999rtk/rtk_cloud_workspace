@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -47,12 +48,15 @@ func dnsLocalStatePath(ctx dnsAdapterContext, adapter, name string) (string, err
 		return "", dnsStateBlocker("private DNS path or permissions cannot be verified")
 	}
 	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) && ctx.RuntimeRoot != "" {
-		legacy := filepath.Join(ctx.RuntimeRoot, "dns", adapter, name)
+		legacyRelative := filepath.Join("dns", adapter, name)
 		if name == "dns.env" {
-			legacy = filepath.Join(ctx.RuntimeRoot, "state", name)
+			legacyRelative = filepath.Join("state", name)
 		}
-		if _, err := os.Lstat(legacy); !errors.Is(err, os.ErrNotExist) {
-			return "", dnsStateBlocker("legacy DNS state exists or cannot be inspected; it cannot be read as a fallback")
+		legacy := filepath.Join(ctx.RuntimeRoot, legacyRelative)
+		if _, err := os.Lstat(legacy); err == nil {
+			return "", dnsStateBlocker(fmt.Sprintf("legacy DNS state exists: environment=%s adapter=%s legacy=%s canonical=%s; it cannot be read as a fallback", environment, adapter, legacyRelative, relative))
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return "", dnsStateBlocker(fmt.Sprintf("legacy DNS state cannot be inspected: environment=%s adapter=%s legacy=%s canonical=%s; it cannot be read as a fallback", environment, adapter, legacyRelative, relative))
 		}
 	}
 	return path, nil
@@ -92,11 +96,12 @@ func writeDNSLocalState(ctx dnsAdapterContext, adapter, name string, raw []byte)
 }
 
 type dnsOwnership struct {
-	Adapter     string         `json:"adapter"`
-	RootDomain  string         `json:"root_domain"`
-	Environment string         `json:"environment"`
-	Records     []dnsRecordSet `json:"records"`
-	UpdatedAt   string         `json:"updated_at"`
+	Adapter              string         `json:"adapter"`
+	RootDomain           string         `json:"root_domain"`
+	Environment          string         `json:"environment"`
+	Records              []dnsRecordSet `json:"records"`
+	UpdatedAt            string         `json:"updated_at"`
+	ReconciliationSHA256 string         `json:"reconciliation_sha256,omitempty"`
 }
 
 func readDNSOwnership(ctx dnsAdapterContext, adapter string) (dnsOwnership, error) {
@@ -114,6 +119,11 @@ func readDNSOwnership(ctx dnsAdapterContext, adapter string) (dnsOwnership, erro
 	for _, record := range owned.Records {
 		if err := validateDNSRecord(ctx.RootDomain, record); err != nil {
 			return owned, dnsStateBlocker("DNS ownership contains invalid or foreign records")
+		}
+	}
+	if owned.ReconciliationSHA256 != "" {
+		if _, err := readDeploymentDNSReconciliation(ctx, adapter, owned); err != nil {
+			return owned, err
 		}
 	}
 	return owned, nil
@@ -176,6 +186,18 @@ func environmentDNSStateDigest(cfg deploymentConfig) (string, error) {
 			return "", err
 		}
 		files[name] = raw
+	}
+	path, err := dnsReconciliationPath(cfg.Environment, cfg.DNSAdapter)
+	if err != nil {
+		return "", err
+	}
+	if raw, err := readStorageEvidenceFile(path); err == nil {
+		if len(raw) > 1<<20 {
+			return "", dnsStateBlocker("DNS reconciliation receipt exceeds its bound")
+		}
+		files["reconciliation.json"] = raw
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
 	}
 	return deploymentplan.Digest(files), nil
 }

@@ -123,7 +123,7 @@ func TestStorageStateIsEnvironmentOwnedAndPreflightCannotCreateCompletion(t *tes
 	for _, environment := range []string{"dev", "staging", "prod"} {
 		t.Run(environment, func(t *testing.T) {
 			t.Setenv("RTK_CLOUD_CONFIG_ROOT", t.TempDir())
-			cfg := deploymentConfig{Environment: environment, RuntimeRoot: t.TempDir(), Values: map[string]string{}, Storage: deploymentStoragePlan{RuntimeMediaCutoverRequired: true, RuntimeMedia: deploymentStorageTarget{Bucket: "target", Region: "us-sea", Prefix: "environments/stack"}}}
+			cfg := deploymentConfig{Environment: environment, RuntimeRoot: t.TempDir(), Values: map[string]string{"DEPLOYMENT_PREFLIGHT_VALIDITY_SECONDS": "3600"}, Storage: deploymentStoragePlan{RuntimeMediaCutoverRequired: true, RuntimeMedia: deploymentStorageTarget{Bucket: "target", Region: "us-sea", Prefix: "environments/stack"}}}
 			// A receipt in another checkout is never a lookup fallback or proof.
 			if err := writeStorageState(filepath.Join(cfg.RuntimeRoot, "state", "storage-cutover.json"), map[string]any{"environment": environment}); err != nil {
 				t.Fatal(err)

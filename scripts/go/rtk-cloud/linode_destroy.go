@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -425,48 +426,76 @@ func listLinodeVolumes(token string) ([]linodeVolume, error) {
 }
 
 func deleteDeploymentVolumesWhenDetached(token string, volumeIDs []string, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), max(timeout, time.Second))
+	defer cancel()
+	return deleteDeploymentVolumesWithEvidence(ctx, token, volumeIDs, timeout, readRemovalRecoveryNative, func(token, id string) error {
+		_, err := linodeRequestRaw(token, "DELETE", "/volumes/"+id, "")
+		if err == nil {
+			fmt.Fprintf(os.Stdout, "DELETE REQUEST ACCEPTED: original Linode volume id=%s\n", id)
+		}
+		return err
+	})
+}
+
+func deleteDeploymentVolumesWithEvidence(ctx context.Context, token string, volumeIDs []string, timeout time.Duration, read removalRecoveryReader, deleteVolume func(string, string) error) error {
 	if len(volumeIDs) == 0 {
 		return nil
 	}
-	if strings.TrimSpace(token) == "" {
-		return errors.New("LINODE_TOKEN is required to remove environment persistent volumes")
+	if strings.TrimSpace(token) == "" || read == nil || deleteVolume == nil {
+		return errors.New("selected credentials and exact volume evidence readers are required")
 	}
 	wanted := map[string]bool{}
 	for _, id := range volumeIDs {
+		if _, err := positiveIntValue("volume_id", id); err != nil || wanted[id] {
+			return errors.New("original volume IDs must be distinct positive numeric IDs")
+		}
 		wanted[id] = true
 	}
+	ids := append([]string(nil), volumeIDs...)
+	sort.Strings(ids)
 	deadline := time.Now().Add(timeout)
 	for {
-		volumes, err := listLinodeVolumes(token)
-		if err != nil {
-			return err
-		}
-		remaining := map[string]linodeVolume{}
-		for _, volume := range volumes {
-			if wanted[volume.ID] {
-				remaining[volume.ID] = volume
-			}
-		}
-		if len(remaining) == 0 {
-			return nil
-		}
-		for id, volume := range remaining {
-			if volume.LinodeID != nil || volume.Status != "active" {
+		pending := []string{}
+		for _, id := range ids {
+			raw, err := read(ctx, token, "/volumes/"+id, nil)
+			if errors.Is(err, errRemovalRecoveryNativeNotFound) {
 				continue
 			}
-			if _, err := linodeRequestRaw(token, "DELETE", "/volumes/"+id, ""); err != nil {
-				return fmt.Errorf("delete environment volume %s: %w", id, err)
+			var volume removalRecoveryVolume
+			if err != nil || json.Unmarshal(raw, &volume) != nil || strconv.Itoa(volume.ID) != id {
+				return fmt.Errorf("cannot verify original Linode volume %s through its exact native endpoint", id)
 			}
-		}
-		if time.Now().After(deadline) {
-			ids := make([]string, 0, len(remaining))
-			for id := range remaining {
-				ids = append(ids, id)
+			if volume.LinodeID != nil || volume.Status != "active" {
+				pending = append(pending, id)
+				continue
 			}
-			sort.Strings(ids)
-			return fmt.Errorf("timed out after %s waiting to remove environment volumes: %s", timeout, strings.Join(ids, ", "))
+			deleteErr := deleteVolume(token, id)
+			raw, err = read(ctx, token, "/volumes/"+id, nil)
+			if errors.Is(err, errRemovalRecoveryNativeNotFound) {
+				fmt.Fprintf(os.Stdout, "[VERIFIED] original Linode volume id=%s is absent\n", id)
+				continue
+			}
+			if err != nil || json.Unmarshal(raw, &volume) != nil || strconv.Itoa(volume.ID) != id {
+				return fmt.Errorf("original Linode volume %s deletion cannot be verified; permission and transport failures are not absence", id)
+			}
+			if deleteErr != nil {
+				return fmt.Errorf("original Linode volume %s deletion failed and its exact native endpoint still reports it present", id)
+			}
+			pending = append(pending, id)
 		}
-		time.Sleep(5 * time.Second)
+		if len(pending) == 0 {
+			return nil
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("timed out after %s waiting for exact original Linode volumes to be absent: %s", timeout, strings.Join(pending, ", "))
+		}
+		timer := time.NewTimer(min(5*time.Second, time.Until(deadline)))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return errors.New("exact original volume removal verification timed out")
+		case <-timer.C:
+		}
 	}
 }
 
@@ -640,6 +669,7 @@ func executeLinodeDestroyPlan(token, envRoot string, plan linodeDestroyPlan, inc
 				if _, err := linodeRequestRaw(token, "DELETE", item.Path, ""); err != nil {
 					return err
 				}
+				fmt.Fprintf(os.Stdout, "DELETE REQUEST ACCEPTED: %s (%s)\n", item.Label, item.Path)
 			}
 		}
 		if len(localState) > 0 {
@@ -657,6 +687,7 @@ func executeLinodeDestroyPlan(token, envRoot string, plan linodeDestroyPlan, inc
 			if _, err := linodeRequestRaw(token, "DELETE", item.Path, ""); err != nil {
 				return err
 			}
+			fmt.Fprintf(os.Stdout, "DELETE REQUEST ACCEPTED: %s (%s)\n", item.Label, item.Path)
 		}
 	}
 	if includeOrphanVolumes && !onlyLKECluster {
@@ -674,6 +705,7 @@ func executeLinodeDestroyPlan(token, envRoot string, plan linodeDestroyPlan, inc
 			if _, err := linodeRequestRaw(token, "DELETE", item.Path, ""); err != nil {
 				return err
 			}
+			fmt.Fprintf(os.Stdout, "DELETE REQUEST ACCEPTED: %s (%s)\n", item.Label, item.Path)
 		}
 	}
 	if includeOrphanNodeBalancers && !onlyLKECluster {
@@ -691,6 +723,7 @@ func executeLinodeDestroyPlan(token, envRoot string, plan linodeDestroyPlan, inc
 			if _, err := linodeRequestRaw(token, "DELETE", item.Path, ""); err != nil {
 				return err
 			}
+			fmt.Fprintf(os.Stdout, "DELETE REQUEST ACCEPTED: %s (%s)\n", item.Label, item.Path)
 		}
 	}
 	return nil

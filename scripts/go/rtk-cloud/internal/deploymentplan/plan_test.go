@@ -208,7 +208,7 @@ func (l *memoryExecutionLease) Release(ctx context.Context) error {
 	return nil
 }
 
-func TestPartialMutationRetainsClusterAndLocalFencesAcrossDifferentControllers(t *testing.T) {
+func TestPartialMutationReleasesExecutionLocksAndPreservesEvidenceAcrossControllers(t *testing.T) {
 	in, d, _ := fixture(t, "dev", "Deployment")
 	p, err := Compile(in, []Definition{d}, nil)
 	if err != nil {
@@ -223,11 +223,16 @@ func TestPartialMutationRetainsClusterAndLocalFencesAcrossDifferentControllers(t
 	if err := p.Execute(context.Background(), backend, p.SHA256(), firstRoot, qualified, qualified, func(context.Context, *Plan) error { return nil }); err == nil {
 		t.Fatal("failed rollout reported success")
 	}
-	if !backend.leaseHeld {
-		t.Fatal("partial mutation released cluster execution")
+	if backend.leaseHeld {
+		t.Fatal("stopped partial mutation retained cluster execution")
 	}
-	if _, err := os.Stat(filepath.Join(firstRoot, "deployment", ".execution-active", "owner.json")); err != nil {
-		t.Fatal("partial mutation removed local recovery fence")
+	if _, err := os.Stat(filepath.Join(firstRoot, "deployment", ".execution-active")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("stopped partial mutation retained its active local lock", err)
+	}
+	journalPath := filepath.Join(firstRoot, "deployment", "rollback", p.SHA256(), "journal.json")
+	before, err := os.ReadFile(journalPath)
+	if err != nil {
+		t.Fatal("partial mutation lost its private journal", err)
 	}
 	in.ConfigurationSHA256 = Digest("second controller config")
 	second, err := Compile(in, []Definition{d}, []Object{backend.objects[ID(d.Object)]})
@@ -235,8 +240,17 @@ func TestPartialMutationRetainsClusterAndLocalFencesAcrossDifferentControllers(t
 		t.Fatal(err)
 	}
 	writes := len(backend.written)
-	if err := second.Execute(context.Background(), backend, second.SHA256(), t.TempDir(), qualified, qualified, func(context.Context, *Plan) error { return nil }); err == nil || len(backend.written) != writes {
-		t.Fatal("different controller bypassed partial-operation lease")
+	backend.failWait = false
+	secondRoot := t.TempDir()
+	if err := os.Chmod(secondRoot, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.Execute(context.Background(), backend, second.SHA256(), secondRoot, qualified, qualified, func(context.Context, *Plan) error { return nil }); err != nil || len(backend.written) != writes || backend.leaseHeld {
+		t.Fatal("fresh plan could not qualify the actual target after the old controller stopped", err)
+	}
+	after, err := os.ReadFile(journalPath)
+	if err != nil || string(after) != string(before) {
+		t.Fatal("fresh execution changed the original partial journal", err)
 	}
 }
 
@@ -412,8 +426,8 @@ func TestDelayedVolumeBindingWaitsAfterConsumerAndBlocksIncompleteStorage(t *tes
 				}
 				if unbound {
 					var blocker *Blocker
-					if !errors.As(err, &blocker) || blocker.ID != "deployment.storage.binding" || accepts != 0 || !backend.leaseHeld {
-						t.Fatal("unbound storage completed deployment or lost its recovery fence", err)
+					if !errors.As(err, &blocker) || blocker.ID != "deployment.storage.binding" || accepts != 0 || backend.leaseHeld {
+						t.Fatal("unbound storage completed deployment or retained its execution lock", err)
 					}
 					raw, readErr := os.ReadFile(filepath.Join(root, "deployment", "rollback", p.SHA256(), "journal.json"))
 					var journal Journal
@@ -446,7 +460,7 @@ func TestFailedWaitPreservesAppliedOwnerAndRejectsJournalOverwrite(t *testing.T)
 	path := filepath.Join(root, "deployment", "rollback", p.SHA256(), "journal.json")
 	raw, err := os.ReadFile(path)
 	var journal Journal
-	if err != nil || json.Unmarshal(raw, &journal) != nil || journal.Owners[ID(d.Object)] != "new-owner" || journal.Failed != ID(d.Object) || len(journal.Completed) != 0 {
+	if err != nil || json.Unmarshal(raw, &journal) != nil || len(journal.Owners) != 1 || journal.Owners[ID(d.Object)] != "new-owner" || journal.Failed != ID(d.Object) || len(journal.Completed) != 1 || journal.Completed[0] != ID(d.Object) || journal.InFlight != "" || journal.AcceptanceStarted || journal.Accepted {
 		t.Fatal("applied but unready owner missing from recovery evidence", err)
 	}
 	// A second command must not erase the first command's partial result even
@@ -457,8 +471,11 @@ func TestFailedWaitPreservesAppliedOwnerAndRejectsJournalOverwrite(t *testing.T)
 		t.Fatal("earlier journal overwritten")
 	}
 	after, _ := os.ReadFile(path)
-	if string(raw) != string(after) || len(backend.written) != 1 {
-		t.Fatal("recovery evidence or original resource outcome changed")
+	if string(raw) != string(after) || len(backend.written) != 1 || backend.leaseHeld {
+		t.Fatal("recovery evidence or original resource outcome changed, or rejected retry retained its lease")
+	}
+	if _, err := os.Stat(filepath.Join(root, "deployment", ".execution-active")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("rejected same-plan retry retained its active local lock", err)
 	}
 }
 
@@ -808,11 +825,13 @@ func TestAcceptanceKeepsDistributedFenceAndRejectsConcurrentChanges(t *testing.T
 					if err == nil || journal.Accepted || len(b.written) != 1 {
 						t.Fatal("failed acceptance completed or overwrote concurrent state")
 					}
-					if mode != "lease-lost" && !b.leaseHeld {
-						t.Fatal("failed acceptance released distributed fence")
+					if b.leaseHeld {
+						t.Fatal("failed acceptance retained distributed execution ownership")
 					}
-					if _, err := os.Stat(filepath.Join(root, "deployment", ".execution-active")); err != nil {
-						t.Fatal("failed acceptance removed local recovery fence")
+					if mode != "lease-lost" {
+						if _, err := os.Stat(filepath.Join(root, "deployment", ".execution-active")); !errors.Is(err, os.ErrNotExist) {
+							t.Fatal("failed acceptance retained its active local lock", err)
+						}
 					}
 					if mode == "typed-failed" {
 						var failure *Blocker

@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/sha256"
 	"fmt"
+	"net"
 	"path"
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 	"strings"
@@ -33,7 +34,7 @@ func validateObservedAccountManagerSocketInitializer(id string, c map[string]any
 	script := strings.Join(parts, "\n")
 	// The original strict-mode recipe only creates /socket/private and sets
 	// 0700. Keep its digest as evidence; never import a live command into intent.
-	if script != accountManagerSocketPreparation && fmt.Sprintf("%x", sha256.Sum256([]byte(script))) != "c5fce41047873694c256411b06c258c56a1f58c9528ff75655f68b24d6b1e4d8" {
+	if script != accountManagerPublicCRLPreparation && script != accountManagerSocketPreparation && fmt.Sprintf("%x", sha256.Sum256([]byte(script))) != "c5fce41047873694c256411b06c258c56a1f58c9528ff75655f68b24d6b1e4d8" {
 		return accountManagerSocketInitializerBlocker(id)
 	}
 	repository := environmentImageRepository(deploymentplan.String(c["image"]))
@@ -46,14 +47,21 @@ func validateObservedAccountManagerSocketInitializer(id string, c map[string]any
 func maintainedAccountManagerSocketInitializer(bound environmentContainerBindings, release environmentRelease, volume, id string) (map[string]any, error) {
 	image := release.Images["LKE_ALPINE_IMAGE"].Reference
 	mounts := certIssuerObjectList(bound.Fields["volumeMounts"])
-	if bound.Name != "management-socket-directory" || bound.ImageKey != "LKE_ALPINE_IMAGE" || !immutableEnvironmentImage.MatchString(image) || len(mounts) != 1 {
+	if bound.Name != "management-socket-directory" || bound.ImageKey != "LKE_ALPINE_IMAGE" || !immutableEnvironmentImage.MatchString(image) || (len(mounts) != 1 && len(mounts) != 2) {
 		return nil, accountManagerSocketInitializerBlocker(id)
 	}
 	mount := deploymentplan.Map(mounts[0])
 	if mount["name"] != volume || mount["mountPath"] != "/socket" || mount["readOnly"] == true || deploymentplan.String(mount["subPath"]) != "" || deploymentplan.String(mount["subPathExpr"]) != "" {
 		return nil, accountManagerSocketInitializerBlocker(id)
 	}
-	c := map[string]any{"name": bound.Name, "image": image, "command": []any{"/bin/sh", "-ec", accountManagerSocketPreparation}, "resources": map[string]any{"requests": map[string]any{"cpu": "10m", "memory": "16Mi"}, "limits": map[string]any{"memory": "64Mi"}}, "securityContext": map[string]any{"allowPrivilegeEscalation": false, "readOnlyRootFilesystem": true, "capabilities": map[string]any{"drop": []any{"ALL"}}}}
+	script := accountManagerSocketPreparation
+	if len(mounts) == 2 {
+		if deploymentplan.Digest(mounts[1]) != deploymentplan.Digest(accountRegistrationCRLSeedMount()) {
+			return nil, accountManagerSocketInitializerBlocker(id)
+		}
+		script = accountManagerPublicCRLPreparation
+	}
+	c := map[string]any{"name": bound.Name, "image": image, "command": []any{"/bin/sh", "-ec", script}, "resources": map[string]any{"requests": map[string]any{"cpu": "10m", "memory": "16Mi"}, "limits": map[string]any{"memory": "64Mi"}}, "securityContext": map[string]any{"allowPrivilegeEscalation": false, "readOnlyRootFilesystem": true, "capabilities": map[string]any{"drop": []any{"ALL"}}}}
 	for field, value := range bound.Fields {
 		c[field] = value
 	}
@@ -134,11 +142,19 @@ func applyAccountManagerSocketProfile(object deploymentplan.Object, binding envi
 		}
 	}
 	pod := environmentPKIPod(object)
+	export := mqttFoundationEnv(manager.Fields, accountRegistrationCRLExportEnv)
+	if export != "" && (export != accountRegistrationCRLBundlePath || mqttFoundationEnv(app.Fields, "ACCOUNT_MANAGER_SERVICE_REGISTRATION_CLIENT_CRL") != export) {
+		return accountManagerSocketInitializerBlocker(deploymentplan.ID(object))
+	}
 	var initializers []any
 	for _, bound := range binding.InitContainers {
 		c, err := maintainedAccountManagerSocketInitializer(bound, release, volume, deploymentplan.ID(object))
 		if err != nil {
 			return err
+		}
+		script := deploymentplan.String(certIssuerObjectList(c["command"])[2])
+		if (export != "") != (script == accountManagerPublicCRLPreparation) {
+			return accountManagerSocketInitializerBlocker(deploymentplan.ID(object))
 		}
 		initializers = append(initializers, c)
 	}
@@ -170,5 +186,73 @@ func applyAccountManagerSocketProfile(object deploymentplan.Object, binding envi
 	}
 	// One managed identity writer must stop before its replacement starts.
 	deploymentplan.Map(object["spec"])["strategy"] = map[string]any{"type": "Recreate"}
+	return nil
+}
+
+// The original internal Service targets this named port. Declaration alone
+// does not enable a listener; only an already configured owner receives it.
+func applyAccountManagerListenerPort(binding environmentPodBindings, container deploymentplan.Object) error {
+	if binding.Name != "account-manager" || container["name"] != "pkimanagement" {
+		return nil
+	}
+	address := mqttFoundationEnv(container, "PKI_MANAGEMENT_ACCOUNT_LISTEN_ADDR")
+	if address == "" {
+		return nil
+	}
+	_, port, err := net.SplitHostPort(address)
+	if err != nil || port != "8443" && port != "18443" {
+		return &deploymentplan.Blocker{ID: "deployment.pki.account-listener", Resource: binding.Name, Cause: "original managed account listener differs from the shared internal Service port", Next: "reconcile the original account listener and owned internal Service before repeating preflight"}
+	}
+	name, number := "account-service", 8443
+	if port == "18443" {
+		pin := mqttFoundationEnv(container, "PKI_MANAGEMENT_IDENTITY_ROOT_SHA256")
+		client, host := mqttFoundationEnv(container, "PKI_MANAGEMENT_IDENTITY_STATE"), mqttFoundationEnv(container, "PKI_MANAGEMENT_ACCOUNT_HOST_IDENTITY_STATE")
+		if !environmentPreflightDigest.MatchString(pin) || mqttFoundationEnv(container, "PKI_MANAGEMENT_ACCOUNT_HOST_ROOT_SHA256") != pin || mqttFoundationEnv(container, "PKI_MANAGEMENT_ACCOUNT_CLIENT_ROOT_SHA256") != pin || !path.IsAbs(client) || !path.IsAbs(host) || path.Clean(client) != client || path.Clean(host) != host || client == host {
+			return &deploymentplan.Blocker{ID: "deployment.pki.account-listener", Resource: binding.Name, Cause: "native account listener lost its original managed client or host lineage", Next: "retain exact managed Account identity states and independent Root pins before repeating preflight"}
+		}
+		name, number = "service-mtls", 18443
+		container["readinessProbe"] = deploymentplan.Object{"tcpSocket": deploymentplan.Object{"port": name}, "periodSeconds": float64(5)}
+	}
+	container["ports"] = mergeEnvironmentNamedFields(container["ports"], []any{deploymentplan.Object{"name": name, "containerPort": float64(number), "protocol": "TCP"}})
+	return nil
+}
+
+// A finite native listener profile adds the matching Service target while the
+// maintained service-reg port continues to select the original main listener.
+func applyAccountManagerServicePorts(object deploymentplan.Object, bindings environmentIdentityBindings) error {
+	if object["kind"] != "Service" || deploymentplan.Map(object["metadata"])["name"] != "account-manager" || deploymentplan.Map(object["metadata"])["namespace"] != bindings.Stack+"-account-manager" {
+		return nil
+	}
+	for _, binding := range bindings.Pods {
+		if binding.Name != "account-manager" || binding.NamespaceSuffix != "account-manager" {
+			continue
+		}
+		for _, owner := range binding.Containers {
+			if owner.Name != "pkimanagement" {
+				continue
+			}
+			_, port, err := net.SplitHostPort(mqttFoundationEnv(owner.Fields, "PKI_MANAGEMENT_ACCOUNT_LISTEN_ADDR"))
+			if err != nil || port != "18443" {
+				return nil // Existing legacy Account socket profiles keep their catalog.
+			}
+			container := deploymentplan.Object{"name": owner.Name, "env": owner.Fields["env"]}
+			if err := applyAccountManagerListenerPort(binding, container); err != nil {
+				return err
+			}
+			if bindings.Owners[deploymentplan.ID(object)] == "" {
+				return &deploymentplan.Blocker{ID: "deployment.pki.account-listener", Resource: deploymentplan.ID(object), Cause: "native Account listener Service has no original owner", Next: "observe its exact original Service UID before rendering the retained managed listener"}
+			}
+			spec := deploymentplan.Map(object["spec"])
+			for _, value := range certIssuerObjectList(spec["ports"]) {
+				p := deploymentplan.Map(value)
+				if p["name"] == "service-mtls" || p["port"] == float64(18443) {
+					if p["name"] != "service-mtls" || p["port"] != float64(18443) || p["targetPort"] != "service-mtls" {
+						return &deploymentplan.Blocker{ID: "deployment.pki.account-listener", Resource: deploymentplan.ID(object), Cause: "native Account Service port collides with another maintained consumer", Next: "restore the original distinct registration and managed API Service targets"}
+					}
+				}
+			}
+			spec["ports"] = mergeEnvironmentNamedFields(spec["ports"], []any{deploymentplan.Object{"name": "service-mtls", "port": float64(18443), "targetPort": "service-mtls", "protocol": "TCP"}})
+		}
+	}
 	return nil
 }

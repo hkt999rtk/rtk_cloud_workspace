@@ -3,9 +3,54 @@ package main
 import (
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 	"strings"
+	"time"
 )
 
 const environmentAppTrustInitialize = "umask 077; mkdir -p /run/pki-state/app; chmod 700 /run/pki-state/app; if [ ! -e /run/pki-state/app/root-policy.json ]; then cp /run/pki-app/root-trust.json /run/pki-state/app/root-policy.json.new; chmod 600 /run/pki-state/app/root-policy.json.new; mv /run/pki-state/app/root-policy.json.new /run/pki-state/app/root-policy.json; fi"
+const environmentAppNativeTrustInitialize = "umask 077; mkdir -p /run/pki-state/app; chmod 700 /run/pki-state/app; if [ -e /run/pki-state/app/root-policy.json ]; then chmod 600 /run/pki-state/app/root-policy.json; fi"
+
+func checkEnvironmentAppTURNPlan(p *deploymentplan.Plan) error {
+	for _, r := range p.Resources {
+		if r.Action != "retire" {
+			if err := validateEnvironmentAppTURNPolicy([]deploymentplan.Definition{{Object: r.Desired}}); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// Match the formal API's App PKI TURN revocation cutoff. Admission cannot
+// validate application durations, and preflight must not depend on a live API.
+func validateEnvironmentAppTURNPolicy(definitions []deploymentplan.Definition) error {
+	for _, d := range definitions {
+		if d.Object["kind"] != "Deployment" || deploymentplan.Map(d.Object["metadata"])["name"] != "video-cloud-api-app-pki" {
+			continue
+		}
+		for _, raw := range certIssuerObjectList(environmentPKIPod(d.Object)["containers"]) {
+			c := deploymentplan.Map(raw)
+			if c["name"] != "app" {
+				continue
+			}
+			settings, err := environmentPKINamedFields(c["env"])
+			blocked := func() error {
+				return &deploymentplan.Blocker{ID: "deployment.configuration.app-turn-ttl", Resource: deploymentplan.ID(d.Object), Cause: "App PKI with TURN requires an explicit positive VIDEO_CLOUD_TURN_CREDENTIAL_TTL no greater than 1m", Next: "maintain the App API's bounded TTL in the common renderer, preserve the other API roles and original identities, then repeat full preflight"}
+			}
+			if err != nil {
+				return blocked()
+			}
+			if settings["VIDEO_CLOUD_AUTH_APP_PKI_ENABLED"]["value"] != "true" || deploymentplan.String(settings["VIDEO_CLOUD_WEBRTC_TURN_URLS"]["value"]) == "" {
+				continue
+			}
+			ttl := settings["VIDEO_CLOUD_TURN_CREDENTIAL_TTL"]
+			duration, err := time.ParseDuration(deploymentplan.String(ttl["value"]))
+			if ttl["valueFrom"] != nil || err != nil || duration <= 0 || duration > time.Minute {
+				return blocked()
+			}
+		}
+	}
+	return nil
+}
 
 type environmentAppIngressBinding struct {
 	Name string                     `json:"name"`
@@ -38,11 +83,33 @@ func validateEnvironmentAppBinding(pod environmentPodBindings) error {
 				if name == "pki-state" {
 					source, field = "persistentVolumeClaim", "claimName"
 				}
+				if name == "pki-management" && pod.NativeTrustInitialization {
+					source, field = "persistentVolumeClaim", "claimName"
+				}
 				found = deploymentplan.String(deploymentplan.Map(volume[source])[field]) != ""
 			}
 		}
 		if !found {
 			return environmentAppBlocker(id, "App API is missing its original "+name+" lifecycle reference")
+		}
+	}
+	if pod.NativeTrustInitialization {
+		claim, identityClaim, identityMount := "", "", false
+		for _, value := range certIssuerObjectList(pod.PodFields["volumes"]) {
+			volume := deploymentplan.Map(value)
+			if volume["name"] == "pki-management" {
+				claim = deploymentplan.String(deploymentplan.Map(volume["persistentVolumeClaim"])["claimName"])
+			}
+			if volume["name"] == "service-identity" {
+				identityClaim = deploymentplan.String(deploymentplan.Map(volume["persistentVolumeClaim"])["claimName"])
+			}
+		}
+		for _, value := range certIssuerObjectList(pod.Containers[0].Fields["volumeMounts"]) {
+			mount := deploymentplan.Map(value)
+			identityMount = identityMount || mount["name"] == "service-identity" && mount["mountPath"] == "/var/lib/video-cloud-app-service" && mount["readOnly"] != true
+		}
+		if claim != "video-cloud-api-app-service-state" || identityClaim != claim || !identityMount || mqttFoundationEnv(pod.Containers[0].Fields, "VIDEO_CLOUD_CONTROLLER_IDENTITY_STATE") != "/var/lib/video-cloud-app-service/private/client.json" {
+			return environmentAppBlocker(id, "native App trust must retain its original owned managed Service client claim and private state path")
 		}
 	}
 	for _, consumer := range append(append([]environmentContainerBindings{}, pod.Containers...), pod.InitContainers...) {
@@ -109,6 +176,12 @@ func observeEnvironmentAppIngress(b *environmentIdentityBindings, object deploym
 	return nil
 }
 func environmentAppDependencies(env map[string]string, b environmentIdentityBindings) ([]deploymentplan.Definition, error) {
+	if b.AppRouting != nil {
+		if err := validateEnvironmentAppRoutingBinding(b); err != nil {
+			return nil, err
+		}
+		return append(environmentAppInternalServiceDependencies(env), environmentAppRoutingDefinition(*b.AppRouting)), nil
+	}
 	route := b.AppIngress
 	ns := lkeNamespaceName(env, "video-cloud")
 	if route == nil || !secretEnvironmentPattern.MatchString(route.Name) || route.Host == "" || b.Owners["Ingress/"+ns+"/"+route.Name] == "" {

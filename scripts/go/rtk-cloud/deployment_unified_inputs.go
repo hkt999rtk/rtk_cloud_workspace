@@ -21,8 +21,9 @@ type environmentRelease struct {
 	Images            map[string]environmentReleaseImage `json:"images"`
 }
 type environmentReleaseImage struct {
-	Reference      string `json:"reference"`
-	SourceRevision string `json:"source_revision,omitempty"`
+	Reference       string                              `json:"reference"`
+	SourceRevision  string                              `json:"source_revision,omitempty"`
+	OTARegistration *environmentOTARegistrationManifest `json:"ota_registration,omitempty"`
 }
 
 var immutableEnvironmentImage = regexp.MustCompile(`^[a-z0-9][a-z0-9./:_-]*@sha256:[a-f0-9]{64}$`)
@@ -37,8 +38,14 @@ func decodeEnvironmentJSON(raw []byte, target any) error {
 }
 
 func readBoundedEnvironmentFile(path string, private bool) ([]byte, error) {
+	return readBoundedEnvironmentInput(path, private, false)
+}
+
+// Optional operator settings may be represented by empty private files. Identity
+// and evidence consumers keep the nonempty read contract above.
+func readBoundedEnvironmentInput(path string, private, allowEmpty bool) ([]byte, error) {
 	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > 4<<20 || (private && info.Mode().Perm() != 0600) {
+	if err != nil || !info.Mode().IsRegular() || (!allowEmpty && info.Size() <= 0) || info.Size() > 4<<20 || (private && info.Mode().Perm() != 0600) {
 		return nil, errors.New("bounded regular environment input with required permissions is unavailable")
 	}
 	file, err := os.Open(path)
@@ -60,14 +67,16 @@ func readBoundedEnvironmentFile(path string, private bool) ([]byte, error) {
 // Identity bindings are lifecycle-owned mounts, references and public settings.
 // They cannot carry image, replicas, resources, probes or a desired Deployment.
 type environmentIdentityBindings struct {
-	Version          int                                 `json:"schema_version"`
-	Environment      string                              `json:"environment"`
-	Stack            string                              `json:"stack"`
-	Owners           map[string]string                   `json:"owners"`
-	Pods             []environmentPodBindings            `json:"pods"`
-	IngressAdmission *environmentAdmissionBinding        `json:"ingress_admission,omitempty"`
-	BootstrapCleanup *environmentBootstrapCleanupBinding `json:"bootstrap_cleanup,omitempty"`
-	AppIngress       *environmentAppIngressBinding       `json:"app_ingress,omitempty"`
+	Version           int                                 `json:"schema_version"`
+	Environment       string                              `json:"environment"`
+	Stack             string                              `json:"stack"`
+	Owners            map[string]string                   `json:"owners"`
+	Pods              []environmentPodBindings            `json:"pods"`
+	IngressAdmission  *environmentAdmissionBinding        `json:"ingress_admission,omitempty"`
+	BootstrapCleanup  *environmentBootstrapCleanupBinding `json:"bootstrap_cleanup,omitempty"`
+	AppIngress        *environmentAppIngressBinding       `json:"app_ingress,omitempty"`
+	AppRouting        *environmentAppRoutingBinding       `json:"app_routing,omitempty"`
+	ProductIdentities *environmentFreshProductBinding     `json:"product_identities,omitempty"`
 }
 
 type environmentAdmissionBinding struct {
@@ -76,16 +85,19 @@ type environmentAdmissionBinding struct {
 	CABundle    string `json:"ca_bundle"`
 }
 type environmentPodBindings struct {
-	DeviceTrustStateFile string                         `json:"device_trust_state_file,omitempty"`
-	Kind                 string                         `json:"kind"`
-	NamespaceSuffix      string                         `json:"namespace_suffix"`
-	Name                 string                         `json:"name"`
-	Component            string                         `json:"component"`
-	PodFields            map[string]any                 `json:"pod_fields"`
-	Containers           []environmentContainerBindings `json:"containers"`
-	InitContainers       []environmentContainerBindings `json:"init_containers,omitempty"`
-	OpenBao              *environmentOpenBaoProfile     `json:"openbao,omitempty"`
-	Turn                 *environmentTurnProfile        `json:"turn,omitempty"`
+	ManagedMQTT               *environmentManagedMQTTPlacement `json:"managed_mqtt,omitempty"`
+	IssuerRuntimeSecret       string                           `json:"issuer_runtime_secret,omitempty"`
+	DeviceTrustStateFile      string                           `json:"device_trust_state_file,omitempty"`
+	NativeTrustInitialization bool                             `json:"native_trust_initialization,omitempty"`
+	Kind                      string                           `json:"kind"`
+	NamespaceSuffix           string                           `json:"namespace_suffix"`
+	Name                      string                           `json:"name"`
+	Component                 string                           `json:"component"`
+	PodFields                 map[string]any                   `json:"pod_fields"`
+	Containers                []environmentContainerBindings   `json:"containers"`
+	InitContainers            []environmentContainerBindings   `json:"init_containers,omitempty"`
+	OpenBao                   *environmentOpenBaoProfile       `json:"openbao,omitempty"`
+	Turn                      *environmentTurnProfile          `json:"turn,omitempty"`
 }
 type environmentContainerBindings struct {
 	Name     string         `json:"name"`
@@ -97,7 +109,13 @@ func validateEnvironmentIdentityBindings(b environmentIdentityBindings, environm
 	if b.Version != 1 || b.Environment != environment || b.Stack != "video-cloud-"+environment {
 		return errors.New("deployment.bindings: exact environment and stack bindings required")
 	}
+	if !validFreshProductBinding(b.ProductIdentities) {
+		return errors.New("deployment.bindings: fresh product lifecycle reference is invalid")
+	}
 	if err := validateEnvironmentBootstrapCleanupBinding(b.BootstrapCleanup, environment); err != nil {
+		return err
+	}
+	if err := validateEnvironmentAppRoutingBinding(b); err != nil {
 		return err
 	}
 	seen := map[string]bool{}
@@ -114,15 +132,37 @@ func validateEnvironmentIdentityBindings(b environmentIdentityBindings, environm
 			return errors.New("deployment.bindings: unsupported managed component")
 		}
 		id := pod.Kind + "/" + b.Stack + "-" + pod.NamespaceSuffix + "/" + pod.Name
+		if err := validateEnvironmentManagedMQTTPlacement(b, pod); err != nil {
+			return err
+		}
+		if pod.IssuerRuntimeSecret != "" && (pod.Component != "certissuer" || (pod.Name != "certissuer" && pod.Name != "factoryenroll") || !secretEnvironmentPattern.MatchString(pod.IssuerRuntimeSecret)) {
+			return environmentIssuerBlocker(id, "issuer runtime reference belongs to an unsupported consumer")
+		}
 		if seen[id] || len(pod.Containers) == 0 {
 			return errors.New("deployment.bindings: duplicate or empty managed component")
 		}
 		seen[id] = true
-		if pod.Component != "managed-openbao" && pod.OpenBao != nil || pod.Component != "managed-openbao" && pod.Component != "managed-turn" && pod.Component != "managed-app-api" && pod.Component != "managed-mqtt" && pod.Component != "managed-api" && !(existingMQTTStateConsumer(pod.Component, pod.Name)) && !accountManagerSocketConsumer(pod.Component, pod.Name) && len(pod.InitContainers) != 0 {
+		if pod.Component != "managed-openbao" && pod.OpenBao != nil || pod.Component != "managed-openbao" && pod.Component != "managed-turn" && pod.Component != "managed-app-api" && pod.Component != "managed-mqtt" && pod.Component != "managed-api" && pod.Component != "pki-controller" && !(existingMQTTStateConsumer(pod.Component, pod.Name)) && !accountManagerSocketConsumer(pod.Component, pod.Name) && len(pod.InitContainers) != 0 {
 			return errors.New("deployment.bindings: OpenBao lifecycle references require the managed OpenBao component")
+		}
+		if pod.Component == "pki-controller" {
+			if len(pod.InitContainers) > 1 {
+				return controllerIdentityPermissionBlocker(id, "only the maintained permission initializer can be observed")
+			}
+			for _, initializer := range pod.InitContainers {
+				if initializer.Name != controllerIdentityInitializerName || initializer.ImageKey != "LKE_ALPINE_IMAGE" || len(initializer.Fields) != 1 || initializer.Fields["volumeMounts"] == nil {
+					return controllerIdentityPermissionBlocker(id, "observed controller initializer must contain only original volume references and its Alpine role")
+				}
+			}
 		}
 		if pod.DeviceTrustStateFile != "" && (pod.Component != "managed-api" || !deviceTrustStatePath.MatchString(pod.DeviceTrustStateFile)) {
 			return deviceInitializerBlocker(id, "invalid Device API trust-state lifecycle reference")
+		}
+		if pod.NativeTrustInitialization && pod.Component != "managed-api" && pod.Component != "managed-app-api" {
+			return errors.New("deployment.bindings: native trust initialization requires its managed Device or App API owner")
+		}
+		if pod.NativeTrustInitialization && pod.Component == "managed-api" && !deviceTrustStatePath.MatchString(pod.DeviceTrustStateFile) {
+			return deviceInitializerBlocker(id, "native trust initialization requires its original Device Root state filename")
 		}
 		if pod.Component == "managed-app-api" {
 			if err := validateEnvironmentAppBinding(pod); err != nil {
@@ -147,7 +187,7 @@ func validateEnvironmentIdentityBindings(b environmentIdentityBindings, environm
 				return errors.New("deployment.bindings: exact container identity and release image key required")
 			}
 			containers[container.Name] = true
-			if expected := environmentManagedImageKey(pod.Component, container.Name, i); expected != "" && container.ImageKey != expected {
+			if !environmentManagedImageRoleAllowed(pod.Component, pod.Name, container.Name, i, container.ImageKey) {
 				return errors.New("deployment.bindings: a managed consumer cannot exchange its maintained API, broker or provider image role")
 			}
 			for field := range container.Fields {
@@ -160,6 +200,9 @@ func validateEnvironmentIdentityBindings(b environmentIdentityBindings, environm
 				name := certIssuerObjectString(setting["name"])
 				if name == "" {
 					return errors.New("deployment.bindings: invalid managed environment setting")
+				}
+				if pod.Name == "video-cloud-api" && container.Name == "app" && mqttFoundationEnv(container.Fields, "VIDEO_CLOUD_MQTT_SERVER_PKI_ROOT_SHA256") != "" && derivedCoreMQTTSetting(name) {
+					return coreMQTTTransportBlocker(id, "derived MQTT transport values cannot be maintained in identity bindings")
 				}
 				if environmentControllerPolicySetting(name) {
 					return errors.New("deployment.bindings: API/issuer authentication, controller consumer and CRL worker policies belong in maintained configuration, not identity references")
@@ -211,6 +254,23 @@ func environmentPrivateFileMount(pod environmentPodBindings, container environme
 		}
 	}
 	return false
+}
+
+// The optional formal repair alias is confined to the original CertIssuer
+// workload's native main container. Its release producer requires the durable
+// accepted owner/source/CI proof before exposing this alias to the renderer.
+func environmentManagedImageRoleAllowed(component, workload, name string, index int, key string) bool {
+	if key == "LKE_PKI_MANAGEMENT_IMAGE" {
+		return component == "existing-workload" && workload == "account-manager" && name == "pkimanagement" && index == 1
+	}
+	if key == "LKE_PKI_CONTROLLER_IMAGE" {
+		return component == "pki-controller" && workload == "pki-controller" && name == "pki-controller" && index == 0
+	}
+	if key == "LKE_CERTISSUER_IMAGE" {
+		return component == "certissuer" && workload == "certissuer" && name == "certissuer" && index == 0
+	}
+	expected := environmentManagedImageKey(component, name, index)
+	return expected == "" || key == expected
 }
 
 func environmentManagedImageKey(component, name string, index int) string {
@@ -283,6 +343,9 @@ func applyEnvironmentPodBindings(object deploymentplan.Object, b environmentIden
 		if existingMQTTStateConsumer(binding.Component, binding.Name) {
 			var initializers []any
 			for _, bound := range binding.InitContainers {
+				if binding.Name == "video-cloud-api" && bound.Name == coreIdentityInitializerName {
+					continue // Rebuilt from the original app state/mount after derivation.
+				}
 				c, err := maintainedCoreMQTTInitializer(bound.Name)
 				if err != nil {
 					return coreMQTTInitializerBlocker(id)
@@ -326,7 +389,7 @@ func applyEnvironmentPodBindings(object deploymentplan.Object, b environmentIden
 			if image == "" {
 				return &deploymentplan.Blocker{ID: "deployment.release.image-role", Resource: id, Cause: "container " + bound.Name + " lacks selected role " + bound.ImageKey, Next: "publish and select the exact formal CI image for this maintained container role; repeat preflight"}
 			}
-			if expected := environmentManagedImageKey(binding.Component, bound.Name, index); expected != "" && bound.ImageKey != expected {
+			if !environmentManagedImageRoleAllowed(binding.Component, binding.Name, bound.Name, index, bound.ImageKey) {
 				return errors.New("deployment.release: consumer image role differs from the maintained catalog")
 			}
 			if binding.Component == "existing-workload" {
@@ -361,11 +424,24 @@ func applyEnvironmentPodBindings(object deploymentplan.Object, b environmentIden
 					container[field] = value
 				}
 			}
+			if b.Owners[id] != "" {
+				if err := applyAccountManagerListenerPort(binding, container); err != nil {
+					return err
+				}
+			}
 			containers = append(containers, container)
 		}
 		pod["containers"] = containers
+		if binding.Component == "pki-controller" && b.Owners[id] != "" {
+			if err := applyEnvironmentControllerNativeIdentity(object, binding); err != nil {
+				return err
+			}
+		}
 		if binding.Component == "managed-openbao" || binding.Component == "managed-turn" || binding.Component == "managed-app-api" || binding.Component == "managed-mqtt" || binding.Component == "managed-api" || existingMQTTStateConsumer(binding.Component, binding.Name) {
 			for _, bound := range binding.InitContainers {
+				if binding.Name == "video-cloud-api" && bound.Name == coreIdentityInitializerName {
+					continue
+				}
 				var container map[string]any
 				for _, v := range certIssuerObjectList(pod["initContainers"]) {
 					if c := deploymentplan.Map(v); c["name"] == bound.Name {
@@ -391,7 +467,26 @@ func applyEnvironmentPodBindings(object deploymentplan.Object, b environmentIden
 }
 
 func environmentIdentitySetting(name string) bool {
+	// These are lifecycle-owned Service client settings. Dropping them sends
+	// MQTT receipt traffic through the legacy empty static-key configuration.
+	if strings.HasPrefix(name, "VIDEO_CLOUD_CONTROLLER_IDENTITY_") || strings.HasPrefix(name, "VIDEO_CLOUD_LOG_INGESTER_MQTT_IDENTITY_") {
+		return true
+	}
 	switch name {
+	case "CERT_ISSUER_REGISTRY_ONLY_ENABLED", "CERT_ISSUER_CREATE_SERVICE_ENROLLMENT_ONLY", "CERT_ISSUER_LISTEN_ADDR", "CERT_ISSUER_SIGNER_PROVIDER", "CERT_ISSUER_APP_SIGNER_PROVIDER", "CERT_ISSUER_OPENBAO_PKI_MOUNT", "CERT_ISSUER_OPENBAO_PKI_ROLE", "CERT_ISSUER_APP_OPENBAO_PKI_MOUNT", "CERT_ISSUER_APP_OPENBAO_PKI_ROLE", "CERT_ISSUER_OPENBAO_SERVICE_CLIENT_ROLE", "CERT_ISSUER_OPENBAO_GATEWAY_ROLE", "CERT_ISSUER_OPENBAO_PKCS11_ENABLED", "CERT_ISSUER_MIN_TTL_DAYS", "CERT_ISSUER_MAX_TTL_DAYS", "CERT_ISSUER_DEFAULT_TTL_DAYS", "CERT_ISSUER_FACTORY_CLIENT_CN_PATTERN", "CERT_ISSUER_APP_CLIENT_CN_PATTERN", "CERT_ISSUER_GATEWAY_CLIENT_CN_PATTERN", "CERT_ISSUER_GATEWAY_DNS_NAMES", "CERT_ISSUER_MQTT_SERVER_CLIENT_CN_PATTERN", "CERT_ISSUER_MQTT_SERVER_DNS_NAMES", "CERT_ISSUER_OPENBAO_HOST_CLIENT_CN_PATTERN", "CERT_ISSUER_OPENBAO_HOST_DNS_NAMES":
+		return true // Finite native issuer mode, registry references and admitted caller policy; validated by the issuer adapter.
+	case "JWT_SIGNER_PROVIDER", "JWT_ACCESS_PRIVATE_KEY_PATH", "JWT_ACCESS_PUBLIC_KEY_PATH", "JWT_REFRESH_PRIVATE_KEY_PATH", "JWT_REFRESH_PUBLIC_KEY_PATH":
+		return true // Original Account Manager signing mode and mounted key references.
+	case "VIDEO_CLOUD_CONTROLLER_SERVER_CRL_MANIFEST", "VIDEO_CLOUD_CONTROLLER_ROOT_SHA256":
+		return true
+	case "VIDEO_CLOUD_AUTH_CRL_MANIFEST", "VIDEO_CLOUD_AUTH_DEVICE_AUTOMATIC_STATE_DIR", "VIDEO_CLOUD_AUTH_ROOT_TRUST_BOOTSTRAP_STATE":
+		return true // Original incoming trust enforcement and native first-policy admission state.
+	case "VIDEO_CLOUD_MQTT_AUTH_CLIENT_NAME":
+		return true // Exact original broker callback subject; native and legacy profiles remain distinct.
+	case "VIDEO_CLOUD_MQTT_MANAGEMENT_CA", "VIDEO_CLOUD_MQTT_MANAGEMENT_CERT", "VIDEO_CLOUD_MQTT_MANAGEMENT_KEY", "VIDEO_CLOUD_MQTT_PKI_CONTROLLER_URL":
+		return true
+	case "RTK_DEPLOYMENT_SERVICE_ISSUER_ID":
+		return true // Original registry issuer metadata is lifecycle-owned, not a process policy.
 	case "VIDEO_CLOUD_WEBRTC_SERVICE_INSTANCE_ID", "VIDEO_CLOUD_WEBRTC_SERVICE_ENDPOINT_REF", "VIDEO_CLOUD_WEBRTC_SERVICE_REGISTRATION_URL", "VIDEO_CLOUD_WEBRTC_SERVICE_CLIENT_CERT", "VIDEO_CLOUD_WEBRTC_SERVICE_CLIENT_KEY", "VIDEO_CLOUD_WEBRTC_SERVICE_SERVER_CA":
 		return true
 	case "VIDEO_CLOUD_VIDEO_STORAGE_SERVICE_INSTANCE_ID", "VIDEO_CLOUD_VIDEO_STORAGE_SERVICE_ENDPOINT_REF", "VIDEO_CLOUD_VIDEO_STORAGE_SERVICE_REGISTRATION_URL", "VIDEO_CLOUD_VIDEO_STORAGE_SERVICE_CLIENT_CERT", "VIDEO_CLOUD_VIDEO_STORAGE_SERVICE_CLIENT_KEY", "VIDEO_CLOUD_VIDEO_STORAGE_SERVICE_SERVER_CA":
@@ -402,13 +497,16 @@ func environmentIdentitySetting(name string) bool {
 		return true
 	case "VIDEO_CLOUD_MQTT_FOUNDATION_INSTANCE_ID", "VIDEO_CLOUD_MQTT_FOUNDATION_ENDPOINT_REF", "VIDEO_CLOUD_MQTT_FOUNDATION_REGISTRATION_URL", "VIDEO_CLOUD_MQTT_FOUNDATION_CLIENT_CERT", "VIDEO_CLOUD_MQTT_FOUNDATION_CLIENT_KEY", "VIDEO_CLOUD_MQTT_FOUNDATION_SERVER_CA":
 		return true
-	case "BAO_ADDR", "BAO_API_ADDR", "BAO_CLUSTER_ADDR", "BAO_CACERT", "BAO_TLS_SERVER_NAME", "CERT_ISSUER_SERVER_CERT", "CERT_ISSUER_SERVER_KEY", "CERT_ISSUER_CLIENT_CA", "CERT_ISSUER_CA_PROVIDER":
+	case "BAO_ADDR", "BAO_API_ADDR", "BAO_CLUSTER_ADDR", "BAO_CACERT", "BAO_TLS_SERVER_NAME", "CERT_ISSUER_SERVER_CERT", "CERT_ISSUER_SERVER_KEY", "CERT_ISSUER_CLIENT_CA":
 		return true
 	}
 	if environmentControllerPolicySetting(name) {
 		return false
 	}
-	for _, prefix := range []string{"ACCOUNT_MANAGER_SERVICE_REGISTRATION_SERVER_", "ACCOUNT_MANAGER_SERVICE_REGISTRATION_CLIENT_", "PKI_", "OPENBAO_", "EMQX_PKI_", "CERT_ISSUER_SERVICE_", "CERT_ISSUER_HOST_", "CERT_ISSUER_SERVER_PKI_", "CERT_ISSUER_MQTT_SERVER_PKI_", "FACTORY_ENROLL_CERT_ISSUER_", "VIDEO_CLOUD_API_TLS_", "VIDEO_CLOUD_AUTH_PRODUCT_PKI_", "VIDEO_CLOUD_AUTH_APP_", "VIDEO_CLOUD_SERVICE_PKI_", "VIDEO_CLOUD_SERVER_PKI_", "VIDEO_CLOUD_CONTROLLER_PKI_", "VIDEO_CLOUD_AUTH_DEVICE_CA_", "VIDEO_CLOUD_AUTH_DEVICE_ROOT_TRUST_", "VIDEO_CLOUD_AUTH_ISSUER_TRUST_", "VIDEO_CLOUD_MQTT_SERVER_PKI_", "VIDEO_CLOUD_MQTT_BUNDLE_", "APP_PKI_", "APP_CERT_ISSUER_", "SERVER_PKI_"} {
+	if strings.HasPrefix(name, "VIDEO_CLOUD_MQTT_SERVER_BUNDLE_") {
+		return true // Exact native prepared bundle references, reverified by the owning runtime.
+	}
+	for _, prefix := range []string{"ACCOUNT_MANAGER_SERVICE_REGISTRATION_SERVER_", "ACCOUNT_MANAGER_SERVICE_REGISTRATION_CLIENT_", "PKI_", "OPENBAO_", "EMQX_PKI_", "CERT_ISSUER_SERVICE_", "CERT_ISSUER_HOST_", "CERT_ISSUER_SERVER_PKI_", "CERT_ISSUER_MQTT_SERVER_PKI_", "CERT_ISSUER_OPENBAO_HOST_PKI_", "FACTORY_ENROLL_CERT_ISSUER_", "FACTORY_ENROLL_ACCOUNT_MANAGER_", "FACTORY_ENROLL_SERVICE_IDENTITY_", "VIDEO_CLOUD_API_TLS_", "VIDEO_CLOUD_AUTH_PRODUCT_PKI_", "VIDEO_CLOUD_AUTH_APP_", "VIDEO_CLOUD_SERVICE_PKI_", "VIDEO_CLOUD_SERVER_PKI_", "VIDEO_CLOUD_CONTROLLER_PKI_", "VIDEO_CLOUD_AUTH_DEVICE_CA_", "VIDEO_CLOUD_AUTH_DEVICE_ROOT_TRUST_", "VIDEO_CLOUD_AUTH_ISSUER_TRUST_", "VIDEO_CLOUD_MQTT_SERVER_PKI_", "VIDEO_CLOUD_MQTT_BUNDLE_", "APP_PKI_", "APP_CERT_ISSUER_", "SERVER_PKI_"} {
 		if strings.HasPrefix(name, prefix) {
 			return true
 		}

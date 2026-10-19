@@ -19,6 +19,9 @@ func TestSharedOTATopologyEnablesRendererAndKeepsExistingIdentityForEveryEnviron
 				env[key], env["LKE_"+key] = "true", "true"
 			}
 			env["VIDEO_CLOUD_OTA_ENTITLEMENTS_REQUIRED"] = "true"
+			env["ACCOUNT_MANAGER_SERVICE_REGISTRATION_ENABLED"], env["LKE_ACCOUNT_MANAGER_SERVICE_REGISTRATION_ENABLED"] = "true", "true"
+			env["VIDEO_CLOUD_OTA_STORAGE_MODE"] = "dedicated"
+			env["VIDEO_CLOUD_OTA_BLOB_BUCKET"], env["VIDEO_CLOUD_OTA_BLOB_REGION"], env["VIDEO_CLOUD_OTA_BLOB_PREFIX"], env["VIDEO_CLOUD_OTA_BLOB_ENDPOINT"] = "isolated-ota-bucket", "us-lax", "environments/video-cloud-"+environment, "https://isolated-ota.example.invalid"
 			b.IngressAdmission = &environmentAdmissionBinding{SecretName: "ingress-nginx-admission", CABundle: base64.StdEncoding.EncodeToString(testOpenBaoCAPEM(t))}
 			restore := installAllCredentialEnvironment(env)
 			defer restore()

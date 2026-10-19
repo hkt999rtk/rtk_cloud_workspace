@@ -118,6 +118,14 @@ func (c *compiledEnvironmentDeployment) CheckProviderQuota(ctx context.Context, 
 			}
 		}
 	}
+	allocated, err := c.recordedNormalTailClaimCount(ctx, plan)
+	if err != nil {
+		return err
+	}
+	if allocated > additional {
+		return quotaQualificationBlocker("recorded claim allocation scope differs from the frozen target")
+	}
+	additional -= allocated
 	if account["LKE_ACTIVE_SERVICE_LIMIT"] != "unlimited" {
 		limit, err := strconv.Atoi(account["LKE_ACTIVE_SERVICE_LIMIT"])
 		if err != nil || limit <= 0 || current+additional > limit {
@@ -125,6 +133,81 @@ func (c *compiledEnvironmentDeployment) CheckProviderQuota(ctx context.Context, 
 		}
 	}
 	return nil
+}
+
+// Native account inventory already includes allocated claims. Only this
+// original execution's frozen plan, durable child write and current native
+// binding can remove them from the remaining allocation count.
+func (c *compiledEnvironmentDeployment) recordedNormalTailClaimCount(ctx context.Context, plan *deploymentplan.Plan) (int, error) {
+	h, ok := createNormalTailHandoffFromContext(ctx)
+	if !ok {
+		return 0, nil
+	}
+	e := h.Execution
+	if e.Store != c.Store {
+		return 0, quotaQualificationBlocker("normal workload owner differs from the selected environment")
+	}
+	if err := e.Check(ctx); err != nil {
+		return 0, err
+	}
+	if createOpenBaoACKCompletionEntry(e.Journal, "kubernetes/workload") == nil {
+		return 0, nil
+	}
+	frozen, err := readCreateNormalTailFrozenTarget(c.Store, e)
+	if err != nil {
+		return 0, err
+	}
+	original, j, err := readCreateNormalTailWorkloadOriginal(c.Store, e, frozen)
+	if err != nil || original == nil {
+		return 0, err
+	}
+	forward, err := readCreateNormalTailWorkloadForwardDescriptor(c.Store, e, original, j)
+	if err != nil {
+		return 0, err
+	}
+	known := plan.SHA256() == frozen.SHA256() || forward != nil && plan.SHA256() == forward.Target.Plan.SHA256()
+	if !known && forward != nil {
+		successor, err := readCreateNormalTailProductSessionForward(c.Store, e, original, j, forward)
+		if err != nil {
+			return 0, err
+		}
+		known = successor != nil && plan.SHA256() == successor.Target.Plan.SHA256()
+		if !known {
+			runtime, err := readCreateNormalTailRuntimeForward(c.Store, e)
+			if err != nil {
+				return 0, err
+			}
+			known = runtime != nil && plan.SHA256() == runtime.Target.Plan.SHA256()
+		}
+	}
+	if !known {
+		return 0, quotaQualificationBlocker("normal workload differs from its original or exact linked forward target")
+	}
+	stages, err := readCreateNormalTailVolumeStages(c.Store, e)
+	if err != nil {
+		return 0, err
+	}
+	ledger, err := readEnvironmentCreateLedger(e)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := observeManagedLatePlannedVolumeStages(ctx, c.Backend, ledger, h.OriginalVolumes, &h.RedisVolume, stages); err != nil {
+		return 0, err
+	}
+	if err := e.Check(ctx); err != nil {
+		return 0, err
+	}
+	claims, err := managedLatePlannedVolumeClaims(plan)
+	if err != nil {
+		return 0, err
+	}
+	allocated := 0
+	for _, volume := range ledger.Volumes {
+		if _, planned := claims["PersistentVolumeClaim/"+volume.Namespace+"/"+volume.PVCName]; planned {
+			allocated++
+		}
+	}
+	return allocated, nil
 }
 
 func quotaQualificationBlocker(cause string) error {

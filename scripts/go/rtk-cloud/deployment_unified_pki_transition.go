@@ -61,6 +61,21 @@ func validateEnvironmentPKITransition(definitions []deploymentplan.Definition, l
 				}
 			}
 			wantedSettings, err := environmentPKISettings(wanted["env"])
+			if environmentCoreMQTTConsumer(current, old) {
+				if e := validateEnvironmentCoreMQTTTransport(definitions); e != nil {
+					return e
+				}
+				for key := range settings {
+					if derivedCoreMQTTSetting(key) {
+						delete(settings, key)
+					}
+				}
+				for key := range wantedSettings {
+					if derivedCoreMQTTSetting(key) {
+						delete(wantedSettings, key)
+					}
+				}
+			}
 			if err != nil || !reflect.DeepEqual(settings, wantedSettings) {
 				keys := map[string]string{}
 				for key := range settings {

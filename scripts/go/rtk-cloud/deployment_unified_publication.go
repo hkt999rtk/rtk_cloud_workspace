@@ -12,6 +12,8 @@ import (
 	"io"
 	"strconv"
 	"strings"
+
+	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 )
 
 const publicationArchiveLimit = 4 << 20
@@ -28,6 +30,12 @@ func verifyEnvironmentPublication(ctx context.Context, repo string, runID int64,
 	}
 	if err = verifyPublicationJSON(evidence, repo, runID, attempt, image, backup); err != nil {
 		return "", err
+	}
+	if image.OTARegistration != nil {
+		manifest, err := publishedOTARegistration(evidence, image)
+		if err != nil || manifest == nil || deploymentplan.Digest(manifest) != deploymentplan.Digest(image.OTARegistration) {
+			return "", otaRegistrationBlocker("", "formal exact-image OTA registration descriptor changed or is unavailable during release verification")
+		}
 	}
 	digest := sha256.Sum256(evidence)
 	return hex.EncodeToString(digest[:]), nil
@@ -50,6 +58,7 @@ func readEnvironmentPublication(ctx context.Context, repo string, runID int64, r
 	if err != nil || json.Unmarshal(raw, &source) != nil || source.ID != runID || source.HeadSHA != revision || source.HeadBranch != "main" || (source.Event != "push" && source.Event != "workflow_dispatch") || source.Status != "completed" || source.Conclusion != "success" || source.Attempt < 1 {
 		return nil, 0, errors.New("deployment.release.publication: exact successful main publication attempt cannot be verified")
 	}
+	runRaw := append([]byte(nil), raw...)
 	raw, err = run(ctx, "gh", "api", fmt.Sprintf("repos/%s/actions/runs/%d/artifacts?per_page=100", repo, runID))
 	var listing struct {
 		Total     int `json:"total_count"`
@@ -63,6 +72,7 @@ func readEnvironmentPublication(ctx context.Context, repo string, runID int64, r
 	if err != nil || json.Unmarshal(raw, &listing) != nil || listing.Artifacts == nil || listing.Total != len(listing.Artifacts) {
 		return nil, 0, errors.New("deployment.release.publication: complete publication artifact inventory is unavailable")
 	}
+	inventoryRaw := append([]byte(nil), raw...)
 	name, file := "image-manifest", "image-manifest.json"
 	if backup {
 		name, file = "postgres-backup-runner-images", "images.json"
@@ -88,6 +98,7 @@ func readEnvironmentPublication(ctx context.Context, repo string, runID int64, r
 	if err != nil {
 		return nil, 0, err
 	}
+	captureEnvironmentPublicationProof(ctx, repo, runID, source.Attempt, revision, id, name, backup, runRaw, inventoryRaw, raw, evidence)
 	return evidence, source.Attempt, nil
 }
 

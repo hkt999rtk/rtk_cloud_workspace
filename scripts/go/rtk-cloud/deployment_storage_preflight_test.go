@@ -92,7 +92,7 @@ func TestPreflightMediaBucketRunsIndependentlyOfOtherPrerequisiteFailures(t *tes
 	}
 	var out bytes.Buffer
 	err := runDeploymentCheckWithDependencies(context.Background(), []string{"--environment", "dev", "--phase", "pre-deploy"}, &out, &out, deps)
-	if err == nil || calls != 1 || !strings.Contains(out.String(), "[PASS] provider.storage.media.bucket") {
+	if err == nil || calls != 1 || !strings.Contains(out.String(), "[OK] provider.storage.media.bucket") {
 		t.Fatalf("bucket calls=%d err=%v output=%s", calls, err, out.String())
 	}
 	if defaultDeploymentCheckDependencies().bucket == nil {

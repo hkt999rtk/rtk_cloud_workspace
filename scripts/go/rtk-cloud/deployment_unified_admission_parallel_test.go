@@ -26,8 +26,8 @@ func TestNativeParallelAdmissionPreservesPlanAndPrivateIdentityCleanup(t *testin
 			if err != nil {
 				t.Fatal(err)
 			}
-			if backend.AdmissionConcurrency() != 8 {
-				t.Fatal("native admission must use eight independent checks")
+			if backend.AdmissionConcurrency() != environmentDeploymentCheckConcurrency || backend.AdmissionConcurrency() != 12 {
+				t.Fatal("native admission must use twelve independent checks")
 			}
 			directory := t.TempDir()
 			log := filepath.Join(directory, "calls")

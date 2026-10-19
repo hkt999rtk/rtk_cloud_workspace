@@ -61,7 +61,12 @@ func TestCompleteSchemaChecksUsePublishedCommitInsteadOfWorkingTree(t *testing.T
 				if mode == "missing-applied-version" {
 					response = `printf '["002_required.sql"]'`
 				}
-				deploymentRuntimeTestKubectl(t, `printf '%s' "$*" > "$RTK_PINNED_MIGRATION_QUERY"`+"\n"+response)
+				deploymentRuntimeTestKubectl(t, `case "$*" in
+ *"schema catalog"*) exit 1 ;;
+ *"json_build_object('database'"*) printf '{"database":"rtk_billing","schema":"public","history":true,"objects":3}' ;;
+ *) printf '%s' "$*" > "$RTK_PINNED_MIGRATION_QUERY"
+ `+response+` ;;
+ esac`)
 				store := makeIsolatedTestSecretStore(t, environment)
 				if mode == "missing-commit" {
 					published = strings.Repeat("f", 40)

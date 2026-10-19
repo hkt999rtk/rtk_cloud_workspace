@@ -11,53 +11,56 @@ import (
 
 func TestCompleteQualificationRequiresEveryActualGateForEveryEnvironment(t *testing.T) {
 	for _, environment := range []string{"dev", "staging", "prod"} {
-		t.Run(environment, func(t *testing.T) {
-			in, definition, live := fixture(t, environment, "Deployment")
-			plan, err := Compile(in, []Definition{definition}, []Object{live})
-			if err != nil {
-				t.Fatal(err)
-			}
-			// All environments run the same engine, including protected local
-			// fixtures. Environment names cannot waive a required gate.
-			options := QualificationOptions{Production: true}
-			checks := map[string]GateCheck{}
-			for _, id := range RequiredGateIDs(true) {
-				checks[id] = func(context.Context, *Plan) (GateEvidence, error) {
-					return GateEvidence{Digest("actual fixture verification")}, nil
+		for _, production := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/production=%t", environment, production), func(t *testing.T) {
+				in, definition, live := fixture(t, environment, "Deployment")
+				plan, err := Compile(in, []Definition{definition}, []Object{live})
+				if err != nil {
+					t.Fatal(err)
 				}
-			}
-			result, err := plan.Qualify(context.Background(), options, checks)
-			if err != nil || result.Decision != "GO" || result.PlanSHA256 != plan.SHA256() {
-				t.Fatal("complete verified fixture rejected", err)
-			}
-			for _, id := range RequiredGateIDs(true) {
-				original := checks[id]
-				for _, replacement := range []GateCheck{nil, func(context.Context, *Plan) (GateEvidence, error) { return GateEvidence{}, nil }, func(context.Context, *Plan) (GateEvidence, error) {
-					return GateEvidence{}, errors.New("credential=never-display-this")
-				}} {
-					checks[id] = replacement
-					result, err = plan.Qualify(context.Background(), options, checks)
-					if err == nil || result.Decision != "NO-GO" {
-						t.Fatal("required missing/failed evidence was GO", id)
-					}
-					raw, _ := json.Marshal(result)
-					if strings.Contains(string(raw), "credential=") {
-						t.Fatal("report leaked backend error")
+				// All environments run the same engine, including protected local
+				// fixtures. Environment names cannot waive a required gate.
+				options := QualificationOptions{Production: production}
+				ids := RequiredGateIDs(production)
+				checks := map[string]GateCheck{}
+				var invoked []string
+				for _, id := range ids {
+					checks[id] = func(context.Context, *Plan) (GateEvidence, error) {
+						invoked = append(invoked, id)
+						return GateEvidence{SHA256: Digest("actual fixture verification")}, nil
 					}
 				}
-				checks[id] = original
-			}
-			options.Fast = true
-			result, err = plan.Qualify(context.Background(), options, checks)
-			if err == nil || result.Decision != "NO-GO" {
-				t.Fatal("fast qualified full environment")
-			}
-			for _, gate := range result.Gates {
-				if !gate.Required || gate.Status != "SKIPPED" {
-					t.Fatal("fast changed required gate")
+				result, err := plan.Qualify(context.Background(), options, checks)
+				if err != nil || result.Decision != "GO" || result.PlanSHA256 != plan.SHA256() {
+					t.Fatal("complete verified fixture rejected", err)
 				}
-			}
-		})
+				if strings.Join(invoked, ",") != strings.Join(ids, ",") || len(result.Gates) != len(ids) {
+					t.Fatal("complete qualification did not invoke every required callback in order", invoked, result.Gates)
+				}
+				for i, gate := range result.Gates {
+					if gate.ID != ids[i] || !gate.Required || gate.Status != "PASS" {
+						t.Fatal("complete qualification changed a required gate", gate)
+					}
+				}
+				for _, id := range ids {
+					original := checks[id]
+					for _, replacement := range []GateCheck{nil, func(context.Context, *Plan) (GateEvidence, error) { return GateEvidence{}, nil }, func(context.Context, *Plan) (GateEvidence, error) {
+						return GateEvidence{}, errors.New("credential=never-display-this")
+					}} {
+						checks[id] = replacement
+						result, err = plan.Qualify(context.Background(), options, checks)
+						if err == nil || result.Decision != "NO-GO" {
+							t.Fatal("required missing/failed evidence was GO", id)
+						}
+						raw, _ := json.Marshal(result)
+						if strings.Contains(string(raw), "credential=") {
+							t.Fatal("report leaked backend error")
+						}
+					}
+					checks[id] = original
+				}
+			})
+		}
 	}
 }
 
@@ -66,11 +69,13 @@ func TestQualificationRejectsPlanMutationAndKeepsStableGateOrder(t *testing.T) {
 	plan, _ := Compile(in, []Definition{definition}, []Object{live})
 	checks := map[string]GateCheck{}
 	for i, id := range RequiredGateIDs(true) {
-		checks[id] = func(context.Context, *Plan) (GateEvidence, error) { return GateEvidence{Digest("verified")}, nil }
+		checks[id] = func(context.Context, *Plan) (GateEvidence, error) {
+			return GateEvidence{SHA256: Digest("verified")}, nil
+		}
 		if i == 0 {
 			checks[id] = func(_ context.Context, p *Plan) (GateEvidence, error) {
 				p.ConfigurationSHA256 = Digest("concurrent input")
-				return GateEvidence{Digest("verified")}, nil
+				return GateEvidence{SHA256: Digest("verified")}, nil
 			}
 		}
 	}
@@ -107,42 +112,45 @@ func TestQualificationReportsActionableTypedBlockers(t *testing.T) {
 
 func TestExistingUpdateRequiresEveryUpdateGateWithoutActivationOrRestoreProjects(t *testing.T) {
 	for _, environment := range []string{"dev", "staging", "prod"} {
-		t.Run(environment, func(t *testing.T) {
-			in, definition, live := fixture(t, environment, "Deployment")
-			plan, err := Compile(in, []Definition{definition}, []Object{live})
-			if err != nil {
-				t.Fatal(err)
-			}
-			checks := map[string]GateCheck{}
-			for _, gate := range fullEnvironmentGates[:6] {
-				checks[gate.id] = func(context.Context, *Plan) (GateEvidence, error) {
-					return GateEvidence{Digest("fixture update evidence")}, nil
+		for _, production := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/production=%t", environment, production), func(t *testing.T) {
+				in, definition, live := fixture(t, environment, "Deployment")
+				plan, err := Compile(in, []Definition{definition}, []Object{live})
+				if err != nil {
+					t.Fatal(err)
 				}
-			}
-			for _, id := range []string{"deployment.recovery", "deployment.production"} {
-				checks[id] = func(context.Context, *Plan) (GateEvidence, error) {
-					t.Fatal("update started an activation/restore project")
-					return GateEvidence{}, nil
+				checks := map[string]GateCheck{}
+				var invoked []string
+				for _, gate := range fullEnvironmentGates[:6] {
+					checks[gate.id] = func(context.Context, *Plan) (GateEvidence, error) {
+						invoked = append(invoked, gate.id)
+						return GateEvidence{SHA256: Digest("fixture update evidence")}, nil
+					}
 				}
-			}
-			options := QualificationOptions{Production: environment == "prod", ExistingUpdate: true}
-			result, err := plan.Qualify(context.Background(), options, checks)
-			if err != nil || result.Decision != "GO" || len(result.Gates) != 6 {
-				t.Fatal("wrong update scope", err, result)
-			}
-			for _, gate := range fullEnvironmentGates[:6] {
-				original := checks[gate.id]
-				delete(checks, gate.id)
-				if result, err := plan.Qualify(context.Background(), options, checks); err == nil || result.Decision != "NO-GO" {
-					t.Fatal("required update gate omitted", gate.id)
+				for _, id := range []string{"deployment.recovery", "deployment.production"} {
+					checks[id] = func(context.Context, *Plan) (GateEvidence, error) {
+						t.Fatal("update started an activation/restore project")
+						return GateEvidence{}, nil
+					}
 				}
-				checks[gate.id] = original
-			}
-			options.Fast = true
-			if result, err := plan.Qualify(context.Background(), options, checks); err == nil || result.Decision != "NO-GO" {
-				t.Fatal("fast mode authorized update")
-			}
-		})
+				options := QualificationOptions{Production: production, ExistingUpdate: true}
+				result, err := plan.Qualify(context.Background(), options, checks)
+				if err != nil || result.Decision != "GO" || len(result.Gates) != 6 {
+					t.Fatal("wrong update scope", err, result)
+				}
+				if strings.Join(invoked, ",") != strings.Join(RequiredGateIDs(false)[:6], ",") {
+					t.Fatal("update qualification did not invoke every required callback in order", invoked)
+				}
+				for _, gate := range fullEnvironmentGates[:6] {
+					original := checks[gate.id]
+					delete(checks, gate.id)
+					if result, err := plan.Qualify(context.Background(), options, checks); err == nil || result.Decision != "NO-GO" {
+						t.Fatal("required update gate omitted", gate.id)
+					}
+					checks[gate.id] = original
+				}
+			})
+		}
 	}
 }
 
@@ -180,7 +188,7 @@ func TestQualificationInterruptionDuringCheckTakesPrecedenceOverEveryResult(t *t
 					for _, id := range ids {
 						checks[id] = func(context.Context, *Plan) (GateEvidence, error) {
 							invoked = append(invoked, id)
-							evidence := GateEvidence{Digest("verified before interruption")}
+							evidence := GateEvidence{SHA256: Digest("verified before interruption")}
 							if id != "deployment.release" {
 								return evidence, nil
 							}
@@ -287,7 +295,7 @@ func TestQualificationRecognizesWrappedInterruptionErrorsWithoutExpiredContext(t
 				checks := map[string]GateCheck{}
 				for _, id := range ids {
 					checks[id] = func(context.Context, *Plan) (GateEvidence, error) {
-						evidence := GateEvidence{Digest("verified")}
+						evidence := GateEvidence{SHA256: Digest("verified")}
 						if id == "deployment.release" {
 							return evidence, errors.Join(fmt.Errorf("credential=never-display-this: %w", interruption), &Blocker{Cause: "private-blocker", Next: "private-repair"})
 						}
@@ -319,5 +327,59 @@ func TestQualificationRecognizesWrappedInterruptionErrorsWithoutExpiredContext(t
 				}
 			})
 		}
+	}
+}
+
+func TestQualificationRecordsPendingHealthOnlyForReviewedPKIWorkloads(t *testing.T) {
+	for _, mode := range []string{"valid", "logingester", "foreign-resource", "other-gate", "retained", "retired", "missing-owner", "wrong-kind", "duplicate", "create"} {
+		t.Run(mode, func(t *testing.T) {
+			id := "Deployment/video-cloud-dev-video-cloud/video-cloud-api"
+			plan := &Plan{Inputs: Inputs{Environment: "dev", Stack: "video-cloud-dev", Operation: "upgrade"}, Resources: []Resource{{ID: id, Action: "update", UID: "original-api", Desired: Object{"kind": "Deployment"}}}}
+			pending, gate := id, "deployment.pki"
+			switch mode {
+			case "logingester":
+				plan.Resources[0].ID = "Deployment/video-cloud-dev-video-cloud/video-cloud-logingester"
+				pending = plan.Resources[0].ID
+			case "foreign-resource":
+				pending = "Deployment/video-cloud-dev-video-cloud/pki-controller"
+			case "other-gate":
+				gate = "deployment.release"
+			case "retained":
+				plan.Resources[0].Action = "retain"
+			case "retired":
+				plan.Resources[0].Action = "retire"
+			case "missing-owner":
+				plan.Resources[0].UID = ""
+			case "wrong-kind":
+				plan.Resources[0].Desired["kind"] = "Secret"
+			case "create":
+				plan.Operation = "create"
+			}
+			checks := map[string]GateCheck{}
+			for _, required := range RequiredGateIDs(false) {
+				checks[required] = func(context.Context, *Plan) (GateEvidence, error) {
+					return GateEvidence{SHA256: Digest("verified original evidence")}, nil
+				}
+			}
+			checks[gate] = func(context.Context, *Plan) (GateEvidence, error) {
+				ids := []string{pending}
+				if mode == "duplicate" {
+					ids = append(ids, pending)
+				}
+				return GateEvidence{SHA256: Digest("verified prerequisites"), PendingRolloutHealth: ids}, nil
+			}
+			result, err := plan.Qualify(context.Background(), QualificationOptions{ExistingUpdate: true}, checks)
+			if mode == "valid" || mode == "logingester" || mode == "retained" {
+				if err != nil || result.Decision != "GO" {
+					t.Fatal("verified repair did not qualify", err)
+				}
+				raw, _ := json.Marshal(result)
+				if !strings.Contains(string(raw), "pending_rollout_health") || !strings.Contains(string(raw), pending) {
+					t.Fatal("pending application health hidden from report")
+				}
+			} else if err == nil || result.Decision != "NO-GO" {
+				t.Fatal("unbound health deferral accepted")
+			}
+		})
 	}
 }

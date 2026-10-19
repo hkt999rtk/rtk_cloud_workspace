@@ -63,7 +63,7 @@ func TestExecutionReconciliationNeverRevertsPartialOrConcurrentChanges(t *testin
 	}
 }
 
-func TestRetainedResourcesStillFenceInterruptedPKIOrBusinessAcceptance(t *testing.T) {
+func TestRetainedResourcesReleaseStoppedExecutionWithoutAcceptingInterruptedPKI(t *testing.T) {
 	in, d, live := fixture(t, "dev", "Deployment")
 	d.Retain = true
 	p, err := Compile(in, []Definition{d}, []Object{live})
@@ -77,8 +77,8 @@ func TestRetainedResourcesStillFenceInterruptedPKIOrBusinessAcceptance(t *testin
 	}
 	pass := func(context.Context, *Plan) error { return nil }
 	err = p.Execute(context.Background(), b, p.SHA256(), root, pass, pass, func(context.Context, *Plan) error { return errors.New("unconfirmed PKI sealing") })
-	if err == nil || !b.leaseHeld || len(b.written) != 0 {
-		t.Fatal("failed acceptance released the fence without resource writes", err)
+	if err == nil || b.leaseHeld || len(b.written) != 0 {
+		t.Fatal("failed acceptance completed or retained its execution lease", err)
 	}
 	var j Journal
 	raw, err := os.ReadFile(filepath.Join(root, "deployment", "rollback", p.SHA256(), "journal.json"))
@@ -89,12 +89,19 @@ func TestRetainedResourcesStillFenceInterruptedPKIOrBusinessAcceptance(t *testin
 		t.Fatal("PKI/business uncertainty was mistaken for no mutations")
 	}
 	active := filepath.Join(root, "deployment", ".execution-active")
-	running, err := LockExecutionOwner(active, false)
+	if _, err := os.Stat(active); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("stopped executor retained its active local lock", err)
+	}
+	archives := executionOwnerArchives(t, root, p.SHA256())
+	if len(archives) != 1 {
+		t.Fatal("stopped executor did not archive its exact owner")
+	}
+	running, err := LockExecutionOwner(archives[0], false)
 	if err != nil {
 		t.Fatal("stopped executor still holds its OS lock", err)
 	}
 	defer running.Close()
-	if another, err := LockExecutionOwner(active, false); err == nil {
+	if another, err := LockExecutionOwner(archives[0], false); err == nil {
 		another.Close()
 		t.Fatal("running reconciler lock was stolen")
 	}

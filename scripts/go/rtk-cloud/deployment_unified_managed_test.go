@@ -93,15 +93,7 @@ func TestIdentityBindingsCannotSupplyControllerPolicies(t *testing.T) {
 		}
 	}
 }
-func managedNamedField(values any, name string) map[string]any {
-	for _, value := range certIssuerObjectList(values) {
-		item := deploymentplan.Map(value)
-		if item["name"] == name {
-			return item
-		}
-	}
-	return nil
-}
+
 func TestManagedConsumersKeepMaintainedConfigurationAndDurableIdentityForEveryEnvironment(t *testing.T) {
 	t.Setenv("LKE_RUNTIME_SECRET_SEED", "isolated-render-fixture")
 	for _, environment := range []string{"dev", "staging", "prod"} {

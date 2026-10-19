@@ -145,7 +145,7 @@ func assertAdmissionProgress(t *testing.T, progress [][2]int, completed, total i
 
 func TestAdmissionOptInConcurrencyIsBoundedAndGenericRemainsSerial(t *testing.T) {
 	for _, environment := range []string{"dev", "staging", "prod"} {
-		for _, concurrency := range []int{0, 4, 8, 32} {
+		for _, concurrency := range []int{0, 4, 8, 12, 32} {
 			t.Run(fmt.Sprintf("%s/workers-%d", environment, concurrency), func(t *testing.T) {
 				plan, fixture := parallelAdmissionPlan(t, environment, 24)
 				release := make(chan struct{})
@@ -506,8 +506,13 @@ func TestParallelAdmissionDoesNotParallelizePersistedExecution(t *testing.T) {
 				t.Fatal("opt-in admission changed the execution contract", err)
 			}
 			var expected []string
+			// Native writes remain serial and in plan order. The workload block
+			// then checks every recorded owner's readiness in that same order.
 			for _, resource := range plan.Resources {
-				expected = append(expected, "write:"+resource.ID, "wait:"+resource.ID)
+				expected = append(expected, "write:"+resource.ID)
+			}
+			for _, resource := range plan.Resources {
+				expected = append(expected, "wait:"+resource.ID)
 			}
 			if !reflect.DeepEqual(backend.trace, expected) || plan.SHA256() != before || backend.leaseHeld {
 				t.Fatal("parallel admission changed persisted write/wait order or execution ownership")

@@ -42,14 +42,15 @@ func loadEnvironmentCIImages(ctx context.Context, cfg deploymentConfig, run envi
 		if reference == "" {
 			continue
 		}
-		environmentDeploymentProgress(ctx, "deployment.release.provider."+configKey)
+		stage := "deployment.release.provider." + configKey
+		environmentDeploymentProgress(ctx, stage)
 		pinned, err := resolveConfiguredProviderImage(ctx, reference, run)
+		environmentDeploymentProgressDone(ctx, stage, err)
 		if err != nil {
 			return environmentRelease{}, &deploymentplan.Blocker{ID: "deployment.provider.images", Resource: configKey, Cause: "configured provider image cannot be pinned to an immutable registry digest", Next: "correct the maintained provider image reference and registry access, then repeat preflight"}
 		}
 		providers.Images[key] = environmentReleaseImage{Reference: pinned}
 	}
-	environmentDeploymentProgress(ctx, "deployment.release.sources")
 	selected, err := resolveEnvironmentCIImages(ctx, cfg, providers, run)
 	if err != nil {
 		var blocker *deploymentplan.Blocker
@@ -130,6 +131,15 @@ type environmentReleaseCommand func(context.Context, string, ...string) ([]byte,
 // artifacts. Provider versions come from maintained configuration, not a file.
 func resolveEnvironmentCIImages(ctx context.Context, cfg deploymentConfig, providers environmentRelease, run environmentReleaseCommand) (environmentRelease, error) {
 	result := environmentRelease{Schema: "rtk-cloud.release/v1", Environment: cfg.Environment, Stack: cfg.Values["CLOUD_STACK_NAME"], Images: map[string]environmentReleaseImage{}}
+	stage := "deployment.release.sources"
+	environmentDeploymentProgress(ctx, stage)
+	// A step is cleared only after its validation succeeds. Every early return
+	// or panic finishes the active step as failed, without printing private errors.
+	defer func() {
+		if stage != "" {
+			environmentDeploymentProgressResult(ctx, stage, "FAIL")
+		}
+	}()
 	if run == nil || providers.Environment != result.Environment || providers.Stack != result.Stack {
 		return result, errors.New("deployment.release: reviewed provider selection must match the environment")
 	}
@@ -170,8 +180,11 @@ func resolveEnvironmentCIImages(ctx context.Context, cfg deploymentConfig, provi
 		}
 		result.Images[key] = image
 	}
+	environmentDeploymentProgressDone(ctx, stage, nil)
+	stage = ""
 	for _, frozen := range sources {
-		environmentDeploymentProgress(ctx, "deployment.release.ci."+frozen.source.Name)
+		stage = "deployment.release.ci." + frozen.source.Name
+		environmentDeploymentProgress(ctx, stage)
 		repo := "hkt999rtk/" + frozen.source.RepoName
 		evidence, runID, attempt, err := latestEnvironmentPublication(ctx, repo, "release.yml", frozen.revision, false, run)
 		if err != nil {
@@ -198,12 +211,15 @@ func resolveEnvironmentCIImages(ctx context.Context, cfg deploymentConfig, provi
 			// enabled; an existing static TLS listener does not use this package.
 
 		}
+		environmentDeploymentProgressDone(ctx, stage, nil)
+		stage = ""
 	}
 	if result.Images["LKE_POSTGRES_IMAGE"].Reference == "" || result.Images["LKE_INGRESS_IMAGE"].Reference == "" || result.Images["LKE_OPENBAO_IMAGE"].Reference == "" {
 		return result, &deploymentplan.Blocker{ID: "deployment.provider.images", Cause: "maintained PostgreSQL, ingress or OpenBao image version is not configured", Next: "maintain POSTGRES_IMAGE, INGRESS_CONTROLLER_IMAGE and OPENBAO_IMAGE in cloud_deploy/architectures/kubernetes/architecture.env or cloud_env/<environment>/overrides/architecture.env; preflight pins their registry digests without a local release.json"}
 	}
 	if cfg.Values["DEPLOYMENT_POSTGRES_BACKUP_ENABLED"] == "true" {
-		environmentDeploymentProgress(ctx, "deployment.release.ci.postgres-backup")
+		stage = "deployment.release.ci.postgres-backup"
+		environmentDeploymentProgress(ctx, stage)
 		repo := "hkt999rtk/rtk_cloud_workspace"
 		evidence, runID, attempt, err := latestEnvironmentPublication(ctx, repo, "postgres-backup-image.yml", result.WorkspaceRevision, true, run)
 		if err != nil {
@@ -220,9 +236,13 @@ func resolveEnvironmentCIImages(ctx context.Context, cfg deploymentConfig, provi
 			return result, err
 		}
 		result.Images["LKE_POSTGRES_BACKUP_RUNNER_IMAGE"] = image
+		environmentDeploymentProgressDone(ctx, stage, nil)
+		stage = ""
 	}
 	// Repeat source checks after network requests. A changed source must not be
 	// silently frozen as a different release midway through evidence collection.
+	stage = "deployment.release.sources.recheck"
+	environmentDeploymentProgress(ctx, stage)
 	if err := verifyEnvironmentReleaseCheckout(ctx, cfg.Workspace, result.WorkspaceRevision, run); err != nil {
 		return result, err
 	}
@@ -231,6 +251,8 @@ func resolveEnvironmentCIImages(ctx context.Context, cfg deploymentConfig, provi
 			return result, err
 		}
 	}
+	environmentDeploymentProgressDone(ctx, stage, nil)
+	stage = ""
 	return result, nil
 }
 func latestEnvironmentPublication(ctx context.Context, repo, workflow, revision string, backup bool, run environmentReleaseCommand) ([]byte, int64, int, error) {
@@ -284,31 +306,66 @@ func selectEnvironmentPublishedImage(raw []byte, repo string, id int64, attempt 
 	if err := verifyPublicationJSON(raw, repo, id, attempt, image, backup); err != nil {
 		return image, err
 	}
+	manifestOTA, err := publishedOTARegistration(raw, image)
+	if err != nil {
+		return image, err
+	}
+	image.OTARegistration = manifestOTA
 	return image, nil
 }
 
 func environmentCIImageCommand(cfg deploymentConfig) environmentReleaseCommand {
 	return func(ctx context.Context, command string, args ...string) ([]byte, error) {
-		if command != "gh" {
-			return deploymentUpgradeCommand(ctx, command, args...)
-		}
-		store, err := newSecretStore("", cfg.Environment)
-		if err != nil {
-			return nil, errors.New("selected environment credentials unavailable")
-		}
-		operator, err := store.readOperator()
-		if err != nil || operator["GHCR_PULL_TOKEN"] == "" {
-			return nil, errors.New("selected environment GHCR_PULL_TOKEN is required for formal CI artifact access")
-		}
-		readCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-		defer cancel()
-		cmd := exec.CommandContext(readCtx, command, args...)
-		cmd.WaitDelay = time.Second
-		cmd.Env = append(os.Environ(), "GH_TOKEN="+operator["GHCR_PULL_TOKEN"])
-		raw, err := cmd.Output()
-		if err != nil {
-			return nil, errors.New("formal CI artifact access failed; check environment token permissions and provider availability")
-		}
-		return raw, nil
+		return cachedDeploymentCICommand(ctx, cfg.Environment, command, args, func() (output []byte, resultErr error) {
+			kind := command
+			if command == "gh" {
+				kind = "github"
+			}
+			measured := beginDeploymentQuery(ctx, kind)
+			defer func() { measured(resultErr) }()
+			if command == "docker" && len(args) > 0 && args[0] == "pull" {
+				// Release pulls use the same selected-environment credential and
+				// process-lifetime boundary as full image qualification. Ambient
+				// Docker Desktop helpers cannot supply another identity or hang
+				// past cancellation. The subsequent OCI/CI checks stay unchanged.
+				if len(args) != 4 || args[1] != "--platform" || args[2] != "linux/amd64" || args[3] == "" {
+					return nil, errors.New("docker release prerequisite failed; check authentication, tool availability and deadline")
+				}
+				store, err := newSecretStore("", cfg.Environment)
+				if err != nil {
+					return nil, errors.New("selected environment credentials unavailable")
+				}
+				operator, err := store.readOperator()
+				username, token := operator["GHCR_PULL_USERNAME"], operator["GHCR_PULL_TOKEN"]
+				if err != nil || username == "" || token == "" || strings.ContainsAny(username+token, "\r\n") {
+					return nil, errors.New("selected environment credentials unavailable")
+				}
+				if err := pullRolloutImageContext(ctx, cfg.Environment, username, token, args[3]); err != nil {
+					return nil, errors.New("docker release prerequisite failed; check authentication, tool availability and deadline")
+				}
+				return nil, nil
+			}
+			if command != "gh" {
+				return deploymentUpgradeCommand(ctx, command, args...)
+			}
+			store, err := newSecretStore("", cfg.Environment)
+			if err != nil {
+				return nil, errors.New("selected environment credentials unavailable")
+			}
+			operator, err := store.readOperator()
+			if err != nil || operator["GHCR_PULL_TOKEN"] == "" {
+				return nil, errors.New("selected environment GHCR_PULL_TOKEN is required for formal CI artifact access")
+			}
+			readCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(readCtx, command, args...)
+			cmd.WaitDelay = time.Second
+			cmd.Env = append(os.Environ(), "GH_TOKEN="+operator["GHCR_PULL_TOKEN"])
+			raw, err := cmd.Output()
+			if err != nil {
+				return nil, errors.New("formal CI artifact access failed; check environment token permissions and provider availability")
+			}
+			return raw, nil
+		})
 	}
 }

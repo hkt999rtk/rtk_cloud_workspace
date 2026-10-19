@@ -146,7 +146,11 @@ func TestCertIssuerAdoptionPreservesServingAndSigningProviderReferences(t *testi
 				values = append(values, deploymentplan.Object{"name": name, "value": settings[name]})
 			}
 			current := deploymentplan.Object{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": deploymentplan.Object{"name": "certissuer", "namespace": env["CLOUD_STACK_NAME"] + "-video-cloud", "uid": "original-certissuer"}, "spec": deploymentplan.Object{"replicas": float64(999), "template": deploymentplan.Object{"spec": deploymentplan.Object{"containers": []any{deploymentplan.Object{"name": "certissuer", "image": release.Images["LKE_VIDEO_CLOUD_IMAGE"].Reference, "env": values, "command": []any{"legacy-do-not-import"}}}}}}}
-			adopted, err := observeEnvironmentBindings(environment, release, []deploymentplan.Object{current})
+			secret := deploymentplan.Object{"apiVersion": "v1", "kind": "Secret", "metadata": deploymentplan.Object{"name": "original-issuer-runtime", "namespace": env["CLOUD_STACK_NAME"] + "-video-cloud", "uid": "original-issuer-runtime-owner"}, "data": deploymentplan.Object{"POSTGRES_PASSWORD": "fixture-password", "device-ca.crt": "fixture-device-ca", "client-ca.crt": "fixture-client-ca"}}
+			pod := environmentPKIPod(current)
+			pod["volumes"] = []any{deploymentplan.Object{"name": "issuer-runtime", "secret": deploymentplan.Object{"secretName": "original-issuer-runtime"}}}
+			deploymentplan.Map(pod["containers"].([]any)[0])["volumeMounts"] = []any{deploymentplan.Object{"name": "issuer-runtime", "mountPath": "/issuer", "readOnly": true}}
+			adopted, err := observeEnvironmentBindings(environment, release, []deploymentplan.Object{current, secret})
 			if err != nil {
 				t.Fatal("serving identity references could not be adopted", err)
 			}
@@ -156,6 +160,9 @@ func TestCertIssuerAdoptionPreservesServingAndSigningProviderReferences(t *testi
 			}
 			if err := applyEnvironmentPodBindings(wanted, adopted, release); err != nil {
 				t.Fatal(err)
+			}
+			if adopted.Pods[0].IssuerRuntimeSecret != "original-issuer-runtime" {
+				t.Fatal("adoption lost the original issuer runtime Secret")
 			}
 			if err := validateEnvironmentPKITransition([]deploymentplan.Definition{{Object: wanted, Phase: "workload"}}, []deploymentplan.Object{current}); err != nil {
 				t.Fatal("adoption lost serving or signing provider references", err)

@@ -38,6 +38,11 @@ func observeEnvironmentBindings(environment string, release environmentRelease, 
 			return b, errors.New("adoption requires unique, active, exact environment owners")
 		}
 		b.Owners[id] = uid
+		if kind == "ConfigMap" && name == environmentAppRoutingDeclaration {
+			if err := observeEnvironmentAppRouting(&b, object, live); err != nil {
+				return b, err
+			}
+		}
 		if ns == b.Stack+"-video-cloud" && name == "video-cloud-otaregistrar" && (kind == "Deployment" || kind == "Service") {
 			continue
 		}
@@ -124,25 +129,79 @@ func observeEnvironmentBindings(environment string, release environmentRelease, 
 		}
 		binding := environmentPodBindings{Kind: kind, NamespaceSuffix: strings.TrimPrefix(ns, b.Stack+"-"), Name: name, Component: component, PodFields: map[string]any{}}
 		pod := deploymentplan.Map(deploymentplan.Map(deploymentplan.Map(object["spec"])["template"])["spec"])
+		if name == "certissuer" || name == "factoryenroll" {
+			var err error
+			binding.IssuerRuntimeSecret, err = observeEnvironmentIssuerRuntimeSecret(object, live)
+			if err != nil {
+				return b, err
+			}
+		}
 		for _, field := range []string{"volumes", "serviceAccountName", "imagePullSecrets"} {
 			if value, ok := pod[field]; ok {
 				binding.PodFields[field] = value
 			}
 		}
-		if accountManagerSocketConsumer(component, name) {
+		if accountManagerSocketConsumer(component, name) || name == "certissuer" && mqttFoundationEnv(mqttFoundationPrimary(object), "CERT_ISSUER_REGISTRY_ONLY_ENABLED") == "true" {
 			if value, ok := pod["securityContext"]; ok {
 				binding.PodFields["securityContext"] = value
 			}
 		}
 		groups := []string{"containers"}
-		if component == "managed-openbao" || component == "managed-turn" || component == "managed-app-api" || component == "managed-mqtt" || component == "managed-api" || existingMQTTStateConsumer(component, name) || accountManagerSocketConsumer(component, name) {
+		if component == "managed-openbao" || component == "managed-turn" || component == "managed-app-api" || component == "managed-mqtt" || component == "managed-api" || existingMQTTStateConsumer(component, name) || accountManagerSocketConsumer(component, name) || component == "pki-controller" {
 			groups = append(groups, "initContainers")
 		}
 		for _, group := range groups {
 			for _, value := range certIssuerObjectList(pod[group]) {
 				container := deploymentplan.Map(value)
 				bound := environmentContainerBindings{Name: deploymentplan.String(container["name"]), Fields: map[string]any{}}
+				if name == "video-cloud-api" && group == "initContainers" && bound.Name == coreIdentityInitializerName {
+					image := deploymentplan.String(container["image"])
+					if environmentImageRepository(image) != environmentImageRepository(release.Images["LKE_ALPINE_IMAGE"].Reference) {
+						return b, coreIdentityPermissionBlocker(object, "original permission initializer has an unsupported image role")
+					}
+					if err := validateCoreIdentityInitializer(object, image); err != nil {
+						return b, err
+					}
+					bound.ImageKey = "LKE_ALPINE_IMAGE"
+					bound.Fields = controllerIdentityInitializerBindingFields(container)
+					binding.InitContainers = append(binding.InitContainers, bound)
+					continue
+				}
+				if component == "pki-controller" && group == "initContainers" {
+					if err := validateObservedControllerIdentityInitializer(object, container, release); err != nil {
+						return b, err
+					}
+					bound.ImageKey = "LKE_ALPINE_IMAGE"
+					bound.Fields = controllerIdentityInitializerBindingFields(container)
+					binding.InitContainers = append(binding.InitContainers, bound)
+					continue
+				}
+				if selected, ok := release.Images["LKE_CERTISSUER_IMAGE"]; ok && component == "certissuer" && name == "certissuer" && group == "containers" && bound.Name == "certissuer" {
+					if deploymentplan.String(container["image"]) != selected.Reference {
+						return b, certIssuerPrepareCompletionBlock("current-native-role-image")
+					}
+					bound.ImageKey = "LKE_CERTISSUER_IMAGE"
+				}
+				if selected, ok := release.Images["LKE_PKI_CONTROLLER_IMAGE"]; ok && component == "pki-controller" && name == "pki-controller" && group == "containers" && bound.Name == "pki-controller" {
+					if deploymentplan.String(container["image"]) != selected.Reference && deploymentplan.String(container["image"]) != release.Images["LKE_VIDEO_CLOUD_IMAGE"].Reference {
+						return b, postCleanupCorrectionBlock("current controller image differs from accepted correction")
+					}
+					bound.ImageKey = "LKE_PKI_CONTROLLER_IMAGE"
+				}
+				if selected, ok := release.Images["LKE_PKI_MANAGEMENT_IMAGE"]; ok && component == "existing-workload" && name == "account-manager" && group == "containers" && bound.Name == "pkimanagement" {
+					image := deploymentplan.String(container["image"])
+					if image != selected.Reference && image != release.Images["LKE_VIDEO_CLOUD_IMAGE"].Reference {
+						return b, errors.New("Account Manager sidecar is neither the formal old image nor selected management image")
+					}
+					bound.ImageKey = "LKE_PKI_MANAGEMENT_IMAGE"
+				}
 				for key, image := range release.Images {
+					if key == "LKE_PKI_MANAGEMENT_IMAGE" || bound.ImageKey == "LKE_PKI_MANAGEMENT_IMAGE" {
+						continue
+					}
+					if key == "LKE_CERTISSUER_IMAGE" || bound.ImageKey == "LKE_CERTISSUER_IMAGE" || key == "LKE_PKI_CONTROLLER_IMAGE" || bound.ImageKey == "LKE_PKI_CONTROLLER_IMAGE" {
+						continue
+					}
 					if strings.HasPrefix(key, "LKE_ZAMMAD_") {
 						continue
 					}
@@ -193,9 +252,10 @@ func observeEnvironmentBindings(environment string, release environmentRelease, 
 				}
 				if component == "managed-app-api" && group == "initContainers" && bound.Name == "initialize-app-trust-state" {
 					command := certIssuerObjectList(container["command"])
-					if len(command) != 3 || command[0] != "/bin/sh" || command[1] != "-ec" || command[2] != environmentAppTrustInitialize || len(certIssuerObjectList(container["args"])) != 0 {
+					if len(command) != 3 || command[0] != "/bin/sh" || command[1] != "-ec" || command[2] != environmentAppTrustInitialize && command[2] != environmentAppNativeTrustInitialize || len(certIssuerObjectList(container["args"])) != 0 {
 						return b, environmentAppBlocker(id, "trust initializer differs from the supported preserve-on-retry command")
 					}
+					binding.NativeTrustInitialization = command[2] == environmentAppNativeTrustInitialize
 					repository := environmentImageRepository(deploymentplan.String(container["image"]))
 					if repository != environmentImageRepository(release.Images["LKE_VIDEO_CLOUD_IMAGE"].Reference) && repository != "ghcr.io/hkt999rtk/rtk_cloud_dev/video-cloud-api" {
 						return b, environmentAppBlocker(id, "trust initializer has an unknown image source")
@@ -219,6 +279,9 @@ func observeEnvironmentBindings(environment string, release environmentRelease, 
 				var settings []any
 				for _, value := range certIssuerObjectList(container["env"]) {
 					setting := deploymentplan.Map(value)
+					if environmentCoreMQTTConsumer(object, container) && mqttFoundationEnv(container, "VIDEO_CLOUD_MQTT_SERVER_PKI_ROOT_SHA256") != "" && derivedCoreMQTTSetting(deploymentplan.String(setting["name"])) {
+						continue
+					}
 					if environmentControllerPolicySetting(deploymentplan.String(setting["name"])) {
 						continue
 					}
@@ -229,7 +292,7 @@ func observeEnvironmentBindings(environment string, release environmentRelease, 
 				if len(settings) > 0 {
 					bound.Fields["env"] = settings
 				}
-				if component == "managed-openbao" || accountManagerSocketConsumer(component, name) {
+				if component == "managed-openbao" || accountManagerSocketConsumer(component, name) || name == "certissuer" && mqttFoundationEnv(container, "CERT_ISSUER_REGISTRY_ONLY_ENABLED") == "true" {
 					if value, ok := container["securityContext"]; ok {
 						bound.Fields["securityContext"] = value
 					}

@@ -65,11 +65,14 @@ func TestReadAccessClassificationSurvivesAdmissionAndExecutionBoundaries(t *test
 					t.Fatal("failed initial resource read persisted an update")
 				}
 				if failRead >= 4 {
-					if len(backend.written) != 1 || !backend.leaseHeld {
-						t.Fatal("post-write read failure discarded the completed update or ownership fence")
+					if len(backend.written) != 1 || backend.leaseHeld {
+						t.Fatal("post-write read failure discarded the completed update or retained execution ownership")
 					}
-					if _, err := os.Stat(filepath.Join(root, "deployment", ".execution-active")); err != nil {
-						t.Fatal("post-write read failure lost private recovery fence", err)
+					if _, err := os.Stat(filepath.Join(root, "deployment", ".execution-active")); !errors.Is(err, os.ErrNotExist) {
+						t.Fatal("post-write read failure retained its active local lock", err)
+					}
+					if _, err := os.Stat(filepath.Join(root, "deployment", "rollback", before, "journal.json")); err != nil {
+						t.Fatal("post-write read failure lost its private journal", err)
 					}
 				}
 			})

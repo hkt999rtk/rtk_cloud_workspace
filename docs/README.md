@@ -10,8 +10,12 @@ in the owning service repository; shared wire and payload contracts belong in
 | Goal | Document |
 | --- | --- |
 | Prepare, deploy, restore, accept, or remove an environment | [Deployment Operations Guide](deployment-operations.md) |
+| Establish new OpenBao/Service PKI identities for an explicitly new deployment generation | [New deployment identity lifecycle](deployment-operations.md#new-deployment-identity-lifecycle), [secrets boundary](deployment-secrets-governance.md#deployment-generation-identity-boundary) |
+| Trace current preflight, deployment and final-check scripts | [Current script flow and flow chart](deployment-operations.md#current-script-flow) |
 | Decide complete-environment GO/NO-GO and review production activation requirements | [Unified Deployment Readiness Standard](deployment-readiness-standard.md) |
 | Understand each preflight check, its rationale and failure consequences | [Detailed preflight checklist](deployment-readiness-standard.md#detailed-preflight-checklist) |
+| Understand derived CertIssuer paths and startup settings | [Issuer startup configuration](cloud-deployment-architecture.md#issuer-startup-configuration) |
+| Understand core API MQTT TLS paths and endpoint derivation | [Core API MQTT transport derivation](cloud-deployment-architecture.md#core-api-mqtt-transport-derivation) |
 | Back up or restore matched core data under maintenance | [Core Backup and Restore](backup-restore.md) |
 | Review raw billing backup, replay and 90-day hot retention | [Billing raw-data lifecycle design](design/billing-raw-data-lifecycle.md) |
 | Operate isolated verification, retention authority and recovery fencing | [Billing lifecycle operations](billing-raw-lifecycle-operations.md) |
@@ -23,7 +27,7 @@ in the owning service repository; shared wire and payload contracts belong in
 | Prepare the private support ticket backend | [Zammad deployment runbook](deployment/support-ticket-zammad.md) |
 | Prepare and run local, acceptance, qualification, or load tests | [Testing Operations Guide](testing-operations.md) |
 | Create tracked environment intent and overrides | [Environment README](../cloud_env/README.md) |
-| Choose or review DNS names for an environment | [Environment DNS naming](environment-dns-naming.md) |
+| Choose or review environment DNS, LKE cluster, pool and worker display names | [Environment and infrastructure naming](environment-dns-naming.md) |
 | Select a DNS provider, manage records, or review DNS-01 ownership | [DNS Adapter Architecture](dns-adapter-architecture.md) |
 | Find shared API, payload, authentication, or device transport contracts | [Canonical contracts index](../repos/rtk_cloud_contracts_doc/README.md) |
 | Find service implementation, configuration, or package documentation | [Repository Documentation](#repository-documentation) |
@@ -54,7 +58,7 @@ when retrieved alongside an active source.
 | --- | --- | --- |
 | [architecture.md](architecture.md) | Source | Cross-repo boundaries and source-of-truth model. |
 | [Video Cloud STRIDE threat model](../cyber_security/threat_models/rtk_video_cloud-stride-threat-model.md) | Supporting note: draft static assessment | Current code and adjoining trust boundaries, conditional risks, and validation responsibilities; no live environment security sign-off. |
-| [environment-dns-naming.md](environment-dns-naming.md) | Source | Environment identity, stack/root mapping, public endpoint hostname rules, and explicit exceptions. |
+| [environment-dns-naming.md](environment-dns-naming.md) | Source | Environment identity, stack/root mapping, LKE cluster/pool/worker display names, public endpoint hostname rules, and explicit exceptions. |
 | [Database ER model](design/database-er-diagrams.md) | Generated design reference | Tables, columns, declared foreign keys, and evidenced logical references across services. |
 | [Database schema to ER process](design/database-er-process.md) | Source | How schema metadata becomes the ER atlas, checked snapshots, and environment diff reports. |
 | [account-manager-admin-boundary.md](account-manager-admin-boundary.md) | Source | Boundary between Account Manager as backend control plane and Admin as enterprise dashboard/BFF. |
@@ -123,7 +127,7 @@ evidence, not current operator instructions.
 | --- | --- |
 | [cloud-deployment-architecture.md](cloud-deployment-architecture.md) | Provider-neutral environment, architecture, adapter, and runtime model. |
 | [cloud-env-layout.md](cloud-env-layout.md) | Tracked environment and ignored runtime directory layout. |
-| [environment-dns-naming.md](environment-dns-naming.md) | Environment-to-DNS naming policy, endpoint roles, overrides, and runtime applicability. |
+| [environment-dns-naming.md](environment-dns-naming.md) | Environment, LKE cluster/pool/worker display and DNS naming policy, endpoint roles, overrides, and runtime applicability. |
 | [deployment-secrets-governance.md](deployment-secrets-governance.md) | Secret ownership, storage, injection, and redaction rules. |
 | [dns-adapter-architecture.md](dns-adapter-architecture.md) | DNS adapter selection, credentials, state, and mutation boundary. |
 | [lke-external-haproxy-edge.md](lke-external-haproxy-edge.md) | Current LKE external HAProxy edge contract. |

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -155,12 +156,39 @@ func TestDirectCIImagesUseFrozenGitlinksAndExactPublicationForAllEnvironments(t 
 					raw, _ := json.Marshal(manifest)
 					return publicationZIP(t, file, raw), nil
 				}
-				release, err := loadEnvironmentCIImages(context.Background(), cfg, run)
+				var progressOutput, progressLog bytes.Buffer
+				progress := &environmentProgress{out: &progressOutput, log: &progressLog, resources: -1}
+				progressCtx := context.WithValue(context.Background(), environmentProgressKey{}, progress)
+				release, err := loadEnvironmentCIImages(progressCtx, cfg, run)
 				if (err == nil) != (mode == "valid" || mode == "host-published" || mode == "backups-disabled" || mode == "legacy-file-invalid" || mode == "root-dirty" || mode == "leaf-dirty") {
 					t.Fatal("release decision differs", mode, err)
 				}
 				if err != nil && strings.Contains(err.Error(), "never-public") {
 					t.Fatal("private source error escaped")
+				}
+				// A successful query can still contain invalid CI evidence. Every
+				// started selection step must log its validated outcome.
+				states := map[string]string{}
+				for _, line := range strings.Split(progressLog.String(), "\n") {
+					fields := strings.Fields(line)
+					if len(fields) >= 2 {
+						states[fields[1]] = fields[0]
+					}
+				}
+				failures := 0
+				for stage, status := range states {
+					if status == "[RUNNING]" {
+						t.Fatal("completed release selection step still running", stage, progressLog.String())
+					}
+					if status == "[FAIL]" {
+						failures++
+					}
+				}
+				if (failures == 0) != (err == nil) || strings.Contains(progressOutput.String()+progressLog.String(), "never-public") || strings.Contains(progressOutput.String(), "[OK]") || !strings.Contains(progressOutput.String(), "[RUNNING]") || strings.Contains(progressOutput.String(), "[FAIL]") != (err != nil) {
+					t.Fatal("progress omitted running work or failure, printed success, or leaked private output", progressOutput.String(), progressLog.String())
+				}
+				if mode == "valid" && states["deployment.release.provider.POSTGRES_IMAGE"] != "[OK]" {
+					t.Fatal("provider digest was validated without its logged OK result", progressLog.String())
 				}
 				if mode == "backups-disabled" {
 					if err != nil {
@@ -276,7 +304,29 @@ func TestDirectCIImagesUseFrozenGitlinksAndExactPublicationForAllEnvironments(t 
 								}
 								return run(ctx, command, args...)
 							}
-							err := verifyEnvironmentReleaseWithCommand(context.Background(), cfg, candidate, verifyRun)
+							var verifyProgressOutput, verifyProgressLog bytes.Buffer
+							verifyProgress := &environmentProgress{out: &verifyProgressOutput, log: &verifyProgressLog, resources: -1}
+							verifyCtx := context.WithValue(context.Background(), environmentProgressKey{}, verifyProgress)
+							err := verifyEnvironmentReleaseWithCommand(verifyCtx, cfg, candidate, verifyRun)
+							states := map[string]string{}
+							for _, line := range strings.Split(verifyProgressLog.String(), "\n") {
+								fields := strings.Fields(line)
+								if len(fields) >= 2 {
+									states[fields[1]] = fields[0]
+								}
+							}
+							failedSteps := 0
+							for stage, status := range states {
+								if status == "[RUNNING]" {
+									t.Fatal("release verification step never finished", stage)
+								}
+								if status == "[FAIL]" {
+									failedSteps++
+								}
+							}
+							if (failedSteps == 0) != (err == nil) || strings.Contains(verifyProgressOutput.String()+verifyProgressLog.String(), "never-public") || strings.Contains(verifyProgressOutput.String()+verifyProgressLog.String(), "private-pull-output") || strings.Contains(verifyProgressOutput.String(), "[OK]") || !strings.Contains(verifyProgressOutput.String(), "[RUNNING]") || strings.Contains(verifyProgressOutput.String(), "[FAIL]") != (err != nil) {
+								t.Fatal("release verification display or log disagreed with evidence", err, verifyProgressOutput.String(), verifyProgressLog.String())
+							}
 							if (err == nil) != (verifyMode == "valid" || verifyMode == "leaf-dirty") {
 								t.Fatal("frozen release verification accepted drift or omitted evidence", err)
 							}

@@ -21,6 +21,7 @@ type deploymentHealthResource struct {
 		} `json:"ownerReferences"`
 	} `json:"metadata"`
 	Spec struct {
+		RestartPolicy  string `json:"restartPolicy"`
 		Replicas       *int32 `json:"replicas"`
 		UpdateStrategy struct {
 			Type string `json:"type"`
@@ -152,7 +153,10 @@ func validateDeploymentWorkloadHealthForStack(stack string, raw []byte) error {
 					job = true
 				}
 			}
-			if job || resource.Metadata.DeletionTimestamp != "" {
+			// Terminal standalone Never Pods are one-shot inspection/migration
+			// evidence, just like Job Pods. Their outcome is not service readiness.
+			terminalOneShot := len(resource.Metadata.OwnerReferences) == 0 && resource.Spec.RestartPolicy == "Never" && (resource.Status.Phase == "Succeeded" || resource.Status.Phase == "Failed")
+			if job || terminalOneShot || resource.Metadata.DeletionTimestamp != "" {
 				continue
 			}
 			pods++

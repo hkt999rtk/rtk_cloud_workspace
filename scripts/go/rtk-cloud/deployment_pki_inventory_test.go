@@ -163,7 +163,7 @@ esac
 						}
 						aggregateErr := verifySecretStoreK8SRuntime(store, time.Now())
 						var aggregateBlocker *deploymentplan.Blocker
-						if !errors.As(aggregateErr, &aggregateBlocker) || aggregateBlocker.ID != id || strings.Contains(aggregateErr.Error(), "private-command-canary") || strings.Contains(aggregateErr.Error(), "not proven") != additionalFailure {
+						if !errors.As(aggregateErr, &aggregateBlocker) || aggregateBlocker.ID != id || strings.Contains(aggregateErr.Error(), "private-command-canary") || strings.Contains(aggregateErr.Error(), "not ready for post-deploy PKI health acceptance") != additionalFailure {
 							t.Fatal("runtime aggregate lost the original typed diagnosis or other scoped failures", aggregateErr)
 						}
 					}

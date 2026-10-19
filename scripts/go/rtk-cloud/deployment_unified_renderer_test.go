@@ -33,12 +33,16 @@ func completeEnvironmentRenderFixture(environment string) (map[string]string, en
 	env["OPENBAO_STORAGE_BACKEND"], env["OPENBAO_DATA_STORAGE"], env["OPENBAO_AUDIT_STORAGE"], env["OPENBAO_POD_MANAGEMENT_POLICY"], env["OPENBAO_UPDATE_STRATEGY"] = "raft", "20Gi", "10Gi", "Parallel", "RollingUpdate"
 	env["PKI_APP_CRL_WORKER_ENABLED"], env["PKI_SERVER_CRL_DOMAIN"], env["PKI_REQUIRE_USER_MFA"] = "true", "service,mqtt,openbao_tls", "true"
 	env["REDIS_DATA_STORAGE"], env["PROMETHEUS_DATA_STORAGE"] = "5Gi", "20Gi"
+	env["DURABLE_DATA_STORAGE_CLASS"] = "linode-block-storage-retain"
 	for _, domain := range managedPKIDomains {
 		env["PKI_REQUIRED_CONSUMERS_"+strings.ToUpper(domain)] = "fixture-consumer"
 	}
 	release := environmentRelease{Schema: "rtk-cloud.release/v1", Environment: environment, Stack: stack, WorkspaceRevision: strings.Repeat("a", 40), Images: map[string]environmentReleaseImage{}}
 	for _, source := range lkeServiceImageSources() {
 		image := environmentReleaseImage{Reference: "ghcr.io/hkt999rtk/" + source.RepoName + "/" + source.Name + "@sha256:" + strings.Repeat("a", 64), SourceRevision: strings.Repeat("b", 40)}
+		if source.EnvKey == "LKE_VIDEO_CLOUD_IMAGE" {
+			image.OTARegistration = otaRegistrationManifestFixture()
+		}
 		release.Images[source.EnvKey] = image
 		env[source.EnvKey] = image.Reference
 	}
@@ -71,12 +75,26 @@ func completeEnvironmentRenderFixture(environment string) (map[string]string, en
 		bindings.Pods = append(bindings.Pods, environmentPodBindings{Kind: kind, NamespaceSuffix: suffix, Name: name, Component: component, Containers: []environmentContainerBindings{{Name: containerName, ImageKey: imageKey, Fields: map[string]any{"env": []any{map[string]any{"name": "PKI_ENVIRONMENT", "value": environment}}}}}})
 	}
 	for i := range bindings.Pods {
+		if bindings.Pods[i].Component == "managed-api" {
+			b := &bindings.Pods[i]
+			b.PodFields = map[string]any{"volumes": []any{map[string]any{"name": "mqtt-callback", "configMap": map[string]any{"name": "pki-mqtt-callback-ca"}}}}
+			b.Containers[0].Fields["volumeMounts"] = []any{map[string]any{"name": "mqtt-callback", "mountPath": "/run/mqtt-callback", "readOnly": true}}
+		}
+		if bindings.Pods[i].Component == "pki-controller" {
+			b := &bindings.Pods[i]
+			b.PodFields = map[string]any{"volumes": []any{map[string]any{"name": "host-state", "persistentVolumeClaim": map[string]any{"claimName": "pki-controller-service-identity"}}}}
+			b.Containers[0].Fields["env"] = append(certIssuerObjectList(b.Containers[0].Fields["env"]), map[string]any{"name": "PKI_HOST_IDENTITY_STATE", "value": "/var/lib/pki-host/identity/host.json"}, map[string]any{"name": "PKI_SERVICE_CLIENT_IDENTITY_STATE", "value": "/var/lib/pki-host/identity/client.json"})
+			b.Containers[0].Fields["volumeMounts"] = []any{map[string]any{"name": "host-state", "mountPath": "/var/lib/pki-host"}}
+		}
+	}
+	for i := range bindings.Pods {
 		if bindings.Pods[i].Component == "managed-mqtt" {
 			bindings.Pods[i].Containers = append(bindings.Pods[i].Containers, environmentContainerBindings{Name: "pkibroker", ImageKey: "LKE_VIDEO_CLOUD_IMAGE", Fields: map[string]any{}})
 		}
 	}
 	// Stable catalog order is intentional; a Go map iteration cannot change
 	// the resources or plan digest selected for an environment.
+	attachEnvironmentIssuerFixture(&bindings)
 	sort.Slice(bindings.Pods, func(i, j int) bool { return bindings.Pods[i].Name < bindings.Pods[j].Name })
 	return env, bindings, release
 }

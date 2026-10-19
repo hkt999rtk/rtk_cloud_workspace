@@ -41,7 +41,8 @@ func TestAccountManagerSocketRetainsIdentityWithoutInventingClientSecret(t *test
 			app["env"] = mergeEnvironmentNamedFields(app["env"], []any{map[string]any{"name": "APP_CERT_ISSUER_SOCKET", "value": "/run/account-pki/private/controller.sock"}, map[string]any{"name": "APP_CERT_ISSUER_CLIENT_CERT"}, map[string]any{"name": "APP_CERT_ISSUER_CLIENT_KEY"}, map[string]any{"name": "APP_CERT_ISSUER_CA_FILE"}})
 			manager, _ := environmentManagedSidecar("pkimanagement")
 			manager["image"] = release.Images["LKE_VIDEO_CLOUD_IMAGE"].Reference
-			manager["env"] = []any{map[string]any{"name": "PKI_MANAGEMENT_SOCKET", "value": "/run/account-pki/private/controller.sock"}}
+			manager["env"] = []any{map[string]any{"name": "PKI_MANAGEMENT_SOCKET", "value": "/run/account-pki/private/controller.sock"}, map[string]any{"name": "PKI_MANAGEMENT_ACCOUNT_LISTEN_ADDR", "value": "0.0.0.0:8443"}}
+			manager["ports"] = []any{deploymentplan.Object{"name": "account-service", "containerPort": float64(8443), "protocol": "TCP"}}
 			manager["volumeMounts"] = []any{map[string]any{"name": "original-socket", "mountPath": "/run/account-pki"}}
 			manager["securityContext"] = map[string]any{"runAsUser": float64(10001), "runAsGroup": float64(10001), "allowPrivilegeEscalation": false}
 			manager["env"] = append(certIssuerObjectList(manager["env"]), map[string]any{"name": "PKI_MANAGEMENT_IDENTITY_STATE", "value": "/identity/private/identity.json"})
@@ -71,6 +72,9 @@ func TestAccountManagerSocketRetainsIdentityWithoutInventingClientSecret(t *test
 				t.Fatal("concurrent identity writers allowed")
 			}
 			wantedPod := environmentPKIPod(target)
+			if deploymentplan.Digest(managedNamedField(wantedPod["containers"], "pkimanagement")["ports"]) != deploymentplan.Digest(manager["ports"]) {
+				t.Fatal("existing internal Account Manager listener lost its Service target port")
+			}
 			initializer := deploymentplan.Map(certIssuerObjectList(wantedPod["initContainers"])[0])
 			if initializer["image"] != release.Images["LKE_ALPINE_IMAGE"].Reference || deploymentplan.Digest(initializer["command"]) != deploymentplan.Digest([]any{"/bin/sh", "-ec", accountManagerSocketPreparation}) || deploymentplan.Digest(initializer["volumeMounts"]) != deploymentplan.Digest(deploymentplan.Map(certIssuerObjectList(pod["initContainers"])[0])["volumeMounts"]) {
 				t.Fatal("socket directory lost its maintained recipe, original mount or selected provider role")

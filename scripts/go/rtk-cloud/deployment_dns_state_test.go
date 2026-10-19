@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +15,62 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/route53/types"
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 )
+
+func TestDNSLegacyStateDiagnosticIdentifiesRequiredMigration(t *testing.T) {
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		for _, name := range []string{"ownership.json", "challenges.json", "state.json", "dns.env"} {
+			for _, mode := range []string{"exists", "cannot-be-inspected"} {
+				t.Run(environment+"/"+name+"/"+mode, func(t *testing.T) {
+					store := makeIsolatedTestSecretStore(t, environment)
+					root := t.TempDir()
+					ctx := dnsContext(provisionPaths{EnvRoot: root}, map[string]string{"CLOUD_ENV_NAME": environment, "CLOUD_DNS_ROOT_DOMAIN": "example.test"})
+					legacyRelative := filepath.Join("dns", "godaddy", name)
+					if name == "dns.env" {
+						legacyRelative = filepath.Join("state", name)
+					}
+					legacy := filepath.Join(root, legacyRelative)
+					cause := "legacy DNS state exists:"
+					if mode == "exists" {
+						writeTestFile(t, legacy, "private source must not be read as a fallback")
+					} else {
+						// A regular-file ancestor makes Lstat fail with ENOTDIR on
+						// every test platform, independently of runner privileges.
+						writeTestFile(t, filepath.Join(root, strings.Split(legacyRelative, string(filepath.Separator))[0]), "not a directory")
+						cause = "legacy DNS state cannot be inspected:"
+					}
+					_, err := readDNSLocalState(ctx, "godaddy", name)
+					var blocker *deploymentplan.Blocker
+					if !errors.As(err, &blocker) || blocker.ID != "deployment.dns.state" {
+						t.Fatal("legacy source did not fail closed", err)
+					}
+					relative := filepath.Join("deployment", "dns", "godaddy", name)
+					for _, want := range []string{cause, "environment=" + environment, "adapter=godaddy", "legacy=" + legacyRelative, "canonical=" + relative, "cannot be read as a fallback"} {
+						if !strings.Contains(blocker.Cause, want) {
+							t.Fatalf("diagnostic missing %q: %s", want, blocker.Cause)
+						}
+					}
+					for _, private := range []string{root, store.Root, "private source", "not a directory"} {
+						if strings.Contains(blocker.Cause, private) {
+							t.Fatal("diagnostic exposed private source content or absolute location")
+						}
+					}
+					if !strings.Contains(blocker.Next, "dns-import-state") {
+						t.Fatal("diagnostic omitted the explicit migration workflow")
+					}
+					// Canonical state remains authoritative even while the original
+					// source is retained or its old path cannot be inspected.
+					canonical := []byte("canonical evidence")
+					if err := writePrivateDeploymentState(environment, relative, canonical); err != nil {
+						t.Fatal(err)
+					}
+					if got, err := readDNSLocalState(ctx, "godaddy", name); err != nil || !bytes.Equal(got, canonical) {
+						t.Fatal("canonical state was not authoritative", err)
+					}
+				})
+			}
+		}
+	}
+}
 
 func TestDNSPrivateStateUsesOneEnvironmentAuthority(t *testing.T) {
 	for _, environment := range []string{"dev", "staging", "prod"} {
@@ -157,9 +214,19 @@ func TestDNSImportVerifiesOriginalRecordsAndPreservesSources(t *testing.T) {
 				var err error
 				if mode == "valid" || mode == "denied" || mode == "drift" {
 					workspace := writeDeploymentFixture(t, environment, "lke")
-					err = runDeploymentDNSImport([]string{"--workspace", workspace, "--environment", environment, "--source-runtime", source, "--confirm", stack})
+					output := captureStdout(t, func() {
+						err = runDeploymentDNSImport([]string{"--workspace", workspace, "--environment", environment, "--source-runtime", source, "--confirm", stack})
+					})
 					if err == nil {
 						count = 4
+						for _, want := range []string{"Removal still requires original DNS ownership and completed ACME cleanup.", "Run full preflight before a subsequent deployment; import is not GO."} {
+							if !strings.Contains(output, want) {
+								t.Fatalf("import next steps missing %q: %s", want, output)
+							}
+						}
+						if strings.Contains(output, "Repeat full preflight;") {
+							t.Fatal("import required full preflight for removal")
+						}
 					}
 				} else {
 					count, err = importDeploymentDNSState(context.Background(), cfg, source, &goDaddyDNSAdapter{client: server.Client(), apiRoot: server.URL})

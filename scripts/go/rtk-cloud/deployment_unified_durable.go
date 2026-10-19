@@ -12,11 +12,17 @@ var environmentDurableSize = regexp.MustCompile(`^[1-9][0-9]*(Mi|Gi|Ti)$`)
 // Persistent component storage is maintained intent, independent of PKI
 // bindings and of the currently installed Pod spec. Single RWO writers use
 // Recreate so an update cannot start a second writer against the same claim.
+type environmentDurableComponent struct{ name, key, container string }
+
 func applyEnvironmentDurableStorage(definitions []deploymentplan.Definition, env map[string]string) ([]deploymentplan.Definition, error) {
-	for _, component := range []struct{ name, key, container string }{
+	return applyEnvironmentDurableComponents(definitions, env, []environmentDurableComponent{
 		{"redis", "REDIS_DATA_STORAGE", "redis"},
 		{"video-cloud-prometheus", "PROMETHEUS_DATA_STORAGE", "prometheus"},
-	} {
+	})
+}
+
+func applyEnvironmentDurableComponents(definitions []deploymentplan.Definition, env map[string]string, components []environmentDurableComponent) ([]deploymentplan.Definition, error) {
+	for _, component := range components {
 		size := env[component.key]
 		if !environmentDurableSize.MatchString(size) {
 			return nil, errors.New("deployment.target.storage: explicit positive Mi/Gi/Ti durable storage sizes are required")

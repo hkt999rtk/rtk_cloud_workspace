@@ -21,6 +21,7 @@ scripts/check-deployment-health.sh --environment staging
 go run ./scripts/go/rtk-cloud -- deployment plan --environment staging
 scripts/deploy-environment.sh create --environment staging --confirm video-cloud-staging
 scripts/deploy-environment.sh upgrade --environment staging --confirm video-cloud-staging
+scripts/deploy-environment.sh remove --environment staging --confirm video-cloud-staging
 go run ./scripts/go/rtk-cloud -- deployment acceptance --environment staging
 ```
 
@@ -33,6 +34,64 @@ scripts/deploy-environment.sh test \
 ```
 
 Replace `dev` and the confirmation stack with `staging` or `prod`; do not copy or fork the script. `test` removes cloud and DNS resources owned by the stack after success or failure and retains sanitized evidence.
+
+Remove an existing environment through the common entry point:
+
+```sh
+./scripts/deploy-environment.sh remove \
+  --environment dev \
+  --confirm video-cloud-dev
+```
+
+This includes owned DNS, Kubernetes storage and provider resources, including
+the exact configured runtime/OTA buckets. It reads canonical private kubeconfig
+and DNS ownership; storage-capture, DNS or Kubernetes failure stops provider
+deletion. `DELETE` in the plan is an intended action and `DELETE REQUEST ACCEPTED`
+is a request result. Provider absence is verified separately before completion.
+Partial removal retains original ownership and private archives for
+reconciliation. Unowned unattached volumes remain skipped; names or region
+matches do not establish ownership. If the cluster is already verified absent
+but original PV ownership is missing, remaining cleanup can proceed while the
+command reports incomplete storage evidence. See [removal and failure recovery](../docs/deployment-operations.md#rehearsal-removal-and-evidence).
+Removal also blocks when neither original DNS ownership nor a validated reviewed
+current-state reconciliation is available, while ACME challenges remain, on
+unsupported PV ownership handles or a changed cluster/Kubernetes identity
+generation. Initial DNS bootstrap retains its separate behavior.
+
+`dns-import-state` explicitly verifies and imports original DNS state without DNS
+mutation:
+
+```sh
+./scripts/deploy-environment.sh dns-import-state \
+  --environment staging --source-runtime "$ORIGINAL_RUNTIME_DIR" \
+  --confirm video-cloud-staging
+```
+
+If original ownership is unavailable, use a read-only current-state review:
+
+```sh
+./scripts/deploy-environment.sh dns-reconcile-state --environment staging
+```
+
+Reconciliation compares configured managed A records against exact Linode
+edge/TURN role tags, labels, region, numeric IDs and public IPv4 addresses.
+Publication requires
+`--confirm video-cloud-staging --review-sha256 "$DNS_REVIEW_SHA256"` after review;
+it creates only a retained private reconciliation receipt and digest-bound
+ownership. Ordinary removal validates that evidence and current mappings before
+DNS deletion. Unknown aliases and unresolved ACME cleanup are not adopted.
+Optional `--report` accepts only an absolute canonical `deployment/reports/`
+path. See [DNS ownership recovery](../docs/deployment-operations.md#dns-ownership-recovery).
+
+`./scripts/deploy-environment.sh reconcile-removal-volumes` requires an explicit
+`--environment` and reviews original preflight and teardown sources with
+`--source-preflight`, `--source-kubeconfig`, `--cluster-id` and `--node-ids`.
+Default review is read-only. Adding `--confirm video-cloud-dev` and the printed
+`--review-sha256` publishes only
+declared recovery metadata; ordinary `remove` performs separately verified
+exact-ID cleanup. Recovery covers the original qualified PVC inventory and
+preserves unmatched volumes. See the [required sources and complete recovery
+command](../docs/deployment-operations.md#rehearsal-removal-and-evidence).
 
 Deterministic secret-free resolved configuration lives under Git-ignored
 `cloud_env/<environment>/runtime/`. Deployment-generated operational state,
@@ -100,6 +159,14 @@ LINODE_OBJ_BUCKET=artifact bucket name
 
 ## Existing Environment Deployment Checks
 
+See the [current script flow and flow chart](../docs/deployment-operations.md#current-script-flow)
+for complete preflight, deployment and final-check ordering. Deployment directly
+reuses the Go post-deploy read-only health checker after exact target owner/image
+verification; it does not invoke the standalone health shell wrapper. Required
+health, final ownership/journal checks and execution-fence cleanup must finish
+before deployment reports completion. The health wrapper is an independent
+current-environment recheck; business E2E/data acceptance is separately invoked.
+
 Deployment checks have two explicit phases. Every shell entry first prints a
 short explanation of its purpose and when to use it, then builds and executes
 the Go checker once, preserving its exit status.
@@ -114,8 +181,8 @@ selected immutable `--image` values and complete candidate `--manifest` JSON.
 Use `--checks ghcr,mounts` for this scoped operation. It verifies exact-source CI
 publication, preserved nonimage configuration, candidate AM/Billing schemas,
 restricted payment-simulator artifact startup, all environment workload health
-and required public CertIssuer mTLS/anonymous denial. Missing evidence is NO-GO;
-`--fast` is rejected. Docker startup fixtures are local/disposable and use no cloud
+and required public CertIssuer mTLS/anonymous denial. Missing evidence is NO-GO.
+Docker startup fixtures are local/disposable and use no cloud
 data or credentials; they are part of read-only **cloud** qualification. The same
 operation on the health entry verifies that selected images actually reached the
 Pods. See [Pod image-upgrade criteria](../docs/deployment-operations.md#existing-pod-image-upgrade-go--no-go)
@@ -124,10 +191,25 @@ separate. The default update uses the same maintained v2 renderer in dev,
 staging and prod. A private schema-1 plan cannot select another renderer or
 bypass a required gate.
 
+For a new environment, run
+`scripts/check-deployment-preflight.sh --environment <environment> --operation create`.
+This checks the local execution fence and selected Linode target through canonical
+provider credentials/state and complete inventory, without requiring an existing
+kubeconfig or cluster Lease. Matching cluster names or stack tags block fresh
+creation; inaccessible targets or incomplete evidence cannot prove absence.
+After absence is confirmed, fresh dev/staging qualification resolves exact-source
+formal CI images and verifies provider requests, operator inputs and native
+bootstrap capabilities. Required missing capabilities or evidence remain NO-GO;
+future Kubernetes identity is allocated only by the separately admitted deployment.
+Production initial activation requires its protected bootstrap profile. The
+default operation remains `upgrade`; missing kubeconfig never switches it to
+`create`. See the [new-environment procedure](../docs/deployment-operations.md#create-a-new-environment).
+
 Health is read-only. Preflight permits only creation of a missing configured
 media bucket when `RUNTIME_MEDIA_STORAGE_CUTOVER_REQUIRED=false`, followed by
-fresh inventory verification; its remaining provider probes are read-only. `--fast` reduces check depth
-within the selected phase; it does not select a phase. The JSON report records
+fresh inventory verification; its remaining provider probes are read-only.
+Pre-deploy rejects `--fast` for every operation. Post-deploy `--fast` reduces
+health check depth. The JSON report records
 `phase`, `read_only` and scope. Each fixed-purpose wrapper rejects contrary
 `--phase` arguments and any false spelling of `--read-only`; it cannot silently
 become the other checker. Complete pre-deploy GO applies to the exact checked plan. Runtime PKI and
@@ -142,12 +224,12 @@ credential-repair flags. `--require-pki-migration` and `--require-product-pki`
 select post-deploy live health gates and are rejected in the pre-deploy phase.
 
 ```sh
-scripts/check-deployment-preflight.sh --environment staging --fast \
+scripts/check-deployment-preflight.sh --environment staging \
   --report "$HOME/.config/rtk_cloud/staging/deployment/reports/staging-pre-deploy-check.json"
 scripts/check-deployment-health.sh --environment staging --fast \
   --report "$HOME/.config/rtk_cloud/staging/deployment/reports/staging-post-deploy-check.json"
 # Select the phase explicitly when invoking Go directly:
-go run ./scripts/go/rtk-cloud -- deployment check --phase pre-deploy --environment staging --fast
+go run ./scripts/go/rtk-cloud -- deployment check --phase pre-deploy --environment staging
 # Registry checks for an affected image; use an actual reviewed CI digest:
 scripts/check-deployment-credentials.sh --environment staging --fast \
   --checks ghcr --image "$RELEASE_IMAGE"
@@ -163,7 +245,7 @@ scripts/check-deployment-health.sh --environment staging --fast \
 | --- | --- | --- |
 | Legacy/direct post-deploy default | Existing write/read/delete probes and storage receipts remain enabled for selected checks | Full `linux/amd64` Docker pull |
 | Named preflight/health wrappers, or `--read-only` | No canaries or new validation receipts; write ability remains unverified | Full Docker pull remains enabled |
-| `--fast` | Implies read-only; no canaries or new validation receipts | Registry manifest/config metadata and `linux/amd64` platform check; full pull is explicitly skipped |
+| Post-deploy `--fast` | Implies read-only; no canaries or new validation receipts | Registry manifest/config metadata and `linux/amd64` platform check; full pull is explicitly skipped |
 
 `--checks` accepts `linode,ghcr,dns,storage,tls,mounts`. Without it, configured
 providers and supplied local checks run. **SecretStore, Kubernetes mirror and
@@ -179,8 +261,50 @@ identity/ownership observations produce the same plan used by execution. Preflig
 reads the selected Kubernetes inventory, compiles in memory and reports its SHA-256.
 It produces `~/.config/rtk_cloud/<environment>/deployment/identity-bindings.json`
 as private qualification output; no pre-existing bindings file is required.
-Deployment requires a matching successful preflight record and rechecks live ownership. Missing capability or evidence is
-NO-GO; `--fast` and scoped provider checks cannot approve a complete update.
+Complete qualification saves immutable `proof.json`, `plan.json`, `release.json`
+and `bindings.json` under `deployment/preflight/<plan-sha256>/qualification-<unique>/`
+and atomically publishes the exact attempt/hashes in `deployment/preflight/active.json`.
+The `rtk-cloud.preflight-proof/v1` proof and `rtk-cloud.preflight-active/v1` pointer
+share an invocation generation. Preflight invalidates prior authorization before
+new checks; short nonblocking `deployment/preflight/.publication.lock` guards all
+observation/final authorization writes and prevents a stale generation from
+overwriting a newer one. Deployment consumes
+only that valid proof and frozen target, verifies unchanged inputs/checker/cluster
+identity, and checks current owners/storage, capacity/access, native PKI/PVC
+permissions, schema/OTA authorization, private storage grants and public mTLS.
+These probes use the frozen Kubernetes identity and can still require provider
+or database reads. Immutable release/CI provenance and exact formal manifests
+are private proof; native probe observation fields contain digests, not payloads.
+It performs executor admission once and retains per-write admission and final
+health acceptance; it does not repeat CI selection, rendering or full qualification.
+Proof expires `DEPLOYMENT_PREFLIGHT_VALIDITY_SECONDS` after successful
+qualification (shared baseline: 3600 seconds). Deployment checks expiry at load
+and admission/start, before immediate checks; after admission `--timeout`
+controls immediate checks, writes, rollout and final acceptance without a
+proof-age cap. The CLI deadline starts before loading evidence and is not reset
+at admission. The active proof's
+identity/generation, current inputs, sources and owners remain fenced; replacing
+or invalidating the proof blocks execution. A new attempt requires evidence that
+is still valid at its own start. Expiry diagnostics show the specific reason and
+UTC `qualified_at`, `valid_until` and `checked_at`. For example, evidence expiring
+at 14:02 may admit a deployment at 14:00 with `--timeout 90m` and allow it to run
+until its CLI deadline; new starts at or after 14:02 are blocked.
+Native PKI freshness is checked separately. Certificates and CRLs must cover
+the later of the execution deadline or current time plus the maintained minimum
+`DEPLOYMENT_UPGRADE_WINDOW_SECONDS` PKI margin. This margin is not an execution
+timer. Ownership cleanup retains an independent bounded deadline.
+All proof files use the canonical
+environment store with 0700 directories and 0600 files; older binding-only GO
+requires a new complete preflight. Missing capability or evidence is
+NO-GO; scoped provider checks cannot approve a complete update.
+Saved proofs from before the validity/timeout split also require one complete
+preflight under the new checker and maintained configuration.
+Reports expose qualification hash/time/expiry and preflight-versus-execution
+evidence origin. Admitted deployment reports include `execution_admitted_at`
+and `execution_deadline`, so its start/deadline are distinct from
+`qualified_at` and `evidence_valid_until`. Failed current checks retain their
+native blocker ID. Execution cancellation and exhaustion of `--timeout` or an
+earlier caller deadline have separate causes from expired qualification.
 See the [readiness standard](../docs/deployment-readiness-standard.md) for the
 required gates and the [deployment runbook](../docs/deployment-operations.md#retired-schema-1-managed-workload-upgrade)
 for preflight-produced existing-owner observations. The presence of `managed-upgrade.json` never selects
@@ -218,11 +342,11 @@ controller-host pull, and cluster rollout are distinct evidence: neither of the
 first two proves cold-node downloads or the live `imagePullSecret`. Raw GHCR
 credentials containing CR/LF fail. Never put tokens in tracked files or logs.
 
-The checker runs at most four independent read probes and two full image pulls
+The checker uses one shared limit of twelve independent read probes and full image pulls
 at once; DNS/storage mutations stay sequential. It shares inventory reads within
 one invocation. Re-run after changing credentials, configuration, environment or
 image inputs. `--timeout` sets the check execution deadline: default **45m for
-complete pre-deploy qualification, 2m with `--fast`, and 10m for health or image-upgrade checks**.
+complete pre-deploy qualification, 2m for post-deploy `--fast`, and 10m for health or image-upgrade checks**.
 Complete qualification checks all selected images, per-resource permissions,
 server dry-run admission and ownership fences. Identical immutable images are
 pulled once per release verification; each role retains its source/CI checks.
@@ -240,16 +364,38 @@ Cancellation stops new work and terminates controlled subprocesses. A canary
 that was already created gets an independent cleanup budget of at most 30s;
 this can extend execution beyond the overall deadline. Cleanup failures appear
 as separate `CANARY_CLEANUP_FAILED` results. The checker prints each check's
-start and completion, progress every 10s during long steps, and a final summary
-with root causes and the three slowest checks.
+start, progress every 10s during long steps, failures and a final verdict with
+root causes. Successful check lines are omitted from the screen. During unified deployment, timing and the three slowest checks
+are retained in the private per-attempt `deployment/logs/` file; user progress
+shows current work, counts and results without elapsed-time diagnostics.
+
+Complete preflight and deployment print one start for a stage within each
+validation round. Each running stage shows status, stage ID and progress fields
+on the first line, then a two-space-indented task description without `task=` or
+quotes on the second line. Task descriptions are cyan on interactive color
+terminals; redirected output, `NO_COLOR` and private logs use the same plain
+layout. Repeated unchanged stage reports are suppressed; changed
+resource/query/readiness details and the periodic `still running` heartbeat
+remain visible. Qualification labels the initial checks `round=preflight`.
+Deployment reuses qualified preflight evidence and displays immediate prerequisite
+checks as `deployment.execution.recheck.*` without repeating complete qualification.
+Release stages distinguish
+each consuming role, including `mqtt-pki` and `openbao-pki`, and each fixed
+subaction, such as `checkout-head`, `pull`, `oci-labels`, `release-run`,
+`artifact-list` and `artifact-download`. These labels describe the existing
+checks; every required source, CI/artifact, admission and ownership check remains.
+Kubernetes permission progress includes the recognized verb, such as `get` or
+`patch`, to distinguish separate permission checks for the same resource.
 
 `--report PATH` writes a sanitized, mode-0600 JSON report; its parent directory
 must exist. Schema version 1 includes environment, phase, mode, read-only flag, scope, overall result,
 start time, duration, coverage counts and results in stable `check_id` order.
 Each result records status/code, resource, required flag, duration, attempts,
 dependencies, message, next action, evidence time/level and reuse when applicable.
-Final statuses are `PASS`, `FAIL`, `ERROR`, `BLOCKED`, and `SKIPPED`; progress also
-shows pending/running checks. Intentional optional skips do not count as passed.
+JSON statuses are `PASS`, `FAIL`, `ERROR`, `BLOCKED`, and `SKIPPED`. Terminal output
+omits successful result lines and displays `FAIL`, `ERROR`, `BLOCKED` in red;
+redirected output and `NO_COLOR` omit colors. Progress also shows pending/running
+checks. Intentional optional skips do not count as passed.
 The shell and compiled CLI return **0** when required selected checks pass,
 **1** for failed/incomplete checks or report errors, and **2** for invalid inputs
 or configuration. `go run` may wrap a program's nonzero status as 1; use the shell
@@ -544,6 +690,18 @@ Validate workspace documentation entry points, important runbooks, E2E directori
 
 ```sh
 go run ./scripts/go/rtk-cloud -- docs-check
+```
+
+### `go run ./scripts/go/rtk-cloud -- secrets init-deployment-ssh`
+
+Explicitly initialize a brand new selected deployment SSH identity in the
+canonical private environment store. Both files use 0600. Existing/partial keys
+and an active execution fence block initialization; preflight never generates
+this identity automatically.
+
+```sh
+go run ./scripts/go/rtk-cloud -- secrets init-deployment-ssh \
+  --environment dev --confirm video-cloud-dev
 ```
 
 ### `go run ./scripts/go/rtk-cloud -- secrets-check`

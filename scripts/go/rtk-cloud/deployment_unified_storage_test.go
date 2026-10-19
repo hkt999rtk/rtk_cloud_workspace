@@ -144,6 +144,10 @@ done
 count="$(awk -v kind="$kind" '$0 == kind {count++} END {print count+0}' "$RTK_STORAGE_READ_CALLS")"
 if [ "$kind" != "${RTK_STORAGE_READ_TARGET:-volume}" ]; then cat "$object"; exit 0; fi
 mode="${RTK_STORAGE_READ_MODE:-valid}"
+if [ "$mode" = unavailable-twice ]; then
+ if [ "$count" -gt 2 ]; then cat "$object"; exit 0; fi
+ mode=unavailable
+fi
 case "$mode" in
  *-once) if [ "$count" -gt 1 ]; then cat "$object"; exit 0; fi; mode="${mode%-once}";;
 esac
@@ -261,8 +265,8 @@ func TestStorageReadsClassifyRetryAndPreserveOwnersAcrossEnvironments(t *testing
 		mode, code string
 		calls      int
 	}{
-		{"unavailable-once", "", 2}, {"rate-limit-once", "", 2}, {"timeout-once", "", 2},
-		{"unavailable", "KUBE_UNAVAILABLE", 2}, {"rate-limit", "KUBE_RATE_LIMITED", 2}, {"timeout", "KUBE_TIMEOUT", 2},
+		{"unavailable-once", "", 2}, {"unavailable-twice", "", 3}, {"rate-limit-once", "", 2}, {"timeout-once", "", 2},
+		{"unavailable", "KUBE_UNAVAILABLE", 3}, {"rate-limit", "KUBE_RATE_LIMITED", 3}, {"timeout", "KUBE_TIMEOUT", 3},
 		{"forbidden", "KUBE_FORBIDDEN", 1}, {"unauthorized", "KUBE_UNAUTHORIZED", 1}, {"not-found", "KUBE_NOT_FOUND", 1}, {"command-failed", "KUBE_COMMAND_FAILED", 1},
 		{"malformed", "KUBE_INVALID_RESPONSE", 1}, {"mismatched-id", "KUBE_INVALID_RESPONSE", 1},
 		{"oversized-stdout", "KUBE_INVALID_RESPONSE", 1}, {"oversized-stderr", "KUBE_INVALID_RESPONSE", 1}, {"missing", "missing", 1},

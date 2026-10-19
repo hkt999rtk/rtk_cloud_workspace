@@ -20,7 +20,7 @@ func TestCommonRendererIncludesAndHashesSelectedAdapterWorkers(t *testing.T) {
 			bindings.IngressAdmission = &environmentAdmissionBinding{SecretName: "ingress-nginx-admission", CABundle: base64.StdEncoding.EncodeToString(testOpenBaoCAPEM(t))}
 			cfg := deploymentConfig{Environment: environment, Values: values, AdapterValues: map[string]string{"LKE_ACCOUNT_MANAGER_HANDOFF_WORKER_ENABLED": "true"}}
 			store := makeIsolatedTestSecretStore(t, environment)
-			snapshot := environmentDeploymentSnapshot{}
+			snapshot := environmentDeploymentSnapshot{Secrets: map[string]string{"emqx-dashboard-password": "isolated-dashboard", "mqtt-broker-auth": "isolated-callback", "emqx-handoff-api-key": "isolated-api-key", "emqx-handoff-api-secret": "isolated-api-secret"}}
 			// Match the existing worker observation that previously failed to
 			// find an enabled renderer. This must retain the maintained image,
 			// launch command and Secret reference without copying a live spec.

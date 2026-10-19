@@ -31,7 +31,9 @@ func prepareDeploymentMediaBucket(ctx context.Context, cfg deploymentConfig, out
 	if created {
 		status = "CREATED"
 	}
-	fmt.Fprintf(out, "[PASS] provider.storage.media.bucket %s bucket=%s region=%s\n", status, cfg.Storage.RuntimeMedia.Bucket, cfg.Storage.RuntimeMedia.Region)
+	if log, ok := ctx.Value(environmentProgressLogKey{}).(io.Writer); ok {
+		fmt.Fprintf(log, "%s provider.storage.media.bucket %s bucket=%s region=%s\n", deploymentStatusLabelColor("PASS", false), status, cfg.Storage.RuntimeMedia.Bucket, cfg.Storage.RuntimeMedia.Region)
+	}
 	return nil
 }
 

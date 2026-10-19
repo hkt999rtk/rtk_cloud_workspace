@@ -52,7 +52,7 @@ func renderEnvironmentIngress(env map[string]string, binding *environmentAdmissi
 	controllerClass := "rtk.realtek.com/" + class
 	selector := map[string]any{"app.kubernetes.io/name": "ingress-nginx", "app.kubernetes.io/instance": "ingress-nginx", "app.kubernetes.io/component": "controller"}
 	meta := func(name, ns string) map[string]any {
-		m := map[string]any{"name": name}
+		m := map[string]any{"name": name, "labels": map[string]any{"rtk.realtek.com/stack": stack}}
 		if ns != "" {
 			m["namespace"] = ns
 		}

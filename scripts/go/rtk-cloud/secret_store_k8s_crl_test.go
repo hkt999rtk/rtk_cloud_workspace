@@ -248,7 +248,7 @@ func TestLivePKICRLManifestRejectsUntrustedMountAndIssuerSources(t *testing.T) {
 			t.Errorf("%s: mount error = %v, want %q", name, err, want)
 		}
 	}
-	checkMount("noncanonical path", deployment, "pkimanagement", "/run/service-crls/../service-crls/crls.json", "absolute crls.json")
+	checkMount("noncanonical path", deployment, "pkimanagement", "/run/service-crls/../service-crls/crls.json", "absolute JSON")
 	checkMount("wrong container", deployment, "other", "/run/service-crls/crls.json", "no matching")
 	missingMount := testLiveCRLDeployment(t, "account-manager", "pkimanagement", "PKI_MANAGEMENT_ACCOUNT_SERVICE_CLIENT_SERVER_CRL_MANIFEST", true)
 	missingMount.Spec.Template.Spec.Containers[0].VolumeMounts[0].MountPath = "/run/other"

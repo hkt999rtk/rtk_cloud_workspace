@@ -1,10 +1,13 @@
 package deploymentplan
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -21,6 +24,26 @@ type Backend interface {
 	Wait(context.Context, Resource) error
 }
 
+// PhaseFence supplies fresh observations for one stage's dependency checks.
+// Individual conditional writes still read their current owner independently.
+type PhaseFence func(context.Context, *Plan) (map[string]Object, error)
+
+// ExecutionProgressBackend reports stage transitions without implying success.
+type ExecutionProgressBackend interface {
+	ExecutionProgress(context.Context, string, string)
+}
+
+// Outcomes are emitted only after the phase's checks or writes complete.
+type ExecutionProgressResultBackend interface {
+	ExecutionProgressResult(context.Context, string, string, bool)
+}
+
+// ExecutionResourceProgressBackend observes work on one resource. A complete
+// event means its journal entry was saved, not that deployment was accepted.
+type ExecutionResourceProgressBackend interface {
+	ExecutionResourceProgress(context.Context, int, int, Resource, string)
+}
+
 // Only backends with independent, concurrent-safe dry-run operations opt in.
 // Progress counts settled checks (including retains), never passed checks.
 type ParallelAdmissionBackend interface {
@@ -28,11 +51,14 @@ type ParallelAdmissionBackend interface {
 	AdmissionProgress(context.Context, int, int)
 }
 
-const maxAdmissionConcurrency = 8
+// MaxCheckConcurrency bounds independent read and admission groups.
+const MaxCheckConcurrency = 12
+const maxAdmissionConcurrency = MaxCheckConcurrency
 
 // Controllers on separate hosts must serialize through the selected cluster,
 // not merely through their own local SecretStore directory. Leases cannot be
-// stolen by an elapsed clock; interrupted mutations require reviewed recovery.
+// stolen by an elapsed clock. Execution releases its own lease on every return;
+// abrupt termination or failed cleanup still requires reviewed recovery.
 type ExecutionLease interface {
 	Owner() LeaseOwner
 	Check(context.Context) error
@@ -56,6 +82,16 @@ type LeasingBackend interface {
 	AcquireExecution(context.Context, *Plan) (ExecutionLease, error)
 }
 
+// A fresh-environment lifecycle owns the local fence before Kubernetes exists.
+// Its child plans still acquire a real cluster Lease and keep separate journals.
+// The adapter must verify the exact live parent owner, then durably bind this
+// Lease to that owner before any child mutation. It cannot bypass qualification,
+// admission, resource ownership, or the distributed execution Lease.
+type ParentExecutionBackend interface {
+	CheckParentExecution(context.Context, *Plan, string) error
+	RecordParentExecutionLease(context.Context, *Plan, LeaseOwner) error
+}
+
 // kubectl refreshes its apply bookkeeping during replace when this annotation
 // already exists. Ignore only that client metadata in admission results; the
 // baseline/current drift projection still fences the original annotation.
@@ -69,6 +105,8 @@ func matchesAdmission(body, admitted Object) bool {
 
 func admissionProjections(body, admitted Object) (Object, Object, bool) {
 	want, have := Projection(body), Projection(admitted)
+	normalizeDeploymentRevision(want)
+	normalizeDeploymentRevision(have)
 	if want == nil || have == nil {
 		return nil, nil, false
 	}
@@ -265,38 +303,146 @@ type Journal struct {
 
 // Execute requires the current plan, real qualification and a private rollback
 // root. It never automatically reverts schema, PKI state or a concurrent update.
-func (p *Plan) Execute(ctx context.Context, backend Backend, expectedDigest, privateRoot string, qualify, fence, accept func(context.Context, *Plan) error) error {
+func (p *Plan) Execute(ctx context.Context, backend Backend, expectedDigest, privateRoot string, qualify, fence, accept func(context.Context, *Plan) error, phaseFences ...PhaseFence) (resultErr error) {
+	return p.execute(ctx, backend, expectedDigest, privateRoot, qualify, fence, accept, false, phaseFences...)
+}
+
+// ExecuteResumable continues only recorded, successful resource writes of the
+// exact original plan. accept must be a repeatable observation, not a ceremony
+// or business transaction. An uncertain in-flight write always needs separate
+// reconciliation; an absent owner never authorizes adoption or recreation.
+func (p *Plan) ExecuteResumable(ctx context.Context, backend Backend, expectedDigest, privateRoot string, qualify, fence, accept func(context.Context, *Plan) error, phaseFences ...PhaseFence) error {
+	return p.execute(ctx, backend, expectedDigest, privateRoot, qualify, fence, accept, true, phaseFences...)
+}
+
+func (p *Plan) execute(ctx context.Context, backend Backend, expectedDigest, privateRoot string, qualify, fence, accept func(context.Context, *Plan) error, resumable bool, phaseFences ...PhaseFence) (resultErr error) {
 	if expectedDigest == "" || expectedDigest != p.SHA256() {
 		return blocked("deployment.plan", "", "reviewed plan digest does not match", "repeat preflight and use its exact plan SHA-256")
 	}
 	if qualify == nil || fence == nil || accept == nil {
 		return errors.New("full release qualification, input fences and post-deploy acceptance are required before execution")
 	}
+	if len(phaseFences) > 1 || len(phaseFences) == 1 && phaseFences[0] == nil {
+		return errors.New("at most one non-nil phase input fence is allowed")
+	}
 	leasing, ok := backend.(LeasingBackend)
 	if !ok {
 		return blocked("deployment.execution.lease", "", "cluster-wide execution fencing is unavailable", "install the environment-bound execution lease adapter before repeating full qualification")
 	}
+	parent, hasParent := backend.(ParentExecutionBackend)
+	if hasParent && parent.CheckParentExecution(ctx, p, privateRoot) != nil {
+		return blocked("deployment.execution.lease", "", "the fresh-environment parent execution owner cannot be verified", "inspect the original create journal and local execution fence before continuing")
+	}
+	progress, _ := backend.(ExecutionProgressBackend)
+	progressResult, _ := backend.(ExecutionProgressResultBackend)
+	activePhase, activeStep := "", ""
+	finishProgress := func(passed bool) error {
+		if activeStep != "" && progressResult != nil {
+			progressResult.ExecutionProgressResult(ctx, activePhase, activeStep, passed && ctx.Err() == nil && p.SHA256() == expectedDigest)
+		}
+		activePhase, activeStep = "", ""
+		if passed {
+			if p.SHA256() != expectedDigest {
+				return errors.New("plan changed during execution progress reporting")
+			}
+			return ctx.Err()
+		}
+		return nil
+	}
+	defer func() { finishProgress(false) }()
+	emitProgress := func(phase, step string) {
+		activePhase, activeStep = phase, step
+		if progress != nil {
+			progress.ExecutionProgress(ctx, phase, step)
+		}
+	}
+	emitProgress("", "qualification")
 	if err := qualify(ctx, p); err != nil {
 		return err
 	}
 	if p.SHA256() != expectedDigest {
 		return errors.New("plan changed during qualification")
 	}
-	if err := p.Admit(ctx, backend); err != nil {
+	if err := finishProgress(true); err != nil {
 		return err
 	}
+	emitProgress("", "admission")
+	var prior *retainedExecutionEvidence
+	admission := p
+	if resumable {
+		var err error
+		prior, err = p.resumableEvidence(privateRoot)
+		if err != nil {
+			return err
+		}
+		if prior != nil {
+			if err := p.verifyRecorded(ctx, backend, prior.journal); err != nil {
+				return err
+			}
+			admission = p.recordedTarget(prior.journal)
+		}
+	}
+	if err := admission.Admit(ctx, backend); err != nil {
+		return err
+	}
+	if err := finishProgress(true); err != nil {
+		return err
+	}
+	emitProgress("", "lease")
 	lease, err := leasing.AcquireExecution(ctx, p)
 	if err != nil || lease == nil {
+		var failure *Blocker
+		if errors.As(err, &failure) && failure.ID == "deployment.execution.cleanup" {
+			return &Blocker{ID: failure.ID, Resource: failure.Resource, Cause: failure.Cause, Next: failure.Next}
+		}
 		return blocked("deployment.execution.lease", "", "another controller or interrupted operation owns cluster execution, or lease access is unavailable", "inspect the exact environment execution lease and its private journal; complete recovery qualification before releasing an interrupted owner")
 	}
-	possibleMutation := false
-	leaseReleased := false
+	var environmentLock string
+	var environmentLockInfo os.FileInfo
+	var running *os.File
 	defer func() {
-		if !possibleMutation && !leaseReleased {
-			cleanup, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			_ = lease.Release(cleanup)
+		_ = finishProgress(false)
+		cleanupProgressCtx := context.WithoutCancel(ctx)
+		if progress != nil {
+			progress.ExecutionProgress(cleanupProgressCtx, "", "cleanup")
 		}
+		cleanupPassed := false
+		defer func() {
+			if progressResult != nil {
+				progressResult.ExecutionProgressResult(cleanupProgressCtx, "", "cleanup", cleanupPassed)
+			}
+		}()
+		if running != nil {
+			defer running.Close()
+		}
+		// The execution deadline or signal must not cancel release of our own
+		// UID-bound lease. Retain the original journal on every outcome.
+		cleanup, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := lease.Release(cleanup); err != nil {
+			resultErr = errors.Join(blocked("deployment.execution.cleanup", lease.Owner().ResourceID, "the original execution lease could not be released", "inspect the exact lease owner and private journal, then reconcile cleanup before repeating preflight; never delete a concurrent owner's lease"), resultErr)
+			return
+		}
+		if environmentLockInfo != nil {
+			// Archive only the directory created by this execution. The process
+			// lock stays held until release and archival have both finished.
+			current, err := os.Lstat(environmentLock)
+			if err != nil || !os.SameFile(environmentLockInfo, current) {
+				resultErr = errors.Join(blocked("deployment.execution.cleanup", "", "the original local execution owner changed or cannot be inspected", "preserve the private journal and inspect local execution ownership before repeating preflight"), resultErr)
+				return
+			}
+			archive, err := os.MkdirTemp(filepath.Join(privateRoot, "deployment", "rollback", expectedDigest), "execution-owner-")
+			if err != nil {
+				resultErr = errors.Join(blocked("deployment.execution.cleanup", "", "a private execution owner archive could not be prepared", "restore private environment-store access and reconcile the retained local owner before repeating preflight"), resultErr)
+				return
+			}
+			if err := os.Rename(environmentLock, filepath.Join(archive, "owner")); err != nil {
+				_ = os.Remove(archive)
+				resultErr = errors.Join(blocked("deployment.execution.cleanup", "", "the original local execution owner could not be archived", "restore private environment-store access and reconcile the retained local owner before repeating preflight"), resultErr)
+				return
+			}
+		}
+		cleanupPassed = true
 	}()
 	directory := filepath.Join(privateRoot, "deployment", "rollback", expectedDigest)
 	if !filepath.IsAbs(privateRoot) {
@@ -309,29 +455,37 @@ func (p *Plan) Execute(ctx context.Context, backend Backend, expectedDigest, pri
 	}
 	// Different reviewed plans still target the same environment. A per-plan
 	// journal lock alone would allow them to execute concurrently.
-	environmentLock := filepath.Join(privateRoot, "deployment", ".execution-active")
-	if err := os.Mkdir(environmentLock, 0700); err != nil {
-		return blocked("deployment.execution", "", "another or an interrupted plan owns environment execution", "inspect the environment-local active execution and journal; requalify recovery before releasing its lock")
-	}
-	defer func() {
-		if !possibleMutation || leaseReleased {
-			_ = os.RemoveAll(environmentLock)
-		}
-	}()
-	running, err := LockExecutionOwner(environmentLock, true)
-	if err != nil {
-		return err
-	}
-	defer running.Close()
-	hostname, err := os.Hostname()
-	if err != nil || hostname == "" {
-		return errors.New("execution controller hostname unavailable")
-	}
+	localLock := filepath.Join(privateRoot, "deployment", ".execution-active")
 	owner := lease.Owner()
 	if owner.ResourceID != "Lease/"+p.Stack+"-video-cloud/rtk-deployment-execution" || owner.UID == "" || owner.Holder == "" {
 		return errors.New("exact execution lease owner receipt unavailable")
 	}
-	if err := writeExclusiveJSON(filepath.Join(environmentLock, "owner.json"), ExecutionOwner{expectedDigest, p.Inputs.Environment, p.Inputs.Stack, hostname, owner}); err != nil {
+	if hasParent {
+		if parent.CheckParentExecution(ctx, p, privateRoot) != nil || parent.RecordParentExecutionLease(ctx, p, owner) != nil {
+			return blocked("deployment.execution.lease", "", "the child Lease could not be bound to the original fresh-environment owner", "preserve both journals and inspect the parent execution fence")
+		}
+	} else {
+		if err := os.Mkdir(localLock, 0700); err != nil {
+			return blocked("deployment.execution", "", "another or an interrupted plan owns environment execution", "inspect the environment-local active execution and journal; requalify recovery before releasing its lock")
+		}
+		environmentLock = localLock
+		environmentLockInfo, err = os.Lstat(environmentLock)
+		if err != nil {
+			return errors.New("original local execution directory cannot be inspected")
+		}
+		running, err = LockExecutionOwner(environmentLock, true)
+		if err != nil {
+			return err
+		}
+		hostname, err := os.Hostname()
+		if err != nil || hostname == "" {
+			return errors.New("execution controller hostname unavailable")
+		}
+		if err := writeExclusiveJSON(filepath.Join(environmentLock, "owner.json"), ExecutionOwner{expectedDigest, p.Inputs.Environment, p.Inputs.Stack, hostname, owner}); err != nil {
+			return err
+		}
+	}
+	if err := finishProgress(true); err != nil {
 		return err
 	}
 	lock := filepath.Join(directory, ".active")
@@ -339,18 +493,162 @@ func (p *Plan) Execute(ctx context.Context, backend Backend, expectedDigest, pri
 		return blocked("deployment.execution", "", "another execution or an interrupted execution owns the private journal", "inspect the recorded outcome and requalify recovery before releasing the environment-local execution lock")
 	}
 	defer os.Remove(lock)
-	if _, err := os.Lstat(filepath.Join(directory, "journal.json")); err == nil || !errors.Is(err, os.ErrNotExist) {
-		return blocked("deployment.recovery", "", "this plan already has execution evidence", "inspect the private journal and produce a newly qualified plan; never overwrite an earlier partial execution")
-	}
-	if err := writeExclusiveJSON(filepath.Join(directory, "plan.json"), p); err != nil {
-		return err
-	}
+	_, journalErr := os.Lstat(filepath.Join(directory, "journal.json"))
+	_, planErr := os.Lstat(filepath.Join(directory, "plan.json"))
 	journal := Journal{PlanSHA256: expectedDigest, Owners: map[string]string{}}
-	if err := saveJournal(directory, journal); err != nil {
+	if resumable && prior != nil {
+		fresh, err := p.resumableEvidence(privateRoot)
+		if err != nil || fresh == nil || !bytes.Equal(prior.planRaw, fresh.planRaw) || !bytes.Equal(prior.journalRaw, fresh.journalRaw) {
+			return existingExecutionEvidenceBlocker()
+		}
+		journal = fresh.journal
+		if err := p.verifyRecorded(ctx, backend, journal); err != nil {
+			return err
+		}
+		if journal.Accepted {
+			if err := fence(ctx, p); err != nil {
+				return err
+			}
+			if err := accept(ctx, p); err != nil {
+				return err
+			}
+			if ctx.Err() != nil || p.SHA256() != expectedDigest || fence(ctx, p) != nil || lease.Check(ctx) != nil {
+				return existingExecutionEvidenceBlocker()
+			}
+			if err := p.verifyRecorded(ctx, backend, journal); err != nil {
+				return err
+			}
+			current, err := p.resumableEvidence(privateRoot)
+			if err != nil || current == nil || !bytes.Equal(current.planRaw, fresh.planRaw) || !bytes.Equal(current.journalRaw, fresh.journalRaw) || ctx.Err() != nil || fence(ctx, p) != nil || lease.Check(ctx) != nil {
+				return existingExecutionEvidenceBlocker()
+			}
+			return p.saveAcceptedTargetVerification(privateRoot, fresh.journalRaw, owner, false)
+		}
+	} else if !errors.Is(journalErr, os.ErrNotExist) || !errors.Is(planErr, os.ErrNotExist) {
+		emitProgress("", "recovery")
+		evidence, err := p.acceptedRetainEvidence(directory)
+		if err != nil {
+			return err
+		}
+		check := func() error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if p.SHA256() != expectedDigest || fence(ctx, p) != nil || p.SHA256() != expectedDigest {
+				return blocked("deployment.inputs", "", "reviewed inputs changed during retained-target revalidation", "repeat qualification and preserve the original accepted execution evidence")
+			}
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if err := lease.Check(ctx); err != nil {
+				return blocked("deployment.execution.lease", "", "execution ownership changed during retained-target revalidation", "review actual state and preserve the original accepted execution evidence")
+			}
+			if outcome, err := p.ReconcileOutcome(ctx, backend, evidence.journal); err != nil {
+				return err
+			} else if outcome != "accepted-target" {
+				return existingExecutionEvidenceBlocker()
+			}
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if p.SHA256() != expectedDigest {
+				return blocked("deployment.inputs", "", "reviewed plan changed during retained-target revalidation", "repeat qualification and preserve the original accepted execution evidence")
+			}
+			if err := lease.Check(ctx); err != nil {
+				return blocked("deployment.execution.lease", "", "execution ownership changed during retained-target revalidation", "review actual state and preserve the original accepted execution evidence")
+			}
+			return nil
+		}
+		if err := check(); err != nil {
+			return err
+		}
+		if err := finishProgress(true); err != nil {
+			return err
+		}
+		emitProgress("", "acceptance")
+		if err := accept(ctx, p); err != nil {
+			var failure *Blocker
+			if errors.As(err, &failure) {
+				return &Blocker{ID: failure.ID, Resource: failure.Resource, Cause: failure.Cause, Next: failure.Next}
+			}
+			return blocked("deployment.post-deploy", "", "complete PKI, endpoint and business-flow acceptance failed during retained-target revalidation", "inspect private evidence and repair the actual target; preserve the original accepted execution evidence")
+		}
+		if err := finishProgress(true); err != nil {
+			return err
+		}
+		emitProgress("", "recovery")
+		if err := check(); err != nil {
+			return err
+		}
+		fresh, err := p.acceptedRetainEvidence(directory)
+		if err != nil || !bytes.Equal(evidence.planRaw, fresh.planRaw) || !bytes.Equal(evidence.journalRaw, fresh.journalRaw) {
+			return existingExecutionEvidenceBlocker()
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if p.SHA256() != expectedDigest {
+			return blocked("deployment.inputs", "", "reviewed plan changed before retained-target verification was recorded", "repeat qualification and preserve the original accepted execution evidence")
+		}
+		if err := lease.Check(ctx); err != nil {
+			return blocked("deployment.execution.lease", "", "execution ownership changed before retained-target verification was recorded", "review actual state and preserve the original accepted execution evidence")
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if p.SHA256() != expectedDigest {
+			return blocked("deployment.inputs", "", "reviewed plan changed before retained-target verification was recorded", "repeat qualification and preserve the original accepted execution evidence")
+		}
+		if err := p.saveAcceptedTargetVerification(privateRoot, evidence.journalRaw, owner, true); err != nil {
+			return err
+		}
+		return finishProgress(true)
+	}
+	if prior == nil {
+		if err := writeExclusiveJSON(filepath.Join(directory, "plan.json"), p); err != nil {
+			return err
+		}
+		if err := saveJournal(directory, journal); err != nil {
+			return err
+		}
+	}
+	resourceProgress, _ := backend.(ExecutionResourceProgressBackend)
+	emitResourceProgress := func(index int, resource Resource, step string) error {
+		if resourceProgress != nil {
+			resourceProgress.ExecutionResourceProgress(ctx, index, len(p.Resources), resource, step)
+		}
+		var progressErr error
+		if p.SHA256() != expectedDigest {
+			progressErr = errors.New("plan changed during execution")
+		} else {
+			progressErr = ctx.Err()
+		}
+		if progressErr != nil {
+			journal.Failed = resource.ID
+			_ = saveJournal(directory, journal)
+		}
+		return progressErr
+	}
+	if err := finishProgress(true); err != nil {
 		return err
 	}
 	phase := ""
+	readinessFence := func(ctx context.Context) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if p.SHA256() != expectedDigest {
+			return errors.New("plan changed during workload readiness")
+		}
+		if err := lease.Check(ctx); err != nil {
+			return blocked("deployment.execution.lease", "", "the exact cluster execution owner changed during workload readiness", "retain the native owners and execution journal; stop dependent writes")
+		}
+		return nil
+	}
 	for index, resource := range p.Resources {
+		if index < len(journal.Completed) {
+			continue
+		}
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -363,16 +661,56 @@ func (p *Plan) Execute(ctx context.Context, backend Backend, expectedDigest, pri
 			return blocked("deployment.execution.lease", resource.ID, "the exact cluster execution owner changed or cannot be verified", "stop all dependent writes and review the interrupted owner's recovery journal; never acquire a replacement lease implicitly")
 		}
 		if resource.Phase != phase {
-			if err := fence(ctx, p); err != nil {
+			emitProgress(resource.Phase, "fence")
+			var observations map[string]Object
+			var fenceErr error
+			if len(phaseFences) == 1 {
+				observations, fenceErr = phaseFences[0](ctx, p)
+			} else {
+				fenceErr = fence(ctx, p)
+			}
+			if fenceErr == nil {
+				fenceErr = ctx.Err()
+			}
+			if fenceErr == nil && p.SHA256() != expectedDigest {
 				journal.Failed = resource.ID
 				_ = saveJournal(directory, journal)
+				return errors.New("plan changed during execution")
+			}
+			if fenceErr != nil {
+				journal.Failed = resource.ID
+				_ = saveJournal(directory, journal)
+				var failure *Blocker
+				if errors.As(fenceErr, &failure) && failure != nil {
+					selected := failure.Resource
+					if selected == "" {
+						selected = resource.ID
+					}
+					return &Blocker{ID: failure.ID, Resource: selected, Cause: failure.Cause, Next: failure.Next}
+				}
 				return blocked("deployment.inputs", resource.ID, "environment configuration, release or PKI bindings changed", "repeat qualification; completed-resource journal retained")
+			}
+			readDependency := func(id string) (Object, error) {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+				if current := observations[id]; current != nil {
+					return current, nil
+				}
+				// Inventory omissions do not prove absence, including planned
+				// creates and retired owners. Resolve every missing ID directly.
+				return backend.Read(ctx, id)
 			}
 			// Check every not-yet-applied owner before advancing the stage. A
 			// retained dependency remains fenced throughout the complete rollout.
 			for i, candidate := range p.Resources {
+				if err := ctx.Err(); err != nil {
+					journal.Failed = candidate.ID
+					_ = saveJournal(directory, journal)
+					return err
+				}
 				if i < index && candidate.Action != "retain" {
-					current, err := backend.Read(ctx, candidate.ID)
+					current, err := readDependency(candidate.ID)
 					matches := err == nil
 					if candidate.Action == "retire" {
 						matches = matches && current == nil
@@ -386,9 +724,13 @@ func (p *Plan) Execute(ctx context.Context, backend Backend, expectedDigest, pri
 					}
 					continue
 				}
-				current, err := backend.Read(ctx, candidate.ID)
+				current, err := readDependency(candidate.ID)
 				if err == nil {
-					_, err = candidate.Body(current)
+					if journal.Owners[candidate.ID] != "" {
+						err = recordedResourceMatches(candidate, journal.Owners[candidate.ID], current)
+					} else {
+						_, err = candidate.Body(current)
+					}
 				}
 				if err != nil {
 					journal.Failed = candidate.ID
@@ -396,20 +738,47 @@ func (p *Plan) Execute(ctx context.Context, backend Backend, expectedDigest, pri
 					return preserveReadBlocker(err, blocked("deployment.drift", candidate.ID, "a stage dependency changed", "repeat qualification; do not overwrite concurrent changes"))
 				}
 			}
+			if err := finishProgress(true); err != nil {
+				return err
+			}
+			emitProgress(resource.Phase, "apply")
 			phase = resource.Phase
+		}
+		if p.SHA256() != expectedDigest {
+			journal.Failed = resource.ID
+			_ = saveJournal(directory, journal)
+			return errors.New("plan changed during execution")
+		}
+		if err := ctx.Err(); err != nil {
+			journal.Failed = resource.ID
+			_ = saveJournal(directory, journal)
+			return err
+		}
+		if err := p.waitWorkloadReadinessDependencies(ctx, backend, journal, resource, readinessFence); err != nil {
+			journal.Failed = resource.ID
+			_ = saveJournal(directory, journal)
+			return err
+		}
+		if err := emitResourceProgress(index, resource, "read"); err != nil {
+			return err
 		}
 		current, err := backend.Read(ctx, resource.ID)
 		if err != nil {
 			err = preserveReadBlocker(err, blocked("deployment.access", resource.ID, "cannot read the selected resource", "restore environment-local read access; preserve the execution journal and ownership fences"))
 		}
 		owner := resource.UID
-		if err == nil {
+		if err == nil && journal.Owners[resource.ID] != "" {
+			owner = journal.Owners[resource.ID]
+			err = recordedResourceMatches(resource, owner, current)
+		} else if err == nil {
 			var body Object
 			body, err = resource.Body(current)
 			if err == nil && body != nil {
 				bodyDigest := Digest(body)
 				var admitted Object
-				admitted, err = backend.Write(ctx, resource.Action, body, true)
+				if err = emitResourceProgress(index, resource, "dry-run"); err == nil {
+					admitted, err = backend.Write(ctx, resource.Action, body, true)
+				}
 				if err == nil && Digest(body) != bodyDigest {
 					err = errors.New("admission mutated the selected request body")
 				}
@@ -417,14 +786,16 @@ func (p *Plan) Execute(ctx context.Context, backend Backend, expectedDigest, pri
 					err = blocked("deployment.admission", resource.ID, admissionMismatchCause("admission result differs from the approved resource body", body, admitted), "repair or qualify the exact admission mutation before execution")
 				}
 				if err == nil {
+					err = emitResourceProgress(index, resource, "apply")
+				}
+				if err == nil {
 					journal.InFlight = resource.ID
 					if err = saveJournal(directory, journal); err != nil {
 						return err
 					}
 					var actual Object
-					// A failed response may follow a persisted API write. Preserve the
-					// shared lease and local fence until its actual outcome is reviewed.
-					possibleMutation = true
+					// A failed response may follow a persisted API write. Preserve its
+					// in-flight journal evidence even though execution locks are released.
 					actual, err = backend.Write(ctx, resource.Action, body, false)
 					owner = String(Map(actual["metadata"])["uid"])
 					if err == nil && (owner == "" || (resource.UID != "" && owner != resource.UID)) {
@@ -442,8 +813,10 @@ func (p *Plan) Execute(ctx context.Context, backend Backend, expectedDigest, pri
 		}
 		// Delayed-binding storage needs its consuming Pod to be scheduled first.
 		// All PVCs are still required to bind during final verification.
-		if err == nil && String(resource.Desired["kind"]) != "PersistentVolumeClaim" {
-			err = backend.Wait(ctx, resource)
+		if err == nil && String(resource.Desired["kind"]) != "PersistentVolumeClaim" && !deferredWorkloadReadiness(resource) {
+			if err = emitResourceProgress(index, resource, "wait"); err == nil {
+				err = backend.Wait(ctx, resource)
+			}
 		}
 		if err != nil {
 			journal.Failed = resource.ID
@@ -455,8 +828,26 @@ func (p *Plan) Execute(ctx context.Context, backend Backend, expectedDigest, pri
 		if err = saveJournal(directory, journal); err != nil {
 			return err
 		}
+		if err := emitResourceProgress(index, resource, "complete"); err != nil {
+			return err
+		}
+		if index+1 == len(p.Resources) || p.Resources[index+1].Phase != phase {
+			if phase == "workload" {
+				if failedID, err := p.waitWorkloadReadinessBlock(ctx, backend, journal, index, readinessFence, func(index int, resource Resource) error {
+					return emitResourceProgress(index, resource, "wait")
+				}); err != nil {
+					journal.Failed = failedID
+					_ = saveJournal(directory, journal)
+					return err
+				}
+			}
+			if err := finishProgress(true); err != nil {
+				return err
+			}
+		}
 	}
 	verify := func() error {
+		emitProgress("", "verification")
 		if err := p.Verify(ctx, backend); err != nil {
 			journal.Failed = "deployment.post-deploy"
 			var blocker *Blocker
@@ -464,6 +855,9 @@ func (p *Plan) Execute(ctx context.Context, backend Backend, expectedDigest, pri
 				journal.Failed = blocker.Resource
 			}
 			return errors.Join(err, saveJournal(directory, journal))
+		}
+		if err := finishProgress(true); err != nil {
+			return err
 		}
 		return nil
 	}
@@ -480,8 +874,9 @@ func (p *Plan) Execute(ctx context.Context, backend Backend, expectedDigest, pri
 		return err
 	}
 	// Acceptance may seal PKI or commit representative business transactions,
-	// even when every Kubernetes resource was retained.
-	possibleMutation = true
+	// even when every Kubernetes resource was retained. Keep its outcome in the
+	// journal after releasing execution locks; a failed attempt is not unstarted.
+	emitProgress("", "acceptance")
 	if err := accept(ctx, p); err != nil {
 		journal.Failed = "deployment.post-deploy"
 		var failure *Blocker
@@ -491,14 +886,18 @@ func (p *Plan) Execute(ctx context.Context, backend Backend, expectedDigest, pri
 			return &Blocker{ID: failure.ID, Resource: failure.Resource, Cause: failure.Cause, Next: failure.Next}
 		}
 		_ = saveJournal(directory, journal)
-		return blocked("deployment.post-deploy", "", "complete PKI, endpoint and business-flow acceptance failed", "inspect private evidence and repair the actual target; retain the execution lease until reviewed recovery completes")
+		return blocked("deployment.post-deploy", "", "complete PKI, endpoint and business-flow acceptance failed", "inspect private evidence and repair the actual target; qualify a new plan or recovery before another deployment")
 	}
 	if p.SHA256() != expectedDigest || fence(ctx, p) != nil {
 		return blocked("deployment.inputs", "", "reviewed inputs changed during acceptance", "requalify the actual target and retained recovery evidence before completing deployment")
 	}
+	if err := finishProgress(true); err != nil {
+		return err
+	}
 	if err := verify(); err != nil {
 		return err
 	}
+	emitProgress("", "ownership")
 	for _, resource := range p.Resources {
 		if resource.Action == "retire" {
 			continue
@@ -512,15 +911,109 @@ func (p *Plan) Execute(ctx context.Context, backend Backend, expectedDigest, pri
 	if err := lease.Check(ctx); err != nil {
 		return blocked("deployment.execution.lease", "", "cluster execution ownership changed before completion", "reconcile actual state and the execution journal before completing deployment")
 	}
+	if err := finishProgress(true); err != nil {
+		return err
+	}
+	emitProgress("", "journal")
+	if resumable && (ctx.Err() != nil || p.SHA256() != expectedDigest || fence(ctx, p) != nil || lease.Check(ctx) != nil) {
+		return existingExecutionEvidenceBlocker()
+	}
 	journal.Accepted = true
+	journal.Failed = ""
 	if err := saveJournal(directory, journal); err != nil {
 		return err
 	}
-	if err := lease.Release(ctx); err != nil {
-		return blocked("deployment.execution.lease", "", "completed resource verification could not release its exact cluster execution owner", "inspect the exact UID-bound lease and journal; do not report deployment completion until release is confirmed")
+	if err := finishProgress(true); err != nil {
+		return err
 	}
-	leaseReleased = true
 	return nil
+}
+
+type retainedExecutionEvidence struct {
+	planRaw, journalRaw []byte
+	journal             Journal
+}
+
+func existingExecutionEvidenceBlocker() error {
+	return blocked("deployment.recovery", "", "this plan already has execution evidence that cannot be revalidated as a complete accepted retained target", "inspect the private journal and produce a newly qualified plan; never overwrite or continue an earlier partial execution")
+}
+
+// Only an exact, already accepted all-retain plan may be checked again. This
+// proves a current outcome without changing the original execution's evidence.
+func (p *Plan) acceptedRetainEvidence(directory string) (retainedExecutionEvidence, error) {
+	var evidence retainedExecutionEvidence
+	if len(p.Resources) == 0 {
+		return evidence, existingExecutionEvidenceBlocker()
+	}
+	for _, resource := range p.Resources {
+		if resource.Action != "retain" {
+			return evidence, existingExecutionEvidenceBlocker()
+		}
+	}
+	planRaw, err := readPrivateExecutionEvidence(filepath.Join(directory, "plan.json"))
+	expected, encodeErr := json.Marshal(p)
+	if err != nil || encodeErr != nil || !bytes.Equal(planRaw, expected) {
+		return evidence, existingExecutionEvidenceBlocker()
+	}
+	journalRaw, err := readPrivateExecutionEvidence(filepath.Join(directory, "journal.json"))
+	if err != nil {
+		return evidence, existingExecutionEvidenceBlocker()
+	}
+	decoder := json.NewDecoder(bytes.NewReader(journalRaw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&evidence.journal); err != nil {
+		return evidence, existingExecutionEvidenceBlocker()
+	}
+	var extra any
+	canonicalJournal, encodeErr := json.Marshal(evidence.journal)
+	if decoder.Decode(&extra) != io.EOF || encodeErr != nil || !bytes.Equal(journalRaw, canonicalJournal) || !evidence.journal.Accepted || !evidence.journal.AcceptanceStarted || evidence.journal.PlanSHA256 != p.SHA256() || evidence.journal.Failed != "" || evidence.journal.InFlight != "" || len(evidence.journal.Completed) != len(p.Resources) || len(evidence.journal.Owners) != len(p.Resources) {
+		return evidence, existingExecutionEvidenceBlocker()
+	}
+	evidence.planRaw, evidence.journalRaw = planRaw, journalRaw
+	return evidence, nil
+}
+
+func readPrivateExecutionEvidence(path string) ([]byte, error) {
+	const limit = 32 << 20
+	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, errors.New("original private execution evidence unavailable")
+	}
+	f := os.NewFile(uintptr(fd), "execution-evidence")
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0600 || info.Size() > limit {
+		return nil, errors.New("bounded private regular execution evidence required")
+	}
+	raw, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err != nil || len(raw) > limit {
+		return nil, errors.New("bounded private execution evidence required")
+	}
+	return raw, nil
+}
+
+func (p *Plan) saveAcceptedTargetVerification(privateRoot string, journalRaw []byte, owner LeaseOwner, retained bool) error {
+	directory := filepath.Join(privateRoot, "deployment", "recovery")
+	if err := privateDirectory(directory); err != nil {
+		return err
+	}
+	attempt, err := os.MkdirTemp(directory, "revalidated-")
+	if err != nil {
+		return errors.New("private retained-target verification directory unavailable")
+	}
+	outcome := "accepted-target-revalidated"
+	if retained {
+		outcome = "accepted-retained-target-revalidated"
+	}
+	receipt := struct {
+		PlanSHA256            string     `json:"plan_sha256"`
+		OriginalJournalSHA256 string     `json:"original_journal_sha256"`
+		Outcome               string     `json:"outcome"`
+		ResourceCount         int        `json:"resource_count"`
+		Lease                 LeaseOwner `json:"lease"`
+		VerifiedAt            time.Time  `json:"verified_at"`
+	}{p.SHA256(), fmt.Sprintf("%x", sha256.Sum256(journalRaw)), outcome, len(p.Resources), owner, time.Now().UTC()}
+	return writeExclusiveJSON(filepath.Join(attempt, "verification.json"), receipt)
 }
 
 // The OS releases this lock when the controller exits. Reconciliation must run

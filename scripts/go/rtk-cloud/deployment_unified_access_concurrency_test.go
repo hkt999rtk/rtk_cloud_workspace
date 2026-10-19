@@ -100,7 +100,7 @@ func assertPlanAccessPrivateFilesRemoved(t *testing.T, backend environmentKubern
 	}
 }
 
-func TestPlanAccessReviewsOverlapWithAtMostFourExactRequests(t *testing.T) {
+func TestPlanAccessReviewsOverlapWithAtMostTwelveExactRequests(t *testing.T) {
 	var mu sync.Mutex
 	var active, maximum int
 	var observed []environmentAccessRequirement
@@ -114,7 +114,7 @@ func TestPlanAccessReviewsOverlapWithAtMostFourExactRequests(t *testing.T) {
 			maximum = active
 		}
 		observed = append(observed, permission)
-		if len(observed) == 4 {
+		if len(observed) == environmentDeploymentCheckConcurrency {
 			close(ready)
 		}
 		mu.Unlock()
@@ -153,7 +153,7 @@ func TestPlanAccessReviewsOverlapWithAtMostFourExactRequests(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if maximum != 4 || active != 0 || len(observed) != len(requirements) {
+	if maximum != environmentDeploymentCheckConcurrency || active != 0 || len(observed) != len(requirements) {
 		t.Fatal("access reviews lost their concurrency bound, cleanup or coverage", maximum, active, len(observed))
 	}
 	pending := map[environmentAccessRequirement]bool{}
@@ -245,11 +245,14 @@ func TestPlanAccessReviewCancellationWaitsForLaunchedSubprocesses(t *testing.T) 
 	case <-time.After(10 * time.Second):
 		t.Fatal("a launched kubectl kept its request alive after cancellation")
 	}
-	if observed.Load() != 4 || active.Load() != 0 {
-		t.Fatal("cancellation leaked or launched additional probes", observed.Load(), active.Load())
+	// Other workers may already have launched before the fourth handler wakes
+	// this goroutine. Cancellation must reap that bounded in-flight set.
+	launched := observed.Load()
+	if launched < 4 || launched > environmentDeploymentCheckConcurrency || active.Load() != 0 {
+		t.Fatal("cancellation leaked or exceeded the bounded probes", launched, active.Load())
 	}
 	assertPlanAccessPrivateFilesRemoved(t, backend)
-	if err := backend.CheckPlanAccess(ctx, plan); !errors.Is(err, context.Canceled) || observed.Load() != 4 {
+	if err := backend.CheckPlanAccess(ctx, plan); !errors.Is(err, context.Canceled) || observed.Load() != launched {
 		t.Fatal("an already canceled context invoked a review", err, observed.Load())
 	}
 }

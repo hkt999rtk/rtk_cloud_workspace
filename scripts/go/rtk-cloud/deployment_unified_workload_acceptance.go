@@ -36,9 +36,58 @@ func targetWorkloadBlocker(resource, cause string) error {
 	return &deploymentplan.Blocker{ID: "deployment.post-deploy.workloads", Resource: resource, Cause: cause, Next: "restore canonical registry access and installed Docker/Buildx; repair the planned controller, actual owned Pods, immutable image, init/sidecar startup and replica readiness; retain execution fencing and the private journal, then repeat complete target and functional acceptance"}
 }
 
-func verifyEnvironmentTargetWorkloads(ctx context.Context, plan *deploymentplan.Plan, objects []deploymentplan.Object, imageDigests func(context.Context, string) (map[string]bool, error)) error {
+// Only maintained literal causes may cross the private OCI client boundary.
+func environmentRuntimeImageFailureCause(message string) string {
+	switch message {
+	case "immutable image required", "selected private environment store required",
+		"private image metadata directory unavailable", "canonical image credentials unavailable",
+		"incomplete canonical registry credentials", "installed Docker client plugin inventory unavailable",
+		"ambiguous installed Buildx plugin", "installed Buildx plugin unavailable",
+		"digest-bound OCI metadata unavailable", "invalid OCI metadata", "image config digest missing",
+		"ambiguous image platform", "required image platform missing", "OCI index nesting exceeds its bound",
+		"empty approved image digest evidence":
+		return message
+	case "":
+		return "empty approved image digest evidence"
+	default:
+		return "runtime image lookup failed"
+	}
+}
+
+func environmentPodEvidenceFailureCause(err error) string {
+	if err == nil {
+		return "container proof unavailable"
+	}
+	message := err.Error()
+	switch message {
+	case "incomplete container inventory", "invalid declared container", "duplicate container",
+		"duplicate container status", "missing current container", "init not successfully completed",
+		"container not running and ready", "running digest differs from the approved image":
+		return message
+	}
+	const prefix = "immutable runtime image evidence unavailable: "
+	if strings.HasPrefix(message, prefix) {
+		return prefix + environmentRuntimeImageFailureCause(strings.TrimPrefix(message, prefix))
+	}
+	return "unclassified container proof failure"
+}
+
+func verifyEnvironmentTargetWorkloads(ctx context.Context, plan *deploymentplan.Plan, objects []deploymentplan.Object, imageDigests func(context.Context, string) (map[string]bool, error), recordedOwners ...map[string]string) error {
 	if plan == nil || imageDigests == nil {
 		return targetWorkloadBlocker("", "complete plan and runtime image verification required")
+	}
+	standaloneRedis := false
+	if len(recordedOwners) > 0 {
+		if len(recordedOwners) != 1 || !environmentRedisTargetPodPlan(plan) || len(objects) != 1 || len(recordedOwners[0]) != 1 {
+			return targetWorkloadBlocker("", "standalone Redis helper requires its exact staged recipe and recorded Pod owner")
+		}
+		resource, pod := plan.Resources[0], objects[0]
+		meta := deploymentplan.Map(pod["metadata"])
+		uid := recordedOwners[0][resource.ID]
+		if deploymentplan.ID(pod) != resource.ID || !environmentBootstrapOwnerUUID.MatchString(uid) || meta["uid"] != uid || len(certIssuerObjectList(meta["ownerReferences"])) != 0 || len(certIssuerObjectList(deploymentplan.Map(pod["spec"])["ephemeralContainers"])) != 0 || len(certIssuerObjectList(deploymentplan.Map(pod["status"])["ephemeralContainerStatuses"])) != 0 || !environmentRedisTargetPodDataMatches(pod) {
+			return targetWorkloadBlocker(resource.ID, "standalone Redis helper differs from its original Pod owner")
+		}
+		standaloneRedis = true
 	}
 	if err := plan.CheckWorkloadInventory(objects); err != nil {
 		return err
@@ -50,9 +99,14 @@ func verifyEnvironmentTargetWorkloads(ctx context.Context, plan *deploymentplan.
 	controllers, counts := map[string]deploymentplan.Object{}, map[string]int{}
 	completedJobs, verifiedJobs := map[string]deploymentplan.Object{}, map[string]bool{}
 	var health []deploymentplan.Object
+	runtimeRequired := false
 	for _, resource := range plan.Resources {
 		kind := deploymentplan.String(resource.Desired["kind"])
-		if resource.Action == "retire" || !keySet("Deployment", "StatefulSet", "DaemonSet", "Pod", "Job", "CronJob")[kind] {
+		if resource.Action == "retire" {
+			continue
+		}
+		isWorkload := keySet("Deployment", "StatefulSet", "DaemonSet", "Pod", "Job", "CronJob")[kind]
+		if !isWorkload && plan.Operation != "scoped" {
 			continue
 		}
 		actual := live[resource.ID]
@@ -60,9 +114,13 @@ func verifyEnvironmentTargetWorkloads(ctx context.Context, plan *deploymentplan.
 		if actual == nil || !deploymentplan.Matches(resource.Desired, actual) || deploymentplan.String(meta["uid"]) == "" || meta["deletionTimestamp"] != nil || resource.UID != "" && resource.UID != meta["uid"] {
 			return targetWorkloadBlocker(resource.ID, "actual workload does not match its planned owner and target")
 		}
+		if !isWorkload {
+			continue
+		}
 		if kind == "CronJob" {
 			continue
 		} // Scheduled templates must match; no future execution is invented.
+		runtimeRequired = true
 		if kind == "Job" {
 			complete := false
 			for _, value := range certIssuerObjectList(deploymentplan.Map(actual["status"])["conditions"]) {
@@ -85,10 +143,20 @@ func verifyEnvironmentTargetWorkloads(ctx context.Context, plan *deploymentplan.
 			health = append(health, actual)
 		}
 	}
+	if plan.Operation == "scoped" && !runtimeRequired {
+		return ctx.Err()
+	}
 	cache := map[string]map[string]bool{}
 	for _, pod := range objects {
 		meta := deploymentplan.Map(pod["metadata"])
-		if pod["kind"] != "Pod" || meta["deletionTimestamp"] != nil {
+		if pod["kind"] != "Pod" {
+			continue
+		}
+		if meta["deletionTimestamp"] != nil {
+			owner, err := environmentPodController(pod, live)
+			if controller := controllers[owner]; err == nil && controller != nil && deploymentplan.Map(controller["spec"])["replicas"] == float64(0) {
+				return targetWorkloadBlocker(owner, "zero-replica owner still has a terminating Pod")
+			}
 			continue
 		}
 		namespace := deploymentplan.String(meta["namespace"])
@@ -114,7 +182,7 @@ func verifyEnvironmentTargetWorkloads(ctx context.Context, plan *deploymentplan.
 				continue
 			}
 			if err := verifyEnvironmentPodContainers(ctx, job, pod, cache, imageDigests); err != nil {
-				return targetWorkloadBlocker(owner, "completed Job startup and immutable image evidence could not be verified")
+				return targetWorkloadBlocker(owner, "completed Job startup and immutable image evidence could not be verified: "+environmentPodEvidenceFailureCause(err))
 			}
 			verifiedJobs[owner] = true
 			continue
@@ -126,7 +194,7 @@ func verifyEnvironmentTargetWorkloads(ctx context.Context, plan *deploymentplan.
 			return targetWorkloadBlocker(owner, "owned application Pod is not Running")
 		}
 		if err := verifyEnvironmentPodContainers(ctx, controller, pod, cache, imageDigests); err != nil {
-			return targetWorkloadBlocker(owner, "owned Pod startup and approved immutable runtime image evidence could not be verified")
+			return targetWorkloadBlocker(owner, "owned Pod startup and approved immutable runtime image evidence could not be verified: "+environmentPodEvidenceFailureCause(err))
 		}
 		counts[owner]++
 		health = append(health, pod)
@@ -157,11 +225,100 @@ func verifyEnvironmentTargetWorkloads(ctx context.Context, plan *deploymentplan.
 			return targetWorkloadBlocker(id, "actual owned Pod count differs from required replicas")
 		}
 	}
+	// This one-time isolated data helper has no workload controller. Its exact
+	// maintained create recipe and original child-journal UID are bound above;
+	// the ordinary owner/body, Running, containers and OCI proofs still run.
+	if standaloneRedis {
+		ready := 0
+		for _, value := range certIssuerObjectList(deploymentplan.Map(objects[0]["status"])["conditions"]) {
+			condition := deploymentplan.Map(value)
+			if condition["type"] == "Ready" {
+				if condition["status"] != "True" {
+					return targetWorkloadBlocker(plan.Resources[0].ID, "standalone Redis helper Pod is not Ready")
+				}
+				ready++
+			}
+		}
+		if ready != 1 {
+			return targetWorkloadBlocker(plan.Resources[0].ID, "standalone Redis helper Pod has no unique Ready proof")
+		}
+		return ctx.Err()
+	}
+	// A staged native migration has terminal successful Job Pods rather than
+	// running application replicas. Every planned Job and its immutable Pod
+	// image was verified above. This never substitutes full environment health.
+	if plan.Operation == "scoped" && len(controllers) == 0 && len(completedJobs) > 0 && len(verifiedJobs) == len(completedJobs) {
+		return ctx.Err()
+	}
+	if plan.Operation == "scoped" && len(controllers) > 0 && len(completedJobs) == 0 {
+		allZero := true
+		for _, v := range controllers {
+			spec, status, meta := deploymentplan.Map(v["spec"]), deploymentplan.Map(v["status"]), deploymentplan.Map(v["metadata"])
+			observed, ok := status["observedGeneration"].(float64)
+			generation, genOK := meta["generation"].(float64)
+			if (v["kind"] != "Deployment" && v["kind"] != "StatefulSet") || spec["replicas"] != float64(0) || !ok || !genOK || observed < generation {
+				allZero = false
+			}
+			for _, key := range []string{"replicas", "readyReplicas", "updatedReplicas", "availableReplicas"} {
+				if value, present := status[key]; present && value != float64(0) {
+					allZero = false
+				}
+			}
+		}
+		if allZero {
+			return ctx.Err()
+		}
+	}
 	raw, err := json.Marshal(map[string]any{"items": health})
 	if err != nil || validateDeploymentWorkloadHealthForStack(plan.Stack, raw) != nil {
 		return targetWorkloadBlocker("", "complete target controllers and Pods are not observed, Running and Ready")
 	}
 	return ctx.Err()
+}
+
+func managedLateRedisTargetPod(namespace, name, image string) deploymentplan.Object {
+	return deploymentplan.Object{"apiVersion": "v1", "kind": "Pod", "metadata": deploymentplan.Object{"name": name, "namespace": namespace}, "spec": deploymentplan.Object{"restartPolicy": "Never", "automountServiceAccountToken": false, "terminationGracePeriodSeconds": float64(30), "containers": []any{deploymentplan.Object{"name": "redis-migration", "image": image, "imagePullPolicy": "IfNotPresent", "command": []any{"/bin/sh", "-ec", "trap 'exit 0' TERM INT; while :; do sleep 10; done"}, "volumeMounts": []any{deploymentplan.Object{"name": "data", "mountPath": "/data"}}}}, "volumes": []any{deploymentplan.Object{"name": "data", "persistentVolumeClaim": deploymentplan.Object{"claimName": "redis-data"}}}}}
+}
+
+func environmentRedisTargetPodDataMatches(pod deploymentplan.Object) bool {
+	spec := deploymentplan.Map(pod["spec"])
+	containers, volumes := certIssuerObjectList(spec["containers"]), certIssuerObjectList(spec["volumes"])
+	if len(containers) != 1 || len(volumes) != 1 {
+		return false
+	}
+	mounts := certIssuerObjectList(deploymentplan.Map(containers[0])["volumeMounts"])
+	if len(mounts) != 1 {
+		return false
+	}
+	volume, mount := deploymentplan.Map(volumes[0]), deploymentplan.Map(mounts[0])
+	claim := deploymentplan.Map(volume["persistentVolumeClaim"])
+	return volume["name"] == "data" && claim["claimName"] == "redis-data" && (claim["readOnly"] == nil || claim["readOnly"] == false) && mount["name"] == "data" && mount["mountPath"] == "/data" && (mount["readOnly"] == nil || mount["readOnly"] == false) && (mount["subPath"] == nil || mount["subPath"] == "") && (mount["subPathExpr"] == nil || mount["subPathExpr"] == "")
+}
+
+// Match the compiler output of this exact maintained stage, not arbitrary
+// standalone Pods or the complete environment health contract.
+func environmentRedisTargetPodPlan(plan *deploymentplan.Plan) bool {
+	if plan == nil || plan.Operation != "scoped" || len(plan.Resources) != 1 {
+		return false
+	}
+	resource := plan.Resources[0]
+	meta := deploymentplan.Map(resource.Desired["metadata"])
+	name := deploymentplan.String(meta["name"])
+	suffix := strings.TrimPrefix(name, "redis-durable-")
+	containers := certIssuerObjectList(deploymentplan.Map(resource.Desired["spec"])["containers"])
+	if resource.Desired["kind"] != "Pod" || meta["namespace"] != plan.Stack+"-platform" || !strings.HasPrefix(name, "redis-durable-") || len(suffix) != 12 || !environmentPreflightDigest.MatchString(suffix+strings.Repeat("0", 52)) || len(containers) != 1 {
+		return false
+	}
+	image := deploymentplan.String(deploymentplan.Map(containers[0])["image"])
+	if !immutableEnvironmentImage.MatchString(image) {
+		return false
+	}
+	definitions := []deploymentplan.Definition{{Object: managedLateRedisTargetPod(plan.Stack+"-platform", name, image), Phase: "workload"}}
+	if plan.BindingsSHA256 != environmentCreateStageBindingsSHA("normal-redis-durable-target", definitions) {
+		return false
+	}
+	expected, err := deploymentplan.Compile(plan.Inputs, definitions, nil)
+	return err == nil && expected.SHA256() == plan.SHA256()
 }
 
 func environmentPodController(pod deploymentplan.Object, live map[string]deploymentplan.Object) (string, error) {
@@ -249,7 +406,11 @@ func verifyEnvironmentPodContainers(ctx context.Context, controller, pod deploym
 			if cache[image] == nil {
 				accepted, err := imageDigests(ctx, image)
 				if err != nil || len(accepted) == 0 {
-					return errors.New("immutable runtime image evidence unavailable")
+					message := ""
+					if err != nil {
+						message = err.Error()
+					}
+					return errors.New("immutable runtime image evidence unavailable: " + environmentRuntimeImageFailureCause(message))
 				}
 				cache[image] = accepted
 			}

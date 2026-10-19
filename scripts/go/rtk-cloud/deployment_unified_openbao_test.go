@@ -194,3 +194,38 @@ func TestOpenBaoCompatibilityRejectsRealTransitionsAndUnknownComponents(t *testi
 		})
 	}
 }
+
+func TestSharedOpenBaoPreservesRotatingLocalReviewerOnlyInPrimaryContainer(t *testing.T) {
+	for _, environment := range []string{"dev", "staging"} {
+		t.Run(environment, func(t *testing.T) {
+			env, release, live := existingFileOpenBaoFixture(environment, true)
+			pod := environmentPKIPod(live[0])
+			projection := deploymentplan.Object{"name": "openbao-kubernetes-reviewer", "projected": deploymentplan.Object{"sources": []any{deploymentplan.Object{"serviceAccountToken": deploymentplan.Object{"expirationSeconds": float64(900), "path": "token"}}, deploymentplan.Object{"configMap": deploymentplan.Object{"name": "kube-root-ca.crt"}}}}}
+			mount := deploymentplan.Object{"name": "openbao-kubernetes-reviewer", "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount", "readOnly": true}
+			pod["volumes"] = append(certIssuerObjectList(pod["volumes"]), projection)
+			main := deploymentplan.Map(certIssuerObjectList(pod["containers"])[0])
+			main["volumeMounts"] = append(certIssuerObjectList(main["volumeMounts"]), mount)
+			bindings, err := observeEnvironmentBindings(environment, release, live)
+			if err != nil {
+				t.Fatal(err)
+			}
+			target, err := renderEnvironmentOpenBao(env, bindings.Pods[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = applyEnvironmentPodBindings(target, bindings, release); err != nil {
+				t.Fatal(err)
+			}
+			wanted := environmentPKIPod(target)
+			if deploymentplan.Digest(managedNamedField(wanted["volumes"], "openbao-kubernetes-reviewer")) != deploymentplan.Digest(projection) {
+				t.Fatal("rotating API-default reviewer projection changed")
+			}
+			for i, value := range certIssuerObjectList(wanted["containers"]) {
+				found := managedNamedField(deploymentplan.Map(value)["volumeMounts"], "openbao-kubernetes-reviewer")
+				if i == 0 && deploymentplan.Digest(found) != deploymentplan.Digest(mount) || i != 0 && len(found) != 0 {
+					t.Fatal("reviewer credential disappeared or spread to another consumer")
+				}
+			}
+		})
+	}
+}

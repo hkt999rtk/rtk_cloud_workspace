@@ -45,11 +45,66 @@ func deploymentCheckBannerPhase(args []string) string {
 func printDeploymentCheckPurpose(out io.Writer, phase string) {
 	switch phase {
 	case deploymentCheckPreDeploy:
-		fmt.Fprintln(out, "Pre-deploy deployability check (pre-deploy): Validate prerequisites for the selected deployment operation. Use --operation image-upgrade to qualify existing Pod image updates. Run before deployment.")
-		fmt.Fprintln(out, "Preflight checks the configured media bucket and creates it if missing when storage cutover is not required. Other provider probes remain read-only; no data migration or credential replacement is performed. Complete updates observe existing ownership and identity references from Kubernetes, then save checked bindings under the environment deployment store; no pre-existing bindings file is required. Deployment requires the matching successful preflight plan. Existing Kubernetes upgrades do not require local Linode cluster ID or account quota state. Image-upgrade additionally requires live health, exact CI images and local startup fixtures; --fast cannot qualify it.")
+		fmt.Fprint(out, `Pre-deploy deployability check (pre-deploy)
+  Validate prerequisites before deployment.
+  For existing Pod image updates, use --operation image-upgrade.
+
+Operation
+  - Default: complete upgrade of an existing Kubernetes environment.
+  - --operation create detects fresh creation or an unfinished original
+    dev checkpoint and qualifies the appropriate prerequisites.
+  - Original-checkpoint qualification preserves the execution fence and
+    OpenBao/PKI identities; it never starts deployment.
+  - Original recovery inputs are resolved from journal-bound evidence in
+    the selected canonical store; no extra recovery operation is needed.
+  - Fresh dev/staging create qualifies provider allocation and native
+    bootstrap without requiring an existing kubeconfig.
+
+Validation and results
+  - Runs complete validation; every required gate must pass.
+  - Missing capability or evidence means NO-GO.
+  - Builds the exact plan from settings, live identity references and
+    formal CI image-manifest.json artifacts.
+  - Saves checked bindings and evidence with an expiry time.
+  - Deployment verifies and reuses valid evidence, runs live checks,
+    then performs post-deploy acceptance.
+
+Provider access
+  - Checks the configured media bucket; may create it if missing and
+    no storage cutover is required.
+  - Other provider probes are read-only.
+  - No data migration or credential replacement.
+
+Required inputs
+  - Existing Kubernetes upgrades use the selected kubeconfig.
+  - Fresh create uses selected operator credentials, verified target
+    absence and formal CI images; deployment creates new runtime state.
+  - No pre-existing bindings or local release file is required.
+  - Existing upgrades need no local Linode cluster ID or account quota state.
+  - Private schema-1 plans are retired.
+
+`)
 	case deploymentCheckPostDeploy:
-		fmt.Fprintln(out, "Post-deploy environment health check (post-deploy): Verify deployed Secret bindings, PKI, required public mTLS and environment workload readiness. Run after deployment or when diagnosing the current environment.")
-		fmt.Fprintln(out, "This checks current health, not pre-deploy deployability or full application acceptance. Default provider validation may use temporary DNS or storage writes. Use --read-only for read-only checks; --fast only reduces validation depth.")
+		fmt.Fprint(out, `Post-deploy environment health check (post-deploy)
+  Run after deployment or to diagnose the current environment.
+
+Checks
+  - Deployed Secret bindings and PKI.
+  - Required public mTLS endpoints.
+  - Environment workload readiness.
+  - Selected provider and input checks.
+
+Scope
+  - Reports the current environment's health.
+  - Use check-deployment-preflight.sh before deploying a new target.
+  - Full application acceptance requires separate application tests.
+
+Execution mode
+  - Default provider validation may use temporary DNS or storage writes.
+  - Use --read-only for read-only checks.
+  - --fast reduces validation depth.
+
+`)
 	default:
 		fmt.Fprintln(out, "Deployment environment check: Use --phase pre-deploy for deployability, or --phase post-deploy for current environment health (default).")
 	}

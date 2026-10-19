@@ -81,6 +81,17 @@ printf '{"subject":"service:account-manager","fingerprint":"bbbbbbbbbbbbbbbbbbbb
 		}
 		f.write(t, filepath.Join(f.workspace, "scripts", script), string(raw), 0700)
 	}
+	// The legacy app container supplies timeout, while the fixture executes its
+	// remote commands on hosts that may lack GNU coreutils. Use the copied probe's
+	// real bounded runner so the simulated container still kills and reaps a
+	// timed-out transport instead of depending on the host's executable inventory.
+	f.write(t, filepath.Join(f.root, "bin", "timeout"), `#!/usr/bin/perl
+use strict;
+use warnings;
+use FindBin qw($Bin);
+exec $^X, "$Bin/../workspace/scripts/check-certissuer-app-helper.pl", 'bounded', @ARGV;
+exit 127;
+`, 0700)
 	// The fake transport opens the actual inherited pipe descriptors. Credential
 	// values live in this synthetic fixture, never in the probe argv or env.
 	openssl := fmt.Sprintf(`#!/usr/bin/perl
@@ -140,6 +151,9 @@ print "HTTP/1.1 400 Bad Request\r\nContent-Length: ", length($body), "\r\nConnec
 
 func (f certIssuerManagedFixture) write(t *testing.T, path, content string, mode os.FileMode) {
 	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(path, []byte(content), mode); err != nil {
 		t.Fatal(err)
 	}
@@ -486,16 +500,6 @@ func TestCertIssuerManagedProbeCancellationAndTimeoutReapTransport(t *testing.T)
 	for _, trigger := range []string{"cancellation", "timeout"} {
 		t.Run(trigger, func(t *testing.T) {
 			f := newCertIssuerManagedFixture(t)
-			if trigger == "timeout" {
-				raw, err := os.ReadFile(f.helper)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if bytes.Count(raw, []byte("alarm 12;")) != 1 {
-					t.Fatal("probe deadline fixture no longer matches its production alarm")
-				}
-				f.write(t, f.helper, string(bytes.Replace(raw, []byte("alarm 12;"), []byte("alarm 1;"), 1)), 0700)
-			}
 			cmd := exec.Command("perl", f.helper, "issuer.example.test", f.socket, "staging")
 			cmd.Env = f.env(map[string]string{"RTK_TEST_OPENSSL_MODE": "hang"}, true)
 			var out bytes.Buffer
@@ -505,7 +509,7 @@ func TestCertIssuerManagedProbeCancellationAndTimeoutReapTransport(t *testing.T)
 			}
 			done := make(chan error, 1)
 			go func() { done <- cmd.Wait() }()
-			deadline := time.Now().Add(3 * time.Second)
+			deadline := time.Now().Add(10 * time.Second)
 			var child int
 			for time.Now().Before(deadline) {
 				raw, err := os.ReadFile(f.pidFile)
@@ -533,7 +537,7 @@ func TestCertIssuerManagedProbeCancellationAndTimeoutReapTransport(t *testing.T)
 				if err == nil {
 					t.Fatal("cancelled probe reported success")
 				}
-			case <-time.After(3 * time.Second):
+			case <-time.After(15 * time.Second):
 				_ = cmd.Process.Kill()
 				_ = syscall.Kill(child, syscall.SIGKILL)
 				<-done

@@ -26,6 +26,8 @@ type Inputs struct {
 	ReleaseSHA256       string `json:"release_sha256"`
 	BindingsSHA256      string `json:"bindings_sha256"`
 	StorageSHA256       string `json:"storage_sha256,omitempty"`
+	CreateParentSHA256  string `json:"create_parent_sha256,omitempty"`
+	CreateHandoffSHA256 string `json:"create_handoff_sha256,omitempty"`
 }
 
 type Resource struct {
@@ -107,6 +109,7 @@ func Compile(in Inputs, definitions []Definition, live []Object, adoptions ...ma
 	seen := map[string]bool{}
 	for _, definition := range definitions {
 		desired := Clone(definition.Object)
+		normalizeDeploymentRevision(desired)
 		id := ID(desired)
 		kind := String(desired["kind"])
 		if kind == "Secret" {
@@ -133,10 +136,11 @@ func Compile(in Inputs, definitions []Definition, live []Object, adoptions ...ma
 			}
 		}
 		metadata := Map(desired["metadata"])
+		expectedUID := String(metadata["uid"])
 		namespace, name := String(metadata["namespace"]), String(metadata["name"])
 		clusterScoped := kind == "Namespace" || kind == "ClusterRole" || kind == "ClusterRoleBinding" || kind == "IngressClass" || kind == "ValidatingWebhookConfiguration"
 		originalAdmission := originalAdmissionOwner(desired, byID[id], in.Stack, adoptions)
-		if !kinds[kind] || name == "" || (clusterScoped && (namespace != "" || !strings.HasPrefix(name, in.Stack+"-") && !originalAdmission)) || (!clusterScoped && !strings.HasPrefix(namespace, in.Stack+"-")) || seen[id] {
+		if (!kinds[kind] && !(kind == "Pod" && in.Operation == "scoped")) || name == "" || (clusterScoped && (namespace != "" || !strings.HasPrefix(name, in.Stack+"-") && !originalAdmission)) || (!clusterScoped && !strings.HasPrefix(namespace, in.Stack+"-")) || seen[id] {
 			return nil, blocked("deployment.inventory", id, "invalid, duplicate or foreign desired resource", "correct the shared renderer and selected environment intent")
 		}
 		if _, ok := phases[definition.Phase]; !ok {
@@ -170,6 +174,16 @@ func Compile(in Inputs, definitions []Definition, live []Object, adoptions ...ma
 			if String(m["uid"]) == "" || m["deletionTimestamp"] != nil || (owner != in.Stack && !adopted) {
 				return nil, blocked("deployment.ownership", id, "live owner is unbound, foreign or terminating", "record and verify an explicit environment ownership adoption before deployment")
 			}
+			// An explicitly selected original owner cannot be rebound by a
+			// fresh planning inventory to a replacement with the same name.
+			if expectedUID != "" && String(m["uid"]) != expectedUID {
+				return nil, blocked("deployment.ownership", id, "reviewed owner was replaced", "review the replacement through its own lifecycle")
+			}
+			if definition.Retire && expectedUID != "" {
+				if !Matches(desired, current) {
+					return nil, blocked("deployment.retirement", id, "reviewed retirement recipe changed", "authenticate the original owner and recipe before retirement")
+				}
+			}
 			r.UID = String(m["uid"])
 			r.Baseline = Projection(current)
 			r.Action = "update"
@@ -192,6 +206,8 @@ func Compile(in Inputs, definitions []Definition, live []Object, adoptions ...ma
 			if definition.Retire {
 				r.Action = "retire"
 			}
+		} else if expectedUID != "" {
+			return nil, blocked("deployment.ownership", id, "reviewed original owner is absent", "reconcile the original owner; do not create a replacement")
 		} else if definition.Retain {
 			return nil, blocked("deployment.dependency", id, "required retained dependency is absent", "complete environment bootstrap or restore the exact managed owner")
 		} else if definition.Retire {
@@ -336,9 +352,29 @@ func (p *Plan) CheckWorkloadInventory(objects []Object) error {
 	return nil
 }
 
+const deploymentRevisionAnnotation = "deployment.kubernetes.io/revision"
+
+// Deployment owns this rollout counter. It is not user intent, and changes
+// after the original update response. Keep every other annotation exact.
+func normalizeDeploymentRevision(object Object) {
+	if object["apiVersion"] != "apps/v1" || object["kind"] != "Deployment" {
+		return
+	}
+	metadata := Map(object["metadata"])
+	annotations, ok := metadata["annotations"].(map[string]any)
+	if !ok {
+		return
+	}
+	delete(annotations, deploymentRevisionAnnotation)
+	if len(annotations) == 0 {
+		delete(metadata, "annotations")
+	}
+}
+
 // Projection removes only server metadata and status; configuration drift remains.
 func Projection(o Object) Object {
 	c := Clone(o)
+	defaultEmptyPodEnvironment(c)
 	delete(c, "status")
 	m := Map(c["metadata"])
 	for _, k := range []string{"resourceVersion", "generation", "creationTimestamp", "managedFields"} {
@@ -349,10 +385,27 @@ func Projection(o Object) Object {
 
 // Matches permits Kubernetes defaults and unrelated metadata, not desired drift.
 func Matches(desired, current Object) bool {
+	desired, current = Clone(desired), Clone(current)
+	normalizeDeploymentRevision(desired)
+	normalizeDeploymentRevision(current)
+	defaultEmptyPodEnvironment(desired)
+	defaultEmptyPodEnvironment(current)
 	for key, value := range desired {
 		if key == "metadata" {
 			for _, field := range []string{"name", "namespace", "labels", "annotations"} {
-				if v, ok := Map(value)[field]; ok && !subset(v, Map(current[key])[field]) {
+				v, ok := Map(value)[field]
+				if !ok {
+					continue
+				}
+				if field == "labels" || field == "annotations" {
+					// Body merges only declared keys, preserving unrelated metadata.
+					// A null or empty outer map declares no keys to compare.
+					m, isMap := v.(map[string]any)
+					if v == nil || (isMap && len(m) == 0) {
+						continue
+					}
+				}
+				if !subset(v, Map(current[key])[field]) {
 					return false
 				}
 			}
@@ -363,6 +416,48 @@ func Matches(desired, current Object) bool {
 		}
 	}
 	return true
+}
+
+// EnvVar.value defaults null or absent input to the empty string, which native
+// JSON omits.
+// A valueFrom source is never equivalent: leave it untouched so explicit empty
+// desired values still reject a webhook injecting a Secret/ConfigMap source.
+func defaultEmptyPodEnvironment(object Object) {
+	var pod Object
+	switch object["kind"] {
+	case "Pod":
+		pod = Map(object["spec"])
+	case "Deployment", "StatefulSet", "DaemonSet", "Job":
+		pod = Map(Map(Map(object["spec"])["template"])["spec"])
+	case "CronJob":
+		pod = Map(Map(Map(Map(Map(object["spec"])["jobTemplate"])["spec"])["template"])["spec"])
+	default:
+		return
+	}
+	for _, field := range []string{"containers", "initContainers"} {
+		containers, _ := pod[field].([]any)
+		for _, container := range containers {
+			mounts, _ := Map(container)["volumeMounts"].([]any)
+			for _, entry := range mounts {
+				mount := Map(entry)
+				if mount != nil {
+					if _, declared := mount["readOnly"]; !declared {
+						mount["readOnly"] = false
+					}
+				}
+			}
+			env, _ := Map(container)["env"].([]any)
+			for _, entry := range env {
+				value := Map(entry)
+				if value == nil {
+					continue
+				}
+				if value["value"] == nil && value["valueFrom"] == nil {
+					value["value"] = ""
+				}
+			}
+		}
+	}
 }
 func subset(want, have any) bool {
 	if m, ok := want.(map[string]any); ok {
@@ -428,7 +523,7 @@ func validateLifecycle(id string, desired, current Object) error {
 		if current["immutable"] == true && !reflect.DeepEqual(desired["data"], current["data"]) {
 			return blocked("deployment.immutable", id, "immutable lifecycle content differs", "use the managed Secret or configuration lifecycle")
 		}
-	case "Job":
+	case "Job", "Pod":
 		if !Matches(desired, current) {
 			return blocked("deployment.migration", id, "existing Job differs from the selected migration", "use a release-specific migration Job and retain failed evidence")
 		}
@@ -451,7 +546,10 @@ func (r Resource) Body(current Object) (Object, error) {
 		}
 		return Clone(r.Desired), nil
 	}
-	if current == nil || String(Map(current["metadata"])["uid"]) != r.UID || !reflect.DeepEqual(Projection(current), r.Baseline) {
+	baseline, observed := Clone(r.Baseline), Projection(current)
+	normalizeDeploymentRevision(baseline)
+	normalizeDeploymentRevision(observed)
+	if current == nil || String(Map(current["metadata"])["uid"]) != r.UID || !reflect.DeepEqual(observed, baseline) {
 		return nil, blocked("deployment.drift", r.ID, "owner or configuration changed after qualification", "repeat planning and qualification; do not overwrite concurrent updates")
 	}
 	if r.Action == "retain" {
@@ -476,6 +574,9 @@ func (r Resource) Body(current Object) (Object, error) {
 	m := Map(body["metadata"])
 	for _, k := range []string{"labels", "annotations"} {
 		for field, value := range Map(Map(r.Desired["metadata"])[k]) {
+			if k == "annotations" && field == deploymentRevisionAnnotation && r.Desired["apiVersion"] == "apps/v1" && r.Desired["kind"] == "Deployment" {
+				continue // preserve the current controller counter in an old frozen plan
+			}
 			target := Map(m[k])
 			if target == nil {
 				target = Object{}

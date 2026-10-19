@@ -11,24 +11,27 @@ import (
 // environment. A callback supplies a digest only after checking real evidence;
 // operator-authored JSON success flags are never a qualification adapter.
 type QualificationOptions struct {
-	Fast           bool
 	Production     bool
 	ExistingUpdate bool
 }
 
 type GateEvidence struct {
-	SHA256 string
+	SHA256               string
+	PendingRolloutHealth []string
 }
 type GateCheck func(context.Context, *Plan) (GateEvidence, error)
 type GateResult struct {
-	ID             string `json:"id"`
-	Status         string `json:"status"`
-	Required       bool   `json:"required"`
-	EvidenceSHA256 string `json:"evidence_sha256,omitempty"`
-	Cause          string `json:"cause,omitempty"`
-	Next           string `json:"next,omitempty"`
-	Impact         string `json:"impact,omitempty"`
-	Recheck        string `json:"recheck,omitempty"`
+	CheckID              string   `json:"check_id,omitempty"`
+	EvidenceSource       string   `json:"evidence_source,omitempty"`
+	ID                   string   `json:"id"`
+	Status               string   `json:"status"`
+	Required             bool     `json:"required"`
+	EvidenceSHA256       string   `json:"evidence_sha256,omitempty"`
+	PendingRolloutHealth []string `json:"pending_rollout_health,omitempty"`
+	Cause                string   `json:"cause,omitempty"`
+	Next                 string   `json:"next,omitempty"`
+	Impact               string   `json:"impact,omitempty"`
+	Recheck              string   `json:"recheck,omitempty"`
 }
 type Qualification struct {
 	PlanSHA256 string       `json:"plan_sha256"`
@@ -52,7 +55,7 @@ var evidenceSHA256 = regexp.MustCompile(`^[a-f0-9]{64}$`)
 // Qualify checks every required gate in stable order. Errors are represented by
 // stable IDs and maintained repair instructions; raw backend errors can contain
 // credentials, certificate data or private subprocess output and are suppressed.
-func (p *Plan) Qualify(ctx context.Context, options QualificationOptions, checks map[string]GateCheck) (Qualification, error) {
+func (p *Plan) Qualify(ctx context.Context, options QualificationOptions, checks map[string]GateCheck, observe ...func(GateResult)) (Qualification, error) {
 	if p == nil || len(p.Resources) == 0 {
 		return Qualification{}, errors.New("a complete compiled deployment plan is required")
 	}
@@ -73,8 +76,6 @@ func (p *Plan) Qualify(ctx context.Context, options QualificationOptions, checks
 		switch {
 		case ctx.Err() != nil:
 			interrupted = ctx.Err()
-		case options.Fast:
-			row.Status, row.Cause = "SKIPPED", "--fast cannot qualify a complete environment update"
 		case check == nil:
 			row.Cause = "required capability has no complete qualification adapter"
 		default:
@@ -97,8 +98,11 @@ func (p *Plan) Qualify(ctx context.Context, options QualificationOptions, checks
 					row.Status, row.Cause = "ERROR", "the selected plan changed during qualification"
 				} else if !evidenceSHA256.MatchString(evidence.SHA256) {
 					row.Cause = "required evidence is absent or incomplete"
+				} else if !p.validPendingRolloutHealth(gate.id, options, evidence.PendingRolloutHealth) {
+					row.Status, row.Cause = "ERROR", "pending rollout health is not bound to reviewed original workloads"
 				} else {
 					row.Status, row.EvidenceSHA256 = "PASS", evidence.SHA256
+					row.PendingRolloutHealth = append([]string(nil), evidence.PendingRolloutHealth...)
 					row.Next, row.Impact, row.Recheck = "", "", ""
 				}
 			}
@@ -115,12 +119,19 @@ func (p *Plan) Qualify(ctx context.Context, options QualificationOptions, checks
 			passed = false
 		}
 		result.Gates = append(result.Gates, row)
+		// Report only the finalized outcome, after evidence, plan and interruption
+		// checks. Finishing a callback or all queries alone does not mean PASS.
+		for _, observer := range observe {
+			if observer != nil {
+				observer(row)
+			}
+		}
 	}
 	if passed {
 		result.Decision = "GO"
 		return result, nil
 	}
-	return result, fmt.Errorf("NO-GO: required gates failed, errored, were blocked, skipped or lacked evidence for plan %s", result.PlanSHA256)
+	return result, fmt.Errorf("NO-GO: required gates failed, errored, were blocked or lacked evidence for plan %s", result.PlanSHA256)
 }
 
 // RequiredGateIDs is also the contract used by runtime adapters and report
@@ -134,4 +145,37 @@ func RequiredGateIDs(production bool) []string {
 		ids = append(ids, productionQualificationGate.id)
 	}
 	return ids
+}
+
+func (p *Plan) validPendingRolloutHealth(gate string, options QualificationOptions, ids []string) bool {
+	if len(ids) == 0 {
+		return true
+	}
+	if gate != "deployment.pki" || !(options.ExistingUpdate && p.Operation == "upgrade" || p.HasCreateHandoff()) {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, id := range ids {
+		if seen[id] {
+			return false
+		}
+		seen[id] = true
+		found := false
+		for _, r := range p.Resources {
+			if r.ID == id {
+				found = Map(r.Desired)["kind"] == "Deployment" && (r.Action == "update" || r.Action == "retain") && r.UID != ""
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+// A completed-bootstrap create continues an existing target while retaining
+// its original operation, parent ownership and every create qualification gate.
+func (p *Plan) HasCreateHandoff() bool {
+	return p != nil && p.Operation == "create" && evidenceSHA256.MatchString(p.CreateParentSHA256) && evidenceSHA256.MatchString(p.CreateHandoffSHA256)
 }

@@ -215,7 +215,7 @@ session succeed.
 
 Run `scripts/check-deployment-health.sh --environment dev --fast` from the
 reviewed workspace for current environment health; use
-`scripts/check-deployment-preflight.sh --environment dev --fast` separately
+`scripts/check-deployment-preflight.sh --environment dev` separately
 before a planned deployment. Neither replaces the required endpoint probes.
 Require PASS for live PKI configuration, signed current Service and OpenBao
 CRLs, Service registry inventory, all seven Secret cross-checks, Account

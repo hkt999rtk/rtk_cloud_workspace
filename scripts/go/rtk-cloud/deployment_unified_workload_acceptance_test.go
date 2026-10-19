@@ -215,6 +215,14 @@ func TestTargetAcceptanceRequiresPlannedJobsToComplete(t *testing.T) {
 				if (err == nil) != (mode == "complete") {
 					t.Fatal(err)
 				}
+				stage := *plan
+				stage.Operation = "scoped"
+				stage.Resources = append([]deploymentplan.Resource(nil), plan.Resources[len(plan.Resources)-1:]...)
+				stageObjects := environmentCreateStageInventory(&stage, objects)
+				err = verifyEnvironmentTargetWorkloads(context.Background(), &stage, stageObjects, func(context.Context, string) (map[string]bool, error) { return map[string]bool{digest: true}, nil })
+				if (err == nil) != (mode == "complete") {
+					t.Fatal("Job-only native stage skipped ownership, immutable image or successful-exit evidence", err)
+				}
 			})
 		}
 	}
@@ -365,5 +373,43 @@ func TestNativePublicOCIImageWithIsolatedClient(t *testing.T) {
 	entries, err := os.ReadDir(filepath.Join(store.Root, "deployment", "tmp"))
 	if err != nil || len(entries) != 0 {
 		t.Fatal("native temporary state not cleaned", err)
+	}
+}
+
+func TestTargetWorkloadAcceptanceRequiresObservedZeroReplicaQuiescence(t *testing.T) {
+	for _, mode := range []string{"valid", "full-environment", "unobserved", "owned-pod", "terminating-pod", "replaced-owner", "missing-controller"} {
+		t.Run(mode, func(t *testing.T) {
+			plan, objects, digest := targetWorkloadFixture(t, "dev", "Deployment")
+			plan.Operation = "scoped"
+			deploymentplan.Map(plan.Resources[0].Desired["spec"])["replicas"] = float64(0)
+			deploymentplan.Map(objects[0]["spec"])["replicas"] = float64(0)
+			status := deploymentplan.Map(objects[0]["status"])
+			for _, k := range []string{"replicas", "readyReplicas", "updatedReplicas", "availableReplicas"} {
+				status[k] = float64(0)
+			}
+			inventory := []deploymentplan.Object{objects[0], objects[2]}
+			switch mode {
+			case "full-environment":
+				plan.Operation = "upgrade"
+			case "unobserved":
+				status["observedGeneration"] = float64(1)
+			case "owned-pod":
+				inventory = append(inventory, objects[1])
+			case "terminating-pod":
+				deploymentplan.Map(objects[1]["metadata"])["deletionTimestamp"] = "2026-10-13T00:00:00Z"
+				inventory = append(inventory, objects[1])
+			case "replaced-owner":
+				deploymentplan.Map(objects[0]["metadata"])["uid"] = "replacement"
+			case "missing-controller":
+				inventory = inventory[1:]
+			}
+			err := verifyEnvironmentTargetWorkloads(context.Background(), plan, inventory, func(context.Context, string) (map[string]bool, error) { return map[string]bool{digest: true}, nil })
+			if mode == "valid" && err != nil {
+				t.Fatal(err)
+			}
+			if mode != "valid" && err == nil {
+				t.Fatal("unverified quiescence accepted")
+			}
+		})
 	}
 }

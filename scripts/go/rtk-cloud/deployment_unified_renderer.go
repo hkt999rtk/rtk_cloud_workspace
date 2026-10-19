@@ -22,6 +22,10 @@ var environmentManagedComponents = map[string]string{
 // The catalog describes desired configuration, not copies of live workloads.
 // Identity references are owned by the independent managed PKI lifecycle.
 func renderEnvironmentResources(env map[string]string, bindings environmentIdentityBindings, release environmentRelease, support ...[]deploymentplan.Definition) ([]deploymentplan.Definition, error) {
+	return renderEnvironmentResourceCatalog(env, bindings, release, nil, support...)
+}
+
+func renderEnvironmentResourceCatalog(env map[string]string, bindings environmentIdentityBindings, release environmentRelease, intent *environmentCreateDependencyRender, support ...[]deploymentplan.Definition) ([]deploymentplan.Definition, error) {
 	if env["SUPPORT_TICKETS_ENABLED"] == "true" && (len(support) != 1 || len(support[0]) == 0) {
 		return nil, zammadBlocker("deployment.target.support", "", "enabled Zammad chart target is unavailable")
 	}
@@ -29,7 +33,17 @@ func renderEnvironmentResources(env map[string]string, bindings environmentIdent
 	if strings.EqualFold(env["PKI_SERVICE_ISSUER_ENABLED"], "true") {
 		needed["certissuer-service-pki"] = true
 	}
+	if intent != nil {
+		for name := range needed {
+			if intent.managed[name] {
+				delete(needed, name)
+			}
+		}
+	}
 	for _, binding := range bindings.Pods {
+		if binding.Name == "mqtt" && (binding.Kind == "StatefulSet" || binding.Kind == "Deployment") {
+			return nil, &deploymentplan.Blocker{ID: "deployment.migration.mqtt", Resource: binding.Kind + "/" + bindings.Stack + "-" + binding.NamespaceSuffix + "/mqtt", Cause: "an installed unmanaged MQTT owner requires its explicit retirement or migration before the native managed target", Next: "preserve its original data and identity; qualify its exact lifecycle instead of creating a second broker or silently dropping the owner"}
+		}
 		// Existing TURN consumers use the same maintained renderer in every
 		// environment. Installing a new identity is a separate bootstrap stage.
 		if binding.Component == "managed-turn" {
@@ -78,6 +92,9 @@ func renderEnvironmentResources(env map[string]string, bindings environmentIdent
 				return &deploymentplan.Blocker{ID: "deployment.renderer.resource", Cause: "shared renderer produced invalid Kubernetes resource values", Next: "repair the maintained renderer's resource structure, then repeat preflight"}
 			}
 			id := deploymentplan.ID(object)
+			if intent != nil && intent.outputs[id] != "" {
+				continue // A separately qualified bootstrap producer owns this object.
+			}
 			if object["kind"] == "Ingress" {
 				deploymentplan.Map(object["spec"])["ingressClassName"] = environmentIngressClass(env)
 			}
@@ -136,14 +153,13 @@ func renderEnvironmentResources(env map[string]string, bindings environmentIdent
 		lkePostgresInitManifest(env), lkePostgresServiceManifest(env), lkePostgresStatefulSetManifest(env),
 		lkeRedisDeploymentManifest(env), lkeRedisServiceManifest(env), lkeRedisExporterDeploymentManifest(env), lkeRedisExporterServiceManifest(env),
 		lkeFleetValkeyStatefulSetManifest(env), lkeFleetValkeyServiceManifest(env), lkeFleetValkeyExporterDeploymentManifest(env), lkeFleetValkeyExporterServiceManifest(env),
-		lkeMQTTConfigManifest(env), lkeMQTTStatefulSetManifest(env), lkeMQTTServiceManifest(env), lkeMQTTHeadlessServiceManifest(env),
 		lkeCertIssuerServiceManifest(env), lkeFactoryEnrollServiceManifest(env),
 		lkeVideoCloudPrometheusConfigManifest(env, provisionOptions{}), lkeVideoCloudPrometheusDeploymentManifest(env, provisionOptions{}), lkeVideoCloudPrometheusServiceManifest(env),
 		lkeLokiConfigManifest(env), lkeLokiDeploymentManifest(env), lkeLokiServiceManifest(env),
 		lkeLogCollectorServiceAccountManifest(env), lkeLogCollectorClusterRoleManifest(env), lkeLogCollectorClusterRoleBindingManifest(env), lkeLogCollectorConfigManifest(env), lkeLogCollectorDaemonSetManifest(env),
 		lkeGrafanaDatasourcesConfigManifest(env), lkeGrafanaDashboardProvidersConfigManifest(env), lkeGrafanaDashboardsConfigManifest(env), lkeGrafanaDeploymentManifest(env), lkeGrafanaServiceManifest(env),
 		lkeBillingPaymentWorkerManifest(env), lkeAccountManagerEmailWorkerManifest(env), lkeAccountManagerOutboxWorkerManifest(env),
-		lkeAllowPostgresClientsNetworkPolicyManifest(env), lkeAllowOpenBaoClientsNetworkPolicyManifest(env), lkeAllowAccountManagerCertIssuerNetworkPolicyManifest(env),
+		lkeAllowPostgresClientsNetworkPolicyManifest(env), lkeAllowPostgresOpenBaoNetworkPolicyManifest(env), lkeAllowOpenBaoClientsNetworkPolicyManifest(env), lkeAllowAccountManagerCertIssuerNetworkPolicyManifest(env),
 		lkeAllowCloudAdminFactoryEnrollNetworkPolicyManifest(env), lkeAllowVideoCloudAccountManagerNetworkPolicyManifest(env), lkeAllowServiceRegistrationNetworkPolicyManifest(env),
 		lkeAllowCloudAdminAccountManagerNetworkPolicyManifest(env), lkeAllowCloudAdminBillingNetworkPolicyManifest(env), lkeAllowVideoCloudAPIInternalNetworkPolicyManifest(env),
 		lkeAllowVideoCloudAPITurnRegistryNetworkPolicyManifest(env), lkeAllowVideoCloudMQTTClientsNetworkPolicyManifest(env), lkeAllowEMQXMQTTUsageNetworkPolicyManifest(env), lkeAllowEMQXClusterNetworkPolicyManifest(env),
@@ -209,7 +225,22 @@ func renderEnvironmentResources(env map[string]string, bindings environmentIdent
 	}
 	// PKI components use the same maintained skeleton in every environment.
 	// A reference bundle cannot introduce an arbitrary new workload.
-	definitions = append(definitions, environmentManagedConsumerDependencies(env)...)
+	definitions = append(definitions, environmentFullManagedConsumerDependencies(env)...)
+	definitions = append(definitions, environmentNativeConnectivityDefinitions(env)...)
+	// The unified compiler and scoped create stages share the same managed
+	// MQTT producer; neither can invent TLS keys or absent process credentials.
+	mqttSecrets := activeRuntimeSecretSnapshot
+	if mqttSecrets == nil {
+		mqttSecrets = map[string]string{}
+		for _, name := range []string{"emqx-dashboard-password", "mqtt-broker-auth", "emqx-handoff-api-key", "emqx-handoff-api-secret"} {
+			mqttSecrets[lkeSecretFileName(name)] = lkeRuntimeSecretValue(name)
+		}
+	}
+	mqttDependencies, err := renderManagedMQTTDependencyDefinitions(env, mqttSecrets)
+	if err != nil {
+		return nil, err
+	}
+	definitions = append(definitions, mqttDependencies...)
 	for _, binding := range bindings.Pods {
 		id := binding.Kind + "/" + bindings.Stack + "-" + binding.NamespaceSuffix + "/" + binding.Name
 		if seen[id] {
@@ -239,6 +270,9 @@ func renderEnvironmentResources(env map[string]string, bindings environmentIdent
 		if err := applyEnvironmentAuthRole(env, object); err != nil {
 			return nil, err
 		}
+		if err := applyEnvironmentIssuerRuntime(env, object, binding); err != nil {
+			return nil, err
+		}
 		if binding.Component == "managed-app-api" {
 			dependencies, err := environmentAppDependencies(env, bindings)
 			if err != nil {
@@ -247,7 +281,21 @@ func renderEnvironmentResources(env map[string]string, bindings environmentIdent
 			definitions = append(definitions, dependencies...)
 		}
 		if binding.Component == "pki-controller" {
-			if err := applyEnvironmentControllerPolicy(env, object); err != nil {
+			if err := applyControllerIdentityPreparation(object, release); err != nil {
+				return nil, err
+			}
+			controllerValues := env
+			for _, managed := range bindings.Pods {
+				if managed.Component == "managed-mqtt" || managed.Component == "managed-openbao" {
+					ids, err := managedTransportServiceConsumerIDs(strings.Split(env["PKI_REQUIRED_CONSUMERS_SERVICE"], ","))
+					if err != nil {
+						return nil, err
+					}
+					controllerValues = appendMap(env, map[string]string{"PKI_REQUIRED_CONSUMERS_SERVICE": strings.Join(ids, ",")})
+					break
+				}
+			}
+			if err := applyEnvironmentControllerPolicy(controllerValues, object); err != nil {
 				return nil, err
 			}
 			if bindings.BootstrapCleanup != nil {
@@ -260,18 +308,34 @@ func renderEnvironmentResources(env map[string]string, bindings environmentIdent
 		}
 		definitions = append(definitions, deploymentplan.Definition{Object: object, Phase: "workload"})
 	}
-	ingress, err := renderEnvironmentIngress(env, bindings.IngressAdmission, release)
+	if intent == nil {
+		ingress, err := renderEnvironmentIngress(env, bindings.IngressAdmission, release)
+		if err != nil {
+			return nil, err
+		}
+		definitions = append(definitions, ingress...)
+	}
+	for _, definition := range definitions {
+		if err := applyAccountManagerServicePorts(definition.Object, bindings); err != nil {
+			return nil, err
+		}
+		if err := applyEnvironmentRegistryIssuerService(definition.Object, bindings); err != nil {
+			return nil, err
+		}
+		canonicalEnvironmentEmptyEnvLiterals(definition.Object)
+	}
+	definitions, err = bindEnvironmentCertIssuerPublicTransport(env, definitions)
 	if err != nil {
 		return nil, err
 	}
-	definitions = append(definitions, ingress...)
-	for _, definition := range definitions {
-		canonicalEnvironmentEmptyEnvLiterals(definition.Object)
+	definitions, err = applyAccountRegistrationCRLRefreshProfile(env, definitions)
+	if err != nil {
+		return nil, err
 	}
 	if len(support) == 1 {
 		definitions = append(definitions, support[0]...)
 	}
-	if lkeMQTTFoundationRegistrationEnabled(env) {
+	if lkeMQTTFoundationRegistrationEnabled(env) && intent == nil {
 		if err := validateMQTTFoundationTarget(env, definitions); err != nil {
 			return nil, err
 		}
@@ -280,7 +344,63 @@ func renderEnvironmentResources(env map[string]string, bindings environmentIdent
 	if err != nil {
 		return nil, err
 	}
+	if err := bindEnvironmentNewStorageClasses(definitions, env["DURABLE_DATA_STORAGE_CLASS"], bindings.Owners); err != nil {
+		return nil, err
+	}
+	if err := deriveEnvironmentCoreMQTTTransport(env, definitions); err != nil {
+		return nil, err
+	}
+	if err := bindEnvironmentManagedMQTTConsumersForRender(definitions, bindings.ProductIdentities); err != nil {
+		return nil, err
+	}
+	if err := bindEnvironmentCurrentMQTTConsumers(definitions, bindings); err != nil {
+		return nil, err
+	}
+	if err := applyEnvironmentBillingRuntimeConfiguration(env, definitions); err != nil {
+		return nil, err
+	}
+	if err := applyCoreIdentityPreparation(definitions, release.Images["LKE_ALPINE_IMAGE"].Reference); err != nil {
+		return nil, err
+	}
+	if err := validateEnvironmentAppTURNPolicy(definitions); err != nil {
+		return nil, err
+	}
+	if err := deriveEnvironmentDeviceMQTTCallback(env, definitions); err != nil {
+		return nil, err
+	}
+	if err := deriveEnvironmentLogMQTTTransport(env, definitions); err != nil {
+		return nil, err
+	}
+	bindEnvironmentVideoStorageObjectStorage(definitions)
+	if intent == nil {
+		// Native endpoint projection belongs to execution after allocation; the
+		// fresh intent pass checks references without inventing those outputs.
+		if err := deriveEnvironmentOTAStartup(definitions); err != nil {
+			return nil, err
+		}
+		if err := deriveEnvironmentVideoStorageStartup(env, definitions); err != nil {
+			return nil, err
+		}
+	}
+	// The native host consumes the same explicit listener intent before it binds
+	// the registered HTTPS callback. A missing flag must not create a WS listener.
+	for _, d := range definitions {
+		if deploymentplan.ID(d.Object) != "Deployment/"+env["CLOUD_STACK_NAME"]+"-video-cloud/mqtt-pki" {
+			continue
+		}
+		container := managedNamedField(environmentPKIPod(d.Object)["containers"], "mqtt")
+		if container != nil {
+			enabled := "false"
+			if lkeTestLabEnabled(env) {
+				enabled = "true"
+			}
+			container["env"] = mergeEnvironmentNamedFields(container["env"], environmentCreateEnv(map[string]string{"EMQX_LISTENERS__WS__TESTLAB__ENABLE": enabled, "EMQX_LISTENERS__WS__TESTLAB__ENABLE_AUTHN": "true"}))
+		}
+	}
 	if err := pinEnvironmentResourceImages(definitions, release); err != nil {
+		return nil, err
+	}
+	if err := validateEnvironmentOTARegistrationRelease(definitions, release); err != nil {
 		return nil, err
 	}
 	sort.Slice(definitions, func(i, j int) bool {
@@ -374,7 +494,7 @@ func renderManagedEnvironmentComponent(env map[string]string, binding environmen
 			binary, port := binding.Name, 0
 			switch binding.Component {
 			case "certissuer", "service-issuer":
-				binary, port = "certissuer", envIntDefault("LKE_CERT_ISSUER_PORT", 18444)
+				binary, port = "certissuer", lkeResolveCertIssuerTLSConfig(env).HTTPSPort
 				if binding.Name == "factoryenroll" {
 					binary, port = "factoryenroll", 18443
 				}

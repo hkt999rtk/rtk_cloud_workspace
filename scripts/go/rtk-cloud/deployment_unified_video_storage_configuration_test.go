@@ -14,6 +14,10 @@ func TestSharedVideoStorageWorkerKeepsCoreRoleAndOriginalIdentityAcrossEnvironme
 		t.Run(environment, func(t *testing.T) {
 			env, b, release := completeEnvironmentRenderFixture(environment)
 			env["VIDEO_STORAGE_SERVICE_REGISTRATION_ENABLED"], env["LKE_VIDEO_STORAGE_SERVICE_REGISTRATION_ENABLED"] = "true", "true"
+			env["ACCOUNT_MANAGER_SERVICE_REGISTRATION_ENABLED"], env["LKE_ACCOUNT_MANAGER_SERVICE_REGISTRATION_ENABLED"] = "true", "true"
+			for key, value := range map[string]string{"BUCKET": "isolated-media-" + environment, "REGION": "us-sea", "PREFIX": "environments/video-cloud-" + environment, "ENDPOINT": "https://isolated-media.example.invalid"} {
+				env["VIDEO_CLOUD_VIDEO_STORAGE_BLOB_"+key] = value
+			}
 			b.IngressAdmission = &environmentAdmissionBinding{SecretName: "ingress-nginx-admission", CABundle: base64.StdEncoding.EncodeToString(testOpenBaoCAPEM(t))}
 			restore := installAllCredentialEnvironment(env)
 			defer restore()

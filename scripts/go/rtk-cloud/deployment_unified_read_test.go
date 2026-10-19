@@ -29,8 +29,8 @@ func TestNativeResourceReadClassifiesAndRetriesOnlyTransientFailures(t *testing.
 			mode, code string
 			calls      int
 		}{
-			{"valid", "", 1}, {"unavailable-once", "", 2}, {"rate-limit-once", "", 2}, {"timeout-once", "", 2},
-			{"unavailable", "KUBE_UNAVAILABLE", 2}, {"rate-limit", "KUBE_RATE_LIMITED", 2}, {"timeout", "KUBE_TIMEOUT", 2},
+			{"valid", "", 1}, {"unavailable-once", "", 2}, {"unavailable-twice", "", 3}, {"rate-limit-once", "", 2}, {"timeout-once", "", 2},
+			{"unavailable", "KUBE_UNAVAILABLE", 3}, {"rate-limit", "KUBE_RATE_LIMITED", 3}, {"timeout", "KUBE_TIMEOUT", 3},
 			{"forbidden", "KUBE_FORBIDDEN", 1}, {"unauthorized", "KUBE_UNAUTHORIZED", 1}, {"not-found", "KUBE_NOT_FOUND", 1},
 			{"command-failed", "KUBE_COMMAND_FAILED", 1}, {"malformed", "KUBE_INVALID_RESPONSE", 1},
 			{"oversized-stdout", "KUBE_INVALID_RESPONSE", 1}, {"oversized-stderr", "KUBE_INVALID_RESPONSE", 1}, {"missing", "", 1},

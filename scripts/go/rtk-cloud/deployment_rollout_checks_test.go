@@ -129,6 +129,31 @@ func TestRolloutSecretMountQualification(t *testing.T) {
 	}
 }
 
+func TestRolloutSecretMountAcceptsOnlyReviewedSupplementaryRootGroupReader(t *testing.T) {
+	for _, tc := range []struct {
+		name, pod, container, mount, secret string
+		passed                              bool
+	}{
+		{"exact container profile", `"supplementalGroups":[0]`, `"runAsUser":10001,"runAsGroup":10001,"runAsNonRoot":true`, `"readOnly":true`, `"defaultMode":288`, true},
+		{"effective Pod profile", `"supplementalGroups":[0],"runAsUser":10001,"runAsGroup":10001,"runAsNonRoot":true`, ``, `"readOnly":true`, `"defaultMode":288`, true},
+		{"container UID override", `"supplementalGroups":[0],"runAsUser":10001,"runAsGroup":10001,"runAsNonRoot":true`, `"runAsUser":10002`, `"readOnly":true`, `"defaultMode":288`, false},
+		{"container GID override", `"supplementalGroups":[0],"runAsUser":10001,"runAsGroup":10001,"runAsNonRoot":true`, `"runAsGroup":10002`, `"readOnly":true`, `"defaultMode":288`, false},
+		{"container nonroot override", `"supplementalGroups":[0],"runAsUser":10001,"runAsGroup":10001,"runAsNonRoot":true`, `"runAsNonRoot":false`, `"readOnly":true`, `"defaultMode":288`, false},
+		{"foreign supplementary group", `"supplementalGroups":[10001]`, `"runAsUser":10001,"runAsGroup":10001,"runAsNonRoot":true`, `"readOnly":true`, `"defaultMode":288`, false},
+		{"writable Secret mount", `"supplementalGroups":[0]`, `"runAsUser":10001,"runAsGroup":10001,"runAsNonRoot":true`, `"readOnly":false`, `"defaultMode":288`, false},
+		{"owner-only key", `"supplementalGroups":[0]`, `"runAsUser":10001,"runAsGroup":10001,"runAsNonRoot":true`, `"readOnly":true`, `"defaultMode":256`, false},
+		{"item key override", `"supplementalGroups":[0]`, `"runAsUser":10001,"runAsGroup":10001,"runAsNonRoot":true`, `"readOnly":true`, `"defaultMode":288,"items":[{"key":"tls.key","path":"tls.key","mode":256}]`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := []byte(fmt.Sprintf(`{"securityContext":{%s},"containers":[{"securityContext":{%s},"volumeMounts":[{"name":"pki",%s}]}],"volumes":[{"name":"pki","secret":{%s}}]}`, tc.pod, tc.container, tc.mount, tc.secret))
+			check := checkRolloutMountsJSON(raw, "isolated restricted Secret profile", true)
+			if check.Passed != tc.passed {
+				t.Fatal("supplementary-root-group proof changed another reader or ignored effective overrides", check)
+			}
+		})
+	}
+}
+
 func TestRolloutSecretMountQualificationAcceptsStatefulSetClaimTemplate(t *testing.T) {
 	raw := `{
 		"apiVersion":"apps/v1",

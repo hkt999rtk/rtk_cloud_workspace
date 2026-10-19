@@ -126,12 +126,16 @@ func (c *compiledEnvironmentDeployment) CheckMQTTFoundationIdentity(ctx context.
 	definitions := []deploymentplan.Definition{}
 	for _, resource := range c.Plan.Resources {
 		if resource.Desired != nil {
-			definitions = append(definitions, deploymentplan.Definition{Object: resource.Desired})
+			object := deploymentplan.Clone(resource.Desired)
+			deploymentplan.Map(object["metadata"])["uid"] = resource.UID
+			definitions = append(definitions, deploymentplan.Definition{Object: object})
 		}
 	}
-	return checkMQTTFoundationIdentity(ctx, c.Configuration.Values, definitions, now, c.Backend.Read)
+	return checkMQTTFoundationIdentity(ctx, c.Configuration.Values, definitions, now, c.Backend.Read, func(ctx context.Context, account, listener deploymentplan.Object) (deploymentplan.Object, error) {
+		return readAccountRegistrationPublicListener(ctx, c.Configuration, c.Store, account, listener, now, c.Backend.Read, func(ctx context.Context, args ...string) ([]byte, error) { return c.Backend.command(ctx, nil, args...) })
+	})
 }
-func checkMQTTFoundationIdentity(ctx context.Context, env map[string]string, definitions []deploymentplan.Definition, now time.Time, read func(context.Context, string) (deploymentplan.Object, error)) error {
+func checkMQTTFoundationIdentity(ctx context.Context, env map[string]string, definitions []deploymentplan.Definition, now time.Time, read func(context.Context, string) (deploymentplan.Object, error), liveListeners ...accountRegistrationListenerRead) error {
 	foundation := mqttFoundationTarget(definitions, "Deployment", "video-cloud-mqttfoundation")
 	account := mqttFoundationTarget(definitions, "Deployment", "account-manager")
 	identityName := mqttFoundationMountedSecret(foundation, mqttFoundationPrimary(foundation), "/etc/video_cloud/platform-service")
@@ -150,8 +154,19 @@ func checkMQTTFoundationIdentity(ctx context.Context, env map[string]string, def
 	if err != nil || listener == nil {
 		return block("original Account Manager listener TLS/CRL Secret is unavailable")
 	}
-	if validatePlatformServiceIdentityMaterial(identity, listener, "service:mqtt", lkeRegistrationServerDNS(env), now) != nil {
-		return block("registration certificate/key, service identity, mutual trust or current issuer CRL is invalid for the checked rollout window")
+	if accountRegistrationPublicCRLDeclared(account) {
+		if len(liveListeners) != 1 || liveListeners[0] == nil {
+			return block("managed registration public CRL reader is unavailable")
+		}
+		listener, err = liveListeners[0](ctx, account, listener)
+		if err != nil {
+			return block("managed registration public CRL export validation failed")
+		}
+	}
+	if err := validatePlatformServiceIdentityMaterial(identity, listener, "service:mqtt", lkeRegistrationServerDNS(env), now); err != nil {
+		// This validator emits only checker-owned material errors. Provider
+		// read failures above remain masked; never append tool stderr.
+		return block("registration identity validation failed: " + err.Error())
 	}
 	return nil
 }

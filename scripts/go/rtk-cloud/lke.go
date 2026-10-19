@@ -1210,7 +1210,7 @@ func parseFirstCertificatePEM(certPEM []byte) (*x509.Certificate, error) {
 }
 
 func lkePublicHTTPSTLSSecretName(env map[string]string) string {
-	return firstNonEmpty(os.Getenv("LKE_PUBLIC_HTTPS_TLS_SECRET"), "video-cloud-staging-public-tls")
+	return firstNonEmpty(env["LKE_PUBLIC_HTTPS_TLS_SECRET"], lkeName(env["CLOUD_STACK_NAME"])+"-public-tls")
 }
 
 func lkePublicHTTPSTLSSecretManifest(env map[string]string, certPEM, keyPEM string) string {
@@ -1529,11 +1529,11 @@ metadata:
 spec:
   ingressClassName: nginx
   tls:
-    - secretName: video-cloud-staging-public-tls
+    - secretName: %s
       hosts:
 %s
   rules:
-%s`, name, lkeIngressNamespace(env), name, env["CLOUD_STACK_NAME"], redirect, redirect, bodySize, annotations, lkePublicHTTPSTLSHostsYAML(routes), rules.String())
+%s`, name, lkeIngressNamespace(env), name, env["CLOUD_STACK_NAME"], redirect, redirect, bodySize, annotations, lkePublicHTTPSTLSSecretName(env), lkePublicHTTPSTLSHostsYAML(routes), rules.String())
 }
 
 func lkePublicHTTPSTLSHostsYAML(routes []lkePublicHTTPSRoute) string {
@@ -1568,6 +1568,7 @@ func lkePublicHTTPSNetworkPolicyManifests(env map[string]string, routes []lkePub
 		manifests = append(manifests, lkeAllowPublicIngressNetworkPolicyManifest(env, namespace, ports))
 	}
 	manifests = append(manifests, lkeAllowPostgresClientsNetworkPolicyManifest(env))
+	manifests = append(manifests, lkeAllowPostgresOpenBaoNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowOpenBaoClientsNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowAccountManagerCertIssuerNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowCloudAdminFactoryEnrollNetworkPolicyManifest(env))
@@ -1914,6 +1915,39 @@ spec:
         - protocol: TCP
           port: 8200
 `, lkeNamespaceName(env, "secrets"), env["CLOUD_STACK_NAME"], lkeNamespaceName(env, "video-cloud"))
+}
+
+// OpenBao's native TLS installer and running host verify their retained
+// identities against the central PKI registry. Keep that one cross-namespace
+// database path separate from the existing application policy.
+func lkeAllowPostgresOpenBaoNetworkPolicyManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-postgres-openbao
+  namespace: %s
+  labels:
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: postgresql
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: %s
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: openbao
+      ports:
+        - protocol: TCP
+          port: 5432
+`, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"], lkeNamespaceName(env, "secrets"))
 }
 
 func lkeAllowAccountManagerCertIssuerNetworkPolicyManifest(env map[string]string) string {
@@ -8818,7 +8852,7 @@ stringData:
   BILLING_HANDOFF_TOKEN: %q
   MQTT_USAGE_SETTLEMENT_TOKEN: %q
   BILLING_DEBIT_SOURCE: "rtk_billing"
-  PAYMENT_SIMULATOR_ENABLED: "true"
+  PAYMENT_SIMULATOR_ENABLED: %q
   PAYMENT_SIMULATOR_RUN_ID: %q
   PAYMENT_SIMULATOR_BASE_URL: %q
   PAYMENT_SIMULATOR_PUBLIC_BASE_URL: %q
@@ -8826,7 +8860,7 @@ stringData:
   PAYMENT_SIMULATOR_SHARED_SECRET: %q
   PAYMENT_SIMULATOR_CALLBACK_SECRET: %q
   PAYMENT_SIMULATOR_SCENARIO: %q
-  NEWEBPAY_ENABLED: "true"
+  NEWEBPAY_ENABLED: %q
   NEWEBPAY_ENVIRONMENT: "sandbox"
   NEWEBPAY_MERCHANT_ID: %q
   NEWEBPAY_HASH_KEY: %q
@@ -8846,8 +8880,8 @@ stringData:
   PAYPAL_CANCEL_URL: %q
   PAYPAL_AFTER_RETURN_URL: %q
   PAYMENT_WORKER_ENABLED: "true"
-  ENVIRONMENT: "staging"
-`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], lkeBillingDatabaseURL(env), lkeRuntimeSecretValue("postgres"), lkeBillingServiceToken(), lkeBillingInternalToken(), lkeBillingDebitToken(), lkeBillingCloudCreationToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkeHandoffRuntimeValue(env, lkeMQTTUsageSettlementToken()), lkePaymentSimulatorRunID(env), lkePaymentSimulatorInternalURL(env), "https://"+lkePaymentSimulatorPublicDomain(env), lkeBillingInternalURL(env)+"/v1/internal/payment-simulator/setup-callback", lkeRuntimeSecretValue("payment-simulator-shared"), lkeRuntimeSecretValue("payment-simulator-callback"), firstNonEmpty(lkeEnvValue(env, "PAYMENT_SIMULATOR_SCENARIO"), "success"), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkeNewebPayEndpointBaseURL(env), lkeNewebPayNotifyURL(env), lkeNewebPayReturnURL(env), lkeNewebPayNotifyURL(env), lkePaymentSimulatorAdminToken(env), lkePaymentReferenceEncryptionKey(env), strconv.FormatBool(lkePayPalEnabled(env)), firstNonEmpty(lkeEnvValue(env, "PAYPAL_ENVIRONMENT"), "sandbox"), lkePayPalSecret(env, "paypal-client-id"), lkePayPalSecret(env, "paypal-client-secret"), lkePayPalSecret(env, "paypal-webhook-id"), lkePayPalReturnURL(env), lkePayPalCancelURL(env), lkePayPalAfterReturnURL(env))
+  ENVIRONMENT: %q
+`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], lkeBillingDatabaseURL(env), lkeRuntimeSecretValue("postgres"), lkeBillingServiceToken(), lkeBillingInternalToken(), lkeBillingDebitToken(), lkeBillingCloudCreationToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkeHandoffRuntimeValue(env, lkeMQTTUsageSettlementToken()), environmentBillingTestSetting(env, "PAYMENT_SIMULATOR_ENABLED"), lkePaymentSimulatorRunID(env), lkePaymentSimulatorInternalURL(env), "https://"+lkePaymentSimulatorPublicDomain(env), lkeBillingInternalURL(env)+"/v1/internal/payment-simulator/setup-callback", lkeRuntimeSecretValue("payment-simulator-shared"), lkeRuntimeSecretValue("payment-simulator-callback"), firstNonEmpty(lkeEnvValue(env, "PAYMENT_SIMULATOR_SCENARIO"), "success"), environmentBillingTestSetting(env, "NEWEBPAY_ENABLED"), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkeNewebPayEndpointBaseURL(env), lkeNewebPayNotifyURL(env), lkeNewebPayReturnURL(env), lkeNewebPayNotifyURL(env), lkePaymentSimulatorAdminToken(env), lkePaymentReferenceEncryptionKey(env), strconv.FormatBool(lkePayPalEnabled(env)), firstNonEmpty(lkeEnvValue(env, "PAYPAL_ENVIRONMENT"), "sandbox"), lkePayPalSecret(env, "paypal-client-id"), lkePayPalSecret(env, "paypal-client-secret"), lkePayPalSecret(env, "paypal-webhook-id"), lkePayPalReturnURL(env), lkePayPalCancelURL(env), lkePayPalAfterReturnURL(env), env["CLOUD_ENV_NAME"])
 }
 
 func lkeCloudAdminBillingSecretManifest(env map[string]string) string {

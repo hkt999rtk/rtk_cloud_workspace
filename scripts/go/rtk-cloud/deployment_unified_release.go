@@ -28,6 +28,28 @@ func environmentReleaseFailure(err error, id, resource, cause, next string) erro
 		}
 		return err
 	}
+	if err != nil {
+		code := ""
+		switch err.Error() {
+		case "selected environment credentials unavailable":
+			code = "ENV_STORE"
+		case "selected environment GHCR_PULL_TOKEN is required for formal CI artifact access":
+			code = "ENV_CI_TOKEN"
+		case "formal CI artifact access failed; check environment token permissions and provider availability":
+			code = "CI_ACCESS"
+		case "candidate image revision does not match the selected source checkout; pull the exact image and select its source":
+			code = "OCI_REVISION"
+		case "docker release prerequisite failed; check authentication, tool availability and deadline":
+			code = "DOCKER_READ"
+		case "formal LKE image publication job has not passed":
+			code = "PUBLICATION_JOB"
+		case "image publication job evidence is malformed or incomplete":
+			code = "PUBLICATION_INVENTORY"
+		}
+		if code != "" {
+			cause += " [" + code + "]"
+		}
+	}
 	return &deploymentplan.Blocker{ID: id, Resource: resource, Cause: cause, Next: next}
 }
 
@@ -35,8 +57,135 @@ func verifyEnvironmentRelease(ctx context.Context, cfg deploymentConfig, release
 	return verifyEnvironmentReleaseWithCommand(ctx, cfg, release, environmentCIImageCommand(cfg))
 }
 
+// Only catalog roles and fixed query steps reach progress output. Image refs,
+// GitHub paths, source revisions and subprocess diagnostics remain private.
+func environmentReleaseProgressStage(key, step string) string {
+	role := "selected-image"
+	switch key {
+	case "workspace":
+		role = "workspace"
+	case "LKE_POSTGRES_BACKUP_RUNNER_IMAGE":
+		role = "postgres-backup"
+	case "LKE_MQTT_PKI_IMAGE":
+		role = "mqtt-pki"
+	case "LKE_OPENBAO_PKI_IMAGE":
+		role = "openbao-pki"
+	default:
+		for _, source := range lkeServiceImageSources() {
+			if key == source.EnvKey {
+				role = source.Name
+				break
+			}
+		}
+		for _, provider := range environmentProviderImageKeys {
+			if key == provider {
+				role = strings.ToLower(strings.ReplaceAll(strings.TrimSuffix(strings.TrimPrefix(provider, "LKE_"), "_IMAGE"), "_", "-"))
+				break
+			}
+		}
+	}
+	switch step {
+	case "workspace-pin", "checkout-head", "pull", "oci-labels", "ci-runs", "release-runs", "publication-jobs", "workspace-baseline-runs", "backup-runs", "release-run", "artifact-list", "artifact-download":
+		return "deployment.release.verify." + role + "." + step
+	default:
+		return ""
+	}
+}
+
+// Classify fixed command shapes rather than exposing arguments or endpoints.
+// Multiple observations of the same prerequisite retain the same progress ID;
+// the command adapter still executes and tracks every individual observation.
+func environmentReleaseProgressStep(command string, args []string) string {
+	switch command {
+	case "git":
+		if len(args) >= 4 && args[0] == "-C" {
+			switch args[2] {
+			case "ls-tree":
+				return "workspace-pin"
+			case "rev-parse":
+				if args[3] == "HEAD" {
+					return "checkout-head"
+				}
+			}
+		}
+	case "docker":
+		if len(args) > 0 && args[0] == "pull" {
+			return "pull"
+		}
+		if len(args) > 1 && args[0] == "image" && args[1] == "inspect" {
+			return "oci-labels"
+		}
+	case "gh":
+		if len(args) < 2 || args[0] != "api" {
+			return ""
+		}
+		endpoint, _, _ := strings.Cut(args[1], "?")
+		_, action, found := strings.Cut(endpoint, "/actions/")
+		if !strings.HasPrefix(endpoint, "repos/") || !found {
+			return ""
+		}
+		switch action {
+		case "workflows/ci.yml/runs":
+			return "ci-runs"
+		case "workflows/release.yml/runs":
+			return "release-runs"
+		case "workflows/workspace-test-baseline.yml/runs":
+			return "workspace-baseline-runs"
+		case "workflows/postgres-backup-image.yml/runs":
+			return "backup-runs"
+		}
+		parts := strings.Split(action, "/")
+		if len(parts) >= 2 && parts[1] != "" {
+			if parts[0] == "runs" {
+				if len(parts) == 2 {
+					return "release-run"
+				}
+				if len(parts) == 3 {
+					switch parts[2] {
+					case "jobs":
+						return "publication-jobs"
+					case "artifacts":
+						return "artifact-list"
+					}
+				}
+			}
+			if parts[0] == "artifacts" && len(parts) == 3 && parts[2] == "zip" {
+				return "artifact-download"
+			}
+		}
+	}
+	return ""
+}
+
+func environmentReleaseProgressCommand(key string, run environmentReleaseCommand, advance func(string)) environmentReleaseCommand {
+	if run == nil {
+		return nil
+	}
+	return func(ctx context.Context, command string, args ...string) ([]byte, error) {
+		action := "read"
+		switch command {
+		case "docker":
+			action = "release-image"
+		case "gh":
+			action = "release-ci"
+		}
+		if stage := environmentReleaseProgressStage(key, environmentReleaseProgressStep(command, args)); stage != "" {
+			if advance != nil {
+				advance(stage)
+			} else {
+				environmentDeploymentProgress(ctx, stage)
+			}
+		}
+		done := environmentDeploymentOperation(ctx, action, "")
+		defer done()
+		return run(ctx, command, args...)
+	}
+}
+
 func verifyEnvironmentReleaseWithCommand(ctx context.Context, cfg deploymentConfig, release environmentRelease, run func(context.Context, string, ...string) ([]byte, error)) error {
-	if err := verifyEnvironmentReleaseCheckout(ctx, cfg.Workspace, release.WorkspaceRevision, run); err != nil {
+	nextStep, abortSteps := environmentDeploymentSteps(ctx)
+	defer abortSteps()
+	if err := verifyEnvironmentReleaseCheckout(ctx, cfg.Workspace, release.WorkspaceRevision, environmentReleaseProgressCommand("workspace", run, nextStep)); err != nil {
 		return environmentReleaseFailure(err, "deployment.release.source", "workspace", "executing workspace revision does not match the selected immutable release", environmentReleaseSourceNext)
 	}
 	keys := make([]string, 0, len(release.Images))
@@ -50,8 +199,9 @@ func verifyEnvironmentReleaseWithCommand(ctx context.Context, cfg deploymentConf
 			return err
 		}
 		image := release.Images[key]
+		imageRun := environmentReleaseProgressCommand(key, run, nextStep)
 		if !pulled[image.Reference] {
-			if _, err := run(ctx, "docker", "pull", "--platform", "linux/amd64", image.Reference); err != nil {
+			if _, err := imageRun(ctx, "docker", "pull", "--platform", "linux/amd64", image.Reference); err != nil {
 				return environmentReleaseFailure(err, "deployment.release.pull", key, "selected immutable image is unavailable for linux/amd64", environmentReleasePullNext)
 			}
 			pulled[image.Reference] = true
@@ -63,7 +213,7 @@ func verifyEnvironmentReleaseWithCommand(ctx context.Context, cfg deploymentConf
 			if image.SourceRevision != release.WorkspaceRevision {
 				return environmentReleaseFailure(nil, "deployment.release.backup", key, "backup runner source differs from the selected workspace release", environmentReleaseBackupNext)
 			}
-			if err := verifyEnvironmentBackupPublication(ctx, image, run); err != nil {
+			if err := verifyEnvironmentBackupPublication(ctx, image, imageRun); err != nil {
 				return err
 			}
 			continue
@@ -74,7 +224,7 @@ func verifyEnvironmentReleaseWithCommand(ctx context.Context, cfg deploymentConf
 		}
 		// The workspace release, service revision and OCI publication must all
 		// identify the same source. Never borrow CI evidence from a newer HEAD.
-		raw, err := run(ctx, "git", "-C", cfg.Workspace, "ls-tree", release.WorkspaceRevision, "--", source.RepoPath)
+		raw, err := imageRun(ctx, "git", "-C", cfg.Workspace, "ls-tree", release.WorkspaceRevision, "--", source.RepoPath)
 		if err != nil {
 			return environmentReleaseFailure(err, "deployment.release.source", key, "selected workspace release gitlink cannot be read", environmentReleaseSourceNext)
 		}
@@ -82,18 +232,18 @@ func verifyEnvironmentReleaseWithCommand(ctx context.Context, cfg deploymentConf
 		if len(fields) != 4 || fields[0] != "160000" || fields[1] != "commit" || fields[2] != image.SourceRevision || fields[3] != source.RepoPath {
 			return environmentReleaseFailure(nil, "deployment.release.source", key, "selected image source differs from its workspace release gitlink", environmentReleaseSourceNext)
 		}
-		raw, err = run(ctx, "git", "-C", filepath.Join(cfg.Workspace, source.RepoPath), "rev-parse", "HEAD")
+		raw, err = imageRun(ctx, "git", "-C", filepath.Join(cfg.Workspace, source.RepoPath), "rev-parse", "HEAD")
 		if err != nil || strings.TrimSpace(string(raw)) != image.SourceRevision {
 			return environmentReleaseFailure(err, "deployment.release.source", key, "schema and startup source checkout differs from the selected image source revision", environmentReleaseSourceNext)
 		}
-		if err := verifyEnvironmentReleaseCheckout(ctx, filepath.Join(cfg.Workspace, source.RepoPath), image.SourceRevision, run); err != nil {
+		if err := verifyEnvironmentReleaseCheckout(ctx, filepath.Join(cfg.Workspace, source.RepoPath), image.SourceRevision, imageRun); err != nil {
 			return environmentReleaseFailure(err, "deployment.release.source", key, "selected image source revision does not match its immutable release", environmentReleaseSourceNext)
 		}
-		if err := verifyDeploymentUpgradeImageCIAtWithCommand(ctx, image.Reference, image.SourceRevision, run); err != nil {
+		if err := verifyDeploymentUpgradeImageCIAtWithCommand(ctx, image.Reference, image.SourceRevision, imageRun); err != nil {
 			return environmentReleaseFailure(err, "deployment.release.publication", key, "selected image OCI revision or exact-source CI and publication evidence cannot be verified", environmentReleasePublicationNext)
 		}
 		repo := "hkt999rtk/" + source.RepoName
-		raw, err = run(ctx, "gh", "api", "repos/"+repo+"/actions/workflows/release.yml/runs?head_sha="+image.SourceRevision+"&per_page=100")
+		raw, err = imageRun(ctx, "gh", "api", "repos/"+repo+"/actions/workflows/release.yml/runs?head_sha="+image.SourceRevision+"&per_page=100")
 		if err != nil {
 			return environmentReleaseFailure(err, "deployment.release.publication", key, "exact-source Release run inventory is unavailable", environmentReleasePublicationNext)
 		}
@@ -101,17 +251,18 @@ func verifyEnvironmentReleaseWithCommand(ctx context.Context, cfg deploymentConf
 		if err != nil {
 			return environmentReleaseFailure(err, "deployment.release.publication", key, "a complete successful latest exact-source main Release run cannot be verified", environmentReleasePublicationNext)
 		}
-		if _, err = verifyEnvironmentPublication(ctx, repo, runID, image, false, run); err != nil {
+		if _, err = verifyEnvironmentPublication(ctx, repo, runID, image, false, imageRun); err != nil {
 			return environmentReleaseFailure(err, "deployment.release.publication", key, "selected immutable image cannot be verified against the exact successful Release attempt's formal artifact", environmentReleasePublicationNext)
 		}
 	}
 	if runner, ok := release.Images["LKE_POSTGRES_BACKUP_RUNNER_IMAGE"]; ok {
-		raw, err := run(ctx, "docker", "image", "inspect", runner.Reference, "--format", "{{json .Config.Labels}}")
+		raw, err := environmentReleaseProgressCommand("LKE_POSTGRES_BACKUP_RUNNER_IMAGE", run, nextStep)(ctx, "docker", "image", "inspect", runner.Reference, "--format", "{{json .Config.Labels}}")
 		var labels map[string]string
 		if err != nil || json.Unmarshal(raw, &labels) != nil || labels["org.opencontainers.image.base.name"] != release.Images["LKE_POSTGRES_IMAGE"].Reference {
 			return environmentReleaseFailure(err, "deployment.release.backup", "LKE_POSTGRES_BACKUP_RUNNER_IMAGE", "backup runner provenance does not match the selected PostgreSQL digest", environmentReleaseBackupNext)
 		}
 	}
+	nextStep("")
 	return nil
 }
 
@@ -135,37 +286,7 @@ func verifyEnvironmentReleaseCheckout(ctx context.Context, directory, revision s
 // Schema requirements belong to the published image's source commit. Working
 // tree additions or deletions must not change that image's migration inventory.
 func verifyEnvironmentReleaseSchemas(ctx context.Context, cfg deploymentConfig, store secretStore, release environmentRelease) error {
-	var images []string
-	for _, image := range release.Images {
-		if strings.HasPrefix(image.Reference, "ghcr.io/hkt999rtk/") && !strings.Contains(image.Reference, "/rtk_cloud_workspace/postgres-backup@") {
-			images = append(images, image.Reference)
-		}
-	}
-	return verifyDeploymentUpgradeSchemasWithInventory(store, images, func(source lkeServiceImageSource) ([]string, error) {
-		image, ok := release.Images[source.EnvKey]
-		if !ok || !deploymentUpgradeSHA.MatchString(image.SourceRevision) {
-			return nil, errors.New("candidate migration source revision is unavailable")
-		}
-		raw, err := deploymentUpgradeCommand(ctx, "git", "-C", filepath.Join(cfg.Workspace, source.RepoPath), "ls-tree", "-z", image.SourceRevision+":migrations")
-		if err != nil {
-			return nil, errors.New("candidate committed migration inventory cannot be read")
-		}
-		var versions []string
-		for _, entry := range strings.Split(string(raw), "\x00") {
-			if entry == "" {
-				continue
-			}
-			metadata, name, found := strings.Cut(entry, "\t")
-			fields := strings.Fields(metadata)
-			if !found || len(fields) != 3 || name == "" {
-				return nil, errors.New("candidate committed migration inventory is invalid")
-			}
-			if fields[1] == "blob" && strings.HasSuffix(name, ".sql") {
-				versions = append(versions, name)
-			}
-		}
-		return versions, nil
-	})
+	return verifyEnvironmentReleaseSchemasForPlan(ctx, cfg, store, release, nil, nil)
 }
 
 func verifyEnvironmentBackupPublication(ctx context.Context, image environmentReleaseImage, run func(context.Context, string, ...string) ([]byte, error)) error {

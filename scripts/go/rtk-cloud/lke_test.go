@@ -5008,6 +5008,21 @@ func TestLKEEMQXBillingJobUsesRuntimeCredentialsAndEnvironmentNamespace(t *testi
 	if !strings.Contains(service, "name: dashboard\n      port: 18083") {
 		t.Fatalf("MQTT service does not expose the internal dashboard API:\n%s", service)
 	}
+	logPath := fakeKubectl(t)
+	if err := lkeConfigureEMQXBilling(provisionPaths{Workspace: mustWorkspaceRoot(t)}, env); err != nil {
+		t.Fatal(err)
+	}
+	log := readTestFile(t, logPath)
+	for _, want := range []string{
+		"configure-emqx-billing.sh: |",
+		"upsert_json() {",
+		"exec /scripts/configure-emqx-billing.sh",
+		"ARGS -n video-cloud-dev-video-cloud wait --for=condition=complete job/emqx-billing-configure",
+	} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("configurator did not publish the maintained script and wait for its Job: missing %q", want)
+		}
+	}
 }
 
 func TestRunProvisionLKEDeployWritesLegacyStackAndVideoState(t *testing.T) {

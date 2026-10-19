@@ -47,7 +47,7 @@ func runDeploymentDNSImport(args []string) error {
 		return exitCode(1)
 	}
 	fmt.Fprintf(os.Stdout, "IMPORTED environment=%s files=%d location=~/.config/rtk_cloud/%s/deployment/dns/%s\n", cfg.Environment, count, cfg.Environment, cfg.DNSAdapter)
-	fmt.Fprintln(os.Stdout, "Original source bytes are archived. No DNS records or credentials were changed. Repeat full preflight; import is not GO.")
+	fmt.Fprintln(os.Stdout, "Original source bytes are archived. No DNS records or credentials were changed. Removal still requires original DNS ownership and completed ACME cleanup. Run full preflight before a subsequent deployment; import is not GO.")
 	return nil
 }
 
