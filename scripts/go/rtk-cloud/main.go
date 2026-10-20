@@ -1209,7 +1209,7 @@ func runTestMatrix(args []string) error {
 	if err := runCmd(workspace, "git", "diff", "--check"); err != nil {
 		return err
 	}
-	if err := runWorkspaceBaselineCmd(workspace, "go", "test", "-timeout=180m", "./scripts/go/..."); err != nil {
+	if err := runWorkspaceBaselineCmd(workspace, "go", "test", "-json", "-failfast", "-timeout=180m", "./scripts/go/..."); err != nil {
 		return err
 	}
 	fmt.Fprintln(os.Stdout)

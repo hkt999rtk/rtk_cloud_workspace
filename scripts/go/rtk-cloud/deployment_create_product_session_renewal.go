@@ -210,14 +210,22 @@ func validateProductSessionRenewalSource(store secretStore, e *environmentCreate
 	return nil
 }
 func readProductSessionRenewalObserved(store secretStore, e *environmentCreateExecution, l *createNormalTailProductLifecycle, s productSessionRenewalSource) (*productSessionRenewalObserved, error) {
+	return readProductSessionRenewalObservedWithInstalled(store, e, l, s, nil)
+}
+
+// Reuse only the original installation authenticated during this read. An
+// independent entry point always resolves its installation afresh.
+func readProductSessionRenewalObservedWithInstalled(store secretStore, e *environmentCreateExecution, l *createNormalTailProductLifecycle, s productSessionRenewalSource, original *environmentProductIdentitySession) (*productSessionRenewalObserved, error) {
 	var o productSessionRenewalObserved
 	exists, err := readProductSessionRenewalJSON(store, l, "observed.json", &o, s.Generation)
 	if err != nil || !exists {
 		return nil, err
 	}
-	original, err := productSessionRenewalSourceInstalled(store, e, l, s)
-	if err != nil {
-		return nil, err
+	if original == nil {
+		original, err = productSessionRenewalSourceInstalled(store, e, l, s)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if o.SourceSHA256 != deploymentplan.Digest(s) || !environmentPreflightDigest.MatchString(o.CertificateSHA256) || !productSessionRenewalInstalledMatches(original, &o.Installed, s) {
 		return nil, productSessionRenewalBlock("observed session")
@@ -236,39 +244,59 @@ func productSessionRenewalInstalledMatches(old, new *environmentProductIdentityS
 	return new.EnrollmentSessionID == enrollment && new.Schema == old.Schema && new.ParentSHA256 == old.ParentSHA256 && new.PlanSHA256 == old.PlanSHA256 && new.OwnerSHA256 == old.OwnerSHA256 && deploymentplan.Digest(new.Outputs) == deploymentplan.Digest(old.Outputs) && deploymentplan.Digest(a.Root) == deploymentplan.Digest(b.Root) && deploymentplan.Digest(a.Intermediate) == deploymentplan.Digest(b.Intermediate) && a.BootstrapClaim == b.BootstrapClaim && a.CustodyReader == b.CustodyReader && a.BootstrapCredentialNamespace == b.BootstrapCredentialNamespace && slices.Equal(a.BootstrapCredentialNamespaces, b.BootstrapCredentialNamespaces) && b.BootstrapSessionID == s.SessionID && b.BootstrapCredentialSecret == "service-bootstrap-"+s.SessionID && len(b.CredentialUIDs) == 1 && environmentBootstrapOwnerUUID.MatchString(b.CredentialUIDs[b.BootstrapCredentialNamespace]) && b.CleanupBinding.SessionID == s.SessionID && b.CleanupBinding.SecretUID == b.CredentialUIDs[b.BootstrapCredentialNamespace] && b.CleanupBinding.PolicySHA256 == s.SignerPolicySHA256 && validateEnvironmentBootstrapCleanupBinding(&b.CleanupBinding, old.Ceremony.Root.Environment) == nil
 }
 func readProductSessionRenewalAt(store secretStore, e *environmentCreateExecution, l *createNormalTailProductLifecycle, generation int) (*productSessionRenewal, error) {
+	r, _, err := readProductSessionRenewalAtWithDependencies(store, e, l, generation, nil)
+	return r, err
+}
+
+// This result belongs to one synchronous read, never an execution-wide cache.
+// A caller selecting dependencies may additionally qualify its configuration;
+// the canonical completion recipe remains mandatory in either case.
+func readProductSessionRenewalAtWithDependencies(store secretStore, e *environmentCreateExecution, l *createNormalTailProductLifecycle, generation int, cfg *deploymentConfig) (*productSessionRenewal, []deploymentplan.Resource, error) {
 	if e == nil || l == nil {
-		return nil, productSessionRenewalBlock("owner")
+		return nil, nil, productSessionRenewalBlock("owner")
 	}
 	var r productSessionRenewal
 	exists, err := readProductSessionRenewalJSON(store, l, "completed.json", &r, generation)
 	if err != nil || !exists {
-		return nil, err
+		return nil, nil, err
 	}
 	s, err := readProductSessionRenewalSourceForGeneration(store, e, l, generation)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if s == nil {
-		return nil, productSessionRenewalBlock("missing source")
+		return nil, nil, productSessionRenewalBlock("missing source")
 	}
 	old, err := productSessionRenewalSourceInstalled(store, e, l, *s)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if s == nil {
-		return nil, productSessionRenewalBlock("missing source")
+		return nil, nil, productSessionRenewalBlock("missing source")
 	}
-	o, err := readProductSessionRenewalObserved(store, e, l, *s)
+	o, err := readProductSessionRenewalObservedWithInstalled(store, e, l, *s, old)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if s == nil || o == nil || r.Schema != productSessionRenewalSchema || r.ScopeSHA256 != productIdentityScope(l) || r.SourceSHA256 != deploymentplan.Digest(s) || deploymentplan.Digest(r.Source) != deploymentplan.Digest(s) || deploymentplan.Digest(r.Original) != deploymentplan.Digest(old) || deploymentplan.Digest(r.Installed) != deploymentplan.Digest(o.Installed) || !productSessionRenewalInstalledMatches(old, &r.Installed, *s) || len(r.Stages) != 4 {
-		return nil, productSessionRenewalBlock("completion source")
+		return nil, nil, productSessionRenewalBlock("completion source")
 	}
-	if _, err = productSessionRenewalDependencyResources(deploymentConfig{Environment: l.Bootstrap.Environment, Values: map[string]string{"CLOUD_STACK_NAME": l.Bootstrap.Stack}}, store, e, l, &r); err != nil {
-		return nil, err
+	job, err := productSessionRenewalSourceJob(store, e, l, *s)
+	if err != nil {
+		return nil, nil, productSessionRenewalBlock("original Job source")
 	}
-	return &r, nil
+	canonical := deploymentConfig{Environment: l.Bootstrap.Environment, Values: map[string]string{"CLOUD_STACK_NAME": l.Bootstrap.Stack}}
+	deps, err := productSessionRenewalDependenciesFromValidatedSource(canonical, store, e, l, &r, old, job, o)
+	if err != nil {
+		return nil, nil, err
+	}
+	if cfg != nil && deploymentplan.Digest(*cfg) != deploymentplan.Digest(canonical) {
+		deps, err = productSessionRenewalDependenciesFromValidatedSource(*cfg, store, e, l, &r, old, job, o)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	return &r, deps, nil
 }
 func readEffectiveProductInstalled(store secretStore, e *environmentCreateExecution, l *createNormalTailProductLifecycle) (*environmentProductIdentitySession, error) {
 	r, err := readProductSessionRenewal(store, e, l)

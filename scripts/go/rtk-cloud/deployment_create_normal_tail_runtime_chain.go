@@ -217,16 +217,12 @@ func readCreateNormalTailRuntimeChain(store secretStore, e *environmentCreateExe
 			return bad("unexpected registration CRL source")
 		}
 		if source.SessionRenewal != nil {
-			r, er := readProductSessionRenewal(store, e, program.Products)
+			r, deps, er := readProductSessionRenewalWithDependencies(store, e, program.Products, &source.Configuration)
 			if er != nil {
 				return nil, er
 			}
 			if r == nil || deploymentplan.Digest(r) != deploymentplan.Digest(source.SessionRenewal) || d.SessionRenewalSHA256 != deploymentplan.Digest(r) {
 				return bad("numbered completed session renewal")
-			}
-			deps, er := productSessionRenewalDependencyResources(source.Configuration, store, e, program.Products, r)
-			if er != nil {
-				return nil, er
 			}
 			if deploymentplan.Digest(deps) != deploymentplan.Digest(source.SessionRenewalResources) {
 				return bad("numbered accepted renewal dependencies")

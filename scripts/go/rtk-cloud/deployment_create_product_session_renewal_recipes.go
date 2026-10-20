@@ -185,6 +185,14 @@ func productSessionRenewalDependencyResources(cfg deploymentConfig, store secret
 	if err != nil {
 		return nil, productSessionRenewalBlock("original Job source")
 	}
+	return productSessionRenewalDependenciesFromValidatedSource(cfg, store, e, l, r, original, job, nil)
+}
+
+// Source, original installation and Job have been authenticated during this
+// same read. A supplied observation was authenticated against that installation.
+// All accepted child, owner, credential and recipe checks remain here; callers
+// must not retain these inputs across another operation.
+func productSessionRenewalDependenciesFromValidatedSource(cfg deploymentConfig, store secretStore, e *environmentCreateExecution, l *createNormalTailProductLifecycle, r *productSessionRenewal, original *environmentProductIdentitySession, job deploymentplan.Object, observed *productSessionRenewalObserved) ([]deploymentplan.Resource, error) {
 	credential, _, err := acceptedCreateStage(store, e, "kubernetes/"+productSessionRenewalStage(l, r.Source, "credentials"))
 	if err != nil || len(credential.Resources) != 1 {
 		return nil, productSessionRenewalBlock("accepted new credential")
@@ -199,7 +207,10 @@ func productSessionRenewalDependencyResources(cfg deploymentConfig, store secret
 		material[k] = string(v)
 	}
 	pair, er := tls.X509KeyPair([]byte(material["tls.crt"]), []byte(material["tls.key"]))
-	observed, observeErr := readProductSessionRenewalObserved(store, e, l, r.Source)
+	var observeErr error
+	if observed == nil {
+		observed, observeErr = readProductSessionRenewalObservedWithInstalled(store, e, l, r.Source, original)
+	}
 	if er != nil || observeErr != nil || observed == nil || !managedLateBootstrapChainMatches(pair.Certificate, r.Original.Ceremony) || environmentPreflightBytesSHA256(pair.Certificate[0]) != observed.CertificateSHA256 {
 		return nil, productSessionRenewalBlock("accepted renewed native credential lineage")
 	}

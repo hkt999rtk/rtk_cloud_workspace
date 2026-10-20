@@ -28,18 +28,23 @@ func readProductSessionRenewalFirst(store secretStore, e *environmentCreateExecu
 	return readProductSessionRenewalAt(store, e, l, 0)
 }
 func readProductSessionRenewal(store secretStore, e *environmentCreateExecution, l *createNormalTailProductLifecycle) (*productSessionRenewal, error) {
-	first, err := readProductSessionRenewalFirst(store, e, l)
+	r, _, err := readProductSessionRenewalWithDependencies(store, e, l, nil)
+	return r, err
+}
+
+func readProductSessionRenewalWithDependencies(store secretStore, e *environmentCreateExecution, l *createNormalTailProductLifecycle, cfg *deploymentConfig) (*productSessionRenewal, []deploymentplan.Resource, error) {
+	first, firstDeps, err := readProductSessionRenewalAtWithDependencies(store, e, l, 0, cfg)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	next, err := readProductSessionRenewalAt(store, e, l, 2)
+	next, nextDeps, err := readProductSessionRenewalAtWithDependencies(store, e, l, 2, cfg)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if next != nil {
-		return next, nil
+		return next, nextDeps, nil
 	}
-	return first, nil
+	return first, firstDeps, nil
 }
 func readProductSessionRenewalSource(store secretStore, e *environmentCreateExecution, l *createNormalTailProductLifecycle) (*productSessionRenewalSource, error) {
 	next, err := readProductSessionRenewalSourceForGeneration(store, e, l, 2)

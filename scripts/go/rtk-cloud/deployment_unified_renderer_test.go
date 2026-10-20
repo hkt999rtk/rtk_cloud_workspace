@@ -74,17 +74,14 @@ func completeEnvironmentRenderFixture(environment string) (map[string]string, en
 		}
 		bindings.Pods = append(bindings.Pods, environmentPodBindings{Kind: kind, NamespaceSuffix: suffix, Name: name, Component: component, Containers: []environmentContainerBindings{{Name: containerName, ImageKey: imageKey, Fields: map[string]any{"env": []any{map[string]any{"name": "PKI_ENVIRONMENT", "value": environment}}}}}})
 	}
+	// The generic unowned Controller uses the maintained complete static TLS
+	// profile. Native identity tests replace its binding with the actual accepted
+	// Service recipe and owner; partial native state cannot augment static TLS.
 	for i := range bindings.Pods {
 		if bindings.Pods[i].Component == "managed-api" {
 			b := &bindings.Pods[i]
 			b.PodFields = map[string]any{"volumes": []any{map[string]any{"name": "mqtt-callback", "configMap": map[string]any{"name": "pki-mqtt-callback-ca"}}}}
 			b.Containers[0].Fields["volumeMounts"] = []any{map[string]any{"name": "mqtt-callback", "mountPath": "/run/mqtt-callback", "readOnly": true}}
-		}
-		if bindings.Pods[i].Component == "pki-controller" {
-			b := &bindings.Pods[i]
-			b.PodFields = map[string]any{"volumes": []any{map[string]any{"name": "host-state", "persistentVolumeClaim": map[string]any{"claimName": "pki-controller-service-identity"}}}}
-			b.Containers[0].Fields["env"] = append(certIssuerObjectList(b.Containers[0].Fields["env"]), map[string]any{"name": "PKI_HOST_IDENTITY_STATE", "value": "/var/lib/pki-host/identity/host.json"}, map[string]any{"name": "PKI_SERVICE_CLIENT_IDENTITY_STATE", "value": "/var/lib/pki-host/identity/client.json"})
-			b.Containers[0].Fields["volumeMounts"] = []any{map[string]any{"name": "host-state", "mountPath": "/var/lib/pki-host"}}
 		}
 	}
 	for i := range bindings.Pods {
