@@ -1188,6 +1188,17 @@ func runSecretsCheck(args []string) error {
 var runWorkspaceBaselineCmd = runCmd
 
 func runTestMatrix(args []string) error {
+	return runTestMatrixWithBaseline(args, func(workspace string) error {
+		return runWorkspaceBaselineCmd(workspace, "go", "test", "-json", "-failfast", "-timeout=180m", "./scripts/go/...")
+	})
+}
+
+// A full pre-PR run can supply its complete governed workspace test invocation
+// here. The callback must pass before the remaining matrix checks can proceed.
+func runTestMatrixWithBaseline(args []string, baseline func(string) error) error {
+	if baseline == nil {
+		return errors.New("workspace matrix requires a baseline test invocation")
+	}
 	fs := flag.NewFlagSet("test-matrix", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
@@ -1209,7 +1220,7 @@ func runTestMatrix(args []string) error {
 	if err := runCmd(workspace, "git", "diff", "--check"); err != nil {
 		return err
 	}
-	if err := runWorkspaceBaselineCmd(workspace, "go", "test", "-json", "-failfast", "-timeout=180m", "./scripts/go/..."); err != nil {
+	if err := baseline(workspace); err != nil {
 		return err
 	}
 	fmt.Fprintln(os.Stdout)

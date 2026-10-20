@@ -590,7 +590,9 @@ Run the fast workspace baseline: workspace/submodule status, diff checks, and Go
 
 ### `pre-pr`
 
-Use the same changed-path selector as GitHub Actions to run affected workspace policy checks, Go/JavaScript coverage, and Cloud Admin desktop/mobile headless E2E. It never connects to or deploys shared staging. Integration tests requiring PostgreSQL, EMQX, or other CI service containers remain in the PR CI plan.
+Use the same changed-path selector as GitHub Actions to run affected workspace policy checks, Go/JavaScript coverage, and Cloud Admin desktop/mobile headless E2E. Selected PostgreSQL and Video Cloud PostgreSQL/EMQX integration profiles run against isolated local fixtures and also remain in the PR CI plan. The command never connects to or deploys shared staging.
+
+When the policy matrix and full workspace-tooling coverage are both selected, one fresh instrumented run of every `scripts/go` package satisfies both the Go baseline and coverage checks. The matrix runs at the Go coverage stage so selected service fixtures remain available. All catalog, inventory, repository, coverage threshold, and selected UI checks remain required. A narrowed workspace coverage selection keeps the separate full baseline; standalone `test-matrix` also continues to run it. Failed or incomplete prior runs are never accepted as coverage evidence.
 
 Commit local changes and update `origin/main` first. The command rejects a dirty worktree so the selector cannot miss uncommitted paths:
 

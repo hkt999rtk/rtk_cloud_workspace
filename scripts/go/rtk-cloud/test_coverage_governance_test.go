@@ -752,7 +752,11 @@ func TestGoCoverageCommandExtendsOnlyWorkspaceToolingTimeout(t *testing.T) {
 					t.Fatalf("capture command failure = %v", err)
 				}
 				got := readTestFile(t, argsPath)
-				want := "test\n-json\n-count=1\n-timeout=" + tc.timeout + "\n./...\n-coverprofile=" + filepath.Join(outDir, "modules", tc.name, "coverage.out") + "\n"
+				want := "test\n-json\n-count=1\n-timeout=" + tc.timeout + "\n"
+				if tc.name == "workspace-tooling" {
+					want += "-failfast\n"
+				}
+				want += "./...\n-coverprofile=" + filepath.Join(outDir, "modules", tc.name, "coverage.out") + "\n"
 				if profile == "pr" {
 					want += "-coverpkg=./...\n"
 				}

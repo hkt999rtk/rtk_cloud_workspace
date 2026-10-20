@@ -6018,7 +6018,8 @@ printf '\n' >> "`+childLog+`"
 
 func TestStartK8SE2EPortForwardsStartsAllBeforeWaiting(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
-	kubectlLog := fakeKubectlForK8SE2EPortForwards(t)
+	services := []string{"svc/account-manager", "svc/video-cloud-api", "svc/factoryenroll", "svc/mqtt", "svc/cloud-logger"}
+	kubectlLog := fakeKubectlForK8SE2EPortForwards(t, services...)
 	writeTestFile(t, filepath.Join(envRoot, "state", "kubeconfig.yaml"), "apiVersion: v1\n")
 	accountPort := freeTCPPort(t)
 	videoPort := freeTCPPort(t)
@@ -6039,7 +6040,7 @@ func TestStartK8SE2EPortForwardsStartsAllBeforeWaiting(t *testing.T) {
 
 	log := readTestFile(t, kubectlLog)
 	lastStart := -1
-	for _, service := range []string{"svc/account-manager", "svc/video-cloud-api", "svc/factoryenroll", "svc/mqtt", "svc/cloud-logger"} {
+	for _, service := range services {
 		idx := strings.Index(log, "PF_START "+service)
 		if idx < 0 {
 			t.Fatalf("expected port-forward start for %s, got:\n%s", service, log)
@@ -7569,8 +7570,12 @@ fi
 	return logPath
 }
 
-func fakeKubectlForK8SE2EPortForwards(t *testing.T) string {
+func fakeKubectlForK8SE2EPortForwards(t *testing.T, expectedServices ...string) string {
 	t.Helper()
+	expectedJSON, err := json.Marshal(append([]string{}, expectedServices...))
+	if err != nil {
+		t.Fatal(err)
+	}
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "kubectl.log")
 	kubectl := filepath.Join(dir, "kubectl")
@@ -7614,10 +7619,25 @@ if [[ "${3:-}" == "port-forward" ]]; then
   exec python3 - "$local_port" "` + logPath + `" "$service" <<'PY'
 import socket
 import sys
+import time
+from pathlib import Path
 
 port = int(sys.argv[1])
 log_path = sys.argv[2]
 service = sys.argv[3]
+# Readiness depends on all selected starts, not child-process scheduling speed.
+# A sequential start-then-wait regression cannot release this finite barrier.
+expected_starts = {Path(log_path).with_name("started-" + name.replace("/", "-")) for name in ` + string(expectedJSON) + `}
+if expected_starts:
+    Path(log_path).with_name("started-" + service.replace("/", "-")).touch(mode=0o600)
+deadline = time.monotonic() + 10
+while expected_starts:
+    missing = sorted(marker.name for marker in expected_starts if not marker.is_file())
+    if not missing:
+        break
+    if time.monotonic() >= deadline:
+        raise SystemExit(f"port-forward start barrier timed out: {missing}")
+    time.sleep(0.01)
 sock = socket.socket()
 sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 sock.bind(("127.0.0.1", port))
