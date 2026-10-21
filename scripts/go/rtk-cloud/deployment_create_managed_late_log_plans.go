@@ -1,6 +1,6 @@
 package main
 
-// PRIVATE DRAFT ONLY. Qualification binds producers before new UID allocation.
+// Qualification binds original producers before allocating new native UIDs.
 
 import (
 	"context"

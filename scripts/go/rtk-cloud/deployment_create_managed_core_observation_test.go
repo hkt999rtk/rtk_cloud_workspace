@@ -352,11 +352,41 @@ func TestManagedCoreNativePolicyCarrierKeepsOriginalRecipeAndDBReference(t *test
 				pass = false
 			}
 			before := deploymentplan.Digest(core)
-			if (validateManagedCorePolicyCarrierResource(core, actual) == nil) != pass {
+			resource := core.Plan.Resources[14]
+			if (validateManagedCorePolicyCarrierResource(core, resource, resource.Baseline, actual) == nil) != pass {
 				t.Fatal("unqualifiednativecarrier", mode)
 			}
 			if before != deploymentplan.Digest(core) {
 				t.Fatal("carriercheckchangedsource")
+			}
+		})
+	}
+}
+
+func TestManagedCoreNativePolicyCarrierAcceptsOnlyTheCompletedForwardOwner(t *testing.T) {
+	core, candidate := managedCorePartialFixture(t)
+	resource := candidate.Resources[14]
+	actual := deploymentplan.Clone(resource.Desired)
+	deploymentplan.Map(actual["metadata"])["uid"] = resource.UID
+	if err := validateManagedCorePolicyCarrierResource(core, resource, resource.Desired, actual); err != nil {
+		t.Fatal("accepted forward CertIssuer was not a valid policy carrier", err)
+	}
+	for _, mode := range []string{"old-owner", "old-recipe", "replacement"} {
+		t.Run(mode, func(t *testing.T) {
+			observed := deploymentplan.Clone(actual)
+			selected := resource
+			carrier := resource.Desired
+			switch mode {
+			case "old-owner":
+				selected.UID = core.Plan.Resources[14].UID
+				selected.UID = "99999999-9999-4999-8999-999999999999"
+			case "old-recipe":
+				carrier = core.Plan.Resources[14].Baseline
+			case "replacement":
+				deploymentplan.Map(observed["metadata"])["uid"] = "99999999-9999-4999-8999-999999999999"
+			}
+			if validateManagedCorePolicyCarrierResource(core, selected, carrier, observed) == nil {
+				t.Fatal("accepted a carrier outside the completed forward authority", mode)
 			}
 		})
 	}

@@ -88,20 +88,20 @@ func prepareEnvironmentCreateProviderMaterial(ctx context.Context, cfg deploymen
 
 func writeEnvironmentCreateDerivedPrivateFile(store secretStore, relative string, expected []byte) error {
 	path, err := privateDeploymentStatePath(store.Environment, relative)
-	if err != nil || path != filepath.Join(store.Root, relative) {
+	if err != nil || path != filepath.Join(store.Root, relative) || len(expected) == 0 || int64(len(expected)) > environmentDerivedArtifactMaxBytes {
 		return createProviderBlocker("derived private creation state is not bound to the canonical selected environment")
 	}
 	if err := ensurePrivateDirectory(filepath.Dir(path)); err != nil {
 		return err
 	}
-	current, err := store.read(relative)
+	current, err := readBoundedDerivedArtifact(path)
 	if err == nil {
-		if !bytes.Equal([]byte(current), expected) && strings.TrimSpace(current) != strings.TrimSpace(string(expected)) {
+		if !bytes.Equal(current, expected) && strings.TrimSpace(string(current)) != strings.TrimSpace(string(expected)) {
 			return createProviderBlocker("retained selected creation material differs from its original identity")
 		}
 		return nil
 	}
-	if !errors.Is(err, os.ErrNotExist) {
+	if _, statErr := os.Lstat(path); !errors.Is(statErr, os.ErrNotExist) {
 		return createProviderBlocker("retained selected creation material cannot be inspected")
 	}
 	return store.write(relative, expected, false)

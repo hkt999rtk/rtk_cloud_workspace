@@ -284,6 +284,7 @@ func TestManagedLatePairedDependencyDiagnosisPreservesOnlyKnownPublicStages(t *t
 		want               string
 	}{
 		{"TLS-cache-permission", "openbao_tls", "targets", openBaoTLSRootCRLError("owned-regular0600-cache"), "paired-openbao_tls-targets-owned-regular0600-cache"},
+		{"TLS-Pod-owner", "openbao_tls", "targets", openBaoTLSRootCRLError("exact-two-native-consumer-owners-pod-owner"), "paired-openbao_tls-targets-exact-two-native-consumer-owners-pod-owner"},
 		{"TLS-ICA-signature", "openbao_tls", "targets", openBaoTLSRootCRLError("signed-ICA3-cache"), "paired-openbao_tls-targets-signed-ICA3-cache"},
 		{"MQTT-owner", "mqtt", "targets", mqttRootCRLError("one-current-owned-Pod"), "paired-mqtt-targets-one-current-owned-Pod"},
 		{"custody-file", "openbao_tls", "custody", errors.New("private-path secret-token"), "paired-openbao_tls-custody-native-or-private-read"},

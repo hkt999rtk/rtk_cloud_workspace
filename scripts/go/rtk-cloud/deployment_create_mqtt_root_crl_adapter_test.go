@@ -14,6 +14,50 @@ import (
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 )
 
+func TestCreateAdmittedGenerationResolvesOriginalAndProviderRecoveryParents(t *testing.T) {
+	cfg, store, e, original, plan := providerExecutionContractFixture(t)
+	loaded, configurationSHA, err := loadEnvironmentCreateAdmittedGeneration(store, e.Journal.PlanSHA256, e.Journal.ArtifactSHA256)
+	if err != nil || deploymentplan.Digest(loaded) != deploymentplan.Digest(plan) || configurationSHA != original.ConfigurationSHA256 || configurationSHA != deploymentplan.Digest(cfg) {
+		t.Fatal("original create admission cannot be recovered from its immutable artifact digest", err)
+	}
+	next, recovery := providerExecutionContractFork(t, e, plan, "")
+	loaded, configurationSHA, err = loadEnvironmentCreateAdmittedGeneration(store, next.Journal.PlanSHA256, next.Journal.ArtifactSHA256)
+	if err != nil || deploymentplan.Digest(loaded) != deploymentplan.Digest(plan) || configurationSHA != recovery.Plan.Plan.ConfigurationSHA256 || configurationSHA != deploymentplan.Digest(cfg) {
+		t.Fatal("provider recovery admission cannot be recovered from its immutable artifact digest", err)
+	}
+}
+
+func TestCreateGenerationAllowsOnlyQualifiedLegacyOpenBaoDNSCorrection(t *testing.T) {
+	admitted := environmentCreatePlan{Environment: "dev", Stack: "video-cloud-dev", ConfigurationSHA256: deploymentplan.Digest("cfg"), Bootstrap: environmentCreateBootstrapPlan{Domains: []environmentCreateIssuerPolicy{
+		{Domain: "mqtt", ServerDNSNames: []string{"mqtt.video-cloud-dev-video-cloud.svc"}},
+		{Domain: "openbao_tls", ServerDNSNames: []string{"openbao", "a.example", "b.example", "c.example", "d.example", "e.example", "f.example", "g.example"}},
+	}}}
+	raw, _ := json.Marshal(admitted)
+	var corrected environmentCreatePlan
+	if decodeEnvironmentJSON(raw, &corrected) != nil {
+		t.Fatal("fixture clone")
+	}
+	names, err := correctedOpenBaoDNSPolicy(corrected.Bootstrap.Domains[1].ServerDNSNames)
+	if err != nil {
+		t.Fatal(err)
+	}
+	corrected.Bootstrap.Domains[1].ServerDNSNames = names
+	if !environmentCreateGenerationMatchesAdmitted(admitted, admitted) || !environmentCreateGenerationMatchesAdmitted(admitted, corrected) {
+		t.Fatal("exact admission or maintained legacy DNS correction was rejected")
+	}
+	changed := corrected
+	changed.Stack = "foreign"
+	if environmentCreateGenerationMatchesAdmitted(admitted, changed) {
+		t.Fatal("unrelated generation drift was accepted")
+	}
+	raw, _ = json.Marshal(corrected)
+	_ = decodeEnvironmentJSON(raw, &changed)
+	changed.Bootstrap.Domains[1].ServerDNSNames = changed.Bootstrap.Domains[1].ServerDNSNames[:6]
+	if environmentCreateGenerationMatchesAdmitted(admitted, changed) {
+		t.Fatal("incomplete dotted DNS policy was accepted")
+	}
+}
+
 func TestMQTTRootCRLDomainSeamKeepsServiceStrictAndPreservesRealHistory(t *testing.T) {
 	root, key, snapshot, now := rootCRLFixture(t)
 	root.Domain = "mqtt"
@@ -168,6 +212,36 @@ func TestMQTTRootCRLJournalPinsActualCanonicalAdmissionAndExactFourSteps(t *test
 	pending.Entries[2].CompletedAt = time.Time{}
 	if !mqttRootCRLImportAdmitted(pending, a, source) || mqttRootCRLProgressValid(pending, a, source, true) {
 		t.Fatal("uncertain native import lost its exact pending fence")
+	}
+}
+
+func TestMQTTRootCRLJournalAcceptsEveryOrderedInProgressBoundary(t *testing.T) {
+	a, source, complete := mqttRootCRLJournalFixture(t)
+	for count := 1; count <= 4; count++ {
+		current := complete
+		current.Entries = append([]environmentCreateJournalEntry(nil), complete.Entries[:len(source.Entries)+count]...)
+		top := len(source.Entries)
+		current.Entries[top].State = "pending"
+		current.Entries[top].Receipt = nil
+		current.Entries[top].CompletedAt = time.Time{}
+		if count > 1 {
+			last := len(current.Entries) - 1
+			current.Entries[last].State = "pending"
+			current.Entries[last].Receipt = nil
+			current.Entries[last].CompletedAt = time.Time{}
+		}
+		if !mqttRootCRLProgressValid(current, a, source, false) {
+			t.Fatal("ordered in-progress boundary rejected", count)
+		}
+	}
+	current := complete
+	current.Entries = append([]environmentCreateJournalEntry(nil), complete.Entries...)
+	top := len(source.Entries)
+	current.Entries[top].State = "pending"
+	current.Entries[top].Receipt = nil
+	current.Entries[top].CompletedAt = time.Time{}
+	if !mqttRootCRLProgressValid(current, a, source, false) {
+		t.Fatal("completed children with pending parent rejected")
 	}
 }
 

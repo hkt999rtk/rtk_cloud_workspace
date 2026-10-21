@@ -39,7 +39,20 @@ func managedCoreAuthenticationSource(ctx context.Context, store secretStore, e *
 	if err != nil {
 		return nil, managedCoreObservationBlock("native-auth-checker")
 	}
-	if err := validateManagedCoreAuthenticationAdmission(e.Journal, captured, e.owner, owner, r, artifact, &preview, checker, time.Now().UTC()); err != nil {
+	current := e.Journal
+	if len(current.Entries) >= len(captured.Entries)+2 && len(current.KubernetesLeases) >= len(captured.KubernetesLeases)+1 {
+		frame := *e
+		frame.Journal = current
+		frame.Journal.Entries = slices.Clone(current.Entries[:len(captured.Entries)+2])
+		frame.Journal.KubernetesLeases = slices.Clone(current.KubernetesLeases[:len(captured.KubernetesLeases)+1])
+		if managedCorePartialNativeCheckpoint(store, &frame) {
+			current.Entries = slices.Clone(current.Entries)
+			copy(current.Entries[:len(captured.Entries)], captured.Entries)
+			current.KubernetesLeases = slices.Clone(current.KubernetesLeases)
+			copy(current.KubernetesLeases[:len(captured.KubernetesLeases)], captured.KubernetesLeases)
+		}
+	}
+	if err := validateManagedCoreAuthenticationAdmission(current, captured, e.owner, owner, r, artifact, &preview, checker, time.Now().UTC()); err != nil {
 		return nil, err
 	}
 	source := *e
@@ -52,7 +65,7 @@ func managedCoreAuthenticationSource(ctx context.Context, store secretStore, e *
 
 func validateManagedCoreAuthenticationAdmission(current, captured environmentCreateJournal, currentOwner, capturedOwner environmentCreateOwner, r *createServiceSessionRecovery, artifact createFoundationRecoveryArtifact, preview *deploymentplan.Plan, checker string, now time.Time) error {
 	bad := func(stage string) error { return managedCoreObservationBlock("native-auth-admission-" + stage) }
-	if r == nil || r.ManagedCorePartial == nil || r.Candidate == nil || preview == nil {
+	if r == nil || r.ManagedCorePartial == nil || preview == nil {
 		return bad("typed-profile")
 	}
 	core := r.ManagedCorePartial
@@ -60,7 +73,7 @@ func validateManagedCoreAuthenticationAdmission(current, captured environmentCre
 	sourceCore := *core
 	sourceCore.ForwardReview = ""
 	sourceCore.CertIssuerPrepare = nil
-	if core.Action != managedCoreRestoreOnly || r.Review != core.OriginalRepairReview || !environmentPreflightDigest.MatchString(review) || deploymentplan.Digest(artifact.Plan) != review || artifact.Schema != "rtk-cloud.create-openbao-recovery-artifact/v1" || artifact.Plan.Schema != managedCorePartialSchema || artifact.Plan.ParentSHA != current.PlanSHA256 || artifact.Plan.ParentJournalSHA != deploymentplan.Digest(captured) || artifact.Plan.ParentJournalSHA != core.SourceSHA || artifact.Plan.ParentOwnerSHA != deploymentplan.Digest(currentOwner) || deploymentplan.Digest(currentOwner) != deploymentplan.Digest(capturedOwner) || capturedOwner.Schema != environmentCreateOwnerSchema || capturedOwner.OwnerToken != current.OwnerToken || capturedOwner.PlanSHA256 != current.PlanSHA256 || artifact.Plan.CheckerSHA != checker || !environmentPreflightDigest.MatchString(checker) || captured.OwnerToken != current.OwnerToken || artifact.QualifiedAt.After(now) || !artifact.ValidUntil.Equal(artifact.QualifiedAt.Add(15*time.Minute)) || !now.Before(artifact.ValidUntil) || artifact.Qualification.PlanSHA256 != review || artifact.Qualification.Decision != "GO" || len(artifact.Qualification.Gates) != 6 {
+	if core.Action != managedCoreRestoreOnly || r.Review != core.OriginalRepairReview || !environmentPreflightDigest.MatchString(review) || deploymentplan.Digest(artifact.Plan) != review || artifact.Schema != "rtk-cloud.create-openbao-recovery-artifact/v1" || artifact.Plan.Schema != managedCorePartialSchema || artifact.Plan.ParentSHA != current.PlanSHA256 || artifact.Plan.ParentJournalSHA != deploymentplan.Digest(captured) || artifact.Plan.ParentJournalSHA != core.SourceSHA || artifact.Plan.ParentOwnerSHA != deploymentplan.Digest(currentOwner) || deploymentplan.Digest(currentOwner) != deploymentplan.Digest(capturedOwner) || capturedOwner.Schema != environmentCreateOwnerSchema || capturedOwner.OwnerToken != current.OwnerToken || capturedOwner.PlanSHA256 != current.PlanSHA256 || artifact.Plan.CheckerSHA != checker || !environmentPreflightDigest.MatchString(checker) || captured.OwnerToken != current.OwnerToken || artifact.QualifiedAt.After(now) || !artifact.ValidUntil.Equal(artifact.QualifiedAt.Add(15*time.Minute)) || artifact.Qualification.PlanSHA256 != review || artifact.Qualification.Decision != "GO" || len(artifact.Qualification.Gates) != 6 {
 		return bad("qualification")
 	}
 	for index, id := range []string{"deployment.openbao.target", "deployment.openbao.release", "deployment.openbao.storage", "deployment.openbao.bootstrap", "deployment.openbao.network", "deployment.openbao.inputs"} {
@@ -70,7 +83,7 @@ func validateManagedCoreAuthenticationAdmission(current, captured environmentCre
 		}
 	}
 	materials := artifact.Plan.Materials
-	if materials["accepted-service-core-complete-issuer-partial-action"] != deploymentplan.Digest(managedCoreRestoreOnly) || materials["accepted-service-core-managed-complete-observation-action"] != deploymentplan.Digest(managedCoreRestoreOnly) || materials["accepted-service-core-complete-issuer-partial-original-review"] != core.OriginalRepairReview || materials["accepted-service-core-complete-issuer-partial-source"] != deploymentplan.Digest(sourceCore) || materials["accepted-service-core-complete-issuer-partial-source-journal"] != deploymentplan.Digest(core.Journal) || materials["accepted-service-core-complete-issuer-partial-source-plan"] != core.Plan.SHA256() || materials["accepted-service-core-complete-issuer-partial-forward-plan"] != preview.SHA256() || preview.SHA256() != r.Candidate.SHA256() || validateManagedCorePartialCandidate(core, preview) != nil {
+	if materials["accepted-service-core-complete-issuer-partial-action"] != deploymentplan.Digest(managedCoreRestoreOnly) || materials["accepted-service-core-managed-complete-observation-action"] != deploymentplan.Digest(managedCoreRestoreOnly) || materials["accepted-service-core-complete-issuer-partial-original-review"] != core.OriginalRepairReview || materials["accepted-service-core-complete-issuer-partial-source"] != deploymentplan.Digest(sourceCore) || materials["accepted-service-core-complete-issuer-partial-source-journal"] != deploymentplan.Digest(core.Journal) || materials["accepted-service-core-complete-issuer-partial-source-plan"] != core.Plan.SHA256() || materials["accepted-service-core-complete-issuer-partial-forward-plan"] != preview.SHA256() || validateManagedCorePartialCandidate(core, preview) != nil {
 		return bad("exact-restore-scope")
 	}
 	if core.PriorForward != nil {
@@ -94,14 +107,15 @@ func validateManagedCoreAuthenticationAdmission(current, captured environmentCre
 	} else if materials["accepted-service-core-complete-issuer-partial-prior-admission"] != "" {
 		return bad("foreign-prior-admission")
 	}
-	if len(current.Entries) != len(captured.Entries)+1 || len(current.KubernetesLeases) != len(captured.KubernetesLeases) || len(captured.Entries) == 0 {
+	if len(current.Entries) < len(captured.Entries)+1 || len(current.KubernetesLeases) < len(captured.KubernetesLeases) || len(captured.Entries) == 0 {
 		return bad("one-admission-suffix")
 	}
 	prefix := current
 	prefix.Entries = slices.Clone(current.Entries[:len(captured.Entries)])
+	prefix.KubernetesLeases = slices.Clone(current.KubernetesLeases[:len(captured.KubernetesLeases)])
 	// The source loader owns the exact known prior-admission transition. Only
 	// its two-field native receipt can move; no other intent/time/owner/lease can.
-	if !managedCorePartialPrefixMatches(captured, prefix, core) || prefix.Entries[len(prefix.Entries)-1].CompletedAt.After(now) {
+	if !managedCorePartialPrefixMatches(captured, prefix, core) && !managedCorePartialAliasPrefixMatches(captured, prefix, core, "kubernetes/managed-complete-issuer-forward-"+review, preview.SHA256()) || prefix.Entries[len(prefix.Entries)-1].CompletedAt.After(now) {
 		return bad("unchanged-source-prefix")
 	}
 	entry := current.Entries[len(captured.Entries)]
@@ -111,7 +125,7 @@ func validateManagedCoreAuthenticationAdmission(current, captured environmentCre
 	}
 	switch entry.State {
 	case "pending":
-		if !entry.CompletedAt.IsZero() || len(entry.Receipt) != 0 {
+		if len(current.Entries) != len(captured.Entries)+1 || len(current.KubernetesLeases) != len(captured.KubernetesLeases) || !now.Before(artifact.ValidUntil) || !entry.CompletedAt.IsZero() || len(entry.Receipt) != 0 {
 			return bad("pending-entry")
 		}
 	case "completed":

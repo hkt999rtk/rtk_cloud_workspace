@@ -33,14 +33,41 @@ func createOpenBaoACKCompletionPath(parent string) string {
 
 func createOpenBaoACKCompletionRead(store secretStore, relative string, target any) error {
 	path, err := privateDeploymentStatePath(store.Environment, relative)
-	if err != nil || path != filepath.Join(store.Root, relative) || validateEnvironmentPreflightDirectories(store, filepath.Dir(path)) != nil {
-		return createOpenBaoACKBlock("completed-private-evidence")
+	if err != nil || path != filepath.Join(store.Root, relative) {
+		return createOpenBaoACKBlock("completed-private-path")
 	}
-	raw, err := readBoundedEnvironmentFile(path, true)
-	if err != nil || decodeEnvironmentJSON(raw, target) != nil {
-		return createOpenBaoACKBlock("completed-private-evidence")
+	if validateEnvironmentPreflightDirectories(store, filepath.Dir(path)) != nil {
+		return createOpenBaoACKBlock("completed-private-directories")
+	}
+	raw, err := readBoundedDerivedArtifact(path)
+	if err != nil {
+		return createOpenBaoACKBlock(createOpenBaoACKPrivateReadStage(relative, path))
+	}
+	if decodeEnvironmentJSON(raw, target) != nil {
+		return createOpenBaoACKBlock("completed-private-json")
 	}
 	return nil
+}
+
+func createOpenBaoACKPrivateReadStage(relative, path string) string {
+	name := filepath.Base(relative)
+	info, err := os.Lstat(path)
+	reason := "changed"
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		reason = "missing"
+	case err != nil:
+		reason = "stat"
+	case !info.Mode().IsRegular():
+		reason = "nonregular"
+	case info.Size() <= 0:
+		reason = "empty"
+	case info.Size() > environmentDerivedArtifactMaxBytes:
+		reason = "oversized"
+	case info.Mode().Perm() != 0600:
+		reason = "permissions"
+	}
+	return "completed-private-read-" + name + "-" + reason
 }
 
 // Only an absent pointer means no overlay. A partially published mirror or a

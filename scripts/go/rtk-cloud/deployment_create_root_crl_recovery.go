@@ -1150,19 +1150,41 @@ func checkCreateRootCRLLeaseAvailable(ctx context.Context, e *environmentCreateE
 	return e.Check(ctx)
 }
 func verifyCreateRootCRLTargetOwners(ctx context.Context, cfg deploymentConfig, b environmentKubernetesBackend, target createRootCRLStateTarget) error {
-	deployment, err := b.Read(ctx, target.ID)
-	if err != nil || deployment == nil || deploymentplan.Map(deployment["metadata"])["uid"] != target.UID || !deploymentplan.Matches(target.Desired, deployment) {
-		return rootCRLRecoveryError()
-	}
-	claim, err := b.Read(ctx, target.ClaimID)
-	if err != nil || claim == nil || target.ClaimUID == "" || deploymentplan.Map(claim["metadata"])["uid"] != target.ClaimUID {
-		return rootCRLRecoveryError()
-	}
-	pod, err := b.Read(ctx, "Pod/"+cfg.Values["CLOUD_STACK_NAME"]+"-video-cloud/"+target.PodName)
-	if err != nil || pod == nil || target.PodUID == "" || deploymentplan.Map(pod["metadata"])["uid"] != target.PodUID {
+	if verifyCreateRootCRLTargetOwnersStage(ctx, cfg, b, target) != "" {
 		return rootCRLRecoveryError()
 	}
 	return nil
+}
+
+// Keep the ordinary recovery error deliberately opaque while allowing domain
+// adapters to report which public Kubernetes ownership boundary changed. This
+// avoids collapsing Deployment, PVC and Pod drift into one retry-only gate.
+func verifyCreateRootCRLTargetOwnersStage(ctx context.Context, cfg deploymentConfig, b environmentKubernetesBackend, target createRootCRLStateTarget) string {
+	deployment, err := b.Read(ctx, target.ID)
+	if err != nil || deployment == nil {
+		return "deployment-read"
+	}
+	if deploymentplan.Map(deployment["metadata"])["uid"] != target.UID {
+		return "deployment-owner"
+	}
+	if !deploymentplan.Matches(target.Desired, deployment) {
+		return "deployment-desired"
+	}
+	claim, err := b.Read(ctx, target.ClaimID)
+	if err != nil || claim == nil {
+		return "claim-read"
+	}
+	if target.ClaimUID == "" || deploymentplan.Map(claim["metadata"])["uid"] != target.ClaimUID {
+		return "claim-owner"
+	}
+	pod, err := b.Read(ctx, "Pod/"+cfg.Values["CLOUD_STACK_NAME"]+"-video-cloud/"+target.PodName)
+	if err != nil || pod == nil {
+		return "pod-read"
+	}
+	if target.PodUID == "" || deploymentplan.Map(pod["metadata"])["uid"] != target.PodUID {
+		return "pod-owner"
+	}
+	return ""
 }
 
 // Repair material directories use the selected private store's directory guard;

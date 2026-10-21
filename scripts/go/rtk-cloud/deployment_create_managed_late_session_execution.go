@@ -1,5 +1,5 @@
-// DRAFT ONLY: outside the workspace, syntax-formatted, never compiled/run.
-// The two verifier hooks and native-write lease adapter are integration seams.
+// Execute the admitted original-key late session under native ownership fences.
+// Source verification and the execution lease remain attached to every write.
 package main
 
 import (

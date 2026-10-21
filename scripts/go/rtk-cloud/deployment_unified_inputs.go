@@ -38,14 +38,30 @@ func decodeEnvironmentJSON(raw []byte, target any) error {
 }
 
 func readBoundedEnvironmentFile(path string, private bool) ([]byte, error) {
-	return readBoundedEnvironmentInput(path, private, false)
+	return readBoundedEnvironmentInputLimit(path, private, false, environmentInputMaxBytes)
+}
+
+const (
+	environmentInputMaxBytes           int64 = 4 << 20
+	environmentDerivedArtifactMaxBytes int64 = 32 << 20
+)
+
+func readBoundedDerivedArtifact(path string) ([]byte, error) {
+	return readBoundedEnvironmentInputLimit(path, true, false, environmentDerivedArtifactMaxBytes)
 }
 
 // Optional operator settings may be represented by empty private files. Identity
 // and evidence consumers keep the nonempty read contract above.
 func readBoundedEnvironmentInput(path string, private, allowEmpty bool) ([]byte, error) {
+	return readBoundedEnvironmentInputLimit(path, private, allowEmpty, environmentInputMaxBytes)
+}
+
+func readBoundedEnvironmentInputLimit(path string, private, allowEmpty bool, limit int64) ([]byte, error) {
+	if limit <= 0 {
+		return nil, errors.New("positive bounded environment input limit required")
+	}
 	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() || (!allowEmpty && info.Size() <= 0) || info.Size() > 4<<20 || (private && info.Mode().Perm() != 0600) {
+	if err != nil || !info.Mode().IsRegular() || (!allowEmpty && info.Size() <= 0) || info.Size() > limit || (private && info.Mode().Perm() != 0600) {
 		return nil, errors.New("bounded regular environment input with required permissions is unavailable")
 	}
 	file, err := os.Open(path)
@@ -57,8 +73,8 @@ func readBoundedEnvironmentInput(path string, private, allowEmpty bool) ([]byte,
 	if err != nil || !os.SameFile(info, opened) || !opened.Mode().IsRegular() {
 		return nil, errors.New("environment input owner changed while opening")
 	}
-	raw, err := io.ReadAll(io.LimitReader(file, (4<<20)+1))
-	if err != nil || len(raw) > 4<<20 {
+	raw, err := io.ReadAll(io.LimitReader(file, limit+1))
+	if err != nil || int64(len(raw)) > limit {
 		return nil, errors.New("cannot read bounded environment input")
 	}
 	return raw, nil

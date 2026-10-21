@@ -265,6 +265,113 @@ func environmentCreateStateBlock(cause string) error {
 	return environmentCreateStateBlocker("deployment.create.preflight.evidence", cause)
 }
 
+// loadEnvironmentCreateAdmittedGeneration resolves the immutable qualification
+// that actually admitted an execution. A parent can be either an original
+// create qualification or a separately qualified provider recovery. The live
+// preflight pointer and qualification expiry are deliberately irrelevant here:
+// this is provenance for an already admitted journal, never permission to run
+// a new deployment.
+func loadEnvironmentCreateAdmittedGeneration(store secretStore, parent, artifactSHA string) (environmentCreatePlan, string, error) {
+	var plan environmentCreatePlan
+	if !environmentPreflightDigest.MatchString(parent) || !environmentPreflightDigest.MatchString(artifactSHA) {
+		return plan, "", environmentCreateStateBlock("admitted create parent requires exact plan and artifact digests")
+	}
+	recoveryPath := filepath.Join(store.Root, "deployment/create/recovery", parent, "qualification.json")
+	if _, err := os.Lstat(recoveryPath); err == nil {
+		var artifact environmentCreateProviderRecoveryArtifact
+		if readExecutionJSON(recoveryPath, &artifact) != nil || artifact.Schema != "rtk-cloud.provider-create-recovery-artifact/v1" || deploymentplan.Digest(artifact.Plan) != parent || deploymentplan.Digest(artifact) != artifactSHA || artifact.Qualification.PlanSHA256 != parent || artifact.Qualification.Decision != "GO" || !environmentCreateQualificationGatesValid(artifact.Qualification) {
+			return plan, "", environmentCreateStateBlock("admitted provider recovery qualification is unavailable or changed")
+		}
+		return artifact.Plan.Plan, artifact.Plan.Plan.ConfigurationSHA256, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return plan, "", environmentCreateStateBlock("admitted provider recovery qualification cannot be inspected")
+	}
+	base := filepath.Join(store.Root, "deployment/create/preflight", parent)
+	if validateEnvironmentPreflightDirectories(store, base) != nil {
+		return plan, "", environmentCreateStateBlock("admitted original create qualification directory is unavailable")
+	}
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		return plan, "", environmentCreateStateBlock("admitted original create qualification history cannot be inspected")
+	}
+	matches := 0
+	configurationSHA := ""
+	for _, entry := range entries {
+		relative := filepath.ToSlash(filepath.Join(parent, entry.Name()))
+		if !entry.IsDir() || !environmentPreflightArtifactName.MatchString(relative) {
+			continue
+		}
+		directory := filepath.Join(base, entry.Name())
+		if validateEnvironmentPreflightDirectories(store, directory) != nil {
+			return plan, "", environmentCreateStateBlock("admitted original create qualification history contains an unsafe entry")
+		}
+		var artifact environmentCreateArtifact
+		if readExecutionJSON(filepath.Join(directory, "artifact.json"), &artifact) != nil {
+			return plan, "", environmentCreateStateBlock("admitted original create qualification history contains unreadable evidence")
+		}
+		if deploymentplan.Digest(artifact) != artifactSHA {
+			continue
+		}
+		var candidate environmentCreatePlan
+		sha, shaErr := environmentCreatePlanSHA256(artifact.Plan)
+		if shaErr != nil || decodeEnvironmentJSON(artifact.Plan, &candidate) != nil || artifact.Schema != environmentCreateArtifactSchema || artifact.PlanSHA256 != parent || sha != parent || artifact.Environment != store.Environment || artifact.Stack != candidate.Stack || artifact.ConfigurationSHA256 != candidate.ConfigurationSHA256 || artifact.Qualification.PlanSHA256 != parent || artifact.Qualification.Decision != "GO" || !environmentCreateQualificationGatesValid(artifact.Qualification) {
+			return plan, "", environmentCreateStateBlock("admitted original create qualification is incomplete or changed")
+		}
+		matches++
+		plan, configurationSHA = candidate, artifact.ConfigurationSHA256
+	}
+	if matches != 1 {
+		return plan, "", environmentCreateStateBlock("exactly one immutable admitted original create qualification is required")
+	}
+	return plan, configurationSHA, nil
+}
+
+func environmentCreateQualificationGatesValid(q deploymentplan.Qualification) bool {
+	if len(q.Gates) != len(environmentCreateRequiredGates) {
+		return false
+	}
+	for i, id := range environmentCreateRequiredGates {
+		gate := q.Gates[i]
+		if gate.ID != id || !gate.Required || gate.Status != "PASS" || !environmentPreflightDigest.MatchString(gate.EvidenceSHA256) {
+			return false
+		}
+	}
+	return true
+}
+
+// environmentCreateGenerationMatchesAdmitted accepts the immutable admitted
+// generation and the one maintained legacy repair that can legitimately evolve
+// it: removing the refused bare OpenBao search-path alias. The recovery that
+// performs this change separately authenticates the original pending request,
+// its corrected request and the accepted forward. No other plan drift is
+// allowed at later CRL recovery boundaries.
+func environmentCreateGenerationMatchesAdmitted(admitted, current environmentCreatePlan) bool {
+	if deploymentplan.Digest(admitted) == deploymentplan.Digest(current) {
+		return true
+	}
+	raw, err := json.Marshal(admitted)
+	if err != nil {
+		return false
+	}
+	var expected environmentCreatePlan
+	if decodeEnvironmentJSON(raw, &expected) != nil {
+		return false
+	}
+	found := false
+	for i := range expected.Bootstrap.Domains {
+		if expected.Bootstrap.Domains[i].Domain != "openbao_tls" {
+			continue
+		}
+		names, err := correctedOpenBaoDNSPolicy(expected.Bootstrap.Domains[i].ServerDNSNames)
+		if err != nil {
+			return false
+		}
+		expected.Bootstrap.Domains[i].ServerDNSNames = names
+		found = true
+	}
+	return found && deploymentplan.Digest(expected) == deploymentplan.Digest(current)
+}
+
 type environmentCreateJournalEntry struct {
 	Key          string          `json:"key"`
 	Phase        string          `json:"phase"`

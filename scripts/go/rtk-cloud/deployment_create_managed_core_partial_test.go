@@ -39,8 +39,12 @@ func managedCorePartialFixture(t *testing.T) (*createManagedCorePartialRecovery,
 			}
 			if index == 14 {
 				settings["ENROLLMENT_ONLY"] = "false"
+				settings["PKI_ENVIRONMENT"] = "dev"
 			}
 			object["spec"] = deploymentplan.Object{"selector": deploymentplan.Object{"matchLabels": deploymentplan.Object{"app": parts[2]}}, "template": deploymentplan.Object{"metadata": deploymentplan.Object{"labels": deploymentplan.Object{"app": parts[2]}}, "spec": deploymentplan.Object{"containers": []any{deploymentplan.Object{"name": parts[2], "image": image, "env": environmentCreateEnv(settings), "volumeMounts": []any{deploymentplan.Object{"name": "state", "mountPath": "/run/pki-state"}}}}, "volumes": []any{deploymentplan.Object{"name": "state", "persistentVolumeClaim": deploymentplan.Object{"claimName": parts[2] + "-original-state"}}}}}}
+			if index == 14 {
+				mqttFoundationPrimary(object)["env"] = append(certIssuerObjectList(mqttFoundationPrimary(object)["env"]), deploymentplan.Object{"name": "CERT_ISSUER_DB_DSN", "valueFrom": deploymentplan.Object{"secretKeyRef": deploymentplan.Object{"name": "pki-issuer-database", "key": "url"}}})
+			}
 		}
 		actual := deploymentplan.Clone(object)
 		deploymentplan.Map(actual["metadata"])["uid"] = fmt.Sprintf("%08d-2222-4222-8222-222222222222", index+1)

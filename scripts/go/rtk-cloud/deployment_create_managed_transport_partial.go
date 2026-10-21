@@ -742,6 +742,10 @@ func loadManagedTransportPartialServiceCore(ctx context.Context, cfg deploymentC
 	if err != nil {
 		return nil, err
 	}
+	definitions, err = preserveManagedTransportPostManagedDefinitions(p.Plan.Bootstrap, candidateRuntime, r.Ceremony, definitions)
+	if err != nil {
+		return nil, err
+	}
 	if err := validateManagedTransportPartialForwardDefinitions(d.Partial, definitions); err != nil {
 		return nil, err
 	}

@@ -906,9 +906,15 @@ func loadCreateMQTTRootCRLArtifact(cfg deploymentConfig, store secretStore, e *e
 	if a.Plan.Candidate != filepath.ToSlash(filepath.Join("deployment/repairs/mqtt-root-crl", selector)) || validateEnvironmentPreflightDirectories(store, filepath.Join(store.Root, a.Plan.Candidate)) != nil || validateEnvironmentPreflightDirectories(store, filepath.Join(store.Root, a.Plan.Candidate, "signed")) != nil {
 		return a, source, mqttRootCRLError("canonical-signed-candidate")
 	}
-	var original environmentCreateProviderRecoveryArtifact
-	if readExecutionJSON(filepath.Join(store.Root, "deployment/create/recovery", a.Plan.Parent, "qualification.json"), &original) != nil || original.Schema != "rtk-cloud.provider-create-recovery-artifact/v1" || deploymentplan.Digest(original.Plan) != a.Plan.Parent || deploymentplan.Digest(original) != source.ArtifactSHA256 || original.Qualification.Decision != "GO" || deploymentplan.Digest(original.Plan.Plan) != deploymentplan.Digest(a.Plan.Generation) || original.Plan.Plan.ConfigurationSHA256 != a.Plan.ConfigurationSHA {
-		return a, source, mqttRootCRLError("immutable-original-parent-plan")
+	generation, configurationSHA, err := loadEnvironmentCreateAdmittedGeneration(store, a.Plan.Parent, source.ArtifactSHA256)
+	if err != nil {
+		return a, source, mqttRootCRLError("immutable-original-parent-read")
+	}
+	if !environmentCreateGenerationMatchesAdmitted(generation, a.Plan.Generation) {
+		return a, source, mqttRootCRLError("immutable-original-parent-generation")
+	}
+	if configurationSHA != a.Plan.ConfigurationSHA {
+		return a, source, mqttRootCRLError("immutable-original-parent-configuration")
 	}
 	if e != nil && (e.Journal.PlanSHA256 != a.Plan.Parent || deploymentplan.Digest(e.owner) != deploymentplan.Digest(owner) || e.Store.Root != store.Root) {
 		return a, source, mqttRootCRLError("actual-original-fence")
@@ -950,7 +956,7 @@ func validateMQTTRootCRLSourceAncestry(store secretStore, source *environmentCre
 	// well as material pins. Retain the complete derived plan for native readers.
 	r, late, err := loadManagedLateSessionSource(plan.Configuration, store, source, p, managedLateSessionMQTTRepair)
 	if err != nil {
-		return nil, nil, mqttRootCRLError("independent-source-loader")
+		return nil, nil, err
 	}
 	if r.MQTTRoot == nil || deploymentplan.Digest(*r.MQTTRoot) != deploymentplan.Digest(plan.Root) {
 		return nil, nil, mqttRootCRLError("independent-original-root")
@@ -1046,45 +1052,49 @@ func mqttRootCRLAcceptedTargetsValid(plan createMQTTRootCRLPlan, r *createServic
 // Strict append-only scoped admission. Completion permits later suffixes but
 // pins this exact original source and its four actual entries forever.
 func mqttRootCRLProgressValid(current environmentCreateJournal, a createMQTTRootCRLArtifact, source environmentCreateJournal, completed bool) bool {
+	return mqttRootCRLProgressFailure(current, a, source, completed) == ""
+}
+
+func mqttRootCRLProgressFailure(current environmentCreateJournal, a createMQTTRootCRLArtifact, source environmentCreateJournal, completed bool) string {
 	if len(current.Entries) < len(source.Entries) || a.Plan.SourceJournalSHA != deploymentplan.Digest(source) {
-		return false
+		return "source"
 	}
 	for i, entry := range source.Entries {
 		if activeTransportJournalDigest(entry) != activeTransportJournalDigest(current.Entries[i]) {
-			return false
+			return "source-entry"
 		}
 	}
 	normalized := current
 	normalized.Entries = source.Entries
 	normalized.KubernetesLeases = source.KubernetesLeases
 	if deploymentplan.Digest(normalized) != deploymentplan.Digest(source) || len(current.KubernetesLeases) < len(source.KubernetesLeases) {
-		return false
+		return "source-envelope"
 	}
 	for i, lease := range source.KubernetesLeases {
 		if lease != current.KubernetesLeases[i] {
-			return false
+			return "source-lease"
 		}
 	}
 	review := deploymentplan.Digest(a.Plan)
 	leaseSHA := rootCRLLeasePlan(a.Plan.Configuration, review).SHA256()
 	for _, lease := range current.KubernetesLeases[len(source.KubernetesLeases):] {
 		if lease.ResourceID != "Lease/"+source.Stack+"-video-cloud/rtk-deployment-execution" || !environmentBootstrapOwnerUUID.MatchString(lease.UID) || !strings.HasPrefix(lease.Holder, leaseSHA+":") {
-			return false
+			return "scoped-lease"
 		}
 	}
 	key := "mqtt-root-crl-renewal-" + review
 	keys := []string{key, key + "/native-import", key + "/native-runtime-video-cloud-api", key + "/native-runtime-video-cloud-logingester"}
 	tail := current.Entries[len(source.Entries):]
 	if len(tail) > 4 || completed && len(tail) != 4 || len(tail) >= 2 && len(current.KubernetesLeases) == len(source.KubernetesLeases) {
-		return false
+		return "tail-shape"
 	}
 	if len(tail) > 0 && tail[0].State != "pending" {
 		if len(tail) != 4 {
-			return false
+			return "parent-state"
 		}
 		for _, child := range tail[1:] {
 			if child.State != "completed" {
-				return false
+				return "parent-child-state"
 			}
 		}
 	}
@@ -1093,47 +1103,47 @@ func mqttRootCRLProgressValid(current environmentCreateJournal, a createMQTTRoot
 		intents = append(intents, mqttRootCRLRuntimeIntent(a.Plan, target))
 	}
 	if len(intents) != 4 {
-		return false
+		return "intent-count"
 	}
 	for i, entry := range tail {
 		if entry.Key != keys[i] || entry.Phase != "bootstrap" || entry.IntentSHA256 != activeTransportJournalDigest(intents[i]) || entry.StartedAt.Before(a.QualifiedAt) || i == 0 && !entry.StartedAt.Before(a.ValidUntil) || entry.State != "pending" && entry.State != "allocated" && entry.State != "completed" || completed && entry.State != "completed" || i > 1 && tail[i-1].State != "completed" || !entry.CompletedAt.IsZero() && entry.CompletedAt.Before(entry.StartedAt) {
-			return false
+			return "entry"
 		}
 		if entry.State == "pending" {
 			if len(entry.Receipt) != 0 || !entry.CompletedAt.IsZero() {
-				return false
+				return "pending-entry"
 			}
 			continue
 		}
 		if len(entry.Receipt) == 0 || entry.State == "completed" && entry.CompletedAt.IsZero() || entry.State == "allocated" && !entry.CompletedAt.IsZero() {
-			return false
+			return "recorded-entry"
 		}
 		if i == 0 {
 			var receipt createMQTTRootCRLReceipt
 			if decodeEnvironmentJSON(entry.Receipt, &receipt) != nil || receipt.Schema != createMQTTRootCRLSchema || receipt.Parent != a.Plan.Parent || receipt.Review != review || receipt.Digest != a.Plan.Signed.Digest || receipt.File != filepath.ToSlash(filepath.Join(a.Plan.Candidate, "signed/revocations.pem")) || !receipt.Completed || !environmentPreflightDigest.MatchString(receipt.NativeEvidenceSHA) {
-				return false
+				return "parent-receipt"
 			}
 		}
 		if i == 1 && activeTransportJournalDigest(json.RawMessage(entry.Receipt)) != activeTransportJournalDigest(map[string]any{"native_crl": a.Plan.Signed, "request_sha256": deploymentplan.Digest(a.Plan.Request)}) {
-			return false
+			return "import-receipt"
 		}
 		if i > 1 {
 			var evidence map[string]string
 			if json.Unmarshal(entry.Receipt, &evidence) != nil || len(evidence) != 4 {
-				return false
+				return "consumer-receipt"
 			}
 			target := a.Plan.Consumers[i-2]
 			for _, k := range []string{"native-publication", target.ID + ":state", target.ID + ":owner", target.ID + ":native-ack"} {
 				if !environmentPreflightDigest.MatchString(evidence[k]) {
-					return false
+					return "consumer-evidence"
 				}
 			}
 			if evidence[target.ID+":owner"] != deploymentplan.Digest(target) {
-				return false
+				return "consumer-owner"
 			}
 		}
 	}
-	return true
+	return ""
 }
 
 func mqttRootCRLImportAdmitted(current environmentCreateJournal, a createMQTTRootCRLArtifact, source environmentCreateJournal) bool {

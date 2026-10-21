@@ -1,7 +1,7 @@
 package main
 
-// PRIVATE DRAFT ONLY. Native execution is never called from this file until an
-// actual distinct-session source and its exact four plans have been admitted.
+// Native execution requires the separately admitted distinct-session source
+// and its exact four plans before changing the retained log owner.
 
 import (
 	"bytes"

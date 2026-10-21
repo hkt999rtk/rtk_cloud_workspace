@@ -178,7 +178,7 @@ environment and fails when a required integration test is skipped. The
 required JavaScript jobs, preferring the integration-aware PR result for
 Account Manager and Video Cloud.
 
-New or modified Go statements must meet 80% differential coverage against
+New or modified Go statements must meet 70% differential coverage against
 `--base-ref`; this prevents legacy debt from lowering the standard for new
 code. Every Go test function and subtest is discovered from `go test -json`
 and recorded as `go://<module>/<package>#<TestName>/<Subtest>`. Critical

@@ -220,15 +220,33 @@ func verifyManagedApplicationCurrentExports(ctx context.Context, e *environmentC
 		}
 		claimID := "PersistentVolumeClaim/" + e.Journal.Stack + "-video-cloud/" + environmentManagedApplicationClaim(name)
 		ledger, err := readEnvironmentCreateLedger(e)
+		if err != nil {
+			return managedApplicationCurrentBlock("original-api-volume-ledger-" + name)
+		}
 		owner, ownerErr := managedTransportRecordedHostVolume(ledger, claimID)
+		if ownerErr != nil {
+			return managedApplicationCurrentBlock("original-api-volume-owner-" + name)
+		}
 		claim, claimErr := b.Read(ctx, claimID)
+		if claimErr != nil || claim == nil {
+			return managedApplicationCurrentBlock("original-api-volume-claim-read-" + name)
+		}
 		volume, volumeErr := b.Read(ctx, "PersistentVolume//"+owner.PVName)
-		if err != nil || ownerErr != nil || claimErr != nil || volumeErr != nil || owner.PVCUID != proof.ClaimUID || validateManagedTransportHostVolume(owner, claim, volume) != nil {
-			return managedApplicationCurrentBlock("original-api-private-volume-" + name)
+		if volumeErr != nil || volume == nil {
+			return managedApplicationCurrentBlock("original-api-volume-pv-read-" + name)
+		}
+		if owner.PVCUID != proof.ClaimUID {
+			return managedApplicationCurrentBlock("original-api-volume-proof-" + name)
+		}
+		if validateManagedTransportHostVolume(owner, claim, volume) != nil {
+			return managedApplicationCurrentBlock("original-api-volume-binding-" + name)
 		}
 		reader, readerErr := b.Read(ctx, "Deployment/"+e.Journal.Stack+"-video-cloud/pki-export-"+name+"-"+e.Journal.PlanSHA256[:12])
-		if readerErr != nil || reader != nil {
-			return managedApplicationCurrentBlock("retired-original-reader-" + name)
+		if readerErr != nil {
+			return managedApplicationCurrentBlock("retired-original-reader-read-" + name)
+		}
+		if reader != nil {
+			return managedApplicationCurrentBlock("retired-original-reader-present-" + name)
 		}
 		materials["accepted-service-core-managed-application-serving-secret-"+name] = deploymentplan.Digest(deploymentplan.Projection(actual))
 		materials["accepted-service-core-managed-application-api-volume-"+name] = deploymentplan.Digest(owner)

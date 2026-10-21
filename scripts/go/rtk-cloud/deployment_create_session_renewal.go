@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -166,26 +167,58 @@ func prepareExpiredServiceSessionRecovery(ctx context.Context, cfg deploymentCon
 	r.RenewedIntent.SessionID = sessionRenewalUUID(e.Journal.PlanSHA256, r.Original.SHA256(), r.Intent.SessionID)
 	r.RenewedCertPath = "/run/pki-bootstrap/renew-" + r.Original.SHA256()[:12] + "/bootstrap.crt"
 	// Reuse the exact accepted one-shot recipe and original persistent key/CSR.
-	var boot *deploymentplan.Plan
-	var bootJournal deploymentplan.Journal
+	// A normally completed first session needs no earlier ordering failure.
+	// An existing completed ordering recovery remains authoritative; a malformed
+	// or ambiguous recovery cannot fall back to the earlier normal stage.
+	bootStage := "kubernetes/service-session"
 	for _, entry := range e.Journal.Entries {
 		if strings.HasPrefix(entry.Key, "kubernetes/service-session-order-recovery-") && entry.State == "completed" {
-			boot, bootJournal, err = acceptedCreateStage(store, e, entry.Key)
+			if bootStage != "kubernetes/service-session" {
+				return nil, createProviderRecoveryBlock("ambiguous accepted bootstrap executors")
+			}
+			bootStage = entry.Key
 		}
 	}
-	if err != nil || boot == nil {
+	boot, bootJournal, err := acceptedCreateStage(store, e, bootStage)
+	if err != nil {
 		return nil, createProviderRecoveryBlock("original accepted bootstrap executor unavailable")
+	}
+	bootIntent, intentErr := environmentCreateKubernetesStageIntent(boot)
+	bootIntentSHA, hashErr := environmentCreatePlanSHA256(bootIntent)
+	bound := 0
+	for _, entry := range e.Journal.Entries {
+		if entry.Key == bootStage && entry.State == "completed" {
+			if intentErr != nil || hashErr != nil || entry.IntentSHA256 != bootIntentSHA {
+				return nil, createProviderRecoveryBlock("original bootstrap executor parent binding changed")
+			}
+			bound++
+		}
+	}
+	normal := bootStage == "kubernetes/service-session"
+	if bound != 1 || normal && (len(boot.Resources) != 3 || boot.Inputs.Environment != cfg.Environment || boot.Inputs.Stack != p.Plan.Stack || boot.Inputs.ConfigurationSHA256 != p.Plan.ConfigurationSHA256) {
+		return nil, createProviderRecoveryBlock("exact original accepted bootstrap executor required")
 	}
 	p.Materials["original-service-session-bootstrap-executor"] = boot.SHA256()
 	p.Materials["original-service-session-bootstrap-executor-journal"] = deploymentplan.Digest(bootJournal)
 	var defs []deploymentplan.Definition
 	for _, resource := range boot.Resources {
 		if resource.Desired["kind"] != "Job" {
+			if normal && resource.ID != "PersistentVolumeClaim/"+p.Plan.Stack+"-video-cloud/"+r.Intent.Claim && resource.ID != "ServiceAccount/"+p.Plan.Stack+"-video-cloud/pki-service-bootstrap" {
+				return nil, createProviderRecoveryBlock("original bootstrap prerequisites differ from session intent")
+			}
 			actual, readErr := b.Read(ctx, resource.ID)
 			if readErr != nil || actual == nil || deploymentplan.Map(actual["metadata"])["uid"] != bootJournal.Owners[resource.ID] || !deploymentplan.Matches(resource.Desired, actual) {
 				return nil, createProviderRecoveryBlock("original bootstrap claim or ServiceAccount changed")
 			}
 			continue
+		}
+		pod := environmentPKIPod(resource.Desired)
+		containers := certIssuerObjectList(pod["containers"])
+		if len(containers) != 1 || mqttFoundationEnv(deploymentplan.Map(containers[0]), "PKI_BOOTSTRAP_SESSION_ID") != r.Intent.SessionID {
+			return nil, createProviderRecoveryBlock("original bootstrap executor session changed")
+		}
+		if normal && (deploymentplan.Map(resource.Desired["metadata"])["namespace"] != p.Plan.Stack+"-video-cloud" || pod["serviceAccountName"] != "pki-service-bootstrap" || deploymentplan.Map(managedNamedField(pod["volumes"], "bootstrap-state")["persistentVolumeClaim"])["claimName"] != r.Intent.Claim) {
+			return nil, createProviderRecoveryBlock("original bootstrap executor custody changed")
 		}
 		definition, err := originalKeyRenewalDefinition(resource.Desired, e.Journal.PlanSHA256, r.Original.SHA256(), r.RenewedIntent.SessionID)
 		if err != nil {
@@ -387,14 +420,38 @@ func executeOriginalKeySessionRenewal(ctx context.Context, cfg deploymentConfig,
 	if r == nil || !r.Renewal || !environmentPreflightDigest.MatchString(r.Review) {
 		return s, environmentCreateBootstrapBlocker("qualified original-key renewal required")
 	}
+	if runtime.Execution == nil || runtime.Execution.Store.Root != store.Root || runtime.Execution.Store.ConfigRoot != store.ConfigRoot || runtime.Execution.Store.Environment != store.Environment || !environmentPreflightDigest.MatchString(runtime.ExecutionSHA256) || runtime.ExecutionSHA256 != runtime.Execution.Journal.PlanSHA256 || len(r.Intent.Namespaces) == 0 {
+		return s, environmentCreateBootstrapBlocker("original selected renewal execution is required")
+	}
+	if err := runtime.Execution.Check(ctx); err != nil {
+		return s, err
+	}
 	s.BootstrapSessionID = r.RenewedIntent.SessionID
 	s.BootstrapClaim = r.Intent.Claim
 	s.BootstrapCredentialNamespace = r.Intent.Namespaces[0]
 	s.BootstrapCredentialNamespaces = slices.Clone(r.Intent.Namespaces)
 	s.BootstrapCredentialSecret = "service-bootstrap-" + s.BootstrapSessionID
 	s.CustodyReader = "pki-bootstrap-custody-" + runtime.ExecutionSHA256[:12]
-	if _, err := writeEnvironmentCreateBootstrapJSON(store, filepath.Join("deployment/create", runtime.ExecutionSHA256, "bootstrap/service/session-renewal", r.Review, "intent.json"), r.RenewedIntent); err != nil {
-		return s, err
+	relative := filepath.Join("deployment/create", runtime.ExecutionSHA256, "bootstrap/service/session-renewal", r.Review, "intent.json")
+	path, pathErr := privateDeploymentStatePath(store.Environment, relative)
+	if pathErr != nil || path != filepath.Join(store.Root, relative) {
+		return s, environmentCreateBootstrapBlocker("original selected renewal intent path is unavailable")
+	}
+	if _, err := os.Lstat(path); os.IsNotExist(err) {
+		if _, err := writeEnvironmentCreateBootstrapJSON(store, relative, r.RenewedIntent); err != nil {
+			return s, err
+		}
+	} else {
+		// A child readiness interruption retains its immutable intent. Resume
+		// only the same private bytes, before any native policy or Job effects.
+		if err != nil || validateEnvironmentPreflightDirectories(store, filepath.Dir(path)) != nil {
+			return s, environmentCreateBootstrapBlocker("original renewal intent changed or cannot be inspected")
+		}
+		expected, encodeErr := json.Marshal(r.RenewedIntent)
+		retained, readErr := readBoundedEnvironmentFile(path, true)
+		if encodeErr != nil || readErr != nil || !bytes.Equal(retained, expected) {
+			return s, environmentCreateBootstrapBlocker("original renewal intent changed or cannot be inspected")
+		}
 	}
 	raw, err := runtime.Backend.command(ctx, nil, "--namespace", s.BootstrapCredentialNamespace, "exec", "deployment/pki-controller", "--container", "pki-controller", "--", "/app/pkicontroller", "render-openbao-policy", s.Intermediate.ID)
 	var policy environmentCreateOpenBaoIssuerPolicies

@@ -601,6 +601,16 @@ func issueEnvironmentPublicTLS(ctx context.Context, cfg deploymentConfig, store 
 	var keys environmentPublicTLSKeys
 	err := publicTLSReadJSON(store, keyPath, &keys)
 	if errors.Is(err, os.ErrNotExist) {
+		// Only an untouched producer directory may establish these keys.
+		// Missing keys from a retained attempt are lost identity, even if its
+		// other cache files were also removed; never replace its ACME signer.
+		path, pathErr := store.safePath(base)
+		if pathErr != nil {
+			return empty, pathErr
+		}
+		if _, stateErr := os.Lstat(path); !errors.Is(stateErr, os.ErrNotExist) || createOpenBaoACKCompletionEntry(e.Journal, "public-tls/certificate") != nil {
+			return empty, publicTLSBlock("original public TLS keys are missing from a retained attempt; restore its exact account key, leaf key and CSR")
+		}
 		account, e1 := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		leaf, e2 := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		if e1 != nil || e2 != nil {

@@ -28,36 +28,58 @@ func managedHistoricalSeedBlock() error {
 	return createProviderRecoveryBlock("used expired seed cleanup requires its exact authenticated original observation, preserved client lineage and five genuine native ACKs")
 }
 
+func managedHistoricalSeedBlockAt(stage string) error {
+	return createProviderRecoveryBlock("used expired seed cleanup requires its exact authenticated original observation, preserved client lineage and five genuine native ACKs: stage=" + stage)
+}
+
 func managedHistoricalSeedStateOf(state managedSessionState) managedHistoricalSeedState {
 	return managedHistoricalSeedState{Session: state.Session, Issuer: state.Issuer, Root: state.Root, Fingerprint: state.Fingerprint, Status: state.Status, Expires: state.Expires, Subjects: slices.Clone(state.Subjects), Installed: slices.Clone(state.Installed)}
 }
 
 func validateManagedHistoricalSeedState(state managedSessionState, observed createServiceSessionObserved, current environmentCreateServiceCeremony, subjects []string, now time.Time) (managedHistoricalSeedState, error) {
 	var saved managedSessionState
-	if decodeEnvironmentJSON(observed.Session, &saved) != nil || state.Session == current.BootstrapSessionID || state.Session != observed.Cleanup.SessionID || state.Session != saved.Session || !environmentBootstrapOwnerUUID.MatchString(state.Session) || state.Status != "expired" || state.Expires.IsZero() || state.Expires.After(now) || !state.Expires.Equal(saved.Expires) || state.Issuer != current.Intermediate.ID || state.Issuer != saved.Issuer || state.Root != current.Root.RootFingerprint || state.Root != saved.Root || !environmentPreflightDigest.MatchString(state.Fingerprint) || state.Fingerprint != saved.Fingerprint || !slices.Equal(state.Subjects, subjects) || !slices.Equal(saved.Subjects, subjects) || len(subjects) != 9 || len(observed.UIDs) != 3 || validateEnvironmentBootstrapCleanupBinding(&observed.Cleanup, current.Root.Environment) != nil {
-		return managedHistoricalSeedState{}, managedHistoricalSeedBlock()
+	if len(observed.Session) == 0 {
+		return managedHistoricalSeedState{}, managedHistoricalSeedBlockAt("observation-session-empty")
+	}
+	if decodeEnvironmentJSON(observed.Session, &saved) != nil {
+		return managedHistoricalSeedState{}, managedHistoricalSeedBlockAt("observation-session-schema")
+	}
+	if state.Session == current.BootstrapSessionID || state.Session != observed.Cleanup.SessionID || state.Session != saved.Session || !environmentBootstrapOwnerUUID.MatchString(state.Session) {
+		return managedHistoricalSeedState{}, managedHistoricalSeedBlockAt("session-lineage")
+	}
+	if state.Status != "expired" || state.Expires.IsZero() || state.Expires.After(now) || !state.Expires.Equal(saved.Expires) {
+		return managedHistoricalSeedState{}, managedHistoricalSeedBlockAt("native-expiry")
+	}
+	if state.Issuer != current.Intermediate.ID || state.Issuer != saved.Issuer || state.Root != current.Root.RootFingerprint || state.Root != saved.Root || !environmentPreflightDigest.MatchString(state.Fingerprint) || state.Fingerprint != saved.Fingerprint {
+		return managedHistoricalSeedState{}, managedHistoricalSeedBlockAt("authority-lineage")
+	}
+	if !slices.Equal(state.Subjects, subjects) || !slices.Equal(saved.Subjects, subjects) || len(subjects) != 9 {
+		return managedHistoricalSeedState{}, managedHistoricalSeedBlockAt("declared-subjects")
+	}
+	if len(observed.UIDs) != 3 || validateEnvironmentBootstrapCleanupBinding(&observed.Cleanup, current.Root.Environment) != nil {
+		return managedHistoricalSeedState{}, managedHistoricalSeedBlockAt("cleanup-owners")
 	}
 	expected := []string{"service:account-manager", "service:certissuer", "service:pki-controller", "service:pkibroker", "service:video-cloud-api"}
 	installed := slices.Clone(state.Installed)
 	slices.Sort(installed)
 	if !slices.Equal(installed, expected) {
-		return managedHistoricalSeedState{}, managedHistoricalSeedBlock()
+		return managedHistoricalSeedState{}, managedHistoricalSeedBlockAt("five-native-acks")
 	}
 	seen := map[string]bool{}
 	for _, subject := range subjects {
 		if seen[subject] {
-			return managedHistoricalSeedState{}, managedHistoricalSeedBlock()
+			return managedHistoricalSeedState{}, managedHistoricalSeedBlockAt("unique-subjects")
 		}
 		seen[subject] = true
 	}
 	for _, subject := range installed {
 		if !seen[subject] {
-			return managedHistoricalSeedState{}, managedHistoricalSeedBlock()
+			return managedHistoricalSeedState{}, managedHistoricalSeedBlockAt("ack-subject")
 		}
 	}
 	for _, uid := range observed.UIDs {
 		if !environmentBootstrapOwnerUUID.MatchString(uid) {
-			return managedHistoricalSeedState{}, managedHistoricalSeedBlock()
+			return managedHistoricalSeedState{}, managedHistoricalSeedBlockAt("credential-owner")
 		}
 	}
 	snapshot := managedHistoricalSeedStateOf(state)
@@ -97,20 +119,26 @@ func qualifyManagedHistoricalSeedCleanupNative(ctx context.Context, cfg deployme
 	historical := r.ManagedTransportRecovery.Partial
 	var clients managedTransportPreservedClients
 	path := filepath.Join(store.Root, "deployment/create", e.Journal.PlanSHA256, "bootstrap/service/session-renewal", historical.SourceReview, "managed-clients-preserved.json")
-	if readExecutionJSON(path, &clients) != nil || clients.Renewed != r.Ceremony.BootstrapSessionID || clients.Original == r.Intent.SessionID || clients.Original == clients.Renewed || clients.Clients != historical.ClientsSHA || clients.Key != r.OriginalKeySHA || clients.CSR != r.OriginalCSRSHA {
-		return managedHistoricalSeedBlock()
+	if readExecutionJSON(path, &clients) != nil {
+		return managedHistoricalSeedBlockAt("preserved-clients-read")
+	}
+	if clients.Renewed != r.Ceremony.BootstrapSessionID || clients.Original == r.Intent.SessionID || clients.Original == clients.Renewed {
+		return managedHistoricalSeedBlockAt("preserved-client-session-lineage")
+	}
+	if clients.Clients != historical.ClientsSHA || clients.Key != r.OriginalKeySHA || clients.CSR != r.OriginalCSRSHA {
+		return managedHistoricalSeedBlockAt("preserved-client-digests")
 	}
 	var observed *createServiceSessionObserved
 	for index := range r.StaleSeeds {
 		if r.StaleSeeds[index].Cleanup.SessionID == clients.Original {
 			if observed != nil {
-				return managedHistoricalSeedBlock()
+				return managedHistoricalSeedBlockAt("ambiguous-original-observation")
 			}
 			observed = &r.StaleSeeds[index]
 		}
 	}
 	if observed == nil {
-		return managedHistoricalSeedBlock()
+		return managedHistoricalSeedBlockAt("missing-original-observation")
 	}
 	subjects, err := environmentCreateBootstrapSubjects(cfg)
 	if err != nil {

@@ -1,7 +1,7 @@
-// PRIVATE OpenBaoTLS-only Root#2 adapter. No integration or execution has occurred.
-// PRIVATE DRAFT ONLY. This code is not in the workspace or any active checker.
-// Integration requires the shared expected-domain patch and strict late-source
-// observer drafts. No calls in this file have been executed against dev.
+// Renew the original OpenBao TLS Root CRL through its offline custody.
+// Qualification checks the same issuer, live revocations, signed request and
+// native consumers. Execution preserves their owners and reconciles known
+// publication outcomes through the original journal and lease.
 package main
 
 import (
@@ -493,8 +493,11 @@ func readOpenBaoTLSRootCRLIntermediateState(ctx context.Context, cfg deploymentC
 }
 func readOpenBaoTLSRootCRLCacheBytes(ctx context.Context, cfg deploymentConfig, b environmentKubernetesBackend, target createRootCRLStateTarget, path string) ([]byte, error) {
 	name := deploymentplan.String(deploymentplan.Map(target.Desired["metadata"])["name"])
-	if name != "certissuer" && name != "pki-controller" || !slices.Contains(target.Paths, path) || target.Container != name || verifyCreateRootCRLTargetOwners(ctx, cfg, b, target) != nil {
+	if name != "certissuer" && name != "pki-controller" || !slices.Contains(target.Paths, path) || target.Container != name {
 		return nil, openBaoTLSRootCRLError("exact-two-native-consumer-owners")
+	}
+	if stage := verifyCreateRootCRLTargetOwnersStage(ctx, cfg, b, target); stage != "" {
+		return nil, openBaoTLSRootCRLError("exact-two-native-consumer-owners-" + stage)
 	}
 	security := deploymentplan.Map(environmentPKIPod(target.Desired)["securityContext"])
 	if security["runAsUser"] != float64(10001) || security["runAsGroup"] != float64(10001) || security["fsGroup"] != float64(10001) {
@@ -1018,8 +1021,8 @@ func loadCreateOpenBaoTLSRootCRLArtifact(cfg deploymentConfig, store secretStore
 	if a.Plan.Candidate != filepath.ToSlash(filepath.Join("deployment/repairs/openbao-tls-root-crl", selector)) || validateEnvironmentPreflightDirectories(store, filepath.Join(store.Root, a.Plan.Candidate)) != nil || validateEnvironmentPreflightDirectories(store, filepath.Join(store.Root, a.Plan.Candidate, "signed")) != nil {
 		return a, source, openBaoTLSRootCRLError("canonical-signed-candidate")
 	}
-	var original environmentCreateProviderRecoveryArtifact
-	if readExecutionJSON(filepath.Join(store.Root, "deployment/create/recovery", a.Plan.Parent, "qualification.json"), &original) != nil || original.Schema != "rtk-cloud.provider-create-recovery-artifact/v1" || deploymentplan.Digest(original.Plan) != a.Plan.Parent || deploymentplan.Digest(original) != source.ArtifactSHA256 || original.Qualification.Decision != "GO" || deploymentplan.Digest(original.Plan.Plan) != deploymentplan.Digest(a.Plan.Generation) || original.Plan.Plan.ConfigurationSHA256 != a.Plan.ConfigurationSHA {
+	generation, configurationSHA, err := loadEnvironmentCreateAdmittedGeneration(store, a.Plan.Parent, source.ArtifactSHA256)
+	if err != nil || !environmentCreateGenerationMatchesAdmitted(generation, a.Plan.Generation) || configurationSHA != a.Plan.ConfigurationSHA {
 		return a, source, openBaoTLSRootCRLError("immutable-original-parent-plan")
 	}
 	if e != nil && (e.Journal.PlanSHA256 != a.Plan.Parent || deploymentplan.Digest(e.owner) != deploymentplan.Digest(owner) || e.Store.Root != store.Root) {

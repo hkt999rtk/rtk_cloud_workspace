@@ -1,6 +1,6 @@
-// DRAFT ONLY. This file is outside the workspace and is not compiled into the
-// deployment checker. Native calls below have not been run. Integration waits
-// for an actual accepted restore-core-only checkpoint and separate six-gate GO.
+// Recover the original expired bootstrap session after accepted managed Core.
+// Qualification binds its authenticated source, original key/CSR and exact
+// native owners before a separately admitted continuation may write.
 package main
 
 import (

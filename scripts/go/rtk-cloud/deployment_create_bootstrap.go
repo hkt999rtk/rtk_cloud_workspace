@@ -11,7 +11,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"gopkg.in/yaml.v3"
 	"io"
 	"net"
 	"net/http"
@@ -841,113 +840,6 @@ func renderEnvironmentCreatePKIPhase(ctx context.Context, cfg deploymentConfig, 
 		return nil, environmentCreateBootstrapBlocker("bootstrap renderer omitted required resources")
 	}
 	return definitions, nil
-}
-
-// Count native allocations from the actual catalog storage manifests and the
-// declared fresh managed state claims. It does not read or require a future PV.
-func countEnvironmentCreateWorkloadAllocations(cfg deploymentConfig, release environmentRelease, p environmentCreateBootstrapPlan) (int, error) {
-	values := appendMap(appendMap(cfg.Values, cfg.AdapterValues), cfg.AdapterResolved)
-	values = appendMap(values, deploymentLegacyLKEValues(values, cfg.Environment))
-	values["CLOUD_ENV_NAME"] = cfg.Environment
-	for role, image := range release.Images {
-		values[role] = image.Reference
-	}
-	restore := installAllCredentialEnvironment(values)
-	defer restore()
-	claims := map[string]bool{}
-	for _, name := range p.Claims {
-		suffix := "video-cloud"
-		if name == "account-manager-service-state" {
-			suffix = "account-manager"
-		}
-		if name == "openbao-pki-identity" {
-			suffix = "secrets"
-		}
-		claims[p.Stack+"-"+suffix+"/"+name] = true
-	}
-	var manifests []string
-	manifests = append(manifests, lkePostgresStatefulSetManifest(values), lkeFleetValkeyStatefulSetManifest(values), lkeMQTTStatefulSetManifest(values))
-	for _, workload := range k8sWorkloads(values) {
-		if lkeSQLitePVCEnabled(values, workload.Key) {
-			manifests = append(manifests, lkeSQLitePVCManifest(values, workload))
-		}
-	}
-	if lkeLoggerRetentionStorageEnabled(values) {
-		manifests = append(manifests, lkeLokiPVCManifest(values))
-	}
-	if lkeGrafanaPersistenceEnabled(values) {
-		manifests = append(manifests, lkeGrafanaPVCManifest(values))
-	}
-	claims[p.Stack+"-platform/redis-data"] = true
-	claims[p.Stack+"-video-cloud/video-cloud-prometheus-data"] = true
-	// The maintained standard OpenBao file profile has independently persistent
-	// data/audit state; Raft is qualified by its separate production profile.
-	claims[p.Stack+"-secrets/data-openbao-0"] = true
-	claims[p.Stack+"-secrets/audit-openbao-0"] = true
-	add := func(object deploymentplan.Object) error {
-		meta := deploymentplan.Map(object["metadata"])
-		namespace := deploymentplan.String(meta["namespace"])
-		if object["kind"] == "PersistentVolumeClaim" {
-			claims[namespace+"/"+deploymentplan.String(meta["name"])] = true
-		}
-		if object["kind"] == "StatefulSet" {
-			spec := deploymentplan.Map(object["spec"])
-			replicas := 1
-			if value, ok := spec["replicas"].(float64); ok {
-				replicas = int(value)
-				if value != float64(replicas) || replicas < 0 || replicas > 1000 {
-					return environmentCreateBootstrapBlocker("StatefulSet storage allocation count is invalid")
-				}
-			}
-			for _, template := range certIssuerObjectList(spec["volumeClaimTemplates"]) {
-				name := deploymentplan.String(deploymentplan.Map(deploymentplan.Map(template)["metadata"])["name"])
-				for ordinal := 0; ordinal < replicas; ordinal++ {
-					claims[fmt.Sprintf("%s/%s-%s-%d", namespace, name, deploymentplan.String(meta["name"]), ordinal)] = true
-				}
-			}
-		}
-		return nil
-	}
-	for _, manifest := range manifests {
-		decoder := yaml.NewDecoder(strings.NewReader(manifest))
-		for {
-			var object deploymentplan.Object
-			err := decoder.Decode(&object)
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				return 0, environmentCreateBootstrapBlocker("maintained storage catalog could not be rendered")
-			}
-			raw, err := json.Marshal(object)
-			if err != nil || json.Unmarshal(raw, &object) != nil {
-				return 0, environmentCreateBootstrapBlocker("storage catalog has invalid API shape")
-			}
-			if err := add(object); err != nil {
-				return 0, err
-			}
-		}
-	}
-	if cfg.Values["SUPPORT_TICKETS_ENABLED"] == "true" {
-		store, err := newSecretStore("", cfg.Environment)
-		if err != nil {
-			return 0, err
-		}
-		values, chart, err := readEnvironmentZammadInputs(cfg)
-		if err != nil {
-			return 0, err
-		}
-		definitions, err := renderEnvironmentZammad(context.Background(), cfg, store, release, "create", values, chart)
-		if err != nil {
-			return 0, err
-		}
-		for _, definition := range definitions {
-			if err := add(definition.Object); err != nil {
-				return 0, err
-			}
-		}
-	}
-	return len(claims), nil
 }
 
 func runEnvironmentCreatePKICeremony(ctx context.Context, store secretStore, image string, args ...string) error {

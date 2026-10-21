@@ -78,17 +78,23 @@ func prepareUsedMQTTBootstrapRenewal(ctx context.Context, cfg deploymentConfig, 
 
 func executeUsedMQTTBootstrapRenewal(ctx context.Context, cfg deploymentConfig, p environmentCreateBootstrapPlan, store secretStore, runtime environmentCreateBootstrapRuntime, apply environmentCreateBootstrapApply) (environmentCreateServiceCeremony, error) {
 	r := runtime.ServiceSessionRecovery
-	s := r.Ceremony
-	candidate := r.Candidate
-	r.Candidate = r.RenewalCandidate
-	subjects, err := environmentCreateBootstrapSubjects(cfg)
+	s, resumed, err := resumeAcceptedUsedBootstrapCore(ctx, cfg, p, store, runtime)
 	if err != nil {
 		return s, err
 	}
-	s, err = createEnvironmentServiceSession(ctx, cfg, p, store, runtime, s, subjects, apply)
-	r.Candidate = candidate
-	if err != nil {
-		return s, err
+	if !resumed {
+		s = r.Ceremony
+		subjects, err := environmentCreateBootstrapSubjects(cfg)
+		if err != nil {
+			return s, err
+		}
+		candidate := r.Candidate
+		r.Candidate = r.RenewalCandidate
+		s, err = createEnvironmentServiceSession(ctx, cfg, p, store, runtime, s, subjects, apply)
+		r.Candidate = candidate
+		if err != nil {
+			return s, err
+		}
 	}
 	// Use the complete original subject policy, including retained application
 	// owners, when creating and distributing the renewed credential.

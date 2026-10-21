@@ -1529,6 +1529,10 @@ order and full attempt chain. The per-order propagation record also remains in
 that canonical directory. Missing recorded identity, partial material or an
 unknown order response is reconciled from original evidence; it does not
 authorize replacement issuance.
+The producer establishes new account/leaf keys only in an untouched producer
+directory with no earlier certificate intent. If that directory already exists,
+missing `keys.json` requires recovery of the original account key, leaf key and
+CSR, even when the other cache files are also missing.
 DNS credentials and enabled SDK download credentials are read from the selected
 operator store. SDK mirrors use exact canonical data and original recorded UID,
 and absent selected SDK settings clear ambient shell values during rendering.

@@ -15,14 +15,17 @@ import (
 )
 
 type normalTailE2EBackend struct {
-	e              *environmentCreateExecution
-	objects        map[string]deploymentplan.Object
-	writes         map[string]int
-	routes         map[string]string
-	phase, failure string
-	stage          string
-	failed, held   bool
-	leases         int
+	e                       *environmentCreateExecution
+	objects                 map[string]deploymentplan.Object
+	writes                  map[string]int
+	routes                  map[string]string
+	phase, failure          string
+	stage                   string
+	failed, held            bool
+	leases                  int
+	captureJobLifecycle     bool
+	defaultNativeServices   bool
+	requireNativeNamespaces bool
 }
 
 func (b *normalTailE2EBackend) trip(point string) error {
@@ -42,18 +45,39 @@ func (b *normalTailE2EBackend) Write(ctx context.Context, action string, body de
 	if err := b.e.Check(ctx); err != nil {
 		return nil, err
 	}
+	actual := deploymentplan.Clone(body)
+	if b.defaultNativeServices && actual["kind"] == "Service" {
+		spec := deploymentplan.Map(actual["spec"])
+		if spec["type"] == nil || spec["type"] == "" {
+			// Kubernetes applies this default on the original API write.
+			spec["type"] = "ClusterIP"
+		}
+	}
 	if dry {
-		return deploymentplan.Clone(body), nil
+		return actual, nil
+	}
+	if b.requireNativeNamespaces {
+		namespace := deploymentplan.String(deploymentplan.Map(body["metadata"])["namespace"])
+		if namespace != "" && b.objects["Namespace//"+namespace] == nil {
+			return nil, errors.New("isolated native namespace does not exist before resource write")
+		}
 	}
 	id := deploymentplan.ID(body)
 	b.writes[id]++
-	actual := deploymentplan.Clone(body)
 	uid := deploymentplan.String(deploymentplan.Map(actual["metadata"])["uid"])
 	if uid == "" {
 		uid = fmt.Sprintf("%08d-1111-4111-8111-111111111111", len(b.objects)+1)
 	}
 	deploymentplan.Map(actual["metadata"])["uid"] = uid
 	deploymentplan.Map(actual["metadata"])["resourceVersion"] = fmt.Sprint(b.writes[id])
+	if b.captureJobLifecycle && actual["kind"] == "Job" {
+		old := b.objects[id]
+		if old != nil && deploymentplan.Map(old["metadata"])["uid"] == uid && deploymentplan.Digest(actual["spec"]) == deploymentplan.Digest(old["spec"]) && deploymentplan.Map(old["status"])["startTime"] != nil {
+			actual["status"] = deploymentplan.Clone(deploymentplan.Map(old["status"]))
+		} else {
+			actual["status"] = deploymentplan.Object{"startTime": time.Now().UTC().Format(time.RFC3339Nano), "active": float64(1)}
+		}
+	}
 	b.objects[id] = actual
 	if err := b.trip("unknown-write"); err != nil {
 		return nil, err
@@ -61,6 +85,28 @@ func (b *normalTailE2EBackend) Write(ctx context.Context, action string, body de
 	return deploymentplan.Clone(actual), nil
 }
 func (b *normalTailE2EBackend) Wait(ctx context.Context, r deploymentplan.Resource) error {
+	if err := b.waitObserved(ctx, r); err != nil {
+		return err
+	}
+	b.recordJobCompletion(r)
+	return nil
+}
+
+func (b *normalTailE2EBackend) recordJobCompletion(r deploymentplan.Resource) {
+	job := b.objects[r.ID]
+	if !b.captureJobLifecycle || job == nil || job["kind"] != "Job" {
+		return
+	}
+	status := deploymentplan.Map(job["status"])
+	if status["startTime"] == nil || status["completionTime"] != nil || status["failed"] != nil {
+		return
+	}
+	status["active"], status["succeeded"] = float64(0), float64(1)
+	status["completionTime"] = time.Now().UTC().Format(time.RFC3339Nano)
+	status["conditions"] = []any{deploymentplan.Object{"type": "Complete", "status": "True"}}
+}
+
+func (b *normalTailE2EBackend) waitObserved(ctx context.Context, r deploymentplan.Resource) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}

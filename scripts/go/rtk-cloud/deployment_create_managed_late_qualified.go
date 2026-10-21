@@ -46,10 +46,46 @@ func managedLateQualifiedArtifactValid(a createFoundationRecoveryArtifact, e *en
 }
 
 func managedLateQualifiedAncestryMatches(loaded, late *createManagedLateSessionRecovery) bool {
+	return managedLateQualifiedAncestryDifference(loaded, late) == ""
+}
+
+func managedLateQualifiedAncestryDifference(loaded, late *createManagedLateSessionRecovery) string {
 	if loaded == nil || late == nil || loaded.AcceptedCore == nil || late.AcceptedCore == nil {
-		return false
+		return "typed-source"
 	}
-	return loaded.Mode == managedLateSessionACKReady && late.Mode == loaded.Mode && loaded.ParentSHA == late.ParentSHA && loaded.SourceOwnerSHA == late.SourceOwnerSHA && loaded.SourceSHA == late.SourceSHA && loaded.CoreSourceSHA == late.CoreSourceSHA && loaded.SourceArtifactSHA == late.SourceArtifactSHA && loaded.OriginalRepairReview == late.OriginalRepairReview && loaded.RestoreReview == late.RestoreReview && loaded.OriginalSession == late.OriginalSession && loaded.OriginalEnrollmentSession == late.OriginalEnrollmentSession && loaded.OriginalClientsSHA == late.OriginalClientsSHA && loaded.OriginalKeySHA == late.OriginalKeySHA && loaded.OriginalCSRSHA == late.OriginalCSRSHA && loaded.AcceptedCore.SHA256() == late.AcceptedCore.SHA256() && deploymentplan.Digest(loaded.AcceptedCoreJournal) == deploymentplan.Digest(late.AcceptedCoreJournal) && deploymentplan.Digest(loaded.SourceCeremony) == deploymentplan.Digest(late.SourceCeremony) && deploymentplan.Digest(loaded.SourceRenewedIntent) == deploymentplan.Digest(late.SourceRenewedIntent) && deploymentplan.Digest(loaded.MQTTRepair) == deploymentplan.Digest(late.MQTTRepair) && deploymentplan.Digest(loaded.MQTTCompletion) == deploymentplan.Digest(late.MQTTCompletion) && deploymentplan.Digest(loaded.OpenBaoTLSRepair) == deploymentplan.Digest(late.OpenBaoTLSRepair) && deploymentplan.Digest(loaded.OpenBaoTLSCompletion) == deploymentplan.Digest(late.OpenBaoTLSCompletion)
+	checks := []struct {
+		name         string
+		actual, want any
+	}{
+		{"mode", loaded.Mode, managedLateSessionACKReady},
+		{"archived-mode", late.Mode, loaded.Mode},
+		{"parent", loaded.ParentSHA, late.ParentSHA},
+		{"source-owner", loaded.SourceOwnerSHA, late.SourceOwnerSHA},
+		{"source", loaded.SourceSHA, late.SourceSHA},
+		{"core-source", loaded.CoreSourceSHA, late.CoreSourceSHA},
+		{"source-artifact", loaded.SourceArtifactSHA, late.SourceArtifactSHA},
+		{"original-review", loaded.OriginalRepairReview, late.OriginalRepairReview},
+		{"restore-review", loaded.RestoreReview, late.RestoreReview},
+		{"original-session", loaded.OriginalSession, late.OriginalSession},
+		{"enrollment-session", loaded.OriginalEnrollmentSession, late.OriginalEnrollmentSession},
+		{"clients", loaded.OriginalClientsSHA, late.OriginalClientsSHA},
+		{"key", loaded.OriginalKeySHA, late.OriginalKeySHA},
+		{"csr", loaded.OriginalCSRSHA, late.OriginalCSRSHA},
+		{"accepted-core", loaded.AcceptedCore.SHA256(), late.AcceptedCore.SHA256()},
+		{"accepted-core-journal", deploymentplan.Digest(loaded.AcceptedCoreJournal), deploymentplan.Digest(late.AcceptedCoreJournal)},
+		{"ceremony", deploymentplan.Digest(loaded.SourceCeremony), deploymentplan.Digest(late.SourceCeremony)},
+		{"renewed-intent", deploymentplan.Digest(loaded.SourceRenewedIntent), deploymentplan.Digest(late.SourceRenewedIntent)},
+		{"mqtt-repair", deploymentplan.Digest(loaded.MQTTRepair), deploymentplan.Digest(late.MQTTRepair)},
+		{"mqtt-completion", deploymentplan.Digest(loaded.MQTTCompletion), deploymentplan.Digest(late.MQTTCompletion)},
+		{"tls-repair", deploymentplan.Digest(loaded.OpenBaoTLSRepair), deploymentplan.Digest(late.OpenBaoTLSRepair)},
+		{"tls-completion", deploymentplan.Digest(loaded.OpenBaoTLSCompletion), deploymentplan.Digest(late.OpenBaoTLSCompletion)},
+	}
+	for _, check := range checks {
+		if deploymentplan.Digest(check.actual) != deploymentplan.Digest(check.want) {
+			return check.name
+		}
+	}
+	return ""
 }
 
 func managedLateQualifiedMaterialPins(late *createManagedLateSessionRecovery) map[string]string {
@@ -213,8 +249,17 @@ func loadManagedLateQualifiedContent(cfg deploymentConfig, store secretStore, e 
 		return nil, err
 	}
 	var late createManagedLateSessionRecovery
-	if createOpenBaoACKCompletionRead(store, filepath.Join(base, "managed-late-session-source.json"), &late) != nil || late.Review != review || !managedLateQualifiedAncestryMatches(loaded, &late) || deploymentplan.Digest(derived.Plan) != deploymentplan.Digest(a.Plan.Plan) {
-		return bad("original-source-and-bootstrap")
+	if err := createOpenBaoACKCompletionRead(store, filepath.Join(base, "managed-late-session-source.json"), &late); err != nil {
+		return nil, err
+	}
+	if late.Review != review {
+		return bad("original-source-review")
+	}
+	if difference := managedLateQualifiedAncestryDifference(loaded, &late); difference != "" {
+		return bad("original-source-" + difference)
+	}
+	if deploymentplan.Digest(derived.Plan) != deploymentplan.Digest(a.Plan.Plan) {
+		return bad("original-bootstrap-plan")
 	}
 	// The original application admission predates the genuine two trust-PVC
 	// additions. The qualifier independently pinned the current canonical ledger

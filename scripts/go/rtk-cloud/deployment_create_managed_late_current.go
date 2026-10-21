@@ -20,8 +20,14 @@ const managedLateAPICurrentMaterial = "accepted-service-core-managed-application
 
 func bindManagedLateFreshAPIServers(materials map[string]string, expected string) error {
 	actual := materials[managedLateAPINativeMaterial]
-	if !environmentPreflightDigest.MatchString(expected) || actual != expected {
-		return managedCoreObservationBlock("late-fresh-original-api-csr-certificates")
+	if !environmentPreflightDigest.MatchString(expected) {
+		return managedCoreObservationBlock("late-original-api-csr-certificate-pin")
+	}
+	if !environmentPreflightDigest.MatchString(actual) {
+		return managedCoreObservationBlock("late-fresh-api-csr-certificate-read")
+	}
+	if actual != expected {
+		return managedCoreObservationBlock("late-fresh-api-csr-certificate-drift")
 	}
 	materials[managedLateAPICurrentMaterial] = actual
 	return nil

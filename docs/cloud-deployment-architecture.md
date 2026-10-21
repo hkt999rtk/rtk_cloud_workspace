@@ -407,6 +407,15 @@ operator review; the executor continues to consume the version-bound
 Preflight GO has `scope=original-generation-recovery completed=false` and cannot
 substitute for actual deployment or full final acceptance.
 
+An expired unused first Service session may renew from its exact accepted
+`service-session` child when no completed ordering recovery exists. A completed
+ordering recovery remains the selected source; malformed or ambiguous sources
+are refused. The reader authenticates the original parent intent and child
+archive, the Job's original session and custody paths, and the retained claim
+and ServiceAccount's current UID and body. Normal first issuance therefore does
+not require an earlier ordering failure, and renewal still uses the original
+persistent key/CSR and signed expired credential.
+
 For the bounded application-enrollment trust repair, the authorized CI artifact
 selection producer saves `deployment/repairs/service-bootstrap/selection.json`
 and `<source-revision>/image-manifest.json` beneath that directory in the canonical
@@ -432,6 +441,22 @@ in that reviewed directory. Execution consumes the original persistent key/CSR
 and binds current-installation re-attestation to the new native session. New
 intent/observed credential records use the same canonical generation's
 `bootstrap/service/session-renewal/<review-sha256>/` producer/consumer lifecycle.
+After a child readiness interruption, the original-key renewal executor reuses
+`intent.json` only when its private file bytes exactly match the reviewed intent.
+It verifies an already recorded OpenBao policy against fresh native readback
+before reusing its receipt; neither retry rewrites the policy or replaces the
+key/CSR. Changed intent, policy or ownership still blocks recovery.
+An exact completed session retry also reobserves the native session, custody,
+credential owners and cleanup binding before reusing its private `observed.json`.
+The existing observation remains unchanged; a different or malformed observation
+cannot become completion evidence.
+When the same used-seed renewal has already completed its Core stage, recovery
+authenticates the original admission and the accepted renewal, custody,
+credential and Core children as one owner-preserving history. It verifies the
+latest resource bodies against the current Core renderer, all original key/CSR
+bindings, credential copies and the live native session before continuing.
+Earlier credential distribution is not replayed over trust ConfigMaps already
+advanced by that accepted Core stage; its original child remains unchanged.
 
 Native Account Manager authentication and explicit policies authorize Service, Device,
 App, MQTT and OpenBao TLS ceremonies. The original final consumers verify
@@ -616,7 +641,15 @@ records and verifies their native bindings without capturing new ownership.
 The target gate accepts only the same-UID audited foundation OpenBao ConfigMap
 baseline to its exact recorded managed-host write. Newly required MQTT producers and direct original
 verifier/worker references precede the corrected broker in the forward plan.
-The partial profile produces its exact five-resource private candidate at
+For the authenticated 26-resource partial application child, the completed
+`pki-create-mqtt-consumer-trust` ConfigMap may be either an original update or an
+unchanged retained owner. The latter requires the same resource ID, baseline UID,
+journal owner, and desired configuration under the planner's normal matching
+rules; unrelated native metadata does not require a write. The original source
+hash, completed prefix, other resource actions, and current native checks remain
+required. Recovery retains this completed ConfigMap in both cases.
+
+The managed-host partial profile produces its exact five-resource private candidate at
 `deployment/create/openbao-recovery/<review-sha256>/openbao-root-trust-plan.json`;
 qualification and exact-checker admission consume that candidate. Its two MQTT
 configuration dependencies reuse existing runtime credentials and contain no
@@ -670,7 +703,13 @@ from the same canonical parent and rollback directories. It produces a new
 qualified recovery artifact under `deployment/create/openbao-recovery/<review>/`
 and records current native audit evidence before continuing export. Already
 accepted transport/Job/reader bodies remain observations: no host cutover, HUP,
-enrollment or key producer runs again. The in-memory exporter remains bound to
+enrollment or key producer runs again. When the current launcher renderer differs
+only in the known historical OpenBao PID marker, this observation retains that
+exact accepted command. It first authenticates the seven-owner audit journal and
+selected session, then requires equality of all seven desired bodies after that
+single compatibility substitution. Unrelated command, image, configuration or
+owner drift remains NO-GO; the separately qualified ACK repair still owns the
+later PID-producer correction. The in-memory exporter remains bound to
 the original PVC and exact current Deployment/ReplicaSet/Pod owner chain.
 A pre-child reader-retirement compiler failure records only the parent's original
 pending UID intent. Its next qualified artifact authenticates that same completed
@@ -2925,7 +2964,7 @@ use 0700 directories and 0600 files.
 | Same product directory: `service/session-forward-attempt-<previous-plan-sha256>.json` | A definite pre-mint native failure records its prior child plan/journal, Job/Pod owners, terminal result, no-mint evidence and original source binding. The producer, semantic history reader and final allocation verifier follow this same-intent chain to a genuinely accepted winner. Failed native children stay failed; their parent receipts explicitly record supersession by that winner. Unknown outcomes do not create another attempt. |
 | `deployment/create/<parent>/bootstrap/product-identities/fresh-program.json` | New-generation bootstrap freezes its original session's product producer intent; the renderer and deferred finalizer consume its parent/scope-bound reference. |
 | `deployment/rollback/<child-plan>/` | Common execution engine produces actual child plans, native owners, write/readiness and acceptance journals; parent completion and allocation capture verify them. |
-| `pki/public-https/<secret-name>/deployment/<producer-digest>/keys.json` | Admitted public HTTPS producer saves its original ACME account key, leaf key and CSR before issuance; interrupted issuance reuses them. Qualification never creates this file. |
+| `pki/public-https/<secret-name>/deployment/<producer-digest>/keys.json` | Admitted public HTTPS producer saves its original ACME account key, leaf key and CSR before issuance; interrupted issuance reuses them. Qualification never creates this file. A retained producer directory or certificate intent with missing keys requires restoration of the original bytes; an empty retained directory is not a fresh producer. |
 | Same public HTTPS directory: `account.json`, `order.json` | Producer saves the original ACME account and first order response. Recovery preserves both and observes the same order while it remains usable. |
 | Same public HTTPS directory: `attempts/<four-digit-number>/{intent,order}.json` | After an authenticated read proves the prior order terminal INVALID, the producer appends its exact terminal result and next request intent before requesting a new order. It saves the actual response separately; producer, semantic recovery reader and final verifier validate the contiguous chain and winning-order receipt. Unknown responses never permit another request. Account key, leaf key, CSR, names, Program and admission clock remain original. |
 | Same public HTTPS directory or numbered attempt directory: `propagation.json` | The DNS waiter saves the complete order challenge-set binding, authoritative nameservers, convergence time and SOA negative-cache horizon. An observed authoritative negative answer durably invalidates the earlier horizon; renewed authoritative convergence extends this status monotonically before waiting. Interrupted validation rechecks current DNS without restarting a separate delay for each name. |

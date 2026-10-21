@@ -44,8 +44,14 @@ func authenticateManagedLateObservationSource(cfg deploymentConfig, store secret
 					return nil, managedCoreObservationBlock("late-mqtt-progress-key")
 				}
 				artifact, captured, err := loadCreateMQTTRootCRLArtifact(cfg, store, e, review)
-				if err != nil || artifact.Plan.SourceJournalSHA != late.SourceSHA || !mqttRootCRLProgressValid(e.Journal, artifact, captured, false) {
-					return nil, managedCoreObservationBlock("late-authenticated-mqtt-progress")
+				if err != nil {
+					return nil, err
+				}
+				if artifact.Plan.SourceJournalSHA != late.SourceSHA {
+					return nil, managedCoreObservationBlock("late-authenticated-mqtt-source")
+				}
+				if failure := mqttRootCRLProgressFailure(e.Journal, artifact, captured, false); failure != "" {
+					return nil, managedCoreObservationBlock("late-authenticated-mqtt-tail-" + failure)
 				}
 				old.Journal = captured
 			} else {
@@ -54,8 +60,14 @@ func authenticateManagedLateObservationSource(cfg deploymentConfig, store secret
 					return nil, managedCoreObservationBlock("late-openbao-tls-progress-key")
 				}
 				artifact, captured, err := loadCreateOpenBaoTLSRootCRLArtifact(cfg, store, e, review)
-				if err != nil || artifact.Plan.SourceJournalSHA != late.SourceSHA || !openBaoTLSRootCRLProgressValid(e.Journal, artifact, captured, false) {
-					return nil, managedCoreObservationBlock("late-authenticated-openbao-tls-progress")
+				if err != nil {
+					return nil, err
+				}
+				if artifact.Plan.SourceJournalSHA != late.SourceSHA {
+					return nil, managedCoreObservationBlock("late-authenticated-openbao-tls-source")
+				}
+				if !openBaoTLSRootCRLProgressValid(e.Journal, artifact, captured, false) {
+					return nil, managedCoreObservationBlock("late-authenticated-openbao-tls-tail")
 				}
 				old.Journal = captured
 			}

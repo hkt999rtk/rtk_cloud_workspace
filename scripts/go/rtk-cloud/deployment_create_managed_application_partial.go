@@ -85,7 +85,15 @@ func validateManagedApplicationPartialJournal(plan *deploymentplan.Plan, journal
 		} else if index >= 20 {
 			phase = "workload"
 		}
-		if resource.Phase != phase || resource.ID != ids[index] || resource.Action != actions[index] || deploymentplan.ID(resource.Desired) != resource.ID || !slices.Contains([]string{"create", "update", "retain"}, resource.Action) || (resource.Action == "create" && (resource.UID != "" || resource.Baseline != nil)) || (resource.Action != "create" && (resource.Baseline == nil || !environmentBootstrapOwnerUUID.MatchString(resource.UID))) {
+		actionMatches := resource.Action == actions[index]
+		if index == 7 && resource.Action == "retain" {
+			// The maintained MQTT intermediate stage already publishes this
+			// exact Root/ICA/CRL configuration. An unchanged original owner
+			// is a completed no-op, not evidence of a missing Apps write.
+			owner := deploymentplan.String(deploymentplan.Map(resource.Baseline["metadata"])["uid"])
+			actionMatches = resource.ID == "ConfigMap/"+namespace+"/pki-create-mqtt-consumer-trust" && deploymentplan.ID(resource.Baseline) == resource.ID && owner == resource.UID && deploymentplan.Matches(resource.Desired, resource.Baseline)
+		}
+		if resource.Phase != phase || resource.ID != ids[index] || !actionMatches || deploymentplan.ID(resource.Desired) != resource.ID || !slices.Contains([]string{"create", "update", "retain"}, resource.Action) || (resource.Action == "create" && (resource.UID != "" || resource.Baseline != nil)) || (resource.Action != "create" && (resource.Baseline == nil || !environmentBootstrapOwnerUUID.MatchString(resource.UID))) {
 			return bad()
 		}
 		owner := journal.Owners[resource.ID]

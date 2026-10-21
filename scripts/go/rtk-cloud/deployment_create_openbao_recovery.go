@@ -1109,105 +1109,8 @@ func runEnvironmentCreateOpenBaoRecoveryContext(parentContext context.Context, a
 		}
 	}
 	if *atServiceSession && !*afterServiceCore && admittedOnly == nil && serviceSession.ManagedLateRemaining == nil {
-		if f := serviceSession.ManagedLateExpiredRenewal; f != nil {
-			f.Review = sha
-			for name, value := range map[string]any{managedLateExpiredRenewalSourceFilename: f, managedLateExpiredRenewalPlanFilename: f.Candidate} {
-				if value == nil {
-					return managedLateExpiredRenewalBlock("qualified-archive")
-				}
-				if err := writeEnvironmentCreateDerivedPrivateFile(store, filepath.Join("deployment/create/openbao-recovery", sha, name), mustProviderRecoveryJSON(value)); err != nil {
-					return err
-				}
-			}
-		}
-		if serviceSession.ManagedLatePostMint != nil {
-			post := serviceSession.ManagedLatePostMint
-			post.Review = sha
-			if err := writeEnvironmentCreateDerivedPrivateFile(store, filepath.Join("deployment/create/openbao-recovery", sha, managedLatePostMintSourceFilename), mustProviderRecoveryJSON(post)); err != nil {
-				return err
-			}
-			if err := writeEnvironmentCreateDerivedPrivateFile(store, filepath.Join("deployment/create/openbao-recovery", sha, managedLatePostMintPlanFilename), mustProviderRecoveryJSON(post.Candidate)); err != nil {
-				return err
-			}
-		} else if serviceSession.ManagedLateSeedForward != nil {
-			f := serviceSession.ManagedLateSeedForward
-			f.Review = sha
-			if err := writeEnvironmentCreateDerivedPrivateFile(store, filepath.Join("deployment/create/openbao-recovery", sha, managedLateSeedForwardSourceFilename), mustProviderRecoveryJSON(f)); err != nil {
-				return err
-			}
-			if err := writeEnvironmentCreateDerivedPrivateFile(store, filepath.Join("deployment/create/openbao-recovery", sha, managedLateSeedForwardPlanFilename), mustProviderRecoveryJSON(f.Candidate)); err != nil {
-				return err
-			}
-		} else if serviceSession.ManagedLateSession != nil {
-			late := serviceSession.ManagedLateSession
-			late.Review, serviceSession.Review = sha, sha
-			if err := writeEnvironmentCreateDerivedPrivateFile(store, filepath.Join("deployment/create/openbao-recovery", sha, "managed-late-session-source.json"), mustProviderRecoveryJSON(late)); err != nil {
-				return err
-			}
-			for filename, candidate := range map[string]*deploymentplan.Plan{managedLateSessionOwnerPlanFilename: late.OwnerCandidate, "managed-late-session-custody-plan.json": late.CustodyCandidate, "managed-late-log-stop-plan.json": late.LogStopCandidate, "managed-late-log-helper-plan.json": late.LogHelperCandidate, "managed-late-log-retire-plan.json": late.LogRetireCandidate, "managed-late-log-restore-plan.json": late.LogRestoreCandidate} {
-				if candidate == nil {
-					return createOpenBaoACKBlock("late-qualified-plan-missing")
-				}
-				if err := writeEnvironmentCreateDerivedPrivateFile(store, filepath.Join("deployment/create/openbao-recovery", sha, filename), mustProviderRecoveryJSON(candidate)); err != nil {
-					return err
-				}
-			}
-		} else if serviceSession.ManagedCorePartial != nil {
-			serviceSession.Review = serviceSession.ManagedCorePartial.OriginalRepairReview
-			serviceSession.ManagedCorePartial.ForwardReview = sha
-			if proof := serviceSession.ManagedCorePartial.CertIssuerPrepare; proof != nil {
-				if err := writeEnvironmentCreateDerivedPrivateFile(store, filepath.Join("deployment/create/openbao-recovery", sha, managedCoreCertIssuerPrepareFilename), mustProviderRecoveryJSON(proof)); err != nil {
-					return err
-				}
-			}
-
-		} else {
-			serviceSession.Review = sha
-		}
-		if serviceSession.ManagedLateSeedForward == nil && serviceSession.ManagedLatePostMint == nil {
-			planName := "service-session-plan.json"
-			if serviceSession.ManagedLateSession != nil {
-				planName = managedLateSessionOwnerPlanFilename
-			} else if serviceSession.ManagedCorePartial != nil {
-				planName = "managed-complete-issuer-forward-plan.json"
-			}
-			if serviceSession.IdentityLockForward {
-				planName = "service-managed-core-plan.json"
-			}
-			if (serviceSession.ManagedCorePartial == nil && serviceSession.ManagedLateSession == nil) && serviceSession.PostServiceResume {
-				planName = "mqtt-root-trust-plan.json"
-				if serviceSession.PostTransportResume {
-					planName = "openbao-root-trust-plan.json"
-				}
-			}
-			if serviceSession.InstallationCandidate != nil {
-				for name, plan := range map[string]*deploymentplan.Plan{"current-installation-plan.json": serviceSession.InstallationCandidate, "current-owner-quiesce-plan.json": serviceSession.QuiesceCandidate} {
-					if err := writeEnvironmentCreateDerivedPrivateFile(store, filepath.Join("deployment/create/openbao-recovery", sha, name), mustProviderRecoveryJSON(plan)); err != nil {
-						return err
-					}
-				}
-			}
-			if serviceSession.RenewalCandidate != nil {
-				if err := writeEnvironmentCreateDerivedPrivateFile(store, filepath.Join("deployment/create/openbao-recovery", sha, "used-bootstrap-renewal-plan.json"), mustProviderRecoveryJSON(serviceSession.RenewalCandidate)); err != nil {
-					return err
-				}
-			}
-			if err := writeEnvironmentCreateDerivedPrivateFile(store, filepath.Join("deployment/create/openbao-recovery", sha, planName), mustProviderRecoveryJSON(serviceSession.Candidate)); err != nil {
-				return err
-			}
-			if serviceSession.OpenBaoACK != nil && (serviceSession.ManagedCorePartial == nil && serviceSession.ManagedLateSession == nil) {
-				if err := writeEnvironmentCreateDerivedPrivateFile(store, filepath.Join("deployment/create/openbao-recovery", sha, "openbao-host-ack-plan.json"), mustProviderRecoveryJSON(serviceSession.OpenBaoACK.Candidate)); err != nil {
-					return err
-				}
-				if err := writeEnvironmentCreateDerivedPrivateFile(store, filepath.Join("deployment/create/openbao-recovery", sha, "openbao-host-ack-source.json"), mustProviderRecoveryJSON(serviceSession.OpenBaoACK)); err != nil {
-					return err
-				}
-			}
-			if *afterApplicationTrust && serviceSession.GrantCandidate != nil {
-				if err := writeEnvironmentCreateDerivedPrivateFile(store, filepath.Join("deployment/create/openbao-recovery", sha, "service-trust-grants-plan.json"), mustProviderRecoveryJSON(serviceSession.GrantCandidate)); err != nil {
-					return err
-				}
-			}
+		if err := writeCreateServiceRecoveryCandidates(store, sha, serviceSession, *afterApplicationTrust); err != nil {
+			return err
 		}
 	}
 	if *atAccount {
@@ -2142,4 +2045,123 @@ func createRecoveryTransportMinimumLife(ctx context.Context, budget time.Duratio
 		}
 	}
 	return remaining + 15*time.Minute
+}
+
+// writeCreateServiceRecoveryCandidates preserves the already qualified concrete
+// plans. Admission, source authentication and live fencing remain in the command.
+func writeCreateServiceRecoveryCandidates(store secretStore, sha string, serviceSession *createServiceSessionRecovery, afterApplicationTrust bool) error {
+	if f := serviceSession.ManagedLateExpiredRenewal; f != nil {
+		if f.Candidate == nil {
+			return managedLateExpiredRenewalBlock("qualified-archive")
+		}
+		f.Review = sha
+		for name, value := range map[string]any{managedLateExpiredRenewalSourceFilename: f, managedLateExpiredRenewalPlanFilename: f.Candidate} {
+			if err := writeEnvironmentCreateDerivedPrivateFile(store, filepath.Join("deployment/create/openbao-recovery", sha, name), mustProviderRecoveryJSON(value)); err != nil {
+				return err
+			}
+		}
+	}
+	if serviceSession.ManagedLatePostMint != nil {
+		post := serviceSession.ManagedLatePostMint
+		post.Review = sha
+		if err := writeEnvironmentCreateDerivedPrivateFile(store, filepath.Join("deployment/create/openbao-recovery", sha, managedLatePostMintSourceFilename), mustProviderRecoveryJSON(post)); err != nil {
+			return err
+		}
+		if err := writeEnvironmentCreateDerivedPrivateFile(store, filepath.Join("deployment/create/openbao-recovery", sha, managedLatePostMintPlanFilename), mustProviderRecoveryJSON(post.Candidate)); err != nil {
+			return err
+		}
+	} else if serviceSession.ManagedLateSeedForward != nil {
+		f := serviceSession.ManagedLateSeedForward
+		f.Review = sha
+		if err := writeEnvironmentCreateDerivedPrivateFile(store, filepath.Join("deployment/create/openbao-recovery", sha, managedLateSeedForwardSourceFilename), mustProviderRecoveryJSON(f)); err != nil {
+			return err
+		}
+		if err := writeEnvironmentCreateDerivedPrivateFile(store, filepath.Join("deployment/create/openbao-recovery", sha, managedLateSeedForwardPlanFilename), mustProviderRecoveryJSON(f.Candidate)); err != nil {
+			return err
+		}
+	} else if serviceSession.ManagedLateSession != nil {
+		late := serviceSession.ManagedLateSession
+		late.Review, serviceSession.Review = sha, sha
+		for filename, candidate := range map[string]*deploymentplan.Plan{managedLateSessionOwnerPlanFilename: late.OwnerCandidate, "managed-late-session-custody-plan.json": late.CustodyCandidate, "managed-late-log-stop-plan.json": late.LogStopCandidate, "managed-late-log-helper-plan.json": late.LogHelperCandidate, "managed-late-log-retire-plan.json": late.LogRetireCandidate, "managed-late-log-restore-plan.json": late.LogRestoreCandidate} {
+			if candidate == nil {
+				return createOpenBaoACKBlock("late-qualified-plan-missing")
+			}
+			if err := writeEnvironmentCreateDerivedPrivateFile(store, filepath.Join("deployment/create/openbao-recovery", sha, filename), mustProviderRecoveryJSON(candidate)); err != nil {
+				return err
+			}
+		}
+	} else if serviceSession.ManagedCorePartial != nil {
+		serviceSession.Review = serviceSession.ManagedCorePartial.OriginalRepairReview
+		serviceSession.ManagedCorePartial.ForwardReview = sha
+		if proof := serviceSession.ManagedCorePartial.CertIssuerPrepare; proof != nil {
+			if err := writeEnvironmentCreateDerivedPrivateFile(store, filepath.Join("deployment/create/openbao-recovery", sha, managedCoreCertIssuerPrepareFilename), mustProviderRecoveryJSON(proof)); err != nil {
+				return err
+			}
+		}
+
+	} else {
+		serviceSession.Review = sha
+	}
+	if serviceSession.ManagedLateSeedForward == nil && serviceSession.ManagedLatePostMint == nil {
+		planName := "service-session-plan.json"
+		if serviceSession.ManagedLateSession != nil {
+			planName = managedLateSessionOwnerPlanFilename
+		} else if serviceSession.ManagedCorePartial != nil {
+			planName = "managed-complete-issuer-forward-plan.json"
+		}
+		if serviceSession.IdentityLockForward {
+			planName = "service-managed-core-plan.json"
+		}
+		if (serviceSession.ManagedCorePartial == nil && serviceSession.ManagedLateSession == nil) && serviceSession.PostServiceResume {
+			planName = "mqtt-root-trust-plan.json"
+			if serviceSession.PostTransportResume {
+				planName = "openbao-root-trust-plan.json"
+			}
+		}
+		if serviceSession.InstallationCandidate != nil {
+			for name, plan := range map[string]*deploymentplan.Plan{"current-installation-plan.json": serviceSession.InstallationCandidate, "current-owner-quiesce-plan.json": serviceSession.QuiesceCandidate} {
+				if err := writeEnvironmentCreateDerivedPrivateFile(store, filepath.Join("deployment/create/openbao-recovery", sha, name), mustProviderRecoveryJSON(plan)); err != nil {
+					return err
+				}
+			}
+		}
+		if serviceSession.RenewalCandidate != nil {
+			if err := writeEnvironmentCreateDerivedPrivateFile(store, filepath.Join("deployment/create/openbao-recovery", sha, "used-bootstrap-renewal-plan.json"), mustProviderRecoveryJSON(serviceSession.RenewalCandidate)); err != nil {
+				return err
+			}
+		}
+		if err := writeEnvironmentCreateDerivedPrivateFile(store, filepath.Join("deployment/create/openbao-recovery", sha, planName), mustProviderRecoveryJSON(serviceSession.Candidate)); err != nil {
+			return err
+		}
+		if serviceSession.OpenBaoACK != nil && (serviceSession.ManagedCorePartial == nil && serviceSession.ManagedLateSession == nil) {
+			if err := writeEnvironmentCreateDerivedPrivateFile(store, filepath.Join("deployment/create/openbao-recovery", sha, "openbao-host-ack-plan.json"), mustProviderRecoveryJSON(serviceSession.OpenBaoACK.Candidate)); err != nil {
+				return err
+			}
+			if err := writeEnvironmentCreateDerivedPrivateFile(store, filepath.Join("deployment/create/openbao-recovery", sha, "openbao-host-ack-source.json"), mustProviderRecoveryJSON(serviceSession.OpenBaoACK)); err != nil {
+				return err
+			}
+		}
+		if afterApplicationTrust && serviceSession.GrantCandidate != nil {
+			if err := writeEnvironmentCreateDerivedPrivateFile(store, filepath.Join("deployment/create/openbao-recovery", sha, "service-trust-grants-plan.json"), mustProviderRecoveryJSON(serviceSession.GrantCandidate)); err != nil {
+				return err
+			}
+		}
+	}
+	// The descriptor is the archive's commit marker. Publish and verify it only
+	// after every referenced preview is durable, so a failed or interrupted
+	// candidate write cannot expose a partially committed qualified source.
+	if late := serviceSession.ManagedLateSession; late != nil {
+		relative := filepath.Join("deployment/create/openbao-recovery", sha, "managed-late-session-source.json")
+		if err := writeEnvironmentCreateDerivedPrivateFile(store, relative, mustProviderRecoveryJSON(late)); err != nil {
+			return err
+		}
+		var retained createManagedLateSessionRecovery
+		if err := createOpenBaoACKCompletionRead(store, relative, &retained); err != nil {
+			return err
+		}
+		if managedLateSessionSourceDigest(&retained) != managedLateSessionSourceDigest(late) {
+			return createOpenBaoACKBlock("late-qualified-descriptor-round-trip")
+		}
+	}
+	return nil
 }

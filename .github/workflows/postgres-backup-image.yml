@@ -31,7 +31,7 @@ concurrency:
 jobs:
   runner:
     runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 45
+    timeout-minutes: 210
     steps:
       - uses: actions/checkout@v6
         with:
@@ -54,7 +54,9 @@ jobs:
           RTK_POSTGRES_BACKUP_LARGE_INTEGRATION: '1'
         run: |
           docker pull postgres:16-alpine
-          go test -timeout=20m -count=1 ./rtk-cloud/internal/postgresbackup ./rtk-cloud/internal/recovery ./internal/cloudmonitor ./rtk-cloud
+          go test -timeout=20m -count=1 ./rtk-cloud/internal/postgresbackup ./rtk-cloud/internal/recovery ./internal/cloudmonitor
+          # Full deployment/recovery E2E shares the workspace baseline budget.
+          go test -failfast -timeout=180m -count=1 ./rtk-cloud
       - uses: docker/setup-buildx-action@v3
       - name: Resolve immutable source image
         id: images

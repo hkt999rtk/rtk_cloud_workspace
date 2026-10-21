@@ -37,30 +37,28 @@ func installEnvironmentCreateOpenBaoPolicy(ctx context.Context, cfg deploymentCo
 	reuse := false
 	closeRecorded := false
 	observePending := false
-	if runtime.ProductIdentityScope != "" {
-		for _, entry := range runtime.Execution.Journal.Entries {
-			if entry.Key != key {
-				continue
-			}
-			if reuse || entry.Phase != "bootstrap" || entry.IntentSHA256 != activeTransportJournalDigest(intent) || entry.StartedAt.IsZero() {
-				return environmentCreateBootstrapBlocker("product policy has an uncertain or changed original outcome")
-			}
-			switch entry.State {
-			case "pending":
-				if len(entry.Receipt) != 0 || !entry.CompletedAt.IsZero() {
-					return environmentCreateBootstrapBlocker("product policy has an uncertain or changed original outcome")
-				}
-				observePending = true
-			case "allocated", "completed":
-				if (entry.State == "completed") == entry.CompletedAt.IsZero() || activeTransportJournalDigest(json.RawMessage(entry.Receipt)) != activeTransportJournalDigest(intent) {
-					return environmentCreateBootstrapBlocker("product policy has an uncertain or changed original outcome")
-				}
-			default:
-				return environmentCreateBootstrapBlocker("product policy has an uncertain or changed original outcome")
-			}
-			reuse = true
-			closeRecorded = entry.State != "completed"
+	for _, entry := range runtime.Execution.Journal.Entries {
+		if entry.Key != key {
+			continue
 		}
+		if reuse || entry.Phase != "bootstrap" || entry.IntentSHA256 != activeTransportJournalDigest(intent) || entry.StartedAt.IsZero() {
+			return environmentCreateBootstrapBlocker("policy has an uncertain or changed original outcome")
+		}
+		switch entry.State {
+		case "pending":
+			if runtime.ProductIdentityScope == "" || len(entry.Receipt) != 0 || !entry.CompletedAt.IsZero() {
+				return environmentCreateBootstrapBlocker("policy has an uncertain or changed original outcome")
+			}
+			observePending = true
+		case "allocated", "completed":
+			if (entry.State == "completed") == entry.CompletedAt.IsZero() || activeTransportJournalDigest(json.RawMessage(entry.Receipt)) != activeTransportJournalDigest(intent) {
+				return environmentCreateBootstrapBlocker("policy has an uncertain or changed original outcome")
+			}
+		default:
+			return environmentCreateBootstrapBlocker("policy has an uncertain or changed original outcome")
+		}
+		reuse = true
+		closeRecorded = entry.State != "completed"
 	}
 	if !reuse {
 		if err := runtime.Execution.BeginEntry(key, "bootstrap", body, time.Now().UTC()); err != nil {
@@ -388,11 +386,34 @@ func createEnvironmentServiceSession(ctx context.Context, cfg deploymentConfig, 
 	if r := runtime.ServiceSessionRecovery; r != nil && r.Renewal {
 		observedPath = filepath.Join("deployment/create", runtime.ExecutionSHA256, "bootstrap/service/session-renewal", r.Review, "observed.json")
 	}
+	value := deploymentplan.Object{"session": json.RawMessage(sessionRaw), "cleanup_binding": s.CleanupBinding, "credential_uids": s.CredentialUIDs, "custody_reader": s.CustodyReader}
 	writer := writeEnvironmentCreateBootstrapJSON
 	if runtime.ProductIdentityScope != "" {
 		writer = writeProductArtifact
+	} else {
+		// A completed retry still reobserves the native session, original
+		// custody, credential owners and cleanup policy above. Retain only an
+		// identical original observation; never rewrite completion evidence.
+		path, pathErr := privateDeploymentStatePath(store.Environment, observedPath)
+		if pathErr != nil || path != filepath.Join(store.Root, observedPath) || runtime.Execution == nil || runtime.Execution.Store.Root != store.Root {
+			return s, environmentCreateBootstrapBlocker("original session observation requires its private canonical owner")
+		}
+		if err := runtime.Execution.Check(ctx); err != nil {
+			return s, err
+		}
+		if _, statErr := os.Lstat(path); statErr == nil {
+			raw, readErr := readBoundedEnvironmentFile(path, true)
+			var original, expected deploymentplan.Object
+			encoded, encodeErr := json.Marshal(value)
+			if readErr != nil || encodeErr != nil || decodeEnvironmentJSON(raw, &original) != nil || decodeEnvironmentJSON(encoded, &expected) != nil || deploymentplan.Digest(original) != deploymentplan.Digest(expected) {
+				return s, environmentCreateBootstrapBlocker("original session observation changed or cannot be inspected")
+			}
+			return s, runtime.Execution.Check(ctx)
+		} else if !os.IsNotExist(statErr) {
+			return s, environmentCreateBootstrapBlocker("original session observation cannot be inspected")
+		}
 	}
-	if _, err := writer(store, observedPath, deploymentplan.Object{"session": json.RawMessage(sessionRaw), "cleanup_binding": s.CleanupBinding, "credential_uids": s.CredentialUIDs, "custody_reader": s.CustodyReader}); err != nil {
+	if _, err := writer(store, observedPath, value); err != nil {
 		return s, err
 	}
 	return s, nil

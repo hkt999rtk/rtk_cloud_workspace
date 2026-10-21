@@ -112,6 +112,44 @@ func TestManagedLateQualifiedArtifactUsesFreshSixGOAndUnchangedActualSource(t *t
 	}
 }
 
+func TestManagedLateQualifiedAncestryReportsTheExactChangedAuthority(t *testing.T) {
+	pin := func(value string) string { return strings.Repeat(value, 64) }
+	session := "11111111-1111-4111-8111-111111111111"
+	plan := &deploymentplan.Plan{Inputs: deploymentplan.Inputs{Environment: "dev", Stack: "video-cloud-dev", ConfigurationSHA256: pin("a")}}
+	original := &createManagedLateSessionRecovery{
+		Mode: managedLateSessionACKReady, ParentSHA: pin("1"), SourceOwnerSHA: pin("2"), SourceSHA: pin("3"), CoreSourceSHA: pin("4"), SourceArtifactSHA: pin("5"), OriginalRepairReview: pin("6"), RestoreReview: pin("7"), OriginalSession: session, OriginalEnrollmentSession: session, OriginalClientsSHA: pin("8"), OriginalKeySHA: pin("9"), OriginalCSRSHA: pin("a"), AcceptedCore: plan,
+		AcceptedCoreJournal: deploymentplan.Journal{PlanSHA256: plan.SHA256()}, SourceCeremony: environmentCreateServiceCeremony{BootstrapSessionID: session}, SourceRenewedIntent: createServiceSessionIntent{SessionID: session},
+	}
+	var archived createManagedLateSessionRecovery
+	if json.Unmarshal(mustProviderRecoveryJSON(original), &archived) != nil || managedLateQualifiedAncestryDifference(original, &archived) != "" {
+		t.Fatal("JSON roundtrip changed immutable ancestry")
+	}
+	for _, tc := range []struct {
+		name string
+		edit func(*createManagedLateSessionRecovery)
+	}{
+		{"source", func(v *createManagedLateSessionRecovery) { v.SourceSHA = pin("b") }},
+		{"accepted-core", func(v *createManagedLateSessionRecovery) { v.AcceptedCore.ConfigurationSHA256 = pin("c") }},
+		{"ceremony", func(v *createManagedLateSessionRecovery) {
+			v.SourceCeremony.BootstrapSessionID = "22222222-2222-4222-8222-222222222222"
+		}},
+		{"renewed-intent", func(v *createManagedLateSessionRecovery) {
+			v.SourceRenewedIntent.SessionID = "22222222-2222-4222-8222-222222222222"
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var changed createManagedLateSessionRecovery
+			if json.Unmarshal(mustProviderRecoveryJSON(&archived), &changed) != nil {
+				t.Fatal("copy fixture")
+			}
+			tc.edit(&changed)
+			if difference := managedLateQualifiedAncestryDifference(original, &changed); difference != tc.name {
+				t.Fatal("wrong ancestry diagnostic", difference)
+			}
+		})
+	}
+}
+
 func managedLateQualifiedPreviewsFixture(t *testing.T) (secretStore, string, *createManagedLateSessionRecovery, map[string]string) {
 	t.Helper()
 	root := t.TempDir()
@@ -209,6 +247,18 @@ func TestManagedLateQualifiedReaderRequiresEveryExactPreviewAndRecipePin(t *test
 				t.Fatal("changed archived preview admitted")
 			}
 		})
+	}
+}
+
+func TestManagedLateQualifiedDescriptorStrictJSONRoundTrip(t *testing.T) {
+	_, _, late, _ := managedLateQualifiedPreviewsFixture(t)
+	raw := mustProviderRecoveryJSON(late)
+	var decoded createManagedLateSessionRecovery
+	if err := decodeEnvironmentJSON(raw, &decoded); err != nil {
+		t.Fatal("qualified late descriptor cannot pass its strict reader", err)
+	}
+	if managedLateSessionSourceDigest(&decoded) != managedLateSessionSourceDigest(late) {
+		t.Fatal("qualified late descriptor changed during strict JSON round trip")
 	}
 }
 

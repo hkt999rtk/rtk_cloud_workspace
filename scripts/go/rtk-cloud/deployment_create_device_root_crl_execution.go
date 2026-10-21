@@ -484,94 +484,8 @@ func executeDeviceRootCRL(ctx context.Context, cfg deploymentConfig, store secre
 		}
 		return lease.Check(ctx)
 	}
-	if completion != nil && j.Stage == "rotating" {
-		if err := guard(); err != nil {
-			return err
-		}
-		proof, raw, err := readDeviceRootCRLProvider(ctx, cfg, store, e, b, p.Root, false)
-		record, recordErr := deviceRootCRLProviderRecord(p.Root, raw)
-		if err != nil || recordErr != nil || proof != p.ProviderSHA || validateDeviceRootCRLRotationReadback(p, completionSource, record, time.Now().UTC()) != nil || deploymentplan.Digest(record) != deploymentplan.Digest(completion.Plan.Signed) {
-			return deviceRootCRLError("completion-exact-once-rotated-provider-outcome")
-		}
-		j.Signed, j.Stage, j.RotatedAt = record, "rotated", time.Now().UTC()
-		if err := saveDeviceRootCRLJournal(store, a, j); err != nil {
-			return err
-		}
-		fmt.Fprintf(out, "PASS deployment.device-root-crl.qualified-rotation-readback crl-number=%s\n", record.Number)
-	}
-	if j.Stage == "admitted" || j.Stage == "rotating" {
-		if completion != nil {
-			return deviceRootCRLError("completion-never-rotates")
-		}
-		wasRotating := j.Stage == "rotating"
-		if err := guard(); err != nil {
-			return err
-		}
-		proof, raw, err := readDeviceRootCRLProvider(ctx, cfg, store, e, b, p.Root, false)
-		if err != nil || proof != p.ProviderSHA {
-			return deviceRootCRLError("original-provider-key-before-rotation")
-		}
-		record, err := deviceRootCRLProviderRecord(p.Root, raw)
-		if err != nil {
-			return err
-		}
-		if record.Number == "3" {
-			if wasRotating || deploymentplan.Digest(record) != deploymentplan.Digest(p.Snapshot.Prior) {
-				return deviceRootCRLError("uncertain-rotation-never-repeat")
-			}
-			j.Stage = "rotating"
-			j.RotationStartedAt = time.Now().UTC()
-			if err := saveDeviceRootCRLJournal(store, a, j); err != nil {
-				return err
-			}
-			// The provider call can fail after success. Always reconcile its public
-			// current CRL; no failure path repeats rotation.
-			_, _, _ = readDeviceRootCRLProvider(ctx, cfg, store, e, b, p.Root, true)
-			proof, raw, err = readDeviceRootCRLProvider(ctx, cfg, store, e, b, p.Root, false)
-			if err != nil || proof != p.ProviderSHA {
-				return deviceRootCRLError("rotation-outcome-unresolved")
-			}
-		} else if !wasRotating {
-			return deviceRootCRLError("unadmitted-provider-outcome")
-		}
-		j.Signed, err = validateDeviceRootCRLSuccessor(p, raw, j.RotationStartedAt, time.Now().UTC())
-		if err != nil {
-			return err
-		}
-		j.Stage = "rotated"
-		j.RotatedAt = time.Now().UTC()
-		if err := saveDeviceRootCRLJournal(store, a, j); err != nil {
-			return err
-		}
-		fmt.Fprintf(out, "PASS deployment.device-root-crl.same-key-rotation elapsed=%.3fs\n", time.Since(j.RotationStartedAt).Seconds())
-	}
-	if j.Stage == "rotated" {
-		started := time.Now()
-		if err := guard(); err != nil {
-			return err
-		}
-		current, _, err = readCreateRootCRLNativeSnapshot(ctx, cfg, e, b, p.Root.ID)
-		if err != nil || !deviceRootCRLSnapshotMatches(p, current, &j.Signed) {
-			return deviceRootCRLError("pre-import-current-union")
-		}
-		if deploymentplan.Digest(current.Prior) != deploymentplan.Digest(j.Signed) {
-			if err := refreshEnvironmentCreateAuthentication(ctx, client, operator); err != nil {
-				return err
-			}
-			var imported createRootCRLRecord
-			importErr := client.call(ctx, "POST", "/v1/platform/pki/issuers/"+p.Root.ID+"/crl", "", map[string]string{"crl_pem": j.Signed.PEM}, &imported)
-			// Read actual registry outcome even after a lost HTTP reply.
-			current, _, err = readCreateRootCRLNativeSnapshot(ctx, cfg, e, b, p.Root.ID)
-			if err != nil || deploymentplan.Digest(current.Prior) != deploymentplan.Digest(j.Signed) || !deviceRootCRLSnapshotMatches(p, current, &j.Signed) {
-				return errors.Join(deviceRootCRLError("human-import-outcome-unresolved"), importErr)
-			}
-		}
-		j.Stage = "imported"
-		j.ImportedAt = time.Now().UTC()
-		if err := saveDeviceRootCRLJournal(store, a, j); err != nil {
-			return err
-		}
-		fmt.Fprintf(out, "PASS deployment.device-root-crl.human-import elapsed=%.3fs\n", time.Since(started).Seconds())
+	if err := reconcileDeviceRootCRLPublication(ctx, cfg, store, environmentCreateBootstrapRuntime{Execution: e, Backend: b}, operator, client, a, &j, lease, completion, completionSource, out); err != nil {
+		return err
 	}
 	for i, target := range p.Consumers {
 		if i == 0 && (j.Stage == "api-verified" || j.Stage == "consumers-verified") || i == 1 && j.Stage == "consumers-verified" {
@@ -633,6 +547,114 @@ func executeDeviceRootCRL(ctx context.Context, cfg deploymentConfig, store secre
 		return err
 	}
 	fmt.Fprintf(out, "PASS environment=dev scope=original-device-root-crl review-sha256=%s crl-number=%s consumers=2 elapsed=%.3fs\n", review, j.Signed.Number, time.Since(j.StartedAt).Seconds())
+	return nil
+}
+
+// reconcileDeviceRootCRLPublication owns only the already-admitted provider
+// rotation and registry import. The caller authenticates original source/history,
+// client and deadline before acquiring the lease, then re-observes native source
+// and both consumers before publishing completion. Every write here retains the
+// actual parent-owner and Kubernetes lease checks; uncertain writes reconcile
+// their public outcome before any retry.
+func reconcileDeviceRootCRLPublication(ctx context.Context, cfg deploymentConfig, store secretStore, runtime environmentCreateBootstrapRuntime, operator map[string]string, client *environmentCreatePKIClient, a createDeviceRootCRLArtifact, j *createDeviceRootCRLJournal, lease deploymentplan.ExecutionLease, completion *createDeviceRootCRLCompletionArtifact, completionSource createDeviceRootCRLJournal, out io.Writer) error {
+	p, e, b := a.Plan, runtime.Execution, runtime.Backend
+	guard := func() error {
+		if err := e.Check(ctx); err != nil {
+			return err
+		}
+		return lease.Check(ctx)
+	}
+	var current createRootCRLNativeSnapshot
+	var err error
+	if completion != nil && j.Stage == "rotating" {
+		if err := guard(); err != nil {
+			return err
+		}
+		proof, raw, err := readDeviceRootCRLProvider(ctx, cfg, store, e, b, p.Root, false)
+		record, recordErr := deviceRootCRLProviderRecord(p.Root, raw)
+		if err != nil || recordErr != nil || proof != p.ProviderSHA || validateDeviceRootCRLRotationReadback(p, completionSource, record, time.Now().UTC()) != nil || deploymentplan.Digest(record) != deploymentplan.Digest(completion.Plan.Signed) {
+			return deviceRootCRLError("completion-exact-once-rotated-provider-outcome")
+		}
+		j.Signed, j.Stage, j.RotatedAt = record, "rotated", time.Now().UTC()
+		if err := saveDeviceRootCRLJournal(store, a, *j); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "PASS deployment.device-root-crl.qualified-rotation-readback crl-number=%s\n", record.Number)
+	}
+	if j.Stage == "admitted" || j.Stage == "rotating" {
+		if completion != nil {
+			return deviceRootCRLError("completion-never-rotates")
+		}
+		wasRotating := j.Stage == "rotating"
+		if err := guard(); err != nil {
+			return err
+		}
+		proof, raw, err := readDeviceRootCRLProvider(ctx, cfg, store, e, b, p.Root, false)
+		if err != nil || proof != p.ProviderSHA {
+			return deviceRootCRLError("original-provider-key-before-rotation")
+		}
+		record, err := deviceRootCRLProviderRecord(p.Root, raw)
+		if err != nil {
+			return err
+		}
+		if record.Number == "3" {
+			if wasRotating || deploymentplan.Digest(record) != deploymentplan.Digest(p.Snapshot.Prior) {
+				return deviceRootCRLError("uncertain-rotation-never-repeat")
+			}
+			j.Stage = "rotating"
+			j.RotationStartedAt = time.Now().UTC()
+			if err := saveDeviceRootCRLJournal(store, a, *j); err != nil {
+				return err
+			}
+			// The provider call can fail after success. Always reconcile its public
+			// current CRL; no failure path repeats rotation.
+			_, _, _ = readDeviceRootCRLProvider(ctx, cfg, store, e, b, p.Root, true)
+			proof, raw, err = readDeviceRootCRLProvider(ctx, cfg, store, e, b, p.Root, false)
+			if err != nil || proof != p.ProviderSHA {
+				return deviceRootCRLError("rotation-outcome-unresolved")
+			}
+		} else if !wasRotating {
+			return deviceRootCRLError("unadmitted-provider-outcome")
+		}
+		j.Signed, err = validateDeviceRootCRLSuccessor(p, raw, j.RotationStartedAt, time.Now().UTC())
+		if err != nil {
+			return err
+		}
+		j.Stage = "rotated"
+		j.RotatedAt = time.Now().UTC()
+		if err := saveDeviceRootCRLJournal(store, a, *j); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "PASS deployment.device-root-crl.same-key-rotation elapsed=%.3fs\n", time.Since(j.RotationStartedAt).Seconds())
+	}
+	if j.Stage == "rotated" {
+		started := time.Now()
+		if err := guard(); err != nil {
+			return err
+		}
+		current, _, err = readCreateRootCRLNativeSnapshot(ctx, cfg, e, b, p.Root.ID)
+		if err != nil || !deviceRootCRLSnapshotMatches(p, current, &j.Signed) {
+			return deviceRootCRLError("pre-import-current-union")
+		}
+		if deploymentplan.Digest(current.Prior) != deploymentplan.Digest(j.Signed) {
+			if err := refreshEnvironmentCreateAuthentication(ctx, client, operator); err != nil {
+				return err
+			}
+			var imported createRootCRLRecord
+			importErr := client.call(ctx, "POST", "/v1/platform/pki/issuers/"+p.Root.ID+"/crl", "", map[string]string{"crl_pem": j.Signed.PEM}, &imported)
+			// Read actual registry outcome even after a lost HTTP reply.
+			current, _, err = readCreateRootCRLNativeSnapshot(ctx, cfg, e, b, p.Root.ID)
+			if err != nil || deploymentplan.Digest(current.Prior) != deploymentplan.Digest(j.Signed) || !deviceRootCRLSnapshotMatches(p, current, &j.Signed) {
+				return errors.Join(deviceRootCRLError("human-import-outcome-unresolved"), importErr)
+			}
+		}
+		j.Stage = "imported"
+		j.ImportedAt = time.Now().UTC()
+		if err := saveDeviceRootCRLJournal(store, a, *j); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "PASS deployment.device-root-crl.human-import elapsed=%.3fs\n", time.Since(started).Seconds())
+	}
 	return nil
 }
 

@@ -409,3 +409,69 @@ func validateManagedTransportPostManagedDefinitions(partial *createManagedTransp
 	}
 	return nil
 }
+
+// A completed API-export continuation observes its accepted transport owners.
+// The historical PID producer is corrected later by the separately admitted ACK
+// repair; observing it must not silently request a new host rollout. Only that
+// exact old marker may differ from the maintained recipe, and the unchanged
+// seven-resource comparison still binds every resulting desired body.
+func preserveManagedTransportPostManagedDefinitions(p environmentCreateBootstrapPlan, runtime environmentCreateBootstrapRuntime, service environmentCreateServiceCeremony, definitions []deploymentplan.Definition) ([]deploymentplan.Definition, error) {
+	r := runtime.ServiceSessionRecovery
+	if r == nil || r.ManagedTransportRecovery == nil || r.ManagedTransportRecovery.Partial == nil || r.ManagedTransportRecovery.Partial.PostManaged == nil {
+		return definitions, nil
+	}
+	partial := r.ManagedTransportRecovery.Partial
+	post := partial.PostManaged
+	bad := func() ([]deploymentplan.Definition, error) {
+		return nil, createProviderRecoveryBlock("post-managed transport observation requires its exact accepted recipe and known original PID producer")
+	}
+	if partial.Original == nil || post.Plan == nil || post.Plan.Environment != p.Environment || post.Plan.Stack != p.Stack || partial.Original.Environment != p.Environment || partial.Original.Stack != p.Stack || post.Session != service.BootstrapSessionID || validateManagedTransportPostManagedJournal(post.Plan, post.Journal) != nil {
+		return bad()
+	}
+	if validateManagedTransportPostManagedDefinitions(partial, definitions) == nil {
+		return definitions, nil
+	}
+	id := "StatefulSet/" + p.Stack + "-secrets/openbao"
+	var original deploymentplan.Object
+	for _, resource := range post.Plan.Resources {
+		if resource.ID == id {
+			if original != nil {
+				return bad()
+			}
+			original = resource.Desired
+		}
+	}
+	if original == nil {
+		return bad()
+	}
+	oldContainers, err := environmentPKINamedFields(environmentPKIPod(original)["containers"])
+	if err != nil || oldContainers["openbao"] == nil {
+		return bad()
+	}
+	oldCommand := certIssuerObjectList(oldContainers["openbao"]["command"])
+	const oldMarker = `printf '%s\n' "$$" > /run/openbao-pki/private/openbao.pid`
+	const currentMarker = `printf '%s\n' "$$$$" > /run/openbao-pki/private/openbao.pid`
+	if len(oldCommand) != 3 || oldCommand[0] != "/bin/sh" || oldCommand[1] != "-ec" || strings.Count(deploymentplan.String(oldCommand[2]), oldMarker) != 1 {
+		return bad()
+	}
+	retained := slices.Clone(definitions)
+	for i, definition := range definitions {
+		if deploymentplan.ID(definition.Object) != id {
+			continue
+		}
+		retained[i].Object = deploymentplan.Clone(definition.Object)
+		containers, err := environmentPKINamedFields(environmentPKIPod(retained[i].Object)["containers"])
+		if err != nil || containers["openbao"] == nil {
+			return bad()
+		}
+		command := certIssuerObjectList(containers["openbao"]["command"])
+		if len(command) != 3 || command[0] != oldCommand[0] || command[1] != oldCommand[1] || strings.Count(deploymentplan.String(command[2]), currentMarker) != 1 || strings.Replace(deploymentplan.String(command[2]), currentMarker, oldMarker, 1) != oldCommand[2] {
+			return bad()
+		}
+		containers["openbao"]["command"] = slices.Clone(oldCommand)
+	}
+	if validateManagedTransportPostManagedDefinitions(partial, retained) != nil {
+		return bad()
+	}
+	return retained, nil
+}

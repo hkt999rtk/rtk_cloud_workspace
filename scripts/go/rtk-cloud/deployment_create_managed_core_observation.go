@@ -395,9 +395,11 @@ func validateManagedCoreOriginalHostServerDigest(current, original string) error
 	return nil
 }
 
-// The original Ready CertIssuer is only a carrier for the native SELECT-only
-// policy renderer. Its accepted recipe, database Secret and owned Pod lineage
-// remain pinned; no credential is copied into an argument or another workload.
+// The authenticated Ready CertIssuer is only a carrier for the native
+// SELECT-only policy renderer. Before repair this is the captured baseline;
+// after repair it is the immutable accepted child. Its recipe, database Secret
+// and owned Pod lineage remain pinned; no credential is copied into an argument
+// or another workload.
 func managedCoreRecordedAuthentication(ctx context.Context, cfg deploymentConfig, store secretStore, e *environmentCreateExecution, b environmentKubernetesBackend, r *createServiceSessionRecovery) (string, string, string, error) {
 	bad := func() (string, string, string, error) {
 		return "", "", "", managedCoreObservationBlock("original-native-policy-carrier")
@@ -408,9 +410,25 @@ func managedCoreRecordedAuthentication(ctx context.Context, cfg deploymentConfig
 	if _, err := managedCoreAuthenticationSource(ctx, store, e, r); err != nil {
 		return "", "", "", err
 	}
-	resource := r.ManagedCorePartial.Plan.Resources[14]
+	return observeManagedCoreRecordedAuthentication(ctx, cfg, store, e, b, r.ManagedCorePartial, r.Ceremony, r.Intent.SessionID)
+}
+
+// Historical/admission authentication stays in the caller. This native reader
+// binds its explicit stopped Core model to the original database receipt,
+// controller descendants and readonly policy response, then rereads those owners.
+func observeManagedCoreRecordedAuthentication(ctx context.Context, cfg deploymentConfig, store secretStore, e *environmentCreateExecution, b environmentKubernetesBackend, core *createManagedCorePartialRecovery, service environmentCreateServiceCeremony, session string) (string, string, string, error) {
+	bad := func() (string, string, string, error) {
+		return "", "", "", managedCoreObservationBlock("original-native-policy-carrier")
+	}
+	if ctx == nil || e == nil || core == nil || validateManagedCorePartialJournal(core.Plan, core.Journal) != nil || cfg.Environment != e.Journal.Environment || store.Root != e.Store.Root || store.Environment != cfg.Environment || b.Store.Root != store.Root || core.Plan.Environment != cfg.Environment || core.Plan.Stack != e.Journal.Stack || !environmentBootstrapOwnerUUID.MatchString(session) || session != service.BootstrapSessionID || !environmentBootstrapOwnerUUID.MatchString(service.Intermediate.ID) || e.Check(ctx) != nil {
+		return bad()
+	}
+	resource, carrier, err := managedCorePolicyCarrier(store, e, core)
+	if err != nil {
+		return bad()
+	}
 	actual, err := b.Read(ctx, resource.ID)
-	if err != nil || validateManagedCorePolicyCarrierResource(r.ManagedCorePartial, actual) != nil {
+	if err != nil || validateManagedCorePolicyCarrierResource(core, resource, carrier, actual) != nil {
 		return bad()
 	}
 	var databaseAlias map[string]string
@@ -459,7 +477,7 @@ func managedCoreRecordedAuthentication(ctx context.Context, cfg deploymentConfig
 		return bad()
 	}
 	ready := resource
-	ready.Action, ready.UID, ready.Desired = "retain", resource.UID, resource.Baseline
+	ready.Action, ready.Desired = "retain", carrier
 	bounded, cancel := context.WithTimeout(ctx, 30*time.Second)
 	err = b.Wait(bounded, ready)
 	cancel()
@@ -493,7 +511,7 @@ func managedCoreRecordedAuthentication(ctx context.Context, cfg deploymentConfig
 	if owner["kind"] != "Deployment" || owner["controller"] != true || owner["uid"] != resource.UID || owner["name"] != "certissuer" {
 		return bad()
 	}
-	expected := deploymentplan.Object{"kind": "Deployment", "spec": deploymentplan.Object{"template": deploymentplan.Map(resource.Baseline["spec"])["template"]}}
+	expected := deploymentplan.Object{"kind": "Deployment", "spec": deploymentplan.Object{"template": deploymentplan.Map(carrier["spec"])["template"]}}
 	observed := deploymentplan.Object{"kind": "Deployment", "spec": deploymentplan.Object{"template": deploymentplan.Map(rs["spec"])["template"]}}
 	if !deploymentplan.Matches(expected, observed) {
 		return bad()
@@ -501,12 +519,12 @@ func managedCoreRecordedAuthentication(ctx context.Context, cfg deploymentConfig
 	script := `export PKI_DATABASE_URL="$CERT_ISSUER_DB_DSN"
 export PGOPTIONS='-c default_transaction_read_only=on'
 exec /app/pkicontroller render-openbao-policy "$1"`
-	raw, err = b.command(ctx, nil, "--namespace", e.Journal.Stack+"-video-cloud", "exec", "pod/"+deploymentplan.String(metadata["name"]), "--container", "certissuer", "--", "/bin/sh", "-ec", script, "original-native-read-policy", r.Ceremony.Intermediate.ID)
+	raw, err = b.command(ctx, nil, "--namespace", e.Journal.Stack+"-video-cloud", "exec", "pod/"+deploymentplan.String(metadata["name"]), "--container", "certissuer", "--", "/bin/sh", "-ec", script, "original-native-read-policy", service.Intermediate.ID)
 	var native environmentCreateOpenBaoIssuerPolicies
-	if err != nil || decodeEnvironmentJSON(raw, &native) != nil || native.IssuerID != r.Ceremony.Intermediate.ID || native.Environment != cfg.Environment || native.ServiceClientSignerPolicy == "" {
+	if err != nil || decodeEnvironmentJSON(raw, &native) != nil || native.IssuerID != service.Intermediate.ID || native.Environment != cfg.Environment || native.ServiceClientSignerPolicy == "" {
 		return bad()
 	}
-	name := "rtk-" + cfg.Environment + "-service-bootstrap-" + r.Intent.SessionID
+	name := "rtk-" + cfg.Environment + "-service-bootstrap-" + session
 	role := "pki-service-bootstrap-" + cfg.Environment
 	intent := deploymentplan.Object{"role": role, "namespace": e.Journal.Stack + "-video-cloud", "service_accounts": []string{"pki-service-bootstrap"}, "policies": []string{name}, "audience": "openbao", "ttl": "15m", "no_default_policy": true}
 	policyBound, roleBound := false, false
@@ -537,15 +555,45 @@ exec /app/pkicontroller render-openbao-policy "$1"`
 	return name, role, native.ServiceClientSignerPolicy, e.Check(ctx)
 }
 
-func validateManagedCorePolicyCarrierResource(core *createManagedCorePartialRecovery, actual deploymentplan.Object) error {
+func managedCorePolicyCarrier(store secretStore, e *environmentCreateExecution, core *createManagedCorePartialRecovery) (deploymentplan.Resource, deploymentplan.Object, error) {
+	var empty deploymentplan.Resource
+	if core == nil || e == nil || validateManagedCorePartialJournal(core.Plan, core.Journal) != nil {
+		return empty, nil, managedCoreObservationBlock("native-carrier-source")
+	}
+	resource := core.Plan.Resources[14]
+	stage := "kubernetes/managed-complete-issuer-forward-" + core.ForwardReview
+	found := false
+	for _, entry := range e.Journal.Entries {
+		if entry.Key == stage {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return resource, resource.Baseline, nil
+	}
+	plan, journal, err := managedTransportPostAcceptedStage(store, e, stage)
+	if err != nil || validateManagedCorePartialCandidate(core, plan) != nil || !createOpenBaoACKCompletedChild(plan, journal) {
+		return empty, nil, managedCoreObservationBlock("native-carrier-accepted-child")
+	}
+	resource = plan.Resources[14]
+	if journal.Owners[resource.ID] != resource.UID {
+		return empty, nil, managedCoreObservationBlock("native-carrier-accepted-owner")
+	}
+	return resource, resource.Desired, nil
+}
+
+func validateManagedCorePolicyCarrierResource(core *createManagedCorePartialRecovery, resource deploymentplan.Resource, carrier, actual deploymentplan.Object) error {
 	if core == nil || validateManagedCorePartialJournal(core.Plan, core.Journal) != nil {
 		return managedCoreObservationBlock("native-carrier-source")
 	}
-	resource := core.Plan.Resources[14]
-	if resource.ID != "Deployment/video-cloud-dev-video-cloud/certissuer" || validateManagedCoreCurrentOwner(core, 14, actual) != nil {
+	metadata := deploymentplan.Map(actual["metadata"])
+	expected := deploymentplan.Clone(carrier)
+	deploymentplan.Map(expected["metadata"])["uid"] = resource.UID
+	if resource.ID != "Deployment/video-cloud-dev-video-cloud/certissuer" || actual == nil || deploymentplan.ID(actual) != resource.ID || metadata["uid"] != resource.UID || metadata["deletionTimestamp"] != nil || !deploymentplan.Matches(carrier, actual) || deploymentplan.Digest(deploymentplan.Projection(actual)) != deploymentplan.Digest(deploymentplan.Projection(expected)) {
 		return managedCoreObservationBlock("native-carrier-owner")
 	}
-	container := mqttFoundationPrimary(resource.Baseline)
+	container := mqttFoundationPrimary(carrier)
 	if container["name"] != "certissuer" || mqttFoundationEnv(container, "PKI_ENVIRONMENT") != "dev" {
 		return managedCoreObservationBlock("native-carrier-environment")
 	}

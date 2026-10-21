@@ -54,11 +54,11 @@ func managedCoreAuthAdmissionFixture(t *testing.T, oldPending bool) (environment
 
 func TestManagedCoreAuthenticationOnlyExactFreshAdmissionProgress(t *testing.T) {
 	for _, oldPending := range []bool{false, true} {
-		for _, mode := range []string{"pending", "completed", "closed-old-admission", "foreign-review", "extra-entry", "prefix-drift", "extra-lease", "bad-owner", "bad-checker", "expired-go", "future-go", "missing-gate", "skipped-gate", "wrong-evidence", "wrong-schema", "wrong-action", "wrong-preview", "entry-intent", "entry-phase", "future-start", "early-start", "pending-receipt", "pending-completion", "unknown-state", "wrong-audit", "wrong-completion-review", "extra-receipt-field", "changed-old-intent", "changed-old-start", "foreign-old-audit", "closed-core-alias"} {
+		for _, mode := range []string{"pending", "completed", "completed-after-expiry", "completed-with-later-ancestry", "completed-alias-with-later-ancestry", "source-loader-cleared-candidate", "closed-old-admission", "foreign-review", "extra-entry", "prefix-drift", "extra-lease", "bad-owner", "bad-checker", "expired-go", "future-go", "missing-gate", "skipped-gate", "wrong-evidence", "wrong-schema", "wrong-action", "wrong-preview", "entry-intent", "entry-phase", "future-start", "early-start", "pending-receipt", "pending-completion", "unknown-state", "wrong-audit", "wrong-completion-review", "extra-receipt-field", "changed-old-intent", "changed-old-start", "foreign-old-audit", "closed-core-alias"} {
 			t.Run(mode+map[bool]string{false: "/344", true: "/345"}[oldPending], func(t *testing.T) {
 				current, captured, owner, r, a, preview, checker, now := managedCoreAuthAdmissionFixture(t, oldPending)
 				actualOwner := owner
-				pass := mode == "pending" || mode == "completed" || mode == "closed-old-admission"
+				pass := mode == "pending" || mode == "completed" || mode == "completed-after-expiry" || mode == "completed-with-later-ancestry" || mode == "completed-alias-with-later-ancestry" || mode == "source-loader-cleared-candidate" || mode == "closed-old-admission"
 				entry := &current.Entries[len(current.Entries)-1]
 				complete := func() {
 					entry.State = "completed"
@@ -76,6 +76,22 @@ func TestManagedCoreAuthenticationOnlyExactFreshAdmissionProgress(t *testing.T) 
 				switch mode {
 				case "completed":
 					complete()
+				case "completed-after-expiry":
+					complete()
+					now = a.ValidUntil.Add(time.Minute)
+				case "completed-with-later-ancestry":
+					complete()
+					current.Entries = append(current.Entries, environmentCreateJournalEntry{Key: "later-qualified-recovery", Phase: "bootstrap", State: "pending", StartedAt: now, IntentSHA256: strings.Repeat("4", 64)})
+					current.KubernetesLeases = append(current.KubernetesLeases, deploymentplan.LeaseOwner{ResourceID: "Lease/video-cloud-dev-video-cloud/rtk-deployment-execution", UID: "11111111-1111-4111-8111-111111111111", Holder: strings.Repeat("5", 64) + ":later"})
+				case "completed-alias-with-later-ancestry":
+					complete()
+					alias := &current.Entries[1]
+					alias.State, alias.CompletedAt = "completed", now.Add(-time.Minute)
+					alias.Receipt = mustProviderRecoveryJSON(map[string]string{"original_plan_sha256": r.ManagedCorePartial.Plan.SHA256(), "original_failed_journal_sha256": deploymentplan.Digest(r.ManagedCorePartial.Journal), "actual_qualified_forward_stage": "kubernetes/managed-complete-issuer-forward-" + r.ManagedCorePartial.ForwardReview, "actual_qualified_forward_plan_sha256": preview.SHA256(), "original_repair_review_sha256": r.ManagedCorePartial.OriginalRepairReview})
+					current.Entries = append(current.Entries, environmentCreateJournalEntry{Key: "later-qualified-recovery", Phase: "bootstrap", State: "pending", StartedAt: now, IntentSHA256: strings.Repeat("4", 64)})
+					current.KubernetesLeases = append(current.KubernetesLeases, deploymentplan.LeaseOwner{ResourceID: "Lease/video-cloud-dev-video-cloud/rtk-deployment-execution", UID: "11111111-1111-4111-8111-111111111111", Holder: strings.Repeat("5", 64) + ":later"})
+				case "source-loader-cleared-candidate":
+					r.Candidate = nil
 				case "closed-old-admission":
 					closeOld()
 					complete()
