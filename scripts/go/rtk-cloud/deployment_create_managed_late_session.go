@@ -432,7 +432,18 @@ func prepareManagedLateSessionSeed(ctx context.Context, cfg deploymentConfig, st
 		return err
 	}
 	p.Materials["accepted-service-core-late-session-source-descriptor"] = managedLateSessionSourceDigest(late)
-	return e.Check(ctx)
+	if err := e.Check(ctx); err != nil {
+		return err
+	}
+	// A successfully prepared late session is one recovery object. Bind the
+	// authenticated descriptor and its owner candidate here so every caller,
+	// including isolated qualification harnesses, publishes the complete
+	// archive. Requiring each caller to repeat this binding allowed a valid
+	// preparation to silently emit an ordinary session archive without the
+	// managed-late descriptor commit marker.
+	r.ManagedLateSession = late
+	r.Candidate = late.OwnerCandidate
+	return nil
 }
 
 // Hydrate an original host pin only from the already authenticated original
