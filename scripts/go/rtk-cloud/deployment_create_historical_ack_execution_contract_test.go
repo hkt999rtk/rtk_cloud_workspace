@@ -21,7 +21,9 @@ func installHistoricalACKPublication(t *testing.T, f *acceptedCoreExecutionContr
 	t.Helper()
 	const repo = "hkt999rtk/rtk_video_cloud"
 	revision := deploymentplan.Digest("isolated-formal-openbao-ack-source")[:40]
-	manifest := mustProviderRecoveryJSON(map[string]any{"schema": "rtk-service-image/v1", "repository": repo, "source_commit": revision, "run_id": "177", "run_attempt": "1", "image": "ghcr.io/" + repo + "/video-cloud-api", "digest": "sha256:" + deploymentplan.Digest("isolated-original-app-image"), "images": map[string]any{"openbao_pki": map[string]any{"image": "ghcr.io/" + repo + "/video-cloud-openbao-pki", "digest": "sha256:" + deploymentplan.Digest("isolated-formal-openbao-ack-image")}}})
+	imageManifest := `{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"digest":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},"layers":[]}`
+	digest := "sha256:" + environmentPreflightBytesSHA256([]byte(imageManifest))
+	manifest := mustProviderRecoveryJSON(map[string]any{"schema": "rtk-service-image/v1", "repository": repo, "source_commit": revision, "run_id": "177", "run_attempt": "1", "image": "ghcr.io/" + repo + "/video-cloud-api", "digest": "sha256:" + deploymentplan.Digest("isolated-original-app-image"), "images": map[string]any{"openbao_pki": map[string]any{"image": "ghcr.io/" + repo + "/video-cloud-openbao-pki", "digest": digest}}})
 	image, err := selectEnvironmentPublishedImage(manifest, repo, 177, 1, revision, "ghcr.io/"+repo+"/video-cloud-openbao-pki", false)
 	if err != nil {
 		t.Fatal(err)
@@ -34,11 +36,22 @@ func installHistoricalACKPublication(t *testing.T, f *acceptedCoreExecutionContr
 	if err := f.store.write("operator/env/GHCR_PULL_TOKEN", []byte("isolated-fake-gh-only"), true); err != nil {
 		t.Fatal(err)
 	}
+	if err := f.store.write("operator/env/GHCR_PULL_USERNAME", []byte("isolated-registry-user"), true); err != nil {
+		t.Fatal(err)
+	}
+	if f.protocol["image_manifests"] == nil {
+		f.protocol["image_manifests"] = map[string]string{}
+	}
+	f.protocol["image_manifests"].(map[string]string)[image.Reference] = imageManifest
 	archive := publicationZIP(t, "image-manifest.json", manifest)
 	f.protocol["ack_ci_run"] = map[string]any{"id": 177, "head_sha": revision, "head_branch": "main", "event": "push", "status": "completed", "conclusion": "success", "run_attempt": 1, "path": ".github/workflows/release.yml"}
 	f.protocol["ack_ci_listing"] = map[string]any{"total_count": 1, "artifacts": []any{map[string]any{"id": 199, "name": "image-manifest", "expired": false, "size_in_bytes": len(archive)}}}
 	f.protocol["ack_ci_archive"] = base64.StdEncoding.EncodeToString(archive)
 	f.publish(t)
+	digests, err := environmentRuntimeImageDigests(t.Context(), f.store, image.Reference)
+	if err != nil || !digests[digest] {
+		t.Fatal("formal OpenBao ACK image lacks exact digest-bound OCI metadata", err)
+	}
 	script := `#!/usr/bin/env python3
 import sys,os,json,base64
 with open(os.environ['RTK_CORE_CONTRACT_NATIVE']) as source:d=json.load(source)

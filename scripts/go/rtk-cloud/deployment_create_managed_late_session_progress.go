@@ -192,29 +192,29 @@ func validateManagedLateCredentialChild(late *createManagedLateSessionRecovery, 
 }
 
 func validateManagedLateSeedObserved(store secretStore, late *createManagedLateSessionRecovery, j environmentCreateJournal, plan *deploymentplan.Plan, entry environmentCreateJournalEntry) error {
-	bad := func() error {
-		return environmentCreateBootstrapBlocker("late signed credential lacks exact native allocation observation")
+	bad := func(stage string) error {
+		return environmentCreateBootstrapBlocker("late signed credential lacks exact native allocation observation: " + stage)
 	}
 	var observed createManagedLateSeedObservation
 	if late == nil || plan == nil || createOpenBaoACKCompletionRead(store, filepath.Join("deployment/create/openbao-recovery", late.Review, "managed-late-seed-observed.json"), &observed) != nil || observed.Schema != managedLateSessionSchema || observed.Parent != late.ParentSHA || observed.Review != late.Review || observed.KeySHA != late.OriginalKeySHA || observed.CSRSHA != late.OriginalCSRSHA || observed.ObservedAt.IsZero() || observed.ObservedAt.After(entry.StartedAt) {
-		return bad()
+		return bad("descriptor")
 	}
 	current := &environmentCreateExecution{Store: store, Journal: j}
 	seed, actualSeedEntry, seedJournal, err := readManagedLateEffectiveSeed(store, current, late)
 	seedEntry := &actualSeedEntry
 	custody := createOpenBaoACKCompletionEntry(j, "kubernetes/service-custody-reader-renewal-"+late.Review)
 	if err != nil || seed == nil || !managedLateSamePlan(seed, late.SeedCandidate) && !managedLateEffectiveSeedIsForward(store, current, late, seed) || observed.SeedPlanSHA != seed.SHA256() || createOpenBaoACKCompletionRead(store, filepath.Join("deployment/rollback", seed.SHA256(), "journal.json"), &seedJournal) != nil || observed.SeedJournalSHA != deploymentplan.Digest(seedJournal) || seedEntry == nil || observed.ObservedAt.Before(seedEntry.CompletedAt) || custody == nil || custody.State != "completed" || observed.ObservedAt.Before(custody.CompletedAt) {
-		return bad()
+		return bad("accepted-seed")
 	}
 	block, err := parseFirstCertificatePEM([]byte(observed.CertificatePEM))
 	state := observed.Session
 	if err != nil || state.Session != late.NewSessionID || state.Issuer != late.SourceCeremony.Intermediate.ID || state.Root != late.SourceCeremony.Root.RootFingerprint || state.Status != "active" || state.OtherActive != 0 || len(state.Installed) != 0 || !slices.Equal(state.Subjects, late.SourceRenewedIntent.Subjects) || state.Fingerprint != environmentPreflightBytesSHA256(block.Raw) || !state.Expires.Equal(block.NotAfter) || !state.Expires.After(observed.ObservedAt) || block.NotBefore.After(observed.ObservedAt) {
-		return bad()
+		return bad("native-session")
 	}
 	for _, resource := range plan.Resources {
 		raw, err := base64.StdEncoding.Strict().DecodeString(deploymentplan.String(deploymentplan.Map(resource.Desired["data"])["tls.crt"]))
 		if err != nil || string(raw) != observed.CertificatePEM {
-			return bad()
+			return bad("credential-copy")
 		}
 	}
 	return nil
@@ -464,8 +464,11 @@ func managedLateSessionRuntimeProgress(store secretStore, e *environmentCreateEx
 			leaseIndex++
 			switch step.Kind {
 			case "credentials":
-				if validateManagedLateCredentialChild(late, plan) != nil || validateManagedLateSeedObserved(store, late, e.Journal, plan, entry) != nil {
-					return bad("three-new-credential-producer")
+				if err := validateManagedLateCredentialChild(late, plan); err != nil {
+					return nil, nil, fmt.Errorf("%w: three-new-credential-producer: %v", environmentCreateBootstrapBlocker("late runtime requires exact admitted monotonic source"), err)
+				}
+				if err := validateManagedLateSeedObserved(store, late, e.Journal, plan, entry); err != nil {
+					return nil, nil, fmt.Errorf("%w: three-new-credential-producer: %v", environmentCreateBootstrapBlocker("late runtime requires exact admitted monotonic source"), err)
 				}
 				credentialJournal = journal
 			case "cleanup":

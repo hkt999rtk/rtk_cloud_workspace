@@ -344,19 +344,44 @@ func managedLateOriginalSessionCurrent(current, saved managedSessionState, newAc
 }
 
 func managedLateNewSessionCurrent(current managedSessionState, late *createManagedLateSessionRecovery, certificate string, subjects []string, now time.Time) bool {
+	return managedLateNewSessionCurrentStage(current, late, certificate, subjects, now) == ""
+}
+
+func managedLateNewSessionCurrentStage(current managedSessionState, late *createManagedLateSessionRecovery, certificate string, subjects []string, now time.Time) string {
+	if late == nil {
+		return "source"
+	}
 	leaf, err := parseFirstCertificatePEM([]byte(certificate))
 	ica, icaErr := parseFirstCertificatePEM([]byte(late.SourceCeremony.Intermediate.Certificate))
-	if err != nil || icaErr != nil || current.Session != late.NewSessionID || current.Issuer != late.SourceCeremony.Intermediate.ID || current.Root != late.SourceCeremony.Root.RootFingerprint || current.Fingerprint != environmentPreflightBytesSHA256(leaf.Raw) || current.Status != "active" || current.OtherActive != 0 || !current.Expires.Equal(leaf.NotAfter) || !current.Expires.After(now) || leaf.NotBefore.After(now) || leaf.CheckSignatureFrom(ica) != nil || leaf.Subject.CommonName != "service:deployment-bootstrap" || leaf.IsCA || leaf.KeyUsage != x509.KeyUsageDigitalSignature || !slices.Equal(leaf.ExtKeyUsage, []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}) || !slices.Equal(current.Subjects, subjects) {
-		return false
+	if err != nil || icaErr != nil {
+		return "certificate"
+	}
+	if current.Session != late.NewSessionID || current.Issuer != late.SourceCeremony.Intermediate.ID || current.Root != late.SourceCeremony.Root.RootFingerprint || current.Fingerprint != environmentPreflightBytesSHA256(leaf.Raw) {
+		return "identity"
+	}
+	if current.Status != "active" || current.OtherActive != 0 {
+		return "state"
+	}
+	if !current.Expires.Equal(leaf.NotAfter) || !current.Expires.After(now) || leaf.NotBefore.After(now) {
+		return "validity"
+	}
+	if leaf.CheckSignatureFrom(ica) != nil {
+		return "chain"
+	}
+	if leaf.Subject.CommonName != "service:deployment-bootstrap" || leaf.IsCA || leaf.KeyUsage != x509.KeyUsageDigitalSignature || !slices.Equal(leaf.ExtKeyUsage, []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}) {
+		return "leaf-profile"
+	}
+	if !slices.Equal(current.Subjects, subjects) {
+		return "subjects"
 	}
 	seen := map[string]bool{}
 	for _, subject := range current.Installed {
 		if seen[subject] || !slices.Contains(subjects, subject) {
-			return false
+			return "installed"
 		}
 		seen[subject] = true
 	}
-	return true
+	return ""
 }
 
 // One fresh boundary snapshot checks every current body. Only the authenticated
@@ -485,8 +510,19 @@ func verifyManagedLateSessionCurrentNative(ctx context.Context, cfg deploymentCo
 		cert, err := b.command(ctx, nil, "--namespace", late.SourceCeremony.BootstrapCredentialNamespace, "exec", "deployment/"+late.SourceCeremony.CustodyReader, "--container", "custody", "--", "cat", late.NewCertificatePath)
 		pair, pairErr := tls.X509KeyPair(cert, key)
 		newState, raw, stateErr := readManagedSessionState(ctx, cfg, runtime, late.NewSessionID)
-		if err != nil || pairErr != nil || !managedLateBootstrapChainMatches(pair.Certificate, late.SourceCeremony) || stateErr != nil || !managedLateNewSessionCurrent(newState, late, string(cert), subjects, time.Now().UTC()) {
-			return managedCoreObservationBlock("late-current-genuine-new-authority")
+		stage := managedLateNewSessionCurrentStage(newState, late, string(cert), subjects, time.Now().UTC())
+		switch {
+		case err != nil:
+			stage = "credential-read"
+		case pairErr != nil:
+			stage = "keypair"
+		case !managedLateBootstrapChainMatches(pair.Certificate, late.SourceCeremony):
+			stage = "runtime-chain"
+		case stateErr != nil:
+			stage = "session-read"
+		}
+		if stage != "" {
+			return managedCoreObservationBlock("late-current-genuine-new-authority-" + stage)
 		}
 		if post := r.ManagedLatePostMint; post != nil && post.InstallationClock == nil && len(newState.Installed) != 0 {
 			return managedCoreObservationBlock("late-first-installation-native-already-installed")

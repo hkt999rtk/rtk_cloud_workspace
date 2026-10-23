@@ -432,6 +432,12 @@ func (a *historicalNativeFinalizer) command(args []string, input []byte) ([]byte
 	f, s := a.fixture, a.service
 	joined := strings.Join(args, " ")
 	if slices.Contains(args, "registry-read") && strings.Contains(joined, "pki_deployment_bootstrap_sessions") {
+		// Before the external finalizer changes native state, retain the already
+		// authenticated session reader installed by the historical source. The
+		// wrapper owns this projection only after it seals the selected session.
+		if a.final.FinalizedAt.IsZero() {
+			return nil, false, nil
+		}
 		matches := historicalFinalizerSessionQuery.FindAllStringSubmatch(joined, -1)
 		if len(matches) == 0 {
 			return nil, false, nil

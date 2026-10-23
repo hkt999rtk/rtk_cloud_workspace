@@ -43,11 +43,42 @@ func historicalManagedOpenBaoPod(t *testing.T, f *acceptedCoreExecutionContract,
 	spec["volumes"] = volumes
 	pod["status"] = unstartedManagedOpenBaoPodFixture()["status"]
 	if ready {
-		pod["status"] = deploymentplan.Object{"phase": "Running", "conditions": []any{deploymentplan.Object{"type": "Ready", "status": "True"}}}
+		status := deploymentplan.Object{"phase": "Running", "conditions": []any{deploymentplan.Object{"type": "Ready", "status": "True"}}}
+		for _, group := range []string{"containers", "initContainers"} {
+			var statuses []any
+			for _, value := range certIssuerObjectList(spec[group]) {
+				container := deploymentplan.Map(value)
+				name, image := deploymentplan.String(container["name"]), deploymentplan.String(container["image"])
+				terminal := group == "initContainers" && container["restartPolicy"] != "Always"
+				state := deploymentplan.Object{"running": deploymentplan.Object{"startedAt": "2026-01-01T00:00:00Z"}}
+				if terminal {
+					state = deploymentplan.Object{"terminated": deploymentplan.Object{"exitCode": float64(0)}}
+				}
+				statuses = append(statuses, deploymentplan.Object{"name": name, "ready": !terminal, "started": !terminal, "restartCount": float64(0), "containerID": "containerd://isolated-" + name, "imageID": "docker-pullable://" + image, "state": state})
+			}
+			field := "containerStatuses"
+			if group == "initContainers" {
+				field = "initContainerStatuses"
+			}
+			status[field] = statuses
+		}
+		pod["status"] = status
 		deploymentplan.Map(set["status"])["readyReplicas"] = float64(1)
 	}
 	if !managedOpenBaoPodMatches(set, pod) || validateOpenBaoPodOwner(set, pod) != nil {
 		t.Fatal("native replacement does not preserve actual StatefulSet template and claims")
+	}
+	if ready {
+		resolve := func(_ context.Context, image string) (map[string]bool, error) {
+			accepted := map[string]bool{}
+			if _, digest, found := strings.Cut(image, "@"); found {
+				accepted[digest] = true
+			}
+			return accepted, nil
+		}
+		if err := verifyEnvironmentPodContainers(t.Context(), set, pod, map[string]map[string]bool{}, resolve); err != nil {
+			t.Fatal("ready native OpenBao Pod lacks complete runtime container evidence", err)
+		}
 	}
 	f.native.objects[deploymentplan.ID(pod)] = pod
 	f.protocol["objects"] = historicalNativeInventory(f.native.objects)
