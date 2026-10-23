@@ -193,6 +193,9 @@ func completeHistoricalLateBootstrap(t *testing.T, ctx context.Context, device *
 			return err
 		}
 		if stage == "managed-late-session-owners-"+late.Review {
+			if err := restartHistoricalManagedOpenBaoPod(stageCtx, t, f, runtime); err != nil {
+				return err
+			}
 			if err := verifyManagedLateAcceptedOwners(stageCtx, f.cfg, runtime); err != nil {
 				return err
 			}

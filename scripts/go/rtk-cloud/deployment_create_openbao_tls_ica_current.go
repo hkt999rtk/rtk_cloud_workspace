@@ -16,7 +16,14 @@ const openBaoTLSOriginalIntermediateID = "48b05140-6167-46c0-b448-562945af691b"
 // also the authority for normal automatic CRL successors; an updated CRL is not
 // a new issuer, Root, trust manifest or completion receipt.
 func validateOpenBaoTLSCurrentIntermediate(root, ica environmentCreateRegisteredIssuer, prior createRootCRLRecord, snapshot createRootCRLNativeSnapshot, history []createRootCRLRecord, now time.Time) error {
+	return validateOpenBaoTLSCurrentIntermediateRemaining(root, ica, prior, snapshot, history, now, 45*time.Minute)
+}
+
+func validateOpenBaoTLSCurrentIntermediateRemaining(root, ica environmentCreateRegisteredIssuer, prior createRootCRLRecord, snapshot createRootCRLNativeSnapshot, history []createRootCRLRecord, now time.Time, minimumRemaining time.Duration) error {
 	bad := func() error { return openBaoTLSRootCRLError("current-original-ICA-successor") }
+	if minimumRemaining < 0 {
+		return bad()
+	}
 	rootCert, rootErr := parseFirstCertificatePEM([]byte(root.Certificate))
 	cert, certErr := parseFirstCertificatePEM([]byte(ica.Certificate))
 	if root.ID != "734487b8-abcf-40be-a813-8b52c64f7954" || root.Domain != "openbao_tls" || root.Environment != "dev" || root.Kind != "root" || root.Status != "active" || root.Document["signer_provider"] != "offline" || rootErr != nil || certErr != nil || rootCert.CheckSignatureFrom(rootCert) != nil || environmentPreflightBytesSHA256(rootCert.Raw) != root.RootFingerprint ||
@@ -77,7 +84,7 @@ func validateOpenBaoTLSCurrentIntermediate(root, ica environmentCreateRegistered
 		}
 	}
 	current, err := parse(snapshot.Prior, now)
-	if err != nil || !current.NextUpdate.After(now.Add(45*time.Minute)) {
+	if err != nil || !current.NextUpdate.After(now.Add(minimumRemaining)) {
 		return bad()
 	}
 	actual := map[string]createRootCRLRevocation{}
@@ -93,6 +100,10 @@ func validateOpenBaoTLSCurrentIntermediate(root, ica environmentCreateRegistered
 // Only a genuine already completed Root2 repair may consume automatic ICA
 // successors. Original Root repair qualification/import keeps its exact ICA3.
 func readCompletedOpenBaoTLSCurrentIntermediate(ctx context.Context, cfg deploymentConfig, store secretStore, e *environmentCreateExecution, b environmentKubernetesBackend, a createOpenBaoTLSRootCRLArtifact) (createRootCRLNativeSnapshot, string, bool, error) {
+	return readCompletedOpenBaoTLSCurrentIntermediateRemaining(ctx, cfg, store, e, b, a, 45*time.Minute)
+}
+
+func readCompletedOpenBaoTLSCurrentIntermediateRemaining(ctx context.Context, cfg deploymentConfig, store secretStore, e *environmentCreateExecution, b environmentKubernetesBackend, a createOpenBaoTLSRootCRLArtifact, minimumRemaining time.Duration) (createRootCRLNativeSnapshot, string, bool, error) {
 	var empty createRootCRLNativeSnapshot
 	completed, proof, err := readCreateOpenBaoTLSRootCRLRecovery(store, e.Journal.PlanSHA256)
 	if err != nil {
@@ -111,7 +122,7 @@ func readCompletedOpenBaoTLSCurrentIntermediate(ctx context.Context, cfg deploym
 	query := "SELECT COALESCE(json_agg(json_build_object('issuer_id',issuer_id,'crl_sha256',digest,'crl_number',number::text,'crl_pem',pem,'this_update',this_update,'next_update',next_update) ORDER BY number),'[]'::json) FROM pki_crls WHERE issuer_id='" + openBaoTLSOriginalIntermediateID + "' AND number>=3"
 	raw, err := readEnvironmentCreateRegistryJSON(ctx, cfg, environmentCreateBootstrapRuntime{Execution: e, Backend: b}, query)
 	var history []createRootCRLRecord
-	if err != nil || decodeEnvironmentJSON(raw, &history) != nil || validateOpenBaoTLSCurrentIntermediate(a.Plan.Root, a.Plan.Intermediate, a.Plan.IntermediateCRL, native, history, time.Now().UTC()) != nil {
+	if err != nil || decodeEnvironmentJSON(raw, &history) != nil || validateOpenBaoTLSCurrentIntermediateRemaining(a.Plan.Root, a.Plan.Intermediate, a.Plan.IntermediateCRL, native, history, time.Now().UTC(), minimumRemaining) != nil {
 		return empty, "", true, openBaoTLSRootCRLError("signed-current-ICA-history-and-inventory")
 	}
 	return native, environmentPreflightBytesSHA256(raw), true, nil

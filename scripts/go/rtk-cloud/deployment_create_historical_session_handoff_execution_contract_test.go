@@ -26,9 +26,12 @@ func TestHistoricalSessionProtocolPreservesOriginalNativePolicyAndExclusiveRole(
 	}
 	runtime := f.runtime
 	runtime.Backend, runtime.Execution = f.backend, f.e
-	read, _, err := readManagedSessionState(t.Context(), f.cfg, runtime, f.session)
+	read, raw, err := readManagedSessionState(t.Context(), f.cfg, runtime, f.session)
 	if err != nil || read.OtherActive != 0 || read.Fingerprint != states[f.session].Fingerprint {
 		t.Fatal("original native session projection differs", err)
+	}
+	if !managedLateLogSessionHashesMatch(raw, environmentPreflightBytesSHA256(managedLateLogSQLSnapshotFixture(states[f.session]))) {
+		t.Fatal("historical registry adapter does not preserve PostgreSQL json_build_object bytes")
 	}
 	// A conflicting native row is adversarial input, not accepted history. The
 	// real reader must see its contribution to the SQL competing-session count.
@@ -122,8 +125,8 @@ func TestHistoricalSessionProtocolReinstallationPreservesNativeStateAndDelegatio
 			t.Fatal("reinstallation lost actual earlier policy", err)
 		}
 		observed, err := f.backend.Read(ctx, objectID)
-		if err != nil || deploymentplan.Digest(observed) != deploymentplan.Digest(expected) {
-			t.Fatal("immutable predecessor delegation failed or changed original native object", err)
+		if err != nil || !deploymentplan.Matches(expected, observed) {
+			t.Fatal("immutable predecessor delegation failed or changed original native object", err, objectID)
 		}
 		assertRecoveryContractReadOnly(t, f.store, originalPrivate)
 	}

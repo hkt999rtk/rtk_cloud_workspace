@@ -412,7 +412,7 @@ func (a *historicalNativeFinalizer) finalize() error {
 }
 
 var historicalFinalizerSessionQuery = regexp.MustCompile(`session_id='([a-f0-9-]{36})'`)
-var historicalFinalizerProjection = regexp.MustCompile(`'([a-z_]+)',`)
+var historicalFinalizerProjection = regexp.MustCompile(`'([a-z0-9_]+)',`)
 
 func (a *historicalNativeFinalizer) originalPolicy() (deploymentplan.Object, string, error) {
 	name := "rtk-" + a.fixture.cfg.Environment + "-service-bootstrap-" + a.service.BootstrapSessionID
@@ -670,6 +670,16 @@ func newHistoricalFinalizerNativeContract(t *testing.T) (*acceptedCoreExecutionC
 	f.protocol["custody"].(map[string]string)["/run/pki-bootstrap/bootstrap.crt"] = f.certificate
 	f.protocol["objects"] = historicalNativeInventory(f.native.objects)
 	f.publish(t)
+	installHistoricalTransportSessionProtocol(t, f, f.protocol["historical_sessions"].(map[string]managedSessionState))
+	var nativePolicies deploymentplan.Object
+	if readExecutionJSON(os.Getenv("RTK_HISTORICAL_SESSION_BAO"), &nativePolicies) != nil {
+		t.Fatal("shared native session endpoint state is unavailable")
+	}
+	deploymentplan.Map(nativePolicies["policies"])["original-permanent-issuer"] = "untouched issuer policy"
+	deploymentplan.Map(nativePolicies["roles"])["original-role"] = []string{"original-permanent-issuer"}
+	if err := os.WriteFile(os.Getenv("RTK_HISTORICAL_SESSION_BAO"), mustProviderRecoveryJSON(nativePolicies), 0600); err != nil {
+		t.Fatal(err)
+	}
 	f.runtime.Backend, f.runtime.Execution, f.runtime.ServiceCeremony = f.backend, f.e, &s
 	return f, installHistoricalNativeFinalizer(t, f, nil)
 }
@@ -788,8 +798,31 @@ func TestHistoricalNativeFinalizerAuthenticatesOwnersAndSignsOriginalRevocation(
 			}
 		})
 	}
+	f.runtime.ServiceSessionRecovery = &createServiceSessionRecovery{Renewal: true}
+	expiryQuery := "SELECT json_build_object('session_id',session_id,'issuer_id',issuer_id,'root_sha256',root_sha256,'status',status,'expires_at',expires_at,'complete',subjects <@ installed_subjects,'other_active',(SELECT count(*) FROM pki_deployment_bootstrap_sessions WHERE environment='" + f.cfg.Environment + "' AND status='active' AND session_id<>'" + s.BootstrapSessionID + "')) FROM pki_deployment_bootstrap_sessions WHERE environment='" + f.cfg.Environment + "' AND session_id='" + s.BootstrapSessionID + "'"
+	expiryRaw, expiryReadErr := readEnvironmentCreateRegistryJSON(t.Context(), f.cfg, f.runtime, expiryQuery)
+	var expiryState completedBootstrapExpiry
+	expiryDecodeErr := decodeEnvironmentJSON(expiryRaw, &expiryState)
+	if expiryReadErr != nil || expiryDecodeErr != nil {
+		t.Fatalf("active renewed expiry SQL projection unavailable: read=%v decode=%v raw=%q", expiryReadErr, expiryDecodeErr, expiryRaw)
+	}
+	if err := expireCompletedRenewedBootstrapSession(t.Context(), f.cfg, f.runtime, s); err != nil {
+		t.Fatal("active renewed session cannot be read by the terminal expiry coordinator", err)
+	}
+	f.runtime.ServiceSessionRecovery = nil
+	activeState := f.protocol["historical_sessions"].(map[string]managedSessionState)[s.BootstrapSessionID]
+	activeSessionRaw := managedLateLogSQLSnapshotFixture(activeState)
 	if err := finalizeEnvironmentCreateServiceSession(t.Context(), client, f.cfg, f.p.Plan.Bootstrap, f.store, f.runtime, s, f.operator); err != nil {
 		t.Fatal("unchanged production finalizer with authentic external native protocol", err)
+	}
+	_, sealedSessionRaw, err := readManagedSessionState(t.Context(), f.cfg, f.runtime, s.BootstrapSessionID)
+	expectedSealedRaw, expectedErr := managedLateSealedLogSessionRaw(activeSessionRaw)
+	if err != nil || expectedErr != nil || !managedLateLogSessionHashesMatch(expectedSealedRaw, environmentPreflightBytesSHA256(sealedSessionRaw)) {
+		t.Fatalf("native finalizer session projection is not the exact active-to-sealed transition: read=%v expected=%v active=%s expected-sealed=%s actual-sealed=%s", err, expectedErr, activeSessionRaw, expectedSealedRaw, sealedSessionRaw)
+	}
+	f.runtime.ServiceSessionRecovery = &createServiceSessionRecovery{Renewal: true}
+	if err := expireCompletedRenewedBootstrapSession(t.Context(), f.cfg, f.runtime, s); err != nil {
+		t.Fatal("sealed renewed session cannot be read by the terminal expiry coordinator", err)
 	}
 	block, _ := pem.Decode([]byte(a.crl.PEM))
 	if block == nil {

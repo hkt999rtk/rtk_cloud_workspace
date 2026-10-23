@@ -661,6 +661,9 @@ func expireCompletedRenewedBootstrapSession(ctx context.Context, cfg deploymentC
 		var state completedBootstrapExpiry
 		raw, err := readEnvironmentCreateRegistryJSON(ctx, cfg, runtime, query)
 		if err != nil || decodeEnvironmentJSON(raw, &state) != nil {
+			if ctx.Err() != nil {
+				return state, fmt.Errorf("%w: %v", environmentCreateBootstrapBlocker("native renewed bootstrap expiry state unavailable"), ctx.Err())
+			}
 			return state, environmentCreateBootstrapBlocker("native renewed bootstrap expiry state unavailable")
 		}
 		return state, nil

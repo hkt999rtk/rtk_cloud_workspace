@@ -456,7 +456,11 @@ func verifyManagedApplicationCurrentAPIServers(ctx context.Context, cfg deployme
 	if err != nil || decodeEnvironmentJSON(raw, &rows) != nil {
 		return managedApplicationCurrentBlock("native-api-server-rows")
 	}
-	digest, err := validateManagedApplicationAPIServers(rows, service, r.ManagedApplicationPartial, time.Now().UTC())
+	validate := validateManagedApplicationAPIServers
+	if r.ManagedLateSession != nil {
+		validate = validateManagedApplicationAPIServersPreserved
+	}
+	digest, err := validate(rows, service, r.ManagedApplicationPartial, time.Now().UTC())
 	if err != nil {
 		return err
 	}
@@ -490,6 +494,14 @@ func managedApplicationTerminalAPISourceMatches(source, current *createServiceSe
 }
 
 func validateManagedApplicationAPIServers(rows []managedTransportServerEvidence, service environmentCreateServiceCeremony, partial *createManagedApplicationPartialRecovery, now time.Time) (string, error) {
+	return validateManagedApplicationAPIServersMode(rows, service, partial, now, true)
+}
+
+func validateManagedApplicationAPIServersPreserved(rows []managedTransportServerEvidence, service environmentCreateServiceCeremony, partial *createManagedApplicationPartialRecovery, now time.Time) (string, error) {
+	return validateManagedApplicationAPIServersMode(rows, service, partial, now, false)
+}
+
+func validateManagedApplicationAPIServersMode(rows []managedTransportServerEvidence, service environmentCreateServiceCeremony, partial *createManagedApplicationPartialRecovery, now time.Time, requireCurrent bool) (string, error) {
 	bad := func() (string, error) {
 		return "", managedApplicationCurrentBlock("original-native-api-server-custody")
 	}
@@ -526,7 +538,8 @@ func validateManagedApplicationAPIServers(rows []managedTransportServerEvidence,
 			return bad()
 		}
 		leaf := currentChain[0]
-		if leaf.CheckSignatureFrom(authority) != nil || !leaf.NotAfter.After(now.Add(time.Hour)) || leaf.NotBefore.After(now) || environmentPreflightBytesSHA256(leaf.Raw) != row.Fingerprint || !slices.Equal(leaf.DNSNames, []string{proof.ServerName}) || !slices.Contains(leaf.ExtKeyUsage, x509.ExtKeyUsageServerAuth) {
+		validityInvalid := !leaf.NotAfter.After(leaf.NotBefore) || requireCurrent && (!leaf.NotAfter.After(now.Add(time.Hour)) || leaf.NotBefore.After(now))
+		if leaf.CheckSignatureFrom(authority) != nil || validityInvalid || environmentPreflightBytesSHA256(leaf.Raw) != row.Fingerprint || !slices.Equal(leaf.DNSNames, []string{proof.ServerName}) || !slices.Contains(leaf.ExtKeyUsage, x509.ExtKeyUsageServerAuth) {
 			return bad()
 		}
 		block, rest := pem.Decode([]byte(row.CSR))

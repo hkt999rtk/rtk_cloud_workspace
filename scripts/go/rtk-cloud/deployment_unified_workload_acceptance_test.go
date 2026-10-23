@@ -377,7 +377,7 @@ func TestNativePublicOCIImageWithIsolatedClient(t *testing.T) {
 }
 
 func TestTargetWorkloadAcceptanceRequiresObservedZeroReplicaQuiescence(t *testing.T) {
-	for _, mode := range []string{"valid", "full-environment", "unobserved", "owned-pod", "terminating-pod", "replaced-owner", "missing-controller"} {
+	for _, mode := range []string{"valid", "mixed-ready", "mixed-peer-unready", "full-environment", "unobserved", "owned-pod", "terminating-pod", "replaced-owner", "missing-controller"} {
 		t.Run(mode, func(t *testing.T) {
 			plan, objects, digest := targetWorkloadFixture(t, "dev", "Deployment")
 			plan.Operation = "scoped"
@@ -388,6 +388,28 @@ func TestTargetWorkloadAcceptanceRequiresObservedZeroReplicaQuiescence(t *testin
 				status[k] = float64(0)
 			}
 			inventory := []deploymentplan.Object{objects[0], objects[2]}
+			if mode == "mixed-ready" || mode == "mixed-peer-unready" {
+				peerController, peerPod, peerSet := deploymentplan.Clone(objects[0]), deploymentplan.Clone(objects[1]), deploymentplan.Clone(objects[2])
+				peerMeta := deploymentplan.Map(peerController["metadata"])
+				peerMeta["name"], peerMeta["uid"] = "peer", "peer-controller"
+				deploymentplan.Map(peerController["spec"])["replicas"] = float64(1)
+				peerStatus := deploymentplan.Map(peerController["status"])
+				for _, key := range []string{"replicas", "readyReplicas", "updatedReplicas", "availableReplicas"} {
+					peerStatus[key] = float64(1)
+				}
+				peerResource := deploymentplan.Resource{ID: deploymentplan.ID(peerController), UID: "peer-controller", Action: "retain", Phase: "workload", Desired: deploymentplan.Projection(peerController)}
+				peerSetMeta := deploymentplan.Map(peerSet["metadata"])
+				peerSetMeta["name"], peerSetMeta["uid"] = "peer-selected", "peer-replicaset"
+				peerSetMeta["ownerReferences"] = []any{map[string]any{"apiVersion": "apps/v1", "kind": "Deployment", "name": "peer", "uid": "peer-controller", "controller": true}}
+				peerPodMeta := deploymentplan.Map(peerPod["metadata"])
+				peerPodMeta["name"], peerPodMeta["uid"] = "peer-0", "peer-pod"
+				peerPodMeta["ownerReferences"] = []any{map[string]any{"apiVersion": "apps/v1", "kind": "ReplicaSet", "name": "peer-selected", "uid": "peer-replicaset", "controller": true}}
+				if mode == "mixed-peer-unready" {
+					deploymentplan.Map(peerPod["status"])["phase"] = "Pending"
+				}
+				plan.Resources = append(plan.Resources, peerResource)
+				inventory = append(inventory, peerController, peerPod, peerSet)
+			}
 			switch mode {
 			case "full-environment":
 				plan.Operation = "upgrade"
@@ -404,11 +426,46 @@ func TestTargetWorkloadAcceptanceRequiresObservedZeroReplicaQuiescence(t *testin
 				inventory = inventory[1:]
 			}
 			err := verifyEnvironmentTargetWorkloads(context.Background(), plan, inventory, func(context.Context, string) (map[string]bool, error) { return map[string]bool{digest: true}, nil })
-			if mode == "valid" && err != nil {
+			if (mode == "valid" || mode == "mixed-ready") && err != nil {
 				t.Fatal(err)
 			}
-			if mode != "valid" && err == nil {
+			if mode != "valid" && mode != "mixed-ready" && err == nil {
 				t.Fatal("unverified quiescence accepted")
+			}
+		})
+	}
+}
+
+func TestScopedControllerStatusUsesNativeKindContracts(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		kind  string
+		spec  deploymentplan.Object
+		state deploymentplan.Object
+		ok    bool
+	}{
+		{"deployment-ready", "Deployment", deploymentplan.Object{}, deploymentplan.Object{"readyReplicas": float64(1), "updatedReplicas": float64(1), "availableReplicas": float64(1)}, true},
+		{"deployment-unavailable", "Deployment", deploymentplan.Object{}, deploymentplan.Object{"readyReplicas": float64(1), "updatedReplicas": float64(1), "availableReplicas": float64(1), "unavailableReplicas": float64(1)}, false},
+		{"stateful-ondelete-native-status", "StatefulSet", deploymentplan.Object{"updateStrategy": deploymentplan.Object{"type": "OnDelete"}}, deploymentplan.Object{"replicas": float64(1), "currentReplicas": float64(1), "readyReplicas": float64(1)}, true},
+		{"stateful-rolling-current", "StatefulSet", deploymentplan.Object{}, deploymentplan.Object{"readyReplicas": float64(1), "updatedReplicas": float64(1), "currentRevision": "current", "updateRevision": "current"}, true},
+		{"stateful-rolling-stale", "StatefulSet", deploymentplan.Object{}, deploymentplan.Object{"readyReplicas": float64(1), "updatedReplicas": float64(1), "currentRevision": "old", "updateRevision": "new"}, false},
+		{"scaled-down-omitted-zero-fields", "Deployment", deploymentplan.Object{}, deploymentplan.Object{}, true},
+		{"scaled-down-stale-replica", "Deployment", deploymentplan.Object{}, deploymentplan.Object{"readyReplicas": float64(1)}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			state := deploymentplan.Clone(tc.state)
+			state["observedGeneration"] = float64(2)
+			controller := deploymentplan.Object{"kind": tc.kind, "metadata": deploymentplan.Object{"generation": float64(2)}, "spec": tc.spec, "status": state}
+			desired := float64(1)
+			if strings.HasPrefix(tc.name, "scaled-down") {
+				desired = 0
+			}
+			err := verifyScopedControllerStatus(controller, desired)
+			if tc.ok && err != nil {
+				t.Fatal(err)
+			}
+			if !tc.ok && err == nil {
+				t.Fatal("incomplete native controller status accepted")
 			}
 		})
 	}

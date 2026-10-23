@@ -101,6 +101,22 @@ func TestOpenBaoTLSCurrentICARequiresOriginalSignedMonotonicCompleteHistory(t *t
 	}
 }
 
+func TestOpenBaoTLSCurrentICAFreshnessSeparatesAdmissionFromContinuation(t *testing.T) {
+	root, ica, key, snapshot, history, now := openBaoTLSCurrentICAFixture(t)
+	request := createRootCRLRequest{ica.ID, "", snapshot.Prior.Number, now.Add(-time.Minute), now.Add(44 * time.Minute), []createRootCRLRevocation{{"63", now.Add(-10 * time.Hour), 1}, {"64", now.Add(-6 * time.Hour), 0}, {"65", now.Add(-3 * time.Hour), 0}}}
+	snapshot.Prior = signedRootCRLFixture(t, ica, key, request)
+	history[len(history)-1] = snapshot.Prior
+	if err := validateOpenBaoTLSCurrentIntermediate(root, ica, history[0], snapshot, history, now); err == nil {
+		t.Fatal("initial admission accepted less than the 45-minute freshness margin")
+	}
+	if err := validateOpenBaoTLSCurrentIntermediateRemaining(root, ica, history[0], snapshot, history, now, 0); err != nil {
+		t.Fatal("already admitted continuation rejected a current unchanged CRL", err)
+	}
+	if err := validateOpenBaoTLSCurrentIntermediateRemaining(root, ica, history[0], snapshot, history, request.NextUpdate, 0); err == nil {
+		t.Fatal("continuation accepted an expired CRL")
+	}
+}
+
 func TestOpenBaoTLSCurrentICACacheRequiresExactLatestSignedRecord(t *testing.T) {
 	_, ica, _, snapshot, history, _ := openBaoTLSCurrentICAFixture(t)
 	cert, _ := parseFirstCertificatePEM([]byte(ica.Certificate))

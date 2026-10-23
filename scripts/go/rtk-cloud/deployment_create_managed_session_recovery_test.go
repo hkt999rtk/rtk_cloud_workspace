@@ -179,6 +179,27 @@ func TestManagedSeedRequiresEveryOriginalClientWithoutIssuanceReplay(t *testing.
 	}
 }
 
+func TestManagedClientContinuityAllowsNaturalExpiryAfterAdmission(t *testing.T) {
+	service, subjects, rows, now := managedSessionClientFixture(t)
+	afterExpiry := now.Add(2 * time.Hour)
+	if validateManagedSessionClients(rows, service, subjects, afterExpiry) {
+		t.Fatal("initial admission accepted expired workload clients")
+	}
+	if !validateManagedSessionClientsPreserved(rows, service, subjects) {
+		t.Fatal("already admitted continuation rejected unchanged naturally expired clients")
+	}
+	changed := slices.Clone(rows)
+	changed[0].Revoked = &afterExpiry
+	if validateManagedSessionClientsPreserved(changed, service, subjects) {
+		t.Fatal("continuation accepted a revoked client")
+	}
+	changed = slices.Clone(rows)
+	changed[0].CSR = changed[1].CSR
+	if validateManagedSessionClientsPreserved(changed, service, subjects) {
+		t.Fatal("continuation accepted changed client key custody")
+	}
+}
+
 func TestManagedSeedExecutionRequiresItsQualificationBeforeAnyMutation(t *testing.T) {
 	called := false
 	_, err := executeManagedSessionRecovery(context.Background(), deploymentConfig{}, environmentCreateBootstrapPlan{}, makeIsolatedTestSecretStore(t, "dev"), environmentCreateBootstrapRuntime{ServiceSessionRecovery: &createServiceSessionRecovery{PostServiceRenewal: true}}, func(context.Context, string, []deploymentplan.Definition) error { called = true; return nil })

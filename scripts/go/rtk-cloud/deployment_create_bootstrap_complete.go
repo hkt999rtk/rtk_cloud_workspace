@@ -12,6 +12,19 @@ import (
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 )
 
+// Ordinary OpenBao ACK completion has its own short guard. Managed-late
+// completion already runs inside the admitted native budget, whose fixed
+// deadline covers the Log handoff and finalizer as one operation. Replacing it
+// here with a fresh 15-minute child would cancel a valid continuation midway
+// through finalization and misreport later native reads as missing state.
+func openBaoACKFinalizationContext(ctx context.Context, runtime environmentCreateBootstrapRuntime) (context.Context, context.CancelFunc) {
+	r := runtime.ServiceSessionRecovery
+	if r == nil || r.OpenBaoACK == nil || r.ManagedLateSession != nil || managedLatePostNativeCleanupRequested(runtime) {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, 15*time.Minute)
+}
+
 // Complete the same admitted initial ceremony. Ready metadata is installed by
 // actual native owners; only their signed registry receipts allow activation.
 func completeEnvironmentCreateBootstrap(ctx context.Context, cfg deploymentConfig, p environmentCreateBootstrapPlan, release environmentRelease, store secretStore, operator map[string]string, runtime environmentCreateBootstrapRuntime, service environmentCreateServiceCeremony, apply environmentCreateBootstrapApply) (environmentIdentityBindings, error) {
@@ -304,9 +317,8 @@ func completeEnvironmentCreateAfterApplicationOwners(ctx context.Context, cfg de
 				if err := verifyManagedLatePostNativeCleanupRuntime(ctx, cfg, store, runtime); err != nil {
 					return empty, err
 				}
-			} else {
-				finalizeCtx, cancelFinalization = context.WithTimeout(ctx, 15*time.Minute)
 			}
+			finalizeCtx, cancelFinalization = openBaoACKFinalizationContext(ctx, runtime)
 		}
 		finalizationErr := func() error {
 			defer cancelFinalization()

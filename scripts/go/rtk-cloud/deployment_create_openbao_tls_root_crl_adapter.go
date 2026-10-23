@@ -918,6 +918,17 @@ func openBaoTLSRootCRLReportStep(out io.Writer, stage string, started time.Time)
 }
 
 func observeOpenBaoTLSRootCRLConsumer(ctx context.Context, cfg deploymentConfig, store secretStore, e *environmentCreateExecution, b environmentKubernetesBackend, a createOpenBaoTLSRootCRLArtifact, target createRootCRLStateTarget) (map[string]string, error) {
+	return observeOpenBaoTLSRootCRLConsumerRemaining(ctx, cfg, store, e, b, a, target, 45*time.Minute)
+}
+
+// Admission requires enough CRL lifetime to start work. A continuation that
+// already bound the exact signed history and consumers requires actual current
+// validity, so the fixed admission margin cannot expire underneath that work.
+func observeOpenBaoTLSRootCRLConsumerContinuation(ctx context.Context, cfg deploymentConfig, store secretStore, e *environmentCreateExecution, b environmentKubernetesBackend, a createOpenBaoTLSRootCRLArtifact, target createRootCRLStateTarget) (map[string]string, error) {
+	return observeOpenBaoTLSRootCRLConsumerRemaining(ctx, cfg, store, e, b, a, target, 0)
+}
+
+func observeOpenBaoTLSRootCRLConsumerRemaining(ctx context.Context, cfg deploymentConfig, store secretStore, e *environmentCreateExecution, b environmentKubernetesBackend, a createOpenBaoTLSRootCRLArtifact, target createRootCRLStateTarget, minimumRemaining time.Duration) (map[string]string, error) {
 	p := a.Plan
 	if _, err := parseCreateRootCRLForDomain(p.Root, p.Signed, "openbao_tls", true, time.Now().UTC()); err != nil {
 		return nil, err
@@ -934,7 +945,7 @@ func observeOpenBaoTLSRootCRLConsumer(ctx context.Context, cfg deploymentConfig,
 	if err != nil {
 		return nil, err
 	}
-	icaSnapshot, icaHistorySHA, currentICA, icaErr := readCompletedOpenBaoTLSCurrentIntermediate(ctx, cfg, store, e, b, a)
+	icaSnapshot, icaHistorySHA, currentICA, icaErr := readCompletedOpenBaoTLSCurrentIntermediateRemaining(ctx, cfg, store, e, b, a, minimumRemaining)
 	if icaErr != nil {
 		return nil, icaErr
 	}

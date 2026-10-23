@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -162,8 +163,14 @@ func applyManagedLateLogExact(ctx context.Context, runtime environmentCreateBoot
 		}
 		return managedLateLogAccepted(e.Store, e, late, kind, helperUID)
 	}
-	if check == nil || check(ctx) != nil || e.Check(ctx) != nil {
-		return nil, empty, logACKDraftBlock("fresh admitted source at mutation boundary")
+	if check == nil {
+		return nil, empty, logACKDraftBlock("runtime source checker at mutation boundary")
+	}
+	if err := check(ctx); err != nil {
+		return nil, empty, fmt.Errorf("%w: runtime source: %v", logACKDraftBlock("admitted source at mutation boundary"), err)
+	}
+	if err := e.Check(ctx); err != nil {
+		return nil, empty, fmt.Errorf("%w: execution owner: %v", logACKDraftBlock("admitted source at mutation boundary"), err)
 	}
 	live, err := runtime.Backend.Inventory(ctx, e.Journal.Stack)
 	if err != nil {
@@ -518,7 +525,7 @@ func readManagedLateLogObservation(ctx context.Context, cfg deploymentConfig, ru
 	if err != nil {
 		return result, err
 	}
-	clients, err := readManagedSessionClients(ctx, cfg, runtime, runtime.ServiceSessionRecovery.Ceremony, state.Subjects)
+	clients, err := readManagedSessionClientsPreserved(ctx, cfg, runtime, runtime.ServiceSessionRecovery.Ceremony, state.Subjects)
 	if err != nil {
 		return result, err
 	}
@@ -665,9 +672,18 @@ func executeManagedLateLogACK(ctx context.Context, cfg deploymentConfig, runtime
 	if err != nil {
 		return nil, err
 	}
-	clients, err := readManagedSessionClients(ctx, cfg, runtime, runtime.ServiceSessionRecovery.Ceremony, state.Subjects)
-	if err != nil || clients != producer.OriginalClientsSHA || check(ctx) != nil || e.Check(ctx) != nil {
-		return nil, logACKDraftBlock("original eleven identities before durable completion")
+	clients, err := readManagedSessionClientsPreserved(ctx, cfg, runtime, runtime.ServiceSessionRecovery.Ceremony, state.Subjects)
+	if err != nil {
+		return nil, fmt.Errorf("%w: preserved client read: %v", logACKDraftBlock("original eleven identities before durable completion"), err)
+	}
+	if clients != producer.OriginalClientsSHA {
+		return nil, logACKDraftBlock("original eleven identity digest before durable completion")
+	}
+	if err := check(ctx); err != nil {
+		return nil, fmt.Errorf("%w: runtime source after restore: %v", logACKDraftBlock("original eleven identities before durable completion"), err)
+	}
+	if err := e.Check(ctx); err != nil {
+		return nil, fmt.Errorf("%w: execution owner after restore: %v", logACKDraftBlock("original eleven identities before durable completion"), err)
 	}
 	stopped, err := managedLateLogEntry(e, stopKey)
 	if err != nil || stopped == nil {

@@ -117,7 +117,9 @@ func (f *acceptedCoreExecutionContract) activateHistoricalTrustAuthority(t *test
 		t.Fatal(err)
 	}
 	// Preserve the signed initial root CRL as the actual native publication.
-	nextUpdate := time.Now().UTC().Add(time.Hour)
+	// Supporting roots must remain current for the entire connected historical
+	// flow; only the two roots whose recovery is under test use a short lifetime.
+	nextUpdate := time.Now().UTC().Add(6 * time.Hour)
 	if root.ID == "14c1a269-e32e-4eac-aa93-db5ad8e85f7e" || root.ID == "734487b8-abcf-40be-a813-8b52c64f7954" {
 		// The original publication starts valid, then genuinely expires during
 		// the later session transition. Never rewrite an accepted CRL to age it.

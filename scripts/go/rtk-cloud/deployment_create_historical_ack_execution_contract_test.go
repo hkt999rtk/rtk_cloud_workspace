@@ -200,30 +200,37 @@ func historicalACKNativeApply(t *testing.T, f *acceptedCoreExecutionContract, ru
 	return func(ctx context.Context, stage string, defs []deploymentplan.Definition) error {
 		f.acceptedHistoricalStage(t, stage, defs)
 		if strings.HasPrefix(stage, "openbao-host-ack-forward-") {
-			pod := historicalManagedOpenBaoPod(t, f, true)
-			statePath := os.Getenv("RTK_HISTORICAL_FOUNDATION_STATE")
-			var state map[string]any
-			if err := readExecutionJSON(statePath, &state); err != nil {
-				return err
-			}
-			state["sealed"] = true
-			if err := os.WriteFile(statePath, mustProviderRecoveryJSON(state), 0600); err != nil {
-				return err
-			}
-			old := deploymentplan.Map(f.protocol["historical_bao_process"])
-			pid, err := strconv.Atoi(deploymentplan.String(old["pid"]))
-			if err != nil {
-				return err
-			}
-			process := deploymentplan.Clone(old)
-			process["pid"], process["start_time"] = strconv.Itoa(pid+1), "223456"
-			process["pid_marker_sha256"] = environmentPreflightBytesSHA256([]byte(strconv.Itoa(pid+1) + "\n"))
-			f.protocol["historical_bao_process"], f.protocol["historical_ack_marker"] = process, process["pid_marker_sha256"]
-			f.publish(t)
-			return unsealEnvironmentCreateOpenBaoRestart(ctx, f.cfg, f.store, runtime, pod)
+			return restartHistoricalManagedOpenBaoPod(ctx, t, f, runtime)
 		}
 		return nil
 	}
+}
+
+// Model the native StatefulSet controller's OnDelete replacement and the
+// operator's original-share unseal after an accepted OpenBao template update.
+func restartHistoricalManagedOpenBaoPod(ctx context.Context, t *testing.T, f *acceptedCoreExecutionContract, runtime environmentCreateBootstrapRuntime) error {
+	t.Helper()
+	pod := historicalManagedOpenBaoPod(t, f, true)
+	statePath := os.Getenv("RTK_HISTORICAL_FOUNDATION_STATE")
+	var state map[string]any
+	if err := readExecutionJSON(statePath, &state); err != nil {
+		return err
+	}
+	state["sealed"] = true
+	if err := os.WriteFile(statePath, mustProviderRecoveryJSON(state), 0600); err != nil {
+		return err
+	}
+	old := deploymentplan.Map(f.protocol["historical_bao_process"])
+	pid, err := strconv.Atoi(deploymentplan.String(old["pid"]))
+	if err != nil {
+		return err
+	}
+	process := deploymentplan.Clone(old)
+	process["pid"], process["start_time"] = strconv.Itoa(pid+1), strconv.Itoa(223456+pid)
+	process["pid_marker_sha256"] = environmentPreflightBytesSHA256([]byte(strconv.Itoa(pid+1) + "\n"))
+	f.protocol["historical_bao_process"], f.protocol["historical_ack_marker"] = process, process["pid_marker_sha256"]
+	f.publish(t)
+	return unsealEnvironmentCreateOpenBaoRestart(ctx, f.cfg, f.store, runtime, pod)
 }
 
 // The short lifetime selects the historical stage contract. It intentionally

@@ -184,8 +184,17 @@ func validateCreateManagedLateOpenBaoACKCompletion(ctx context.Context, cfg depl
 		return bad("sole-real-accepted-log-SID-update")
 	}
 	log, err := readManagedLateLogCompletion(store, &current, &late, proof.CompletedAt)
-	if err != nil || log == nil || proof.Native["late_helper_proof_sha256"] != deploymentplan.Digest(log) || !managedLateLogProofSessionHashMatches(store, log, deploymentplan.String(proof.Native["session_sha256"])) || proof.Native["clients_sha256"] != log.NativeClientsSHA {
-		return bad("genuine-exclusive-log-and-native-nine")
+	if err != nil || log == nil {
+		return bad("genuine-exclusive-log-proof")
+	}
+	if proof.Native["late_helper_proof_sha256"] != deploymentplan.Digest(log) {
+		return bad("genuine-exclusive-log-proof-digest")
+	}
+	if !managedLateLogProofSessionHashMatches(store, log, deploymentplan.String(proof.Native["session_sha256"])) {
+		return bad("genuine-exclusive-log-session-cross-hash")
+	}
+	if proof.Native["clients_sha256"] != log.NativeClientsSHA {
+		return bad("genuine-exclusive-log-client-inventory")
 	}
 	if !managedLateSeedAuthorizationCompleted(current.Journal, &late) {
 		return bad("actual-exclusive-new-signer-role")

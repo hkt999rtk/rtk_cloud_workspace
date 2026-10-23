@@ -34,7 +34,7 @@ type historicalTransportIdentityObservations struct {
 	ServerKeys map[string]string
 }
 
-func historicalTransportSignedLeaf(t *testing.T, issuer environmentCreateRegisteredIssuer, signer *ecdsa.PrivateKey, subject string, names []string) (certificate, keyPEM, csrPEM string) {
+func historicalTransportSignedLeaf(t *testing.T, issuer environmentCreateRegisteredIssuer, signer *ecdsa.PrivateKey, subject string, names []string, remaining ...time.Duration) (certificate, keyPEM, csrPEM string) {
 	t.Helper()
 	authority, err := parseFirstCertificatePEM([]byte(issuer.Certificate))
 	if err != nil || signer == nil {
@@ -49,11 +49,17 @@ func historicalTransportSignedLeaf(t *testing.T, issuer environmentCreateRegiste
 		t.Fatal(err)
 	}
 	now := time.Now().UTC().Truncate(time.Second)
+	lifetime := 3 * time.Hour
+	if len(remaining) == 1 {
+		lifetime = remaining[0]
+	} else if len(remaining) != 0 {
+		t.Fatal("one optional leaf lifetime is permitted")
+	}
 	usage := []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
 	if len(names) > 0 {
 		usage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}
 	}
-	leaf := &x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: subject}, DNSNames: slices.Clone(names), NotBefore: now.Add(-time.Hour), NotAfter: now.Add(3 * time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: usage, BasicConstraintsValid: true}
+	leaf := &x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: subject}, DNSNames: slices.Clone(names), NotBefore: now.Add(-time.Hour), NotAfter: now.Add(lifetime), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: usage, BasicConstraintsValid: true}
 	der, err := x509.CreateCertificate(rand.Reader, leaf, authority, &key.PublicKey, signer)
 	if err != nil {
 		t.Fatal(err)
@@ -270,6 +276,30 @@ func TestHistoricalTransportNativeObservationContract(t *testing.T) {
 	if err != nil || servers != deploymentplan.Digest(identity.Servers) {
 		t.Fatal("native host rows rejected", err)
 	}
+	t.Run("preserved naturally expired servers", func(t *testing.T) {
+		expired := slices.Clone(identity.Servers)
+		for i := range expired {
+			issuer := intermediates[expired[i].Domain]
+			certificate, _, csr := historicalTransportSignedLeaf(t, issuer, keys[issuer.ID], expired[i].DNS[0], expired[i].DNS, -time.Minute)
+			leaf, parseErr := parseFirstCertificatePEM([]byte(certificate))
+			if parseErr != nil {
+				t.Fatal(parseErr)
+			}
+			expired[i].Certificate = certificate
+			expired[i].CSR = csr
+			expired[i].Fingerprint = environmentPreflightBytesSHA256(leaf.Raw)
+		}
+		f.protocol["historical_servers"] = expired
+		f.publish(t)
+		if _, err := readManagedTransportServers(t.Context(), f.cfg, f.runtime, f.p.Plan.Bootstrap, roots, intermediates); err == nil {
+			t.Fatal("active admission accepted expired server leaves")
+		}
+		if got, err := readManagedTransportServersPreserved(t.Context(), f.cfg, f.runtime, f.p.Plan.Bootstrap, roots, intermediates); err != nil || got != deploymentplan.Digest(expired) {
+			t.Fatal("preserved continuation rejected unchanged naturally expired server leaves", err)
+		}
+		f.protocol["historical_servers"] = identity.Servers
+		f.publish(t)
+	})
 	originalJournal := readTestFile(t, f.e.JournalPath)
 	ledger := historicalTransportCaptureVolumes(t, f)
 	if len(ledger.Volumes) == 0 {
@@ -468,16 +498,22 @@ if 'FROM pki_deployment_bootstrap_sessions' in joined:
  expires=datetime.datetime.fromisoformat(session['expires_at'].replace('Z','+00:00'))
  if session['status']=='active' and expires<=now:session['status']='expired'
  session['other_active']=sum(1 for other_id,other in d['historical_sessions'].items() if other_id!=sid and other['status']=='active' and datetime.datetime.fromisoformat(other['expires_at'].replace('Z','+00:00'))>now)
- if "'root',root_sha256" in joined:
-  aliases={'root':'root_sha256','fingerprint':'bootstrap_fingerprint','installed':'installed_subjects','expires':'expires_at'}
-  session={k:session[aliases.get(k,k)] for k in ['session_id','issuer_id','root','fingerprint','status','subjects','installed','expires','other_active']}
- elif "'other_active'" not in joined:session={k:session[k] for k in ['session_id','issuer_id','root_sha256','bootstrap_fingerprint','status','subjects','expires_at']}
  if query==early:
   issued=d.get('historical_bootstrap_issuances',{});row=issued.get(sid)
-  if row is None or row['session_id']!=sid or row['issuer_id']!=session['issuer_id'] or row['fingerprint']!=session['fingerprint']:sys.exit('selected session has no matching native bootstrap issuance')
-  session.pop('other_active',None)
-  session.update(count=len(d['historical_sessions']),servers=len(d.get('historical_servers') or []),clients=len(issued)+len(d.get('historical_clients') or []),caller=row['caller'])
- print(json.dumps(session));sys.exit()
+  if row is None or row['session_id']!=sid or row['issuer_id']!=session['issuer_id'] or row['fingerprint']!=session['bootstrap_fingerprint']:sys.exit('selected session has no matching native bootstrap issuance')
+  session={'count':len(d['historical_sessions']),'servers':len(d.get('historical_servers') or []),'clients':len(issued)+len(d.get('historical_clients') or []),'session_id':session['session_id'],'issuer_id':session['issuer_id'],'root':session['root_sha256'],'caller':row['caller'],'fingerprint':session['bootstrap_fingerprint'],'subjects':session['subjects'],'installed':session['installed_subjects'],'status':session['status'],'expires':session['expires_at']}
+ else:
+  end=query.rfind(' FROM pki_deployment_bootstrap_sessions WHERE environment=')
+  keys=re.findall(r"'([a-z0-9_]+)',",query[:end] if end>=0 else '')
+  aliases={'root':'root_sha256','fingerprint':'bootstrap_fingerprint','installed':'installed_subjects','expires':'expires_at'}
+  session['complete']=set(session['subjects']).issubset(set(session['installed_subjects']))
+  if not keys or any(aliases.get(k,k) not in session for k in keys):sys.exit('unsupported native session projection')
+  session={k:session[aliases.get(k,k)] for k in keys}
+ # psql renders json_build_object with spaces around the outer object
+ # separators while nested TEXT[] values remain compact JSON. Preserve that
+ # exact lexical contract: completion proofs hash the native bytes, not only
+ # their decoded values.
+ print('{'+', '.join(json.dumps(k)+' : '+json.dumps(v,separators=(',',':')) for k,v in session.items())+'}');sys.exit()
 if 'bao policy ' not in joined and 'bao read -format=json auth/kubernetes/role/' not in joined:
  os.execv(original,[original]+a)
 with open(state_file) as source:s=json.load(source)
@@ -627,7 +663,16 @@ func historicalTransportSessionApply(t *testing.T, f *acceptedCoreExecutionContr
 		if stage == "service-session-original-key-renewal-"+r.Review {
 			f.protocol["custody"].(map[string]string)[r.RenewedCertPath] = certificate
 			f.protocol["historical_sessions"].(map[string]managedSessionState)[state.Session] = state
-			recordHistoricalBootstrapIssuance(t, f, state, certificate)
+			// The issuance row is written at the signer boundary from the actual
+			// certificate. Keep it independent of the session-table fixture so a
+			// later altered session fingerprint remains observable as corruption.
+			issuanceState := state
+			leaf, err := parseFirstCertificatePEM([]byte(certificate))
+			if err != nil {
+				t.Fatal("native bootstrap issuance certificate cannot be parsed", err)
+			}
+			issuanceState.Fingerprint = environmentPreflightBytesSHA256(leaf.Raw)
+			recordHistoricalBootstrapIssuance(t, f, issuanceState, certificate)
 		}
 		f.protocol["objects"] = historicalNativeInventory(f.native.objects)
 		f.publish(t)

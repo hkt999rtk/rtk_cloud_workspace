@@ -139,13 +139,13 @@ func verifyManagedLateTerminalFinalizerNative(ctx context.Context, cfg deploymen
 	if err != nil || len(subjects) != 9 {
 		return bad("nine-subjects")
 	}
-	clients, err := readManagedSessionClients(ctx, cfg, runtime, late.SourceCeremony, subjects)
+	clients, err := readManagedSessionClientsPreserved(ctx, cfg, runtime, late.SourceCeremony, subjects)
 	if err != nil || clients != late.OriginalClientsSHA || clients != admitted.Plan.Materials["accepted-service-core-managed-application-current-clients"] {
 		return bad("eleven-clients")
 	}
 	roots := map[string]environmentCreateRegisteredIssuer{"mqtt": *source.MQTTRoot, "openbao_tls": *source.OpenBaoRoot}
 	icas := map[string]environmentCreateRegisteredIssuer{"mqtt": *source.MQTTIntermediate, "openbao_tls": *source.OpenBaoIntermediate}
-	hosts, err := readManagedTransportServers(ctx, cfg, runtime, admitted.Plan.Plan.Bootstrap, roots, icas)
+	hosts, err := readManagedTransportServersPreserved(ctx, cfg, runtime, admitted.Plan.Plan.Bootstrap, roots, icas)
 	if err != nil || hosts != source.ManagedTransportRecovery.Partial.ServerSHA || hosts != admitted.Plan.Materials["accepted-service-core-managed-application-current-servers"] {
 		return bad("original-host-servers")
 	}

@@ -339,6 +339,14 @@ type managedTransportServerEvidence struct {
 }
 
 func readManagedTransportServers(ctx context.Context, cfg deploymentConfig, runtime environmentCreateBootstrapRuntime, p environmentCreateBootstrapPlan, roots, intermediates map[string]environmentCreateRegisteredIssuer) (string, error) {
+	return readManagedTransportServersMode(ctx, cfg, runtime, p, roots, intermediates, true)
+}
+
+func readManagedTransportServersPreserved(ctx context.Context, cfg deploymentConfig, runtime environmentCreateBootstrapRuntime, p environmentCreateBootstrapPlan, roots, intermediates map[string]environmentCreateRegisteredIssuer) (string, error) {
+	return readManagedTransportServersMode(ctx, cfg, runtime, p, roots, intermediates, false)
+}
+
+func readManagedTransportServersMode(ctx context.Context, cfg deploymentConfig, runtime environmentCreateBootstrapRuntime, p environmentCreateBootstrapPlan, roots, intermediates map[string]environmentCreateRegisteredIssuer, requireCurrent bool) (string, error) {
 	query := "SELECT COALESCE(json_agg(json_build_object('domain',domain,'caller',caller,'request_id',request_id,'issuer_id',issuer_id,'status',status,'fingerprint',fingerprint,'csr_pem',csr_pem,'certificate_pem',certificate_pem,'dns_names',dns_names,'revoked_at',revoked_at) ORDER BY domain,caller,request_id),'[]'::json) FROM pki_server_issuances WHERE environment='" + cfg.Environment + "' AND domain IN ('mqtt','openbao_tls')"
 	raw, err := readEnvironmentCreateRegistryJSON(ctx, cfg, runtime, query)
 	var rows []managedTransportServerEvidence
@@ -356,7 +364,12 @@ func readManagedTransportServers(ctx context.Context, cfg deploymentConfig, runt
 		leaf, leafErr := parseFirstCertificatePEM([]byte(row.Certificate))
 		authority, authorityErr := parseFirstCertificatePEM([]byte(issuer.Certificate))
 		block, rest := pem.Decode([]byte(row.CSR))
-		if seen[row.Domain] || row.Domain != "mqtt" && row.Domain != "openbao_tls" || row.Caller != caller || row.Request == "" || row.Issuer != issuer.ID || row.Status != "succeeded" || row.Revoked != nil || namesErr != nil || leafErr != nil || authorityErr != nil || block == nil || block.Type != "CERTIFICATE REQUEST" || strings.TrimSpace(string(rest)) != "" || !slices.Equal(row.DNS, names) || !slices.Equal(leaf.DNSNames, names) || !leaf.NotAfter.After(time.Now().Add(time.Hour)) || leaf.NotBefore.After(time.Now()) || leaf.CheckSignatureFrom(authority) != nil || environmentPreflightBytesSHA256(leaf.Raw) != row.Fingerprint || issuer.RootFingerprint != root.RootFingerprint {
+		validityInvalid := false
+		if leafErr == nil {
+			now := time.Now()
+			validityInvalid = !leaf.NotAfter.After(leaf.NotBefore) || requireCurrent && (!leaf.NotAfter.After(now.Add(time.Hour)) || leaf.NotBefore.After(now))
+		}
+		if seen[row.Domain] || row.Domain != "mqtt" && row.Domain != "openbao_tls" || row.Caller != caller || row.Request == "" || row.Issuer != issuer.ID || row.Status != "succeeded" || row.Revoked != nil || namesErr != nil || leafErr != nil || authorityErr != nil || block == nil || block.Type != "CERTIFICATE REQUEST" || strings.TrimSpace(string(rest)) != "" || !slices.Equal(row.DNS, names) || !slices.Equal(leaf.DNSNames, names) || validityInvalid || leaf.CheckSignatureFrom(authority) != nil || environmentPreflightBytesSHA256(leaf.Raw) != row.Fingerprint || issuer.RootFingerprint != root.RootFingerprint {
 			return "", createProviderRecoveryBlock("managed transport server issuer, names, signature or native issuance differs from its completed source")
 		}
 		csr, err := x509.ParseCertificateRequest(block.Bytes)

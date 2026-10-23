@@ -197,7 +197,7 @@ func verifyManagedLateNativeFinalization(ctx context.Context, cfg deploymentConf
 			return bad()
 		}
 	}
-	clients, err := readManagedSessionClients(ctx, cfg, runtime, current, subjects)
+	clients, err := readManagedSessionClientsPreserved(ctx, cfg, runtime, current, subjects)
 	if err != nil || clients != late.OriginalClientsSHA {
 		return bad()
 	}

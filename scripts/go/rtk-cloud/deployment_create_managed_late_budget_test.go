@@ -87,6 +87,26 @@ func TestManagedLateNativeBudgetIsQualifiedFixedAndNonResettable(t *testing.T) {
 	}
 }
 
+func TestOpenBaoACKFinalizationKeepsManagedLateNativeDeadline(t *testing.T) {
+	parentDeadline := time.Now().Add(40 * time.Minute)
+	parent, stop := context.WithDeadline(context.Background(), parentDeadline)
+	defer stop()
+	lateRuntime := environmentCreateBootstrapRuntime{ServiceSessionRecovery: &createServiceSessionRecovery{OpenBaoACK: &createOpenBaoACKRecovery{}, ManagedLateSession: &createManagedLateSessionRecovery{}}}
+	got, cancel := openBaoACKFinalizationContext(parent, lateRuntime)
+	defer cancel()
+	deadline, ok := got.Deadline()
+	if !ok || !deadline.Equal(parentDeadline) {
+		t.Fatal("managed-late finalization replaced its admitted native deadline", deadline, parentDeadline)
+	}
+	ordinaryRuntime := environmentCreateBootstrapRuntime{ServiceSessionRecovery: &createServiceSessionRecovery{OpenBaoACK: &createOpenBaoACKRecovery{}}}
+	ordinary, cancelOrdinary := openBaoACKFinalizationContext(parent, ordinaryRuntime)
+	defer cancelOrdinary()
+	ordinaryDeadline, ok := ordinary.Deadline()
+	if !ok || ordinaryDeadline.After(time.Now().Add(15*time.Minute+time.Second)) || ordinaryDeadline.Before(time.Now().Add(15*time.Minute-time.Second)) {
+		t.Fatal("ordinary OpenBao ACK completion lost its 15-minute guard", ordinaryDeadline)
+	}
+}
+
 func TestManagedLateActualLeafAndSessionCoverFixedFiftyMinutePhase(t *testing.T) {
 	parent, cancel := context.WithTimeout(context.Background(), managedLateOverallLimit)
 	defer cancel()

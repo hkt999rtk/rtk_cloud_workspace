@@ -393,13 +393,21 @@ func completeCreateManagedOpenBaoACK(ctx context.Context, cfg deploymentConfig, 
 	if !slices.Equal(installed, subjects) {
 		return createOpenBaoACKBlock("genuine-nine-original-session-acks")
 	}
-	clients, err := readManagedSessionClients(ctx, cfg, runtime, r.Ceremony, subjects)
+	readClients := readManagedSessionClients
+	if r.ManagedLateSession != nil {
+		readClients = readManagedSessionClientsPreserved
+	}
+	clients, err := readClients(ctx, cfg, runtime, r.Ceremony, subjects)
 	if err != nil || clients != r.ManagedTransportRecovery.Partial.ClientsSHA {
 		return createOpenBaoACKBlock("unchanged-original-eleven-clients")
 	}
 	roots := map[string]environmentCreateRegisteredIssuer{"mqtt": *r.MQTTRoot, "openbao_tls": *r.OpenBaoRoot}
 	issuers := map[string]environmentCreateRegisteredIssuer{"mqtt": *r.MQTTIntermediate, "openbao_tls": *r.OpenBaoIntermediate}
-	servers, err := readManagedTransportServers(ctx, cfg, runtime, p, roots, issuers)
+	readServers := readManagedTransportServers
+	if r.ManagedLateSession != nil {
+		readServers = readManagedTransportServersPreserved
+	}
+	servers, err := readServers(ctx, cfg, runtime, p, roots, issuers)
 	if err != nil || servers != r.ManagedTransportRecovery.Partial.ServerSHA {
 		return createOpenBaoACKBlock("unchanged-original-host-servers")
 	}

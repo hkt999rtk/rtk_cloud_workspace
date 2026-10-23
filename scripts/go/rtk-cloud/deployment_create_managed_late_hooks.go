@@ -255,7 +255,7 @@ func verifyManagedLateHistoricalSeedCleanup(ctx context.Context, cfg deploymentC
 	if err != nil {
 		return false, err
 	}
-	clients, err := readManagedSessionClients(ctx, cfg, runtime, current, subjects)
+	clients, err := readManagedSessionClientsPreserved(ctx, cfg, runtime, current, subjects)
 	if err != nil || clients != late.OriginalClientsSHA {
 		return false, managedHistoricalSeedBlock()
 	}

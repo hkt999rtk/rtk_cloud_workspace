@@ -82,6 +82,14 @@ type managedSessionClient struct {
 // Three independently owned API clients share one Service subject. All other
 // declared workload subjects have one original client. Seed rows are excluded.
 func validateManagedSessionClients(rows []managedSessionClient, service environmentCreateServiceCeremony, subjects []string, now time.Time) bool {
+	return validateManagedSessionClientsMode(rows, service, subjects, now, true)
+}
+
+func validateManagedSessionClientsPreserved(rows []managedSessionClient, service environmentCreateServiceCeremony, subjects []string) bool {
+	return validateManagedSessionClientsMode(rows, service, subjects, time.Time{}, false)
+}
+
+func validateManagedSessionClientsMode(rows []managedSessionClient, service environmentCreateServiceCeremony, subjects []string, now time.Time, requireCurrent bool) bool {
 	expected := map[string]int{}
 	for _, subject := range subjects {
 		if expected[subject] != 0 || subject == "service:deployment-bootstrap" {
@@ -104,7 +112,7 @@ func validateManagedSessionClients(rows []managedSessionClient, service environm
 		}
 		leaf, err := parseFirstCertificatePEM([]byte(row.Certificate))
 		block, rest := pem.Decode([]byte(row.CSR))
-		if err != nil || leaf.Subject.CommonName != row.Subject || !leaf.NotAfter.After(now) || leaf.NotBefore.After(now) || leaf.CheckSignatureFrom(intermediate) != nil || environmentPreflightBytesSHA256(leaf.Raw) != row.Fingerprint || block == nil || block.Type != "CERTIFICATE REQUEST" || strings.TrimSpace(string(rest)) != "" {
+		if err != nil || leaf.Subject.CommonName != row.Subject || !leaf.NotAfter.After(leaf.NotBefore) || requireCurrent && (!leaf.NotAfter.After(now) || leaf.NotBefore.After(now)) || leaf.CheckSignatureFrom(intermediate) != nil || environmentPreflightBytesSHA256(leaf.Raw) != row.Fingerprint || block == nil || block.Type != "CERTIFICATE REQUEST" || strings.TrimSpace(string(rest)) != "" {
 			return false
 		}
 		csr, err := x509.ParseCertificateRequest(block.Bytes)
@@ -132,10 +140,18 @@ func validateManagedSessionClients(rows []managedSessionClient, service environm
 }
 
 func readManagedSessionClients(ctx context.Context, cfg deploymentConfig, runtime environmentCreateBootstrapRuntime, service environmentCreateServiceCeremony, subjects []string) (string, error) {
+	return readManagedSessionClientsMode(ctx, cfg, runtime, service, subjects, true)
+}
+
+func readManagedSessionClientsPreserved(ctx context.Context, cfg deploymentConfig, runtime environmentCreateBootstrapRuntime, service environmentCreateServiceCeremony, subjects []string) (string, error) {
+	return readManagedSessionClientsMode(ctx, cfg, runtime, service, subjects, false)
+}
+
+func readManagedSessionClientsMode(ctx context.Context, cfg deploymentConfig, runtime environmentCreateBootstrapRuntime, service environmentCreateServiceCeremony, subjects []string, requireCurrent bool) (string, error) {
 	query := "SELECT COALESCE(json_agg(json_build_object('subject',subject,'caller',caller,'request_id',request_id,'issuer_id',issuer_id,'fingerprint',fingerprint,'status',status,'revoked_at',revoked_at,'csr_pem',csr_pem,'certificate_pem',certificate_pem) ORDER BY subject,caller,request_id),'[]'::json) FROM pki_service_client_issuances WHERE environment='" + cfg.Environment + "' AND subject<>'service:deployment-bootstrap'"
 	raw, err := readEnvironmentCreateRegistryJSON(ctx, cfg, runtime, query)
 	var clients []managedSessionClient
-	if err != nil || decodeEnvironmentJSON(raw, &clients) != nil || !validateManagedSessionClients(clients, service, subjects, time.Now().UTC()) {
+	if err != nil || decodeEnvironmentJSON(raw, &clients) != nil || !validateManagedSessionClientsMode(clients, service, subjects, time.Now().UTC(), requireCurrent) {
 		return "", createProviderRecoveryBlock("managed seed renewal requires every unchanged original native workload client and no foreign or partial issuance")
 	}
 	return deploymentplan.Digest(clients), nil

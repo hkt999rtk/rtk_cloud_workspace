@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 )
@@ -22,6 +23,9 @@ func TestHistoricalTLSCRLCacheRequiresActualCoreManifestPublication(t *testing.T
 	roots, intermediates := map[string]environmentCreateRegisteredIssuer{"openbao_tls": root}, map[string]environmentCreateRegisteredIssuer{"openbao_tls": ica}
 	f := &deviceTrustExecutionContract{postServiceMQTTExecutionContract: &postServiceMQTTExecutionContract{acceptedCoreExecutionContract: core}, authorityKeys: keys}
 	rootCRL, icaCRL := historicalNativeSignedCRL(t, root, keys[root.ID]), historicalNativeSignedCRL(t, ica, keys[ica.ID], 3)
+	if !rootCRL.NextUpdate.After(time.Now().UTC().Add(75*time.Minute)) || !icaCRL.NextUpdate.After(time.Now().UTC().Add(75*time.Minute)) {
+		t.Fatal("supporting CRLs do not cover the complete historical-flow test budget")
+	}
 	core.protocol["historical_crls"] = map[string]managedLateCRLRecord{root.ID: rootCRL, ica.ID: icaCRL}
 	core.protocol["historical_crl_history"] = map[string][]managedLateCRLRecord{root.ID: {rootCRL}, ica.ID: {icaCRL}}
 	core.protocol["historical_crl_caches"] = map[string]map[string]any{}

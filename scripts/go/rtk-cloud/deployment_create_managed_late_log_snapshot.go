@@ -96,9 +96,22 @@ func managedLateLogSessionHashesMatch(raw []byte, hashes ...string) bool {
 	if err != nil {
 		return false
 	}
-	a, b := environmentPreflightBytesSHA256(compact), environmentPreflightBytesSHA256(legacy)
+	// The retained PostgreSQL reader returns the selected columns in query
+	// order. A later native finalizer projects those same exact columns through
+	// a Go map, whose JSON encoder writes keys in lexical order. Accept that
+	// third deterministic byte encoding only after the strict reader above has
+	// proved the complete nine-field shape and every value type.
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(compact, &fields) != nil || len(fields) != 9 {
+		return false
+	}
+	sorted, err := json.Marshal(fields)
+	if err != nil {
+		return false
+	}
+	a, b, c := environmentPreflightBytesSHA256(compact), environmentPreflightBytesSHA256(legacy), environmentPreflightBytesSHA256(sorted)
 	for _, hash := range hashes {
-		if !environmentPreflightDigest.MatchString(hash) || hash != a && hash != b {
+		if !environmentPreflightDigest.MatchString(hash) || hash != a && hash != b && hash != c {
 			return false
 		}
 	}
@@ -116,7 +129,46 @@ func managedLateLogProofSessionHashMatches(store secretStore, proof *createManag
 	if validateEnvironmentPreflightDirectories(store, filepath.Dir(path)) != nil || readExecutionJSON(path, &final) != nil || final.Schema != "rtk-cloud.create-managed-late-log-final-session/v1" || final.Parent != proof.Parent || final.Review != proof.Review {
 		return false
 	}
-	return managedLateLogSessionHashesMatch(final.Raw, proof.NativeSessionSHA, nativeSHA)
+	if !managedLateLogSessionHashesMatch(final.Raw, proof.NativeSessionSHA) {
+		return false
+	}
+	if managedLateLogSessionHashesMatch(final.Raw, nativeSHA) {
+		return true
+	}
+	sealed, err := managedLateSealedLogSessionRaw(final.Raw)
+	return err == nil && managedLateLogSessionHashesMatch(sealed, nativeSHA)
+}
+
+// Native finalization makes exactly one semantic change after Log captures the
+// active nine-ACK snapshot: status becomes sealed. Rebuild that exact typed
+// projection so the completion proof can bind either PostgreSQL field order or
+// the finalizer's deterministic lexical-key encoding without accepting drift in
+// identity, expiry, subjects, installed ACKs or competing-session count.
+func managedLateSealedLogSessionRaw(raw []byte) ([]byte, error) {
+	if _, _, err := managedLateLogSessionEncodings(raw); err != nil {
+		return nil, err
+	}
+	var state managedSessionState
+	if decodeEnvironmentJSON(raw, &state) != nil || state.Status != "active" {
+		return nil, logACKDraftBlock("active native session before final seal")
+	}
+	state.Status = "sealed"
+	projection := struct {
+		Session     string    `json:"session_id"`
+		Issuer      string    `json:"issuer_id"`
+		Root        string    `json:"root_sha256"`
+		Fingerprint string    `json:"bootstrap_fingerprint"`
+		Status      string    `json:"status"`
+		Expires     time.Time `json:"expires_at"`
+		Subjects    []string  `json:"subjects"`
+		Installed   []string  `json:"installed_subjects"`
+		OtherActive int       `json:"other_active"`
+	}{state.Session, state.Issuer, state.Root, state.Fingerprint, state.Status, state.Expires, state.Subjects, state.Installed, state.OtherActive}
+	sealed, err := json.Marshal(projection)
+	if err != nil {
+		return nil, logACKDraftBlock("sealed native session projection")
+	}
+	return sealed, nil
 }
 
 func validateManagedLateLogFinalSession(late *createManagedLateSessionRecovery, proof *createManagedLateLogProof, observation createManagedLateLogObservation, final createManagedLateLogFinalSession) (managedSessionState, error) {

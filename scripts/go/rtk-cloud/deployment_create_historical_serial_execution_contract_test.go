@@ -225,6 +225,70 @@ func (f *acceptedCoreExecutionContract) acceptedHistoricalStage(t *testing.T, st
 // ready Pod observations for the rest of the isolated native inventory.
 func historicalNativeInventory(original map[string]deploymentplan.Object) map[string]deploymentplan.Object {
 	out := coreContractNativeInventory(original)
+	// The isolated observer stands in for the native StatefulSet controller.
+	// Reconcile its status from the actual directly owned Pods, as Kubernetes
+	// does after an API write. Pod health and revision labels remain the source;
+	// the observer must not carry stale generation or replica counters forward.
+	for id, actual := range out {
+		if actual["kind"] != "StatefulSet" {
+			continue
+		}
+		meta := deploymentplan.Map(actual["metadata"])
+		generation, ok := meta["generation"].(float64)
+		if !ok {
+			generation = 1
+			meta["generation"] = generation
+		}
+		status := deploymentplan.Map(actual["status"])
+		if status == nil {
+			status = deploymentplan.Object{}
+			actual["status"] = status
+		}
+		status["observedGeneration"] = generation
+		var replicas, ready, updated float64
+		updateRevision := deploymentplan.String(status["updateRevision"])
+		for _, candidate := range out {
+			if candidate["kind"] != "Pod" {
+				continue
+			}
+			podMeta := deploymentplan.Map(candidate["metadata"])
+			if podMeta["deletionTimestamp"] != nil {
+				continue
+			}
+			owned := false
+			for _, value := range certIssuerObjectList(podMeta["ownerReferences"]) {
+				owner := deploymentplan.Map(value)
+				if owner["kind"] == "StatefulSet" && owner["name"] == meta["name"] && owner["uid"] == meta["uid"] && owner["controller"] == true {
+					owned = true
+				}
+			}
+			if !owned {
+				continue
+			}
+			replicas++
+			podStatus := deploymentplan.Map(candidate["status"])
+			podReady := podStatus["phase"] == "Running"
+			conditionReady := false
+			for _, value := range certIssuerObjectList(podStatus["conditions"]) {
+				condition := deploymentplan.Map(value)
+				if condition["type"] == "Ready" && condition["status"] == "True" {
+					conditionReady = true
+				}
+			}
+			if podReady && conditionReady {
+				ready++
+			}
+			if updateRevision != "" && deploymentplan.Map(podMeta["labels"])["controller-revision-hash"] == updateRevision {
+				updated++
+			}
+		}
+		status["replicas"], status["currentReplicas"] = replicas, replicas
+		status["readyReplicas"], status["availableReplicas"] = ready, ready
+		if updateRevision != "" {
+			status["updatedReplicas"] = updated
+		}
+		out[id] = actual
+	}
 	// The small original Core fixture has single-replica listeners. Historical
 	// application owners may request several replicas; expose exactly that
 	// native controller cardinality, retaining each actual ReplicaSet lineage.

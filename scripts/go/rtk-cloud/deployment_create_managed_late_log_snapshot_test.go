@@ -203,8 +203,36 @@ func TestManagedLateLogSnapshotDurableCrossHashUsesSameImmutablePayload(t *testi
 	if err := os.WriteFile(path, raw, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if !managedLateLogProofSessionHashMatches(store, proof, environmentPreflightBytesSHA256(final.Raw)) || !managedLateLogProofSessionHashMatches(store, proof, proof.NativeSessionSHA) {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(final.Raw, &fields) != nil {
+		t.Fatal("valid fixed-order session snapshot cannot be decoded")
+	}
+	sorted, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !managedLateLogProofSessionHashMatches(store, proof, environmentPreflightBytesSHA256(final.Raw)) || !managedLateLogProofSessionHashMatches(store, proof, proof.NativeSessionSHA) || !managedLateLogProofSessionHashMatches(store, proof, environmentPreflightBytesSHA256(sorted)) {
 		t.Fatal("same legacy/compact payload durable binding refused")
+	}
+	sealed, err := managedLateSealedLogSessionRaw(final.Raw)
+	if err != nil || !managedLateLogProofSessionHashMatches(store, proof, environmentPreflightBytesSHA256(sealed)) {
+		t.Fatal("exact active-to-sealed native finalization binding refused", err)
+	}
+	var sealedFields map[string]json.RawMessage
+	if json.Unmarshal(sealed, &sealedFields) != nil {
+		t.Fatal("sealed session projection cannot be decoded")
+	}
+	sealedSorted, err := json.Marshal(sealedFields)
+	if err != nil || !managedLateLogProofSessionHashMatches(store, proof, environmentPreflightBytesSHA256(sealedSorted)) {
+		t.Fatal("lexical-key sealed finalizer projection refused", err)
+	}
+	var changed managedSessionState
+	if decodeEnvironmentJSON(sealed, &changed) != nil {
+		t.Fatal("sealed session cannot be decoded")
+	}
+	changed.Fingerprint = strings.Repeat("e", 64)
+	if managedLateLogProofSessionHashMatches(store, proof, environmentPreflightBytesSHA256(mustProviderRecoveryJSON(changed))) {
+		t.Fatal("sealed session with changed identity admitted")
 	}
 	if managedLateLogProofSessionHashMatches(store, proof, strings.Repeat("f", 64)) || managedLateLogProofSessionHashMatches(store, proof, "") {
 		t.Fatal("foreign/empty native digest admitted")

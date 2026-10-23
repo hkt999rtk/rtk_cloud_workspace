@@ -72,6 +72,66 @@ func environmentPodEvidenceFailureCause(err error) string {
 	return "unclassified container proof failure"
 }
 
+// A scoped lifecycle may intentionally quiesce one controller while the other
+// selected owners remain available. Validate every selected controller against
+// its own desired state; a whole-stack summary cannot represent that mixture.
+func verifyScopedControllerStatus(controller deploymentplan.Object, desired float64) error {
+	kind := deploymentplan.String(controller["kind"])
+	if kind == "Pod" {
+		return nil
+	}
+	metadata, status := deploymentplan.Map(controller["metadata"]), deploymentplan.Map(controller["status"])
+	generation, generationOK := metadata["generation"].(float64)
+	observed, observedOK := status["observedGeneration"].(float64)
+	if !generationOK || !observedOK || observed < generation {
+		return errors.New("controller generation is not observed")
+	}
+	exact := func(key string, want float64) bool {
+		value, ok := status[key].(float64)
+		return ok && value == want
+	}
+	zero := func(key string) bool {
+		value, ok := status[key].(float64)
+		return !ok || value == 0
+	}
+	switch kind {
+	case "Deployment":
+		if desired == 0 {
+			if !zero("replicas") || !zero("readyReplicas") || !zero("updatedReplicas") || !zero("availableReplicas") || !zero("unavailableReplicas") {
+				return errors.New("scaled-down deployment still reports replicas")
+			}
+			return nil
+		}
+		if !exact("readyReplicas", desired) || !exact("updatedReplicas", desired) || !exact("availableReplicas", desired) || !zero("unavailableReplicas") {
+			return errors.New("deployment rollout status differs from desired")
+		}
+	case "StatefulSet":
+		if desired == 0 {
+			if !zero("replicas") || !zero("readyReplicas") || !zero("currentReplicas") || !zero("updatedReplicas") || !zero("availableReplicas") {
+				return errors.New("scaled-down statefulset still reports replicas")
+			}
+			return nil
+		}
+		if !exact("readyReplicas", desired) {
+			return errors.New("statefulset ready replicas differ from desired")
+		}
+		strategy := deploymentplan.String(deploymentplan.Map(deploymentplan.Map(controller["spec"])["updateStrategy"])["type"])
+		if strategy != "OnDelete" {
+			current, update := deploymentplan.String(status["currentRevision"]), deploymentplan.String(status["updateRevision"])
+			if !exact("updatedReplicas", desired) || current == "" || current != update {
+				return errors.New("statefulset rollout revision is not current")
+			}
+		}
+	case "DaemonSet":
+		if !exact("desiredNumberScheduled", desired) || !exact("numberReady", desired) || !exact("updatedNumberScheduled", desired) || !zero("numberUnavailable") {
+			return errors.New("daemonset status differs from desired")
+		}
+	default:
+		return errors.New("unsupported scoped controller")
+	}
+	return nil
+}
+
 func verifyEnvironmentTargetWorkloads(ctx context.Context, plan *deploymentplan.Plan, objects []deploymentplan.Object, imageDigests func(context.Context, string) (map[string]bool, error), recordedOwners ...map[string]string) error {
 	if plan == nil || imageDigests == nil {
 		return targetWorkloadBlocker("", "complete plan and runtime image verification required")
@@ -224,6 +284,11 @@ func verifyEnvironmentTargetWorkloads(ctx context.Context, plan *deploymentplan.
 		if desired < 0 || desired > 10000 || desired != float64(int(desired)) || counts[id] != int(desired) {
 			return targetWorkloadBlocker(id, "actual owned Pod count differs from required replicas")
 		}
+		if plan.Operation == "scoped" {
+			if err := verifyScopedControllerStatus(controller, desired); err != nil {
+				return targetWorkloadBlocker(id, err.Error())
+			}
+		}
 	}
 	// This one-time isolated data helper has no workload controller. Its exact
 	// maintained create recipe and original child-journal UID are bound above;
@@ -251,23 +316,7 @@ func verifyEnvironmentTargetWorkloads(ctx context.Context, plan *deploymentplan.
 		return ctx.Err()
 	}
 	if plan.Operation == "scoped" && len(controllers) > 0 && len(completedJobs) == 0 {
-		allZero := true
-		for _, v := range controllers {
-			spec, status, meta := deploymentplan.Map(v["spec"]), deploymentplan.Map(v["status"]), deploymentplan.Map(v["metadata"])
-			observed, ok := status["observedGeneration"].(float64)
-			generation, genOK := meta["generation"].(float64)
-			if (v["kind"] != "Deployment" && v["kind"] != "StatefulSet") || spec["replicas"] != float64(0) || !ok || !genOK || observed < generation {
-				allZero = false
-			}
-			for _, key := range []string{"replicas", "readyReplicas", "updatedReplicas", "availableReplicas"} {
-				if value, present := status[key]; present && value != float64(0) {
-					allZero = false
-				}
-			}
-		}
-		if allZero {
-			return ctx.Err()
-		}
+		return ctx.Err()
 	}
 	raw, err := json.Marshal(map[string]any{"items": health})
 	if err != nil || validateDeploymentWorkloadHealthForStack(plan.Stack, raw) != nil {

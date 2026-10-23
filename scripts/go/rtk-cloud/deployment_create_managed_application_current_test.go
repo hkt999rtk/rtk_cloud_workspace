@@ -619,6 +619,27 @@ func TestManagedApplicationNativeAPIServersRequireOriginalSignedCSRAndExportedCh
 	}
 }
 
+func TestManagedApplicationAPIServerContinuityAllowsNaturalExpiryAfterAdmission(t *testing.T) {
+	service, partial, rows := managedApplicationAPIServerFixture(t)
+	afterExpiry := time.Now().Add(48 * time.Hour)
+	if _, err := validateManagedApplicationAPIServers(rows, service, partial, afterExpiry); err == nil {
+		t.Fatal("initial admission accepted expired API server leaves")
+	}
+	if _, err := validateManagedApplicationAPIServersPreserved(rows, service, partial, afterExpiry); err != nil {
+		t.Fatal("already admitted continuation rejected unchanged naturally expired API server leaves", err)
+	}
+	changed := slices.Clone(rows)
+	changed[0].Revoked = &afterExpiry
+	if _, err := validateManagedApplicationAPIServersPreserved(changed, service, partial, afterExpiry); err == nil {
+		t.Fatal("continuation accepted a revoked API server leaf")
+	}
+	changed = slices.Clone(rows)
+	changed[0].CSR = changed[1].CSR
+	if _, err := validateManagedApplicationAPIServersPreserved(changed, service, partial, afterExpiry); err == nil {
+		t.Fatal("continuation accepted changed API server key custody")
+	}
+}
+
 func TestManagedApplicationThirdSessionLifetimeAndExecutorRequireBoundedAuthenticatedSource(t *testing.T) {
 	_, _, partial, forward := managedApplicationThirdInterruptedFixture(t)
 	partial.Interrupted = forward

@@ -64,6 +64,15 @@ func installHistoricalLateCRLProtocol(t *testing.T, f *deviceTrustExecutionContr
 	if len(records) != 9 {
 		t.Fatal("native registry does not contain exactly nine original authorities", len(records))
 	}
+	flowDeadline := time.Now().UTC().Add(75 * time.Minute)
+	for id, record := range records {
+		if id == roots["service"].ID || id == roots["mqtt"].ID || id == roots["openbao_tls"].ID {
+			continue
+		}
+		if !record.NextUpdate.After(flowDeadline) {
+			t.Fatalf("supporting CRL does not cover the complete historical-flow budget: issuer=%s next=%s deadline=%s", id, record.NextUpdate, flowDeadline)
+		}
+	}
 	f.protocol["historical_crls"] = records
 	history := make(map[string][]managedLateCRLRecord, len(records))
 	for id, record := range records {
@@ -181,7 +190,12 @@ func historicalNativeSignedCRL(t *testing.T, issuer environmentCreateRegisteredI
 		t.Fatal("invalid original native CRL generation")
 	}
 	now := time.Now().UTC()
-	der, err := x509.CreateRevocationList(rand.Reader, &x509.RevocationList{Number: big.NewInt(number), ThisUpdate: now.Add(-time.Minute), NextUpdate: now.Add(time.Hour)}, cert, key)
+	// These baseline publications are supporting state for the connected
+	// historical-flow test. The MQTT and OpenBao TLS Root fixtures below own the
+	// deliberate real-time expiry coverage. Keep every other authority current
+	// for the complete bounded continuation so its validity does not depend on
+	// how long the earlier Root expiry and session-expiry stages take to run.
+	der, err := x509.CreateRevocationList(rand.Reader, &x509.RevocationList{Number: big.NewInt(number), ThisUpdate: now.Add(-time.Minute), NextUpdate: now.Add(2 * time.Hour)}, cert, key)
 	if err != nil {
 		t.Fatal("native CRL signing", err)
 	}
@@ -191,7 +205,7 @@ func historicalNativeSignedCRL(t *testing.T, issuer environmentCreateRegisteredI
 	}
 	record := managedLateCRLRecord{IssuerID: issuer.ID, Digest: environmentPreflightBytesSHA256(der), Number: parsed.Number.String(), PEM: string(pem.EncodeToMemory(&pem.Block{Type: "X509 CRL", Bytes: der})), ThisUpdate: parsed.ThisUpdate, NextUpdate: parsed.NextUpdate}
 	if _, err := validateManagedLateSignedCRL(issuer.Domain, issuer.ID, environmentPreflightBytesSHA256(cert.Raw), issuer.Status, issuer.ChainPEM, record, managedLateObserveACKReady, now); err != nil {
-		t.Fatal("native CRL signature did not match actual issuer", err)
+		t.Fatalf("native CRL signature did not match actual issuer: domain=%s issuer=%s cert-not-after=%s crl-next-update=%s: %v", issuer.Domain, issuer.ID, cert.NotAfter, record.NextUpdate, err)
 	}
 	return record
 }
@@ -224,8 +238,7 @@ func publishHistoricalNativeCRL(t *testing.T, f *acceptedCoreExecutionContract, 
 	f.publish(t)
 }
 
-// The retained controllers automatically publish a same-key ICA successor
-// before the one-hour original CRL can fall below the later completion budget.
+// The retained controllers automatically publish a same-key ICA successor.
 // Model that native event without changing the immutable Root#2 artifact: the
 // registry history grows monotonically and both durable consumers install and
 // acknowledge the exact new signed bytes.

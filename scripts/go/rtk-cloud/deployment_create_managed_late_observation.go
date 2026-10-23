@@ -368,7 +368,7 @@ func readManagedLateRegistryCRLs(ctx context.Context, cfg deploymentConfig, e *e
 			proof, err = validateManagedLateSignedCRL(issuer.Domain, issuer.ID, environmentPreflightBytesSHA256(cert.Raw), issuer.Status, issuer.ChainPEM, record, mode, time.Now().UTC())
 		}
 		if err != nil {
-			return nil, nil, managedCoreObservationBlock("late-native-crl-signature-freshness-" + issuer.Domain)
+			return nil, nil, managedCoreObservationBlock("late-native-crl-signature-freshness-" + issuer.Domain + "-" + issuer.ID)
 		}
 		records[issuer.ID], proofs[issuer.ID] = record, proof
 	}

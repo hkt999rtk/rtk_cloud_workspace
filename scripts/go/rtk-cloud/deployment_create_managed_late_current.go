@@ -478,14 +478,14 @@ func verifyManagedLateSessionCurrentNative(ctx context.Context, cfg deploymentCo
 	if err != nil {
 		return err
 	}
-	clients, err := readManagedSessionClients(ctx, cfg, runtime, late.SourceCeremony, subjects)
+	clients, err := readManagedSessionClientsPreserved(ctx, cfg, runtime, late.SourceCeremony, subjects)
 	if err != nil || clients != late.OriginalClientsSHA || clients != admitted.Plan.Materials["accepted-service-core-managed-application-current-clients"] {
 		return managedCoreObservationBlock("late-current-eleven-clients")
 	}
 	roots := map[string]environmentCreateRegisteredIssuer{"mqtt": *source.MQTTRoot, "openbao_tls": *source.OpenBaoRoot}
 	icas := map[string]environmentCreateRegisteredIssuer{"mqtt": *source.MQTTIntermediate, "openbao_tls": *source.OpenBaoIntermediate}
 	bootstrap := admitted.Plan.Plan.Bootstrap
-	hosts, err := readManagedTransportServers(ctx, cfg, runtime, bootstrap, roots, icas)
+	hosts, err := readManagedTransportServersPreserved(ctx, cfg, runtime, bootstrap, roots, icas)
 	if err != nil || validateManagedCoreOriginalHostServerDigest(hosts, source.ManagedTransportRecovery.Partial.ServerSHA) != nil || hosts != admitted.Plan.Materials["accepted-service-core-managed-application-current-servers"] {
 		return managedCoreObservationBlock("late-current-original-host-servers")
 	}
@@ -667,7 +667,7 @@ func verifyManagedLateCurrentCRLConsumers(ctx context.Context, cfg deploymentCon
 		if err != nil {
 			return err
 		}
-		if _, err := observeOpenBaoTLSRootCRLConsumer(ctx, cfg, store, e, b, *tlsRoot, current); err != nil {
+		if _, err := observeOpenBaoTLSRootCRLConsumerContinuation(ctx, cfg, store, e, b, *tlsRoot, current); err != nil {
 			return err
 		}
 	}
