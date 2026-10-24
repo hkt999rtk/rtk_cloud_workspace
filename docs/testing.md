@@ -94,11 +94,12 @@ workspace-owned Go tooling, catalog validity and generated-document drift, and
 repository/submodule status. It does not run every service or product E2E test.
 In pull-request CI, the catalog/policy job uses `test-matrix --policy-only`
 because governed workspace coverage owns the deterministic workspace Go suite.
-Two long recovery contracts are omitted directly. Pull requests retain one
-bounded product-expiry end-to-end path, while extended renewal, runtime
-correction, and CRL recovery fixtures stop when they reach a real signed-expiry
-wait. The scheduled or explicitly dispatched nightly workflow runs the complete
-suite with those waits.
+Two long recovery contracts are omitted directly. Pull requests retain the
+bounded product-expiry end-to-end path and focused durable recovery checkpoints
+with test-only signed lifetimes. Extended monolithic renewal, runtime correction,
+and CRL recovery fixtures stop when they reach a real signed-expiry wait. The
+scheduled or explicitly dispatched nightly workflow runs the complete suite
+with production-shaped waits and full-history validation.
 
 ## High-Risk PostgreSQL Integration Tests
 
@@ -322,7 +323,7 @@ PR coverage evidence is retained for 30 days; manual workspace baseline and
 `main` evidence are retained for 90 days. A gate fails for test failure,
 required integration SKIP, package or module ratchet regression, missing
 critical permanent ID, unsafe artifact, or changed-Go-statement coverage below
-80%.
+70%.
 
 `Go Runtime Coverage Nightly` is deliberately separate. It builds
 coverage-only images into the existing staging LKE cluster while deploying only

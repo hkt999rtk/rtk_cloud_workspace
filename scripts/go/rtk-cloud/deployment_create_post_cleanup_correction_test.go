@@ -279,6 +279,13 @@ func TestProductPostCleanupCorrectionOuterCompletesOriginalAndPreservesAllSource
 	runProductSessionExpiryOuter(t, true, true, true)
 }
 
+func TestPRProductPostCleanupCorrectionCompletesDurableCheckpoint(t *testing.T) {
+	if os.Getenv(historicalWallClockExpirySkipEnv) != "1" {
+		t.Skip("nightly runs the complete postcleanup contract")
+	}
+	runProductSessionExpiryOuter(t, true, true, true, true)
+}
+
 type postCleanupKnownResponseBackend struct {
 	*productOuterTargetBackend
 	state  *postCleanupCorrectionFixtureState

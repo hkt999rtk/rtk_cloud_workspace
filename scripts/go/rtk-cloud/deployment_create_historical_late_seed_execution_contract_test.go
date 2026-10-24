@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -9,6 +10,22 @@ import (
 
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 )
+
+func TestPRHistoricalLateRootCRLsCompleteDurableCheckpoints(t *testing.T) {
+	if os.Getenv(historicalWallClockExpirySkipEnv) != "1" {
+		t.Skip("nightly runs the complete historical-late contract")
+	}
+	t.Setenv(historicalWallClockExpirySkipEnv, "")
+	device, _ := newHistoricalAcceptedCoreRestoreExecutionContract(t, historicalCompleteOriginalSessionHooks(t))
+	mqttArtifact, mqttCompletion := advanceHistoricalLateMQTTRootCRL(t, device)
+	if mqttArtifact == nil || mqttCompletion == nil || !mqttCompletion.Completed {
+		t.Fatal("bounded MQTT Root CRL checkpoint lacks durable completion proof")
+	}
+	tlsArtifact, tlsCompletion := advanceHistoricalLateTLSRootCRL(t, device)
+	if tlsArtifact == nil || tlsCompletion == nil || !tlsCompletion.Completed {
+		t.Fatal("bounded OpenBao TLS Root CRL checkpoint lacks durable completion proof")
+	}
+}
 
 // All original Core/Apps/MQTT/TLS source and native observers run before this
 // explicit isolated historical-admission boundary. It is not a public six-gate

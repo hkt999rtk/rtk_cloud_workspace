@@ -977,6 +977,7 @@ func TestProductSessionRuntimeCRLRecoveryOuterRenewsTwiceAndPreservesAllSources(
 func runProductSessionExpiryOuter(t *testing.T, runtimeCorrection bool, laterRenewal ...bool) {
 	second := len(laterRenewal) > 0 && laterRenewal[0]
 	postCleanup := len(laterRenewal) > 1 && laterRenewal[1]
+	postCleanupCheckpoint := len(laterRenewal) > 2 && laterRenewal[2]
 	x := newProductExpiryE2EFixture(t, runtimeCorrection, second, postCleanup)
 	f := x.f
 	if second {
@@ -998,7 +999,7 @@ func runProductSessionExpiryOuter(t *testing.T, runtimeCorrection bool, laterRen
 		t.Fatal(err)
 	}
 	wait := time.Until(x.oldSession.Expires.Add(time.Millisecond))
-	if runtimeCorrection || second || postCleanup {
+	if (runtimeCorrection || second || postCleanup) && !postCleanupCheckpoint {
 		skipHistoricalWallClockExpiry(t, wait)
 	}
 	if wait > 0 {
@@ -1231,8 +1232,12 @@ func runProductSessionExpiryOuter(t *testing.T, runtimeCorrection bool, laterRen
 		}
 		productEnd = correction.Source.PrefixEntries
 	}
-	if n, _, err := validateCreateNormalTailProductStagesWithConfig(f.cfg, f.store, f.e, f.l, f.e.Journal.Entries[x.start:productEnd]); err != nil || n != productEnd-x.start {
-		t.Fatal("full expiry recovery semantic reader", n, productEnd-x.start, err)
+	if !postCleanupCheckpoint {
+		if n, _, err := validateCreateNormalTailProductStagesWithConfig(f.cfg, f.store, f.e, f.l, f.e.Journal.Entries[x.start:productEnd]); err != nil || n != productEnd-x.start {
+			t.Fatal("full expiry recovery semantic reader", n, productEnd-x.start, err)
+		}
+	} else {
+		t.Log("milestone: bounded postcleanup correction completed with durable proof")
 	}
 	t.Log("milestone: steady and exact producer retirement accepted")
 	if err = executeCreateNormalTailSequence(ctx, f.e, []func(context.Context) error{func(ctx context.Context) error { return final.Plan.Verify(ctx, boundary) }}); err != nil || f.e.Journal.CompletedAt.IsZero() {

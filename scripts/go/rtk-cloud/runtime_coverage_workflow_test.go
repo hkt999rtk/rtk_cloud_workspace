@@ -84,8 +84,8 @@ func TestPRBoundsExtendedWallClockExpiryWaitsOwnedByNightlyWorkflow(t *testing.T
 		t.Fatal(err)
 	}
 	productSource := string(productExpiry)
-	if !strings.Contains(productSource, "if runtimeCorrection || second || postCleanup {\n\t\tskipHistoricalWallClockExpiry(t, wait)\n\t}") {
-		t.Fatal("extended product expiry/recovery E2E variants must leave their initial real signed-expiry wait to nightly CI")
+	if !strings.Contains(productSource, "if (runtimeCorrection || second || postCleanup) && !postCleanupCheckpoint {\n\t\tskipHistoricalWallClockExpiry(t, wait)\n\t}") {
+		t.Fatal("extended product expiry/recovery E2E variants must leave their initial real signed-expiry wait to nightly CI except for the bounded PR checkpoint")
 	}
 	nightly, err := os.ReadFile(filepath.Join(workspace, ".github", "workflows", "workspace-expiry-recovery-nightly.yml"))
 	if err != nil {
