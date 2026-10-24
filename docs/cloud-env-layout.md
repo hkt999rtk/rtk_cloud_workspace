@@ -9,7 +9,7 @@ RTK Cloud deployment has four independent layers:
 3. `cloud_deploy/dns_adapters/` stores independent DNS-adapter contracts for
    GoDaddy, Route53, and similar providers.
 4. `cloud_env/<environment>/` stores environment instances such as dev, staging,
-   and prod, plus their local runtime.
+   and prod, plus their deterministic resolved configuration.
 
 An architecture does not belong to staging, and LKE is not a child directory of
 staging. Any environment may select any adapter compatible with its architecture.
@@ -61,38 +61,42 @@ All of `cloud_env/<environment>/runtime/` is Git-ignored:
 
 ```text
 runtime/
-  resolved/{deployment.env,deployment-plan.json}
-  state/topology.json
-  adapters/<adapter>/{state.env,resources.json}
-  dns/<dns-adapter>/state.json
+  resolved/{deployment.env,deployment-plan.json,dns-plan.json,dns.env}
+  env/stack.env
+  adapters/<adapter>/{config.env,resolved-resources.env}
+  dns/<dns-adapter>/config.env
   services/
-  devices/
-  artifacts/
-  backups/
 ```
 
-This tree contains non-secret generated state only. Credentials and kubeconfig
-live in [SecretStore](secret-store.md) under
-`~/.config/rtk_cloud/<environment>/{operator,runtime,pki,kube}/`; do not copy
-them into workspace runtime, even though that tree is ignored. Device
-artifacts here must be redacted; private test credentials belong in SecretStore
-`test/`. Encrypted backup artifacts follow [backup-restore.md](backup-restore.md).
+This tree contains configuration only, including deterministic secret-free
+resolved files. All deployment-generated state, whether secret or redacted,
+belongs in `~/.config/rtk_cloud/<environment>/`. See the
+[canonical location table](deployment-secrets-governance.md#configuration-versus-deployment-generated-data).
+Private test/device material and backups also follow that boundary; an ignored
+workspace directory does not make operational state permitted there.
 
-Shared Kubernetes runtime and load tests read only normalized `runtime/state`,
-`runtime/services`, `runtime/devices`, and `runtime/artifacts`. Provider state such
-as cluster IDs, node-pool IDs, and Linode resource IDs may exist only under
-`runtime/adapters/lke/`.
+The generic DNS plan is `runtime/resolved/dns-plan.json`. DNS ownership/change
+IDs and provider cluster/node-pool IDs are operational state under the selected
+environment store's `deployment/dns/<dns-adapter>/` and
+`deployment/adapters/<deployment-adapter>/`; consumers must not search worktrees
+or legacy runtime directories for missing state.
 
-The generic DNS plan is `runtime/resolved/dns-plan.json`; normalized DNS state is
-`runtime/state/dns.env`. DNS-provider state such as hosted-zone IDs and change IDs
-may exist only under `runtime/dns/<dns-adapter>/`. Shared runtime and load tests
-must not read DNS-provider-private state directly.
-
-LKE account limits are in ignored `runtime/adapters/lke/account.env`. Adapter
-resolution writes `runtime/adapters/lke/resolved-resources.env`; normalized
-`runtime/state/provider-preflight.env` exposes only the provider region and active-
-service limit required by load tests. Shared runtime and load tests must not read
-adapter-private files directly.
+Adapter resolution writes `runtime/adapters/lke/resolved-resources.env`.
+The normalized provider region and confirmed active-service limit are produced
+and consumed at `~/.config/rtk_cloud/<environment>/deployment/provider-preflight.env`
+with `0700` directories and a `0600` file. This metadata is not a successful
+preflight or deployment receipt. LKE cluster/node-pool IDs and operator-confirmed quota use private
+`deployment/adapters/lke/{state,account}.env`. Public migration uses
+`deployment provider-import-state`, verifies original API/CA ownership and keeps
+source bytes in `migration-backup/provider-state/`. Normal operations never read
+legacy operational files as a fallback. DNS synchronization, ACME cleanup and
+zone evidence now share private `deployment/dns/<adapter>/`;
+[explicit DNS import](dns-adapter-architecture.md#migration) verifies original
+records and archives the source. Pure root/adapter configuration uses
+`runtime/resolved/dns.env`, never the old operational `runtime/state/dns.env`.
+Remaining edge/TURN, service and artifact-state
+readers/writers still require migration; old locations are implementation gaps,
+not exceptions to the location rule.
 
 ## Configuration Resolution Order
 
@@ -105,9 +109,15 @@ The production operator interface uses the environment name:
 
 ```sh
 go run ./scripts/go/rtk-cloud -- deployment plan --environment staging
-go run ./scripts/go/rtk-cloud -- deployment provision --environment staging --confirm video-cloud-staging
-go run ./scripts/go/rtk-cloud -- deployment acceptance --environment staging
+go run ./scripts/go/rtk-cloud -- deployment preflight --environment staging
+go run ./scripts/go/rtk-cloud -- deployment upgrade --environment staging --confirm video-cloud-staging --plan-sha256 "$APPROVED_PLAN_SHA256"
 ```
+
+The same explicitly selected formal release is used for planning, preflight and
+execution. Required missing capabilities remain NO-GO; these entry points do not
+claim that environment qualification has completed. Actual workloads, PKI, public
+endpoints and representative business acceptance must pass before completion is
+recorded. The old full `deployment provision` entry is retired.
 
 Legacy `cloud_env/staging/lke` is neither moved nor deleted, but is no longer an
 active input. The new runtime is generated from scratch; commands receiving a

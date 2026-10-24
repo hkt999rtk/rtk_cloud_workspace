@@ -11,7 +11,8 @@ import (
 )
 
 func TestDNSChallengeStateLifecycle(t *testing.T) {
-	ctx := dnsAdapterContext{RuntimeRoot: t.TempDir()}
+	makeIsolatedTestSecretStore(t, "staging")
+	ctx := dnsAdapterContext{RuntimeRoot: t.TempDir(), RootDomain: "example.test", Values: map[string]string{"CLOUD_ENV_NAME": "staging"}}
 	if values, err := readDNSChallenges(ctx, "godaddy"); err != nil || len(values) != 0 {
 		t.Fatalf("initial values = %#v, error = %v", values, err)
 	}
@@ -28,7 +29,10 @@ func TestDNSChallengeStateLifecycle(t *testing.T) {
 	if err != nil || len(values) != 2 {
 		t.Fatalf("recorded values = %#v, error = %v", values, err)
 	}
-	path := dnsChallengeStatePath(ctx, "godaddy")
+	path, err := dnsLocalStatePath(ctx, "godaddy", "challenges.json")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("challenge state mode = %v, error = %v", info.Mode().Perm(), err)
 	}

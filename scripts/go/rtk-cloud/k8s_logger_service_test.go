@@ -34,7 +34,18 @@ func TestLKEDevLoggerCutoverPersistsThroughPlainConfigRender(t *testing.T) {
 		"LKE_LOGGER_MQTT_CORE_CUTOVER_ENABLED",
 		"LKE_LOGGER_RETENTION_STORAGE_ENABLED",
 		"LKE_LOGGER_BILLING_FACTS_ENABLED",
-		"LKE_OTA_REGISTRAR_REGISTRATION_ENABLED",
+	}
+	const retiredOTARegistrarFlag = "LKE_OTA_REGISTRAR_REGISTRATION_ENABLED"
+	for _, values := range []map[string]string{defaultValues, current} {
+		if _, present := values[retiredOTARegistrarFlag]; present {
+			t.Fatal("retired OTA registrar enablement must be absent from maintained configuration")
+		}
+	}
+	t.Setenv(retiredOTARegistrarFlag, "")
+	for _, service := range lkeVideoCloudAuxiliaryServices() {
+		if service.Name == "video-cloud-otaregistrar" || service.Binary == "otaregistrar" {
+			t.Fatal("plain Logger rendering must not retain an enabled legacy OTA registrar")
+		}
 	}
 	for _, flag := range flags {
 		if defaultValues[flag] != "false" {
@@ -52,7 +63,7 @@ func TestLKEDevLoggerCutoverPersistsThroughPlainConfigRender(t *testing.T) {
 			"LKE_LOGGER_HTTP_CORE_CUTOVER_ENABLED=true\n"+
 			"LKE_LOGGER_MQTT_CORE_CUTOVER_ENABLED=true\n"+
 			"LKE_LOGGER_RETENTION_STORAGE_ENABLED=true\n"+
-			"LKE_OTA_REGISTRAR_REGISTRATION_ENABLED=true\n")
+			"")
 	for pass := 0; pass < 2; pass++ {
 		cfg, err := resolveDeploymentConfig(workspace, "dev", "")
 		if err != nil {
@@ -66,13 +77,18 @@ func TestLKEDevLoggerCutoverPersistsThroughPlainConfigRender(t *testing.T) {
 			t.Fatal(err)
 		}
 		env := loaded.Values
+		if _, present := env[retiredOTARegistrarFlag]; present {
+			t.Fatalf("plain config pass %d restored retired OTA registrar enablement", pass+1)
+		}
 		if !lkeLoggerServiceRegistrationEnabled(env) || !lkeLoggerHTTPCoreCutoverEnabled(env) ||
-			!lkeLoggerMQTTCoreCutoverEnabled(env) || !lkeLoggerRetentionStorageEnabled(env) ||
-			!lkeOTARegistrarRegistrationEnabled(env) {
-			t.Fatalf("plain config pass %d lost persisted Logger/OTA gates", pass+1)
+			!lkeLoggerMQTTCoreCutoverEnabled(env) || !lkeLoggerRetentionStorageEnabled(env) {
+			t.Fatalf("plain config pass %d lost persisted Logger gates", pass+1)
 		}
 		workload := lkeWorkload{Key: "video-cloud", Name: "video-cloud-api", Namespace: lkeNamespaceName(env, "video-cloud"), Port: 8080, Image: "example.test/video-cloud:reviewed"}
 		manifest := lkeDeploymentManifest(env, workload, nil)
+		if strings.Contains(manifest, "video-cloud-otaregistrar") || strings.Contains(manifest, "OTA_REGISTRAR_REGISTRATION_ENABLED") {
+			t.Fatalf("plain config pass %d restored the retired OTA registrar", pass+1)
+		}
 		for _, setting := range []string{
 			"name: VIDEO_CLOUD_LOGGER_HTTP_SERVICE_CUTOVER_ENABLED\n              value: \"true\"",
 			"name: VIDEO_CLOUD_LOGGER_MQTT_CUTOVER_ENABLED\n              value: \"true\"",
@@ -489,7 +505,7 @@ func TestLKELoggerCutoverRequiresReadyPrivateEndpoint(t *testing.T) {
 	}
 }
 
-func TestLKELoggerIdentityAndCutoverPrerequisites(t *testing.T) {
+func TestRetiredLKELoggerIdentityAndCutoverPrerequisites(t *testing.T) {
 	fakeKubectl(t)
 	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "LKE_VIDEO_CLOUD_IMAGE": "example.test/video-cloud:reviewed", "VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED": "false"}
 	setFakeLKEPlatformIdentitySecrets(t, env)
@@ -498,24 +514,24 @@ func TestLKELoggerIdentityAndCutoverPrerequisites(t *testing.T) {
 	}
 	t.Setenv("LKE_LOGGER_HTTP_CORE_CUTOVER_ENABLED", "true")
 	err := lkeDeployWorkloads(provisionPaths{}, env, provisionOptions{workloads: []string{"video-cloud"}})
-	if err == nil || !strings.Contains(err.Error(), "requires the registered Logger") {
+	if err == nil || !strings.Contains(err.Error(), "static PKI templates are retired") {
 		t.Fatalf("unregistered Logger cutover was accepted: %v", err)
 	}
 	t.Setenv("LKE_LOGGER_SERVICE_REGISTRATION_ENABLED", "true")
 	err = lkeDeployWorkloads(provisionPaths{}, env, provisionOptions{workloads: []string{"video-cloud"}})
-	if err == nil || !strings.Contains(err.Error(), "requires the MQTT foundation") {
+	if err == nil || !strings.Contains(err.Error(), "static PKI templates are retired") {
 		t.Fatalf("Logger registration without MQTT was accepted: %v", err)
 	}
 	t.Setenv("LKE_MQTT_FOUNDATION_REGISTRATION_ENABLED", "true")
 	t.Setenv("LKE_ACCOUNT_MANAGER_SERVICE_REGISTRATION_ENABLED", "true")
 	t.Setenv("FAKE_ACCOUNT_MANAGER_REGISTRATION_SERVICE_JSON", `{"spec":{"type":"ClusterIP","selector":{"app.kubernetes.io/name":"account-manager"},"ports":[{"name":"service-reg","port":8443,"targetPort":"service-reg"}]}}`)
 	err = lkeDeployWorkloads(provisionPaths{}, env, provisionOptions{workloads: []string{"video-cloud"}})
-	if err == nil || !strings.Contains(err.Error(), "requires verified Loki retention storage") {
+	if err == nil || !strings.Contains(err.Error(), "static PKI templates are retired") {
 		t.Fatalf("Logger cutover without retention was accepted: %v", err)
 	}
 	t.Setenv("LKE_LOGGER_RETENTION_STORAGE_ENABLED", "true")
 	err = lkeDeployWorkloads(provisionPaths{}, env, provisionOptions{workloads: []string{"video-cloud"}})
-	if err == nil || !strings.Contains(err.Error(), "Logger Service is not private") {
+	if err == nil || !strings.Contains(err.Error(), "static PKI templates are retired") {
 		t.Fatalf("Logger cutover without private ready endpoint was accepted: %v", err)
 	}
 }

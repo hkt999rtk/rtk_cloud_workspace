@@ -86,12 +86,24 @@ func TestMergeObjectStorageCredentialDefaultsUsesEnvironmentProfile(t *testing.T
 			t.Fatal(err)
 		}
 	}
+	envRoot := t.TempDir()
+	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), "CLOUD_ENV_NAME=staging\n")
 	values := map[string]string{}
-	if err := mergeObjectStorageCredentialDefaults(t.TempDir(), values); err != nil {
+	if err := mergeObjectStorageCredentialDefaults(envRoot, values); err != nil {
 		t.Fatal(err)
 	}
 	if values["LINODE_OBJ_ACCESS_KEY_ID"] != "profile-access" || values["LINODE_OBJ_SECRET_ACCESS_KEY"] != "profile-secret" {
 		t.Fatalf("environment profile object-storage credentials were not loaded: %#v", values)
+	}
+}
+
+func TestMergeObjectStorageCredentialDefaultsRejectsImplicitEnvironment(t *testing.T) {
+	values := map[string]string{}
+	if err := mergeObjectStorageCredentialDefaults(t.TempDir(), values); err == nil || !strings.Contains(err.Error(), "cannot default to staging") {
+		t.Fatalf("missing environment must fail before credential lookup, got %v", err)
+	}
+	if len(values) != 0 {
+		t.Fatal("failed lookup must not populate another environment's credentials")
 	}
 }
 
@@ -139,6 +151,10 @@ func TestProvisionStateAndCredentialHelpers(t *testing.T) {
 		}
 	}
 	values := map[string]string{}
+	if err := mergeObjectStorageCredentialDefaults(root, values); err == nil {
+		t.Fatal("missing environment implicitly borrowed staging credentials")
+	}
+	writeTestFile(t, filepath.Join(root, "env", "stack.env"), "CLOUD_ENV_NAME=staging\n")
 	if err := mergeObjectStorageCredentialDefaults(root, values); err != nil {
 		t.Fatal(err)
 	}

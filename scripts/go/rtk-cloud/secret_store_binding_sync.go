@@ -43,6 +43,10 @@ func syncMissingSecretBindings(out io.Writer, store secretStore, dryRun bool) er
 		if err != nil || canonical == "" {
 			return fmt.Errorf("canonical runtime secret %s is unavailable", entry.ID)
 		}
+		canonical, err = environmentRuntimeBindingValue(entry.ID, canonical)
+		if err != nil {
+			return err
+		}
 		for _, binding := range entry.K8SBinding {
 			if !billingLifecycleBindingRequired(store, entry.ID, binding) {
 				continue

@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-mkdir -p "$TMP/bin" "$TMP/workspace/cloud_env/staging" "$TMP/workspace/scripts" "$TMP/config/staging/kube"
+mkdir -p "$TMP/bin" "$TMP/workspace/cloud_env/staging" \
+  "$TMP/workspace/scripts" \
+  "$TMP/config/staging/kube"
 printf 'CLOUD_STACK_NAME=video-cloud-staging\n' >"$TMP/workspace/cloud_env/staging/environment.env"
 printf 'DEPLOYMENT_ADAPTER=lke\n' >"$TMP/workspace/cloud_env/staging/deployment.env"
 printf 'test\n' >"$TMP/config/staging/kube/kubeconfig.yaml"
-cp "$ROOT/scripts/check-certissuer-app-mtls.sh" "$ROOT/scripts/check-certissuer-app-socket.pl" \
-  "$ROOT/scripts/check-certissuer-app-helper.pl" "$TMP/workspace/scripts/"
+cp "$ROOT/scripts/check-certissuer-app-mtls.sh" "$TMP/workspace/scripts/"
+cp "$ROOT/scripts/check-certissuer-app-socket.pl" \
+  "$ROOT/scripts/check-certissuer-app-helper.pl" \
+  "$ROOT/scripts/check-certissuer-app-managed.pl" "$TMP/workspace/scripts/"
 
 cat >"$TMP/bin/kubectl" <<'SH'
 #!/bin/sh
@@ -26,6 +31,16 @@ case " $* " in
   *'APP_CERT_ISSUER_SOCKET:-'*) printf '%s' "${FAKE_SOCKET:-}" ;;
   *" -- perl -"*)
     cat >/dev/null
+    case " $* " in
+      *' anonymous '*)
+        case "${FAKE_ANONYMOUS_FAILURE:-}" in
+          accepted) printf '%s\nRTK_ANONYMOUS_EXIT=0\n' "$FAKE_CERTISSUER_RESPONSE" ;;
+          transport) printf 'connect:errno=111\nRTK_ANONYMOUS_EXIT=1\n' ;;
+          ca) printf 'verify error:num=20\nRTK_ANONYMOUS_EXIT=1\n' ;;
+          *) printf 'tlsv13 alert certificate required\nRTK_ANONYMOUS_EXIT=1\n' ;;
+        esac
+        exit 0 ;;
+    esac
     case "${FAKE_SOCKET_FAILURE:-}" in
       unavailable) printf 'CertIssuer socket is unavailable do-not-leak-this-secret\n' >&2; exit 1 ;;
       timeout) printf 'CERTISSUER_SOCKET_TIMEOUT do-not-leak-this-secret\n' >&2; exit 1 ;;

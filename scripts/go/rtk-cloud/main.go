@@ -89,8 +89,8 @@ var commands = map[string]commandSpec{
 	"provisioning-lifecycle-evidence":  {run: runProvisioningLifecycleEvidence},
 	"video-cloud-admin-token":          {run: runVideoCloudAdminToken},
 	"cloud-logger-token":               {run: runCloudLoggerToken},
-	"provision":                        {run: runProvision},
-	"provision-k8s":                    {run: runProvisionK8s},
+	"provision":                        {run: runProvisionCompatibilityEntry},
+	"provision-k8s":                    {run: runRetiredFullProvisionEntry},
 	"refresh-user-tokens":              {run: runRefreshUserTokens},
 	"schema":                           {run: runSchema},
 	"refresh-runtime-client-ca":        {run: runRefreshRuntimeClientCA},
@@ -109,7 +109,7 @@ var commands = map[string]commandSpec{
 	"staging-e2e-mqtt-log-verify":      {run: runStagingE2EMQTTLogVerify},
 	"environment-e2e-mqtt-log-verify":  {run: runStagingE2EMQTTLogVerify},
 	"staging-e2e-test":                 {run: runStagingE2ETest},
-	"staging-provision":                {run: runStagingProvision},
+	"staging-provision":                {run: runRetiredFullProvisionEntry},
 	"staging-reset-k8s":                {run: runStagingResetK8s},
 	"status-all":                       {run: runStatusAll},
 	"sync-env":                         {run: runSyncEnv},
@@ -173,9 +173,9 @@ func run(args []string) error {
 		return nil
 	}
 	args = normalizeLegacyPathArgs(args)
-	// The deployment-check facade validates all arguments before consulting
-	// the same maintenance fence. Other commands retain their existing order.
-	if !(len(args) > 1 && args[0] == "deployment" && args[1] == "check") {
+	// Deployment check and direct preflight validate all arguments before
+	// consulting the same maintenance fence. Other commands retain their order.
+	if !(len(args) > 1 && args[0] == "deployment" && (args[1] == "check" || args[1] == "preflight")) {
 		if err := recoveryMutationGuard(args); err != nil {
 			return err
 		}
@@ -1188,8 +1188,22 @@ func runSecretsCheck(args []string) error {
 var runWorkspaceBaselineCmd = runCmd
 
 func runTestMatrix(args []string) error {
+	return runTestMatrixWithBaseline(args, func(workspace string) error {
+		// Workspace coverage owns the quick genuine-expiry recovery contract. The
+		// nightly workflow repeats it with production-duration test lifetimes.
+		return runWorkspaceBaselineCmd(workspace, "go", "test", "-json", "-failfast", "-timeout=180m", "-skip=^TestHistoricalLateBootstrapCompletesFromOriginalSourceAndPairedCRLs$", "./scripts/go/...")
+	})
+}
+
+// A full pre-PR run can supply its complete governed workspace test invocation
+// here. The callback must pass before the remaining matrix checks can proceed.
+func runTestMatrixWithBaseline(args []string, baseline func(string) error) error {
+	if baseline == nil {
+		return errors.New("workspace matrix requires a baseline test invocation")
+	}
 	fs := flag.NewFlagSet("test-matrix", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	policyOnly := fs.Bool("policy-only", false, "validate workspace policy and inventory without repeating the governed Go coverage suite")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -1209,7 +1223,7 @@ func runTestMatrix(args []string) error {
 	if err := runCmd(workspace, "git", "diff", "--check"); err != nil {
 		return err
 	}
-	if err := runWorkspaceBaselineCmd(workspace, "go", "test", "-timeout=20m", "./scripts/go/..."); err != nil {
+	if err := runTestMatrixBaseline(workspace, *policyOnly, baseline); err != nil {
 		return err
 	}
 	fmt.Fprintln(os.Stdout)
@@ -1243,6 +1257,14 @@ func runTestMatrix(args []string) error {
 		}
 	}
 	return nil
+}
+
+func runTestMatrixBaseline(workspace string, policyOnly bool, baseline func(string) error) error {
+	if policyOnly {
+		fmt.Fprintln(os.Stdout, "SKIP: governed Go coverage job owns the workspace test suite")
+		return nil
+	}
+	return baseline(workspace)
 }
 
 type serviceTestSpec struct {
@@ -4939,6 +4961,9 @@ func runStagingE2ETest(args []string) error {
 	}
 	if *confirm != stackName {
 		return fmt.Errorf("--confirm %s does not match CLOUD_STACK_NAME=%s", *confirm, stackName)
+	}
+	if selection.Provision {
+		return errors.New("legacy E2E full provisioning is retired; qualify and execute the shared deployment plan first, then run explicit acceptance steps with --skip-remove --skip-provision; no reset or provisioning was started")
 	}
 	if useLKEProvision && selection.Provision {
 		if err := materializeStagingE2EDeploymentConfig(workspace, envRoot); err != nil {

@@ -187,7 +187,8 @@ func loadAndValidateTestCatalogForRunner(workspace, sourceRunner string) (testCa
 		return testCatalog{}, err
 	}
 	catalog.Features = inventory.Features
-	if err := validateFeatureRequirements(workspace, catalog, sourceRunner); err != nil {
+	validateChangePath := catalogChangePathValidator(workspace)
+	if err := validateFeatureRequirementsWithPaths(workspace, catalog, sourceRunner, validateChangePath); err != nil {
 		return testCatalog{}, err
 	}
 	requirements := catalogRequirementIndex(catalog)
@@ -287,7 +288,7 @@ func loadAndValidateTestCatalogForRunner(workspace, sourceRunner string) (testCa
 		}
 		if validateSource {
 			for _, changePath := range tc.ChangePaths {
-				if err := validateCatalogChangePath(workspace, changePath); err != nil {
+				if err := validateChangePath(changePath); err != nil {
 					return testCatalog{}, fmt.Errorf("%s %s change_path %q: %w", prefix, tc.ID, changePath, err)
 				}
 			}
@@ -419,6 +420,10 @@ func requirementRequired(requirement testCatalogRequirement) bool {
 }
 
 func validateFeatureRequirements(workspace string, catalog testCatalog, sourceRunner string) error {
+	return validateFeatureRequirementsWithPaths(workspace, catalog, sourceRunner, catalogChangePathValidator(workspace))
+}
+
+func validateFeatureRequirementsWithPaths(workspace string, catalog testCatalog, sourceRunner string, validateChangePath func(string) error) error {
 	if len(catalog.Features) == 0 {
 		return errors.New("test catalog requires at least one feature")
 	}
@@ -447,7 +452,7 @@ func validateFeatureRequirements(workspace string, catalog testCatalog, sourceRu
 		}
 		for _, changePath := range feature.ChangePaths {
 			if sourceRunner == "" {
-				if err := validateCatalogChangePath(workspace, changePath); err != nil {
+				if err := validateChangePath(changePath); err != nil {
 					return fmt.Errorf("%s %s change_path %q: %w", prefix, feature.ID, changePath, err)
 				}
 			}
@@ -701,23 +706,40 @@ func catalogCaseByID(cases []testCatalogCase, id string) (testCatalogCase, bool)
 }
 
 func validateCatalogChangePath(workspace, pattern string) error {
-	if pattern == "" || filepath.IsAbs(pattern) || strings.Contains(pattern, `\`) || strings.Contains(pattern, "..") {
-		return errors.New("must be a non-empty workspace-relative glob without backslashes or parent traversal")
-	}
-	files, err := gitOutput(workspace, "ls-files", "--recurse-submodules")
-	if err != nil {
-		return fmt.Errorf("list tracked files: %w", err)
-	}
-	re, err := catalogGlobRegexp(pattern)
-	if err != nil {
-		return err
-	}
-	for _, tracked := range strings.Fields(files) {
-		if re.MatchString(filepath.ToSlash(tracked)) {
-			return nil
+	return catalogChangePathValidator(workspace)(pattern)
+}
+
+// One catalog validation reads one fresh tracked-file inventory. Re-enumerating
+// recursive submodules for every feature/case made the full gate exceed ten
+// minutes. The snapshot is local to this call, never cached across Git changes.
+func catalogChangePathValidator(workspace string) func(string) error {
+	var tracked []string
+	var loaded bool
+	var loadErr error
+	return func(pattern string) error {
+		if pattern == "" || filepath.IsAbs(pattern) || strings.Contains(pattern, `\`) || strings.Contains(pattern, "..") {
+			return errors.New("must be a non-empty workspace-relative glob without backslashes or parent traversal")
 		}
+		re, err := catalogGlobRegexp(pattern)
+		if err != nil {
+			return err
+		}
+		if !loaded {
+			loaded = true
+			var files string
+			files, loadErr = gitOutput(workspace, "ls-files", "-z", "--recurse-submodules")
+			tracked = strings.Split(files, "\x00")
+		}
+		if loadErr != nil {
+			return fmt.Errorf("list tracked files: %w", loadErr)
+		}
+		for _, name := range tracked {
+			if name != "" && re.MatchString(filepath.ToSlash(name)) {
+				return nil
+			}
+		}
+		return errors.New("does not match a tracked file")
 	}
-	return errors.New("does not match a tracked file")
 }
 
 func catalogGlobRegexp(pattern string) (*regexp.Regexp, error) {

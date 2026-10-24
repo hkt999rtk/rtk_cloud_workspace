@@ -31,7 +31,6 @@ func newOTADeliveryReinitializeFixture(t *testing.T, selectedURL, liveURL string
 	f.cfg.Values["LKE_OTA_SERVICE_REGISTRATION_ENABLED"] = "true"
 	f.cfg.Values["LKE_OTA_CORE_CUTOVER_ENABLED"] = "true"
 	f.cfg.Values["LKE_OTA_SERVICE_EDGE_ENABLED"] = "true"
-	f.cfg.Values["LKE_OTA_REGISTRAR_REGISTRATION_ENABLED"] = "false"
 	f.cfg.Values["VIDEO_CLOUD_DOMAIN"] = "video.example.test"
 	f.cfg.Values["VIDEO_CLOUD_OTA_CDN_BASE_URL"] = selectedURL
 	if err := os.WriteFile(f.candidate, []byte("RTK_STORAGE_CANDIDATE_ENVIRONMENT=dev\nLINODE_OTA_OBJ_ACCESS_KEY_ID=candidate-access\nLINODE_OTA_OBJ_SECRET_ACCESS_KEY=candidate-secret\n"), 0600); err != nil {
@@ -332,7 +331,7 @@ func TestReinitializeOTADeliveryQualifiedActivation(t *testing.T) {
 func TestReinitializeOTADeliveryUsesSelectedAdapterIntent(t *testing.T) {
 	f := newOTADeliveryReinitializeFixture(t, "", "")
 	f.cfg.AdapterValues = map[string]string{}
-	for _, key := range []string{"LKE_OTA_SERVICE_REGISTRATION_ENABLED", "LKE_OTA_CORE_CUTOVER_ENABLED", "LKE_OTA_SERVICE_EDGE_ENABLED", "LKE_OTA_REGISTRAR_REGISTRATION_ENABLED"} {
+	for _, key := range []string{"LKE_OTA_SERVICE_REGISTRATION_ENABLED", "LKE_OTA_CORE_CUTOVER_ENABLED", "LKE_OTA_SERVICE_EDGE_ENABLED"} {
 		f.cfg.AdapterValues[key] = f.cfg.Values[key]
 		delete(f.cfg.Values, key)
 	}

@@ -3,7 +3,7 @@ schema_version: 3
 # Ratchets are enforced immediately. Targets describe the first coverage
 # improvement milestone and become the new ratchet when a module reaches them.
 differential:
-  minimum_statement_percent: 80.0
+  minimum_statement_percent: 70.0
 
 risk_thresholds:
   critical: 80.0

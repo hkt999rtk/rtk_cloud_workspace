@@ -221,11 +221,14 @@ func TestTargetedBillingDeployAcceptsLegacySecretWithoutNewebPayKeys(t *testing.
 func TestPaymentSimulatorLKEManifestsUseApprovedIsolatedTopology(t *testing.T) {
 	t.Setenv("LKE_RUNTIME_SECRET_SEED", "payment-simulator-test-seed")
 	env := map[string]string{
-		"CLOUD_STACK_NAME":       "video-cloud-staging",
-		"VIDEO_CLOUD_DOMAIN":     "video-cloud-staging.realtekconnect.com",
-		"ACCOUNT_MANAGER_DOMAIN": "account-manager.video-cloud-staging.realtekconnect.com",
-		"CLOUD_ADMIN_DOMAIN":     "admin.video-cloud-staging.realtekconnect.com",
-		"LKE_BILLING_IMAGE":      "registry.example.test/billing:test",
+		"CLOUD_ENV_NAME":            "staging",
+		"CLOUD_STACK_NAME":          "video-cloud-staging",
+		"VIDEO_CLOUD_DOMAIN":        "video-cloud-staging.realtekconnect.com",
+		"ACCOUNT_MANAGER_DOMAIN":    "account-manager.video-cloud-staging.realtekconnect.com",
+		"CLOUD_ADMIN_DOMAIN":        "admin.video-cloud-staging.realtekconnect.com",
+		"LKE_BILLING_IMAGE":         "registry.example.test/billing:test",
+		"PAYMENT_SIMULATOR_ENABLED": "true",
+		"NEWEBPAY_ENABLED":          "true",
 	}
 	secret := lkeBillingSecretManifest(env)
 	for _, want := range []string{
@@ -276,6 +279,10 @@ func TestPaymentSimulatorLKEManifestsUseApprovedIsolatedTopology(t *testing.T) {
 	}
 	if manifest := lkeBillingPaymentWorkerManifest(env); !strings.Contains(manifest, `/rtk-billing-payment-worker`) {
 		t.Fatalf("payment worker deployment is incomplete:\n%s", manifest)
+	}
+	env["PAYMENT_SIMULATOR_ENABLED"], env["NEWEBPAY_ENABLED"] = "false", "false"
+	if disabled := lkeBillingSecretManifest(env); !strings.Contains(disabled, `PAYMENT_SIMULATOR_ENABLED: "false"`) || !strings.Contains(disabled, `NEWEBPAY_ENABLED: "false"`) {
+		t.Fatal("selected disabled payment settings were replaced by staging defaults")
 	}
 }
 

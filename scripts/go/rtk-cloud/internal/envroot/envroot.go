@@ -92,6 +92,11 @@ func Load(root, dnsOverride string) (Environment, error) {
 	if err != nil {
 		return Environment{}, err
 	}
+	for _, key := range []string{"LKE_CLUSTER_ID", "LKE_CLUSTER_LABEL", "LKE_CLUSTER_REGION", "LKE_CLUSTER_VERSION", "LKE_POSTGRES_NODE_POOL_ID"} {
+		if values[key] != "" {
+			return Environment{}, fmt.Errorf("%s is operational provider state, not configuration; explicitly migrate it into ~/.config/rtk_cloud/<environment>/deployment/adapters/lke and regenerate the configuration", key)
+		}
+	}
 	adapter := firstNonEmpty(values["DEPLOYMENT_ADAPTER"], values["CLOUD_PROVIDER"])
 	if adapter != "" {
 		adapterValues, adapterErr := parseOptionalEnvFile(filepath.Join(root, "adapters", adapter, "config.env"))

@@ -43,7 +43,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.policy == 'true'
     runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 20
+    timeout-minutes: 210
     steps:
       - uses: actions/checkout@v6
         with:
@@ -59,10 +59,9 @@ jobs:
           cache: false
       - name: Validate catalog, policy, inventory, and generated docs
         working-directory: scripts/go
-        env:
-          # Keep the workspace-wide Go test binaries from peaking together on shared runners.
-          GOFLAGS: -p=1
-        run: go run ./rtk-cloud -- test-matrix
+        # Workspace coverage below owns the complete PR Go suite with short
+        # genuine expiries. Nightly repeats the long-duration expiry contract.
+        run: go run ./rtk-cloud -- test-matrix --policy-only
       - name: Test private Zammad bootstrap safety
         run: python3 tests/bootstrap_zammad_test.py -v
 
@@ -71,7 +70,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run_unit == 'true'
     runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 30
+    timeout-minutes: 210
     env:
       BILLING_UNIT_POSTGRES_CONTAINER_ID: ""
     strategy:

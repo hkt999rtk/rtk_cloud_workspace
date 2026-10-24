@@ -1252,8 +1252,8 @@ func evaluateVideoRelayCoturnEvidence(envRoot, outDir string, startedAt time.Tim
 	if !required {
 		return videoRelayCoturnStatus{Status: "not_required", Required: false, Detail: "WebRTC path did not require TURN relay evidence"}, nil
 	}
-	artifact := filepath.Join(envRoot, "artifacts", "coturn-vm", "coturn-vm.json")
-	if raw, err := os.ReadFile(artifact); err == nil {
+	artifact, pathErr := deploymentLKEArtifactPath(provisionPaths{EnvRoot: envRoot}, "coturn-vm/turn01/coturn-vm.json")
+	if raw, err := readStorageEvidenceFile(artifact); pathErr == nil && err == nil {
 		var parsed map[string]any
 		_ = json.Unmarshal(raw, &parsed)
 		domain := stringValue(parsed["domain"])
@@ -1273,7 +1273,7 @@ func evaluateVideoRelayCoturnEvidence(envRoot, outDir string, startedAt time.Tim
 			}
 		}
 	}
-	return videoRelayCoturnStatus{Status: "retired", Required: true, Detail: "VM coturn journal evidence is retired for K8s staging; use K8s observability or persisted runtime logs"}, nil
+	return videoRelayCoturnStatus{Status: "retired", Required: true, Detail: "private TURN evidence is unavailable; use the configured environment's K8s observability or persisted runtime logs"}, nil
 }
 
 func parseVideoRelayCoturnEvents(raw string) []videoRelayCoturnEvent {

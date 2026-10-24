@@ -30,16 +30,64 @@ type livePKICRLManifestEntry struct {
 // settings still need their own deployment contract before secrets verify can
 // accept them.
 func verifyMountedPKICRLManifests(kubeconfig, namespace, environment string, deployments liveDeploymentList, target string, runtimes ...*deploymentCheckRuntime) error {
+	return verifyMountedPKICRLManifestsAt(kubeconfig, namespace, environment, deployments, target, time.Now().UTC(), runtimes...)
+}
+
+func logIngesterCRLRuntimeRequired(deployments liveDeploymentList) bool {
+	for _, deployment := range deployments.Items {
+		for _, container := range deployment.Spec.Template.Spec.Containers {
+			for _, setting := range container.Env {
+				if deployment.Metadata.Name == "video-cloud-logingester" && container.Name == "app" {
+					switch setting.Name {
+					case "VIDEO_CLOUD_MQTT_SERVER_PKI_ROOT_SHA256", "VIDEO_CLOUD_LOG_INGESTER_MQTT_IDENTITY_STATE", "VIDEO_CLOUD_MQTT_SERVER_CRL_MANIFEST", "VIDEO_CLOUD_LOG_INGESTER_MQTT_IDENTITY_SERVER_CRL_MANIFEST":
+						// An empty or partial installed profile is still required;
+						// deleting one manifest cannot turn acceptance off.
+						return true
+					}
+				}
+				if deployment.Metadata.Name == "pki-controller" && (setting.Name == "PKI_REQUIRED_CONSUMERS_SERVICE" || setting.Name == "PKI_REQUIRED_CONSUMERS_MQTT") {
+					for _, consumer := range strings.Split(setting.Value, ",") {
+						if strings.TrimSpace(consumer) == "video-cloud-logingester" {
+							return true
+						}
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+func verifyMountedPKICRLManifestsAt(kubeconfig, namespace, environment string, deployments liveDeploymentList, target string, validUntil time.Time, runtimes ...*deploymentCheckRuntime) error {
+	if target == "video-cloud-logingester" {
+		for _, runtime := range runtimes {
+			if runtime != nil && runtime.preflightPlan != nil {
+				// Candidate qualification validates the original public inputs.
+				// The updated consumer must install and acknowledge its durable
+				// CRL cache before post-deploy acceptance, not before rollout.
+				return nil
+			}
+		}
+		if !logIngesterCRLRuntimeRequired(deployments) {
+			return nil // Unmanaged workloads receive no new identity requirement.
+		}
+	}
 	specs := map[string][]struct{ container, setting, domain string }{
-		"account-manager": {{"pkimanagement", "PKI_MANAGEMENT_ACCOUNT_SERVICE_CLIENT_SERVER_CRL_MANIFEST", "service"}},
+		"account-manager": {{"pkimanagement", "PKI_MANAGEMENT_ACCOUNT_SERVICE_CLIENT_SERVER_CRL_MANIFEST", "service"}, {"pkimanagement", "PKI_MANAGEMENT_CONTROLLER_SERVER_CRL_MANIFEST", "service"}, {"pkimanagement", "PKI_MANAGEMENT_ISSUER_SERVER_CRL_MANIFEST", "service"}},
 		"certissuer": {
 			{"certissuer", "CERT_ISSUER_SERVICE_CLIENT_SERVER_CRL_MANIFEST", "service"},
 			{"certissuer", "OPENBAO_SERVER_CRL_MANIFEST", "openbao_tls"},
 		},
+		"video-cloud-logingester": {
+			{"app", "VIDEO_CLOUD_MQTT_SERVER_CRL_MANIFEST", "mqtt"},
+			{"app", "VIDEO_CLOUD_LOG_INGESTER_MQTT_IDENTITY_SERVER_CRL_MANIFEST", "service"},
+		},
+		"video-cloud-api-pki": {{"app", "VIDEO_CLOUD_AUTH_CRL_MANIFEST", "device"}},
+		"mqtt-pki":            {{"pkibroker", "PKI_BROKER_DEVICE_CRL_MANIFEST", "device"}, {"pkibroker", "PKI_BROKER_APP_CRL_MANIFEST", "app"}},
 	}
-	// Dev already uses all three reviewed CRL consumers. A later Deployment
-	// replacement must not silently remove one and make secrets verify pass.
-	if environment == "dev" {
+	// Dev already uses the reviewed original consumers. An installed or required
+	// managed LogIngester profile must remain complete in every environment.
+	if environment == "dev" || target == "video-cloud-logingester" {
 		foundDeployment := false
 		for _, deployment := range deployments.Items {
 			if deployment.Metadata.Name != target {
@@ -47,6 +95,11 @@ func verifyMountedPKICRLManifests(kubeconfig, namespace, environment string, dep
 			}
 			foundDeployment = true
 			for _, spec := range specs[target] {
+				// Outbound managed origins are optional on the historical listener
+				// profile; a selected origin is validated as a complete transport.
+				if target == "account-manager" && spec.setting != "PKI_MANAGEMENT_ACCOUNT_SERVICE_CLIENT_SERVER_CRL_MANIFEST" {
+					continue
+				}
 				foundContainer, settingCount := false, 0
 				for _, container := range deployment.Spec.Template.Spec.Containers {
 					if container.Name != spec.container {
@@ -119,7 +172,7 @@ func verifyMountedPKICRLManifests(kubeconfig, namespace, environment string, dep
 						}
 					}
 					for _, entry := range entries {
-						if err := verifyLivePKICRLEvidence(kubeconfig, namespace, environment, target, spec.container, entry, runtimes...); err != nil {
+						if err := verifyLivePKICRLEvidence(kubeconfig, namespace, environment, target, spec.container, entry, validUntil, runtimes...); err != nil {
 							return fmt.Errorf("%s issuer %s: %w", spec.setting, entry.Issuer.ID, err)
 						}
 					}
@@ -127,23 +180,44 @@ func verifyMountedPKICRLManifests(kubeconfig, namespace, environment string, dep
 			}
 		}
 	}
+	if target == "certissuer" && logIngesterCRLRuntimeRequired(deployments) {
+		// This existing entry point receives the complete Video Cloud inventory.
+		// Check an enabled LogIngester after the existing consumers; no new
+		// workload or credential is created to obtain runtime evidence.
+		for _, deployment := range deployments.Items {
+			if deployment.Metadata.Name == "video-cloud-logingester" && deployment.Spec.Replicas != nil && *deployment.Spec.Replicas == 0 {
+				return nil
+			}
+		}
+		return verifyMountedPKICRLManifestsAt(kubeconfig, namespace, environment, deployments, "video-cloud-logingester", validUntil, runtimes...)
+	}
 	return nil
 }
 
 func mountedPKICRLConfigMap(deployment liveDeployment, containerName, path string) (string, string, error) {
-	return mountedPKIConfigMapFile(deployment, containerName, path, "crls.json", "CRL manifest")
+	return mountedPKIConfigMapFile(deployment, containerName, path, "", "CRL manifest")
 }
 
 func mountedPKIConfigMapFile(deployment liveDeployment, containerName, path, filename, label string) (string, string, error) {
-	if !filepath.IsAbs(path) || filepath.Clean(path) != path || filepath.Base(path) != filename {
-		return "", "", fmt.Errorf("%s path must be an absolute %s file", label, filename)
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path || (filename != "" && filepath.Base(path) != filename) || (filename == "" && !strings.HasSuffix(filepath.Base(path), ".json")) {
+		return "", "", fmt.Errorf("%s path must be an absolute JSON manifest file", label)
 	}
+	var sourceName, sourceKey string
 	for _, container := range deployment.Spec.Template.Spec.Containers {
 		if container.Name != containerName {
 			continue
 		}
 		for _, mount := range container.VolumeMounts {
-			if !strings.HasPrefix(path, mount.MountPath+"/") || strings.TrimPrefix(path, mount.MountPath+"/") != filename {
+			if mount.SubPathExpr != "" {
+				continue
+			}
+			relative := strings.TrimPrefix(path, mount.MountPath+"/")
+			if mount.SubPath != "" {
+				if path != mount.MountPath || filepath.Clean(mount.SubPath) != mount.SubPath || filepath.IsAbs(mount.SubPath) {
+					continue
+				}
+				relative = mount.SubPath
+			} else if !strings.HasPrefix(path, mount.MountPath+"/") || strings.HasPrefix(relative, "../") {
 				continue
 			}
 			if !mount.ReadOnly {
@@ -151,11 +225,34 @@ func mountedPKIConfigMapFile(deployment liveDeployment, containerName, path, fil
 			}
 			for _, volume := range deployment.Spec.Template.Spec.Volumes {
 				if volume.Name == mount.Name && volume.ConfigMap.Name != "" {
-					return volume.ConfigMap.Name, filename, nil
+					key := relative
+					if len(volume.ConfigMap.Items) > 0 {
+						key = ""
+						for _, item := range volume.ConfigMap.Items {
+							if item.Path == relative {
+								if key != "" {
+									return "", "", fmt.Errorf("%s ConfigMap key is ambiguous", label)
+								}
+								key = item.Key
+							}
+						}
+					}
+					if key == "" || strings.ContainsAny(key, "/\\") {
+						return "", "", fmt.Errorf("%s ConfigMap key is unavailable", label)
+					}
+					if sourceName != "" {
+						return "", "", fmt.Errorf("%s ConfigMap mount is ambiguous", label)
+					}
+					sourceName, sourceKey = volume.ConfigMap.Name, key
 				}
 			}
-			return "", "", fmt.Errorf("%s mount is not backed by a ConfigMap", label)
+			if sourceName == "" {
+				return "", "", fmt.Errorf("%s mount is not backed by a ConfigMap", label)
+			}
 		}
+	}
+	if sourceName != "" {
+		return sourceName, sourceKey, nil
 	}
 	return "", "", fmt.Errorf("%s has no matching read-only ConfigMap mount", label)
 }
@@ -180,7 +277,7 @@ func verifyMountedServiceCRLCoverage(kubeconfig, namespace string, deployment li
 	if count != 1 || indirect || path == "" {
 		return fmt.Errorf("%s requires exactly one explicit bundle manifest path", settingName)
 	}
-	name, key, err := mountedPKIConfigMapFile(deployment, containerName, path, "issuers.json", "Service bundle manifest")
+	name, key, err := mountedPKIConfigMapFile(deployment, containerName, path, "", "Service bundle manifest")
 	if err != nil {
 		return err
 	}
@@ -252,7 +349,7 @@ var livePKIIssuerIDPattern = regexp.MustCompile(`^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[
 
 // The public PVC state is checked against the registry's latest signed CRL
 // and the exact workload receipt. A valid ConfigMap alone is not acceptance.
-func verifyLivePKICRLEvidence(kubeconfig, namespace, environment, target, container string, entry livePKICRLManifestEntry, runtimes ...*deploymentCheckRuntime) error {
+func verifyLivePKICRLEvidence(kubeconfig, namespace, environment, target, container string, entry livePKICRLManifestEntry, validUntil time.Time, runtimes ...*deploymentCheckRuntime) error {
 	stateRaw, err := secretCheckKubectl(runtimes, false, "--kubeconfig", kubeconfig, "-n", namespace, "exec", "deployment/"+target, "-c", container, "--", "cat", entry.StatePath)
 	if err != nil || len(stateRaw) == 0 || len(stateRaw) > 1<<20 {
 		return secretCheckFailure(err, "current CRL PVC state is unreadable")
@@ -289,6 +386,11 @@ func verifyLivePKICRLEvidence(kubeconfig, namespace, environment, target, contai
 	if err != nil || crl.Number == nil || crl.Number.Sign() <= 0 || crl.CheckSignatureFrom(certificate) != nil || !bytes.Equal(crl.RawIssuer, certificate.RawSubject) || len(certificate.SubjectKeyId) == 0 || !bytes.Equal(crl.AuthorityKeyId, certificate.SubjectKeyId) || crl.ThisUpdate.After(now) || crl.ThisUpdate.Before(now.Add(-7*24*time.Hour)) || !crl.NextUpdate.After(now) || crl.NextUpdate.After(crl.ThisUpdate.Add(7*24*time.Hour)) || crl.NextUpdate.After(certificate.NotAfter) {
 		return fmt.Errorf("installed CRL signature or freshness is invalid")
 	}
+	// Future rollout qualification extends expiration only. Publication time,
+	// freshness, registry version and acknowledgments still describe actual now.
+	if !crl.NextUpdate.After(validUntil) {
+		return fmt.Errorf("installed CRL expires within the checked validity window")
+	}
 	digest := sha256.Sum256(crl.Raw)
 	if state.CRL.Digest != hex.EncodeToString(digest[:]) || state.CRL.Number != crl.Number.String() || !state.CRL.ThisUpdate.Equal(crl.ThisUpdate) || !state.CRL.NextUpdate.Equal(crl.NextUpdate) {
 		return fmt.Errorf("installed CRL metadata differs from signed content")
@@ -303,6 +405,13 @@ func verifyLivePKICRLEvidence(kubeconfig, namespace, environment, target, contai
 		return secretCheckFailure(err, "cannot read PostgreSQL Pod for CRL receipt verification")
 	}
 	consumer := target
+	// Receipt membership follows the native enrolled Service subject, not the
+	// Kubernetes owner name. Reuse the producer's exact owner/container roster.
+	for _, owner := range environmentCreateApplicationOwners() {
+		if owner.Name == target && owner.Container == container {
+			consumer = owner.Role
+		}
+	}
 	query := fmt.Sprintf(`SELECT json_build_object('digest',digest,'number',number::text,'ack',EXISTS(SELECT 1 FROM pki_crl_acknowledgments a WHERE a.issuer_id=c.issuer_id AND a.digest=c.digest AND a.consumer_id='%s')) FROM pki_crls c WHERE c.issuer_id='%s'::uuid ORDER BY c.number DESC LIMIT 1`, consumer, entry.Issuer.ID)
 	row, err := secretCheckKubectl(runtimes, false, "--kubeconfig", kubeconfig, "-n", platformNamespace, "exec", pods.Items[0].Metadata.Name, "--", "psql", "-U", "postgres", "-d", "video_cloud", "-At", "-c", query)
 	var latest struct {

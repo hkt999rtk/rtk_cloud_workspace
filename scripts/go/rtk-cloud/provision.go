@@ -92,14 +92,22 @@ func runProvision(args []string) error {
 	}
 	env, err := envroot.Load(envRoot, dnsOverride)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			env = envroot.Environment{Values: defaultProvisionEnvValues()}
-		} else {
-			return err
-		}
+		return errors.New("selected maintained environment configuration is unavailable; implicit staging defaults are retired")
+	}
+	if !secretEnvironmentPattern.MatchString(env.Values["CLOUD_ENV_NAME"]) {
+		return errors.New("explicit configured CLOUD_ENV_NAME is required before environment access")
 	}
 	if err := mergeObjectStorageCredentialDefaults(envRoot, env.Values); err != nil {
 		return err
+	}
+	if env.Values["CLOUD_PROVIDER"] == "lke" {
+		account, err := readLKEAccountState(env.Values["CLOUD_ENV_NAME"], false)
+		if err != nil {
+			return err
+		}
+		if limit := account["LKE_ACTIVE_SERVICE_LIMIT"]; limit != "" {
+			env.Values["LKE_LINODE_ACTIVE_SERVICE_LIMIT"] = limit
+		}
 	}
 	if err := validateK8SWorkloadSelection(env.Values, opts); err != nil {
 		return err
@@ -123,8 +131,28 @@ func runProvision(args []string) error {
 	return provider.RunProvision(ctx)
 }
 
+// Internal legacy helpers remain available for migration fixtures while the
+// public full renderer is retired. There is no environment-name exception.
+func runProvisionCompatibilityEntry(args []string) error {
+	options, err := parseProvisionArgs(args)
+	if err != nil {
+		return err
+	}
+	if options.mode.apply || options.mode.reset || (options.mode.deploy && len(options.workloads) == 0) {
+		return runRetiredFullProvisionEntry(args)
+	}
+	return runProvision(args)
+}
+
+func runRetiredFullProvisionEntry([]string) error {
+	return errors.New("legacy full infrastructure/workload provisioning is retired; use deployment plan/create/upgrade with the selected formal --release and reviewed --plan-sha256; missing required capabilities remain NO-GO")
+}
+
 func mergeObjectStorageCredentialDefaults(envRoot string, values map[string]string) error {
-	environment := firstNonEmpty(envFileValue(filepath.Join(envRoot, "env", "stack.env"), "CLOUD_ENV_NAME"), "staging")
+	environment := envFileValue(filepath.Join(envRoot, "env", "stack.env"), "CLOUD_ENV_NAME")
+	if !secretEnvironmentPattern.MatchString(environment) {
+		return errors.New("explicit configured environment is required; credential lookup cannot default to staging")
+	}
 	candidates := []string{defaultDeploymentEnvironmentCredentialFile(environment)}
 	for _, path := range candidates {
 		operator, check := deploymentCredentialValues(path)

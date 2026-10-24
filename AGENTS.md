@@ -26,8 +26,17 @@ the common path helpers; never choose another location from the current
 checkout, worktree, external disk, or OS-specific volume format.
 
 Document each producer/consumer path in the deployment architecture and secrets
-governance. Missing state is not permission to regenerate identity, fabricate a
-receipt, or search another environment/worktree as a fallback. Old paths may be
-read only by explicit validated migration. Synthetic test fixtures must use
-isolated roots and must not write the real environment store. Online runtime
-stores and independently held escrow follow their explicit design contracts.
+governance. Missing state in an existing deployment generation is not permission
+to regenerate identity, fabricate a receipt, or search another
+environment/worktree as a fallback. An explicitly selected brand-new deployment
+generation may establish new OpenBao and Service PKI identities through its
+qualified bootstrap lifecycle, even when the same environment name retains old
+generation material. Preserve and segregate that original material before new
+active state is initialized; never overwrite it or treat missing state alone as
+authorization for a new generation. Preflight qualifies prerequisites and does
+not generate these identities. See
+[`new deployment identity lifecycle`](docs/deployment-operations.md#new-deployment-identity-lifecycle).
+Old paths may be read only by explicit validated migration. Synthetic test
+fixtures must use isolated roots and must not write the real environment store.
+Online runtime stores and independently held escrow follow their explicit design
+contracts.

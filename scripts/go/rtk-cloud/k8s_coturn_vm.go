@@ -15,15 +15,16 @@ import (
 )
 
 type lkeCoturnVM struct {
-	ID       int    `json:"id,omitempty"`
-	Name     string `json:"name"`
-	Label    string `json:"label"`
-	PublicIP string `json:"public_ip"`
-	Region   string `json:"region,omitempty"`
-	Type     string `json:"type,omitempty"`
-	Status   string `json:"status,omitempty"`
-	Domain   string `json:"domain"`
-	Role     string `json:"role"`
+	bootstrap bool   // Only this operation's newly allocated VM may generate a credential.
+	ID        int    `json:"id,omitempty"`
+	Name      string `json:"name"`
+	Label     string `json:"label"`
+	PublicIP  string `json:"public_ip"`
+	Region    string `json:"region,omitempty"`
+	Type      string `json:"type,omitempty"`
+	Status    string `json:"status,omitempty"`
+	Domain    string `json:"domain"`
+	Role      string `json:"role"`
 }
 
 func lkeEnsureExternalCoturnVM(paths provisionPaths, env map[string]string, opts provisionOptions) (lkeCoturnVM, error) {
@@ -60,7 +61,7 @@ func lkeEnsureExternalCoturnVM(paths provisionPaths, env map[string]string, opts
 	if installMode == "skip-existing-ip" {
 		return vm, nil
 	}
-	if err := lkeInstallExternalCoturnVM(paths, opts, vm, install); err != nil {
+	if err := lkeInstallExternalCoturnVM(paths, env, opts, vm, install); err != nil {
 		return lkeCoturnVM{}, err
 	}
 	return vm, nil
@@ -165,6 +166,7 @@ func lkeResolveCoturnVM(paths provisionPaths, env map[string]string, opts provis
 	if vm.PublicIP == "" {
 		return lkeCoturnVM{}, "", errors.New("coturn VM has no public IPv4")
 	}
+	vm.bootstrap = !found
 	return vm, "linode-vm", nil
 }
 
@@ -309,13 +311,24 @@ func renderLKECoturnInstallScript(env map[string]string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "#!/usr/bin/env bash\nset -euo pipefail\n")
 	fmt.Fprintf(&b, ": \"${VIDEO_CLOUD_COTURN_SHARED_SECRET:?VIDEO_CLOUD_COTURN_SHARED_SECRET is required}\"\n")
+	fmt.Fprintf(&b, ": \"${COTURN_CLI_PASSWORD:?deployment must supply the retained CLI password}\"\n")
+	// Verify existing runtime copies before package installation or config writes.
+	fmt.Fprint(&b, `if [ -e /etc/turnserver.conf ]; then
+  existing=$(sed -n 's/^cli-password=//p' /etc/turnserver.conf)
+		[ -z "$existing" ] || [ "$existing" = "$COTURN_CLI_PASSWORD" ] || { echo 'existing Coturn CLI credential differs; refusing replacement' >&2; exit 1; }
+fi
+if [ -e /etc/video-cloud-coturn-cli.env ]; then
+  existing=$(sed -n 's/^COTURN_CLI_PASSWORD=//p' /etc/video-cloud-coturn-cli.env)
+		[ -z "$existing" ] || [ "$existing" = "$COTURN_CLI_PASSWORD" ] || { echo 'existing Coturn CLI credential differs; refusing replacement' >&2; exit 1; }
+fi
+`)
 	fmt.Fprintf(&b, "export DEBIAN_FRONTEND=noninteractive\n")
 	fmt.Fprintf(&b, "apt-get update\n")
 	fmt.Fprintf(&b, "apt-get install -y coturn conntrack curl netcat-openbsd prometheus-node-exporter\n")
 	fmt.Fprintf(&b, "install -d -m 0755 /opt/video_cloud/bin\n")
 	fmt.Fprintf(&b, "install -m 0755 /tmp/video-cloud-turnregistrar /opt/video_cloud/bin/turnregistrar\n")
 	fmt.Fprintf(&b, "install -d -m 0755 /etc/systemd/system/coturn.service.d\n")
-	fmt.Fprintf(&b, "coturn_cli_password=$(openssl rand -hex 24)\n")
+	fmt.Fprintf(&b, "coturn_cli_password=$COTURN_CLI_PASSWORD\n")
 	fmt.Fprintf(&b, "printf 'COTURN_CLI_PASSWORD=%%s\\n' \"$coturn_cli_password\" >/etc/video-cloud-coturn-cli.env\n")
 	fmt.Fprintf(&b, "chmod 0600 /etc/video-cloud-coturn-cli.env\n")
 	fmt.Fprintf(&b, "{\n")
@@ -370,11 +383,8 @@ func renderLKECoturnInstallScript(env map[string]string) string {
 }
 
 func writeLKECoturnVMArtifacts(paths provisionPaths, vm lkeCoturnVM, config, install string, validation map[string]any) error {
-	dir := filepath.Join(paths.EnvRoot, "artifacts", "coturn-vm", vm.Name)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	if err := writeJSON(filepath.Join(dir, "coturn-vm.json"), map[string]any{
+	dir := filepath.Join("coturn-vm", vm.Name)
+	if err := writeDeploymentLKEArtifactJSON(paths, filepath.Join(dir, "coturn-vm.json"), map[string]any{
 		"schema":    "rtk-cloud-workspace.coturn-vm/v1",
 		"generated": time.Now().UTC().Format(time.RFC3339),
 		"coturn_vm": vm,
@@ -385,47 +395,21 @@ func writeLKECoturnVMArtifacts(paths provisionPaths, vm lkeCoturnVM, config, ins
 	}); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "turnserver.conf.redacted"), []byte(config), 0o644); err != nil {
+	if err := writeDeploymentLKEArtifact(paths, filepath.Join(dir, "turnserver.conf.redacted"), []byte(config)); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "install.sh"), []byte(install), 0o700); err != nil {
+	if err := writeDeploymentLKEArtifact(paths, filepath.Join(dir, "install.sh"), []byte(install)); err != nil {
 		return err
 	}
-	if err := writeJSON(filepath.Join(dir, "validation.json"), validation); err != nil {
+	if err := writeDeploymentLKEArtifactJSON(paths, filepath.Join(dir, "validation.json"), validation); err != nil {
 		return err
 	}
-	if vm.Name == "turn01" {
-		legacyDir := filepath.Join(paths.EnvRoot, "artifacts", "coturn-vm")
-		if err := writeJSON(filepath.Join(legacyDir, "coturn-vm.json"), map[string]any{
-			"schema":    "rtk-cloud-workspace.coturn-vm/v1",
-			"generated": time.Now().UTC().Format(time.RFC3339),
-			"coturn_vm": vm,
-			"name":      vm.Name,
-			"public_ip": vm.PublicIP,
-			"domain":    vm.Domain,
-			"role":      vm.Role,
-		}); err != nil {
-			return err
-		}
-		if err := os.WriteFile(filepath.Join(legacyDir, "turnserver.conf.redacted"), []byte(config), 0o644); err != nil {
-			return err
-		}
-		if err := os.WriteFile(filepath.Join(legacyDir, "install.sh"), []byte(install), 0o700); err != nil {
-			return err
-		}
-		if err := writeJSON(filepath.Join(legacyDir, "validation.json"), validation); err != nil {
-			return err
-		}
-	}
+
 	return nil
 }
 
 func writeLKECoturnVMsSummary(paths provisionPaths, vms []lkeCoturnVM) error {
-	dir := filepath.Join(paths.EnvRoot, "artifacts", "coturn-vm")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	return writeJSON(filepath.Join(dir, "coturn-vms.json"), map[string]any{
+	return writeDeploymentLKEArtifactJSON(paths, "coturn-vm/coturn-vms.json", map[string]any{
 		"schema":     "rtk-cloud-workspace.coturn-vms/v1",
 		"generated":  time.Now().UTC().Format(time.RFC3339),
 		"coturn_vms": vms,
@@ -433,7 +417,7 @@ func writeLKECoturnVMsSummary(paths provisionPaths, vms []lkeCoturnVM) error {
 	})
 }
 
-func lkeInstallExternalCoturnVM(paths provisionPaths, opts provisionOptions, vm lkeCoturnVM, install string) error {
+func lkeInstallExternalCoturnVM(paths provisionPaths, env map[string]string, opts provisionOptions, vm lkeCoturnVM, install string) error {
 	sshKey := opts.sshKey
 	if sshKey == "" {
 		sshKey = defaultStagingSSHKey()
@@ -452,6 +436,33 @@ func lkeInstallExternalCoturnVM(paths provisionPaths, opts provisionOptions, vm 
 	if lastErr != nil {
 		return fmt.Errorf("coturn VM SSH did not become ready: %w", lastErr)
 	}
+	// Deployment owns bootstrap/import. Preflight never requires this future
+	// controller-local password and never generates or replaces it.
+	store, err := newSecretStore("", env["CLOUD_ENV_NAME"])
+	if err != nil {
+		return err
+	}
+	probe := exec.Command("ssh", loggerSSHArgs(paths, sshKey, vm.PublicIP, "bash", "-s")...)
+	probe.Stdin = strings.NewReader(`set -eu
+value=''
+if [ -e /etc/turnserver.conf ]; then
+  value=$(sed -n 's/^cli-password=//p' /etc/turnserver.conf)
+fi
+if [ -e /etc/video-cloud-coturn-cli.env ]; then
+  saved=$(sed -n 's/^COTURN_CLI_PASSWORD=//p' /etc/video-cloud-coturn-cli.env)
+  [ -z "$saved" ] || [ -z "$value" ] || [ "$value" = "$saved" ] || exit 1
+  value=${value:-$saved}
+fi
+printf '%s' "$value"
+`)
+	original, err := probe.Output()
+	if err != nil {
+		return errors.New("cannot verify the original Coturn CLI credential; no replacement was generated")
+	}
+	cliPassword, err := retainCoturnCLIPassword(store, vm.Name, string(original), vm.bootstrap)
+	if err != nil {
+		return err
+	}
 	binary, err := buildLKECoturnRegistrarBinary(paths)
 	if err != nil {
 		return err
@@ -459,13 +470,13 @@ func lkeInstallExternalCoturnVM(paths provisionPaths, opts provisionOptions, vm 
 	if err := copyLKECoturnRegistrarBinary(paths, sshKey, vm.PublicIP, binary); err != nil {
 		return err
 	}
-	turnValue, registryValue, err := lkeCurrentCoturnRuntimeSecrets(paths, map[string]string{"CLOUD_STACK_NAME": strings.TrimSuffix(vm.Label, "-"+vm.Name)})
+	turnValue, registryValue, err := lkeCurrentCoturnRuntimeSecrets(paths, env)
 	if err != nil {
 		return err
 	}
-	turnSecret := shellQuote(turnValue)
-	registrySecret := shellQuote(registryValue)
-	return runCmdWithInput("", install, "ssh", loggerSSHArgs(paths, sshKey, vm.PublicIP, "env", "VIDEO_CLOUD_COTURN_SHARED_SECRET="+turnSecret, "VIDEO_CLOUD_TURN_REGISTRY_NODE_AUTH_KEY="+registrySecret, "bash", "-s")...)
+	// Transfer credentials over stdin, never process arguments or artifacts.
+	input := "export VIDEO_CLOUD_COTURN_SHARED_SECRET=" + shellQuote(turnValue) + "\nexport VIDEO_CLOUD_TURN_REGISTRY_NODE_AUTH_KEY=" + shellQuote(registryValue) + "\nexport COTURN_CLI_PASSWORD=" + shellQuote(cliPassword) + "\n" + install
+	return runCmdWithInput("", input, "ssh", loggerSSHArgs(paths, sshKey, vm.PublicIP, "bash", "-s")...)
 }
 
 func lkeCurrentCoturnRuntimeSecrets(paths provisionPaths, env map[string]string) (string, string, error) {
@@ -535,11 +546,13 @@ func lkeCurrentK8SSecretValue(namespace, secretName, key string) (string, error)
 
 func buildLKECoturnRegistrarBinary(paths provisionPaths) (string, error) {
 	repo := filepath.Join(paths.Workspace, "repos", "rtk_video_cloud")
-	outDir := filepath.Join(paths.EnvRoot, "artifacts", "coturn-vm")
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
+	out, err := deploymentLKEArtifactPath(paths, "coturn-vm/turnregistrar")
+	if err != nil {
 		return "", err
 	}
-	out := filepath.Join(outDir, "turnregistrar")
+	if err := ensurePrivateDirectory(filepath.Dir(out)); err != nil {
+		return "", err
+	}
 	goBin := firstNonEmpty(os.Getenv("RTK_CLOUD_GO"), "go")
 	cmd := exec.Command(goBin, "build", "-trimpath", "-o", out, "./cmd/turnregistrar")
 	cmd.Dir = repo
@@ -548,6 +561,10 @@ func buildLKECoturnRegistrarBinary(paths provisionPaths) (string, error) {
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("build turnregistrar: %w", err)
+	}
+	// This Linux binary is transferred to the VM, never executed on the operator host.
+	if err := os.Chmod(out, 0600); err != nil {
+		return "", err
 	}
 	return out, nil
 }

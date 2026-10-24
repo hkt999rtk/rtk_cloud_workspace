@@ -30,6 +30,12 @@ When a configured media target has been prepared but the live workloads still us
 
 Credentials are individual `0600` files below `~/.config/rtk_cloud/<environment>/operator/env/`. Media uses `LINODE_MEDIA_OBJ_ACCESS_KEY_ID` / `LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY`; OTA uses `LINODE_OTA_OBJ_ACCESS_KEY_ID` / `LINODE_OTA_OBJ_SECRET_ACCESS_KEY`. Each key is limited to its bucket. The OTA pod receives the OTA key through the `ota-object-storage` Kubernetes Secret; API and clip workers keep the media key. Shared release uses `LINODE_ARTIFACT_OBJ_*`. Never commit secrets.
 
+The independent VideoStorage role receives the selected media pair through
+`video-storage-object-storage`. Its database, tokens and clip key retain their
+original shared Secret references. Creating that dedicated mirror does not
+rotate the original Core/clip `video-cloud-runtime` data or switch an existing
+consumer; an existing reference change still requires its explicit lifecycle.
+
 ## Operator lifecycle
 
 ### Environment-owned receipts and proof location
@@ -54,8 +60,13 @@ encrypted environment backup. `cloud_env/<environment>/runtime/state/` is no
 longer the authority for these files. Normal reads never search old worktrees.
 
 Preflight and deployment use the same storage activation verifier. Missing,
-wrong-environment or mismatched receipt/proof/journal is NO-GO. Preflight is
-read-only: it neither performs a cutover nor produces a completion receipt.
+wrong-environment or mismatched receipt/proof/journal is NO-GO. When `RUNTIME_MEDIA_STORAGE_CUTOVER_REQUIRED=false`, preflight checks the
+configured media bucket and creates that exact name/region if it is absent, then
+verifies fresh inventory. Inventory/authentication errors never imply absence;
+creation or readback failure is NO-GO. This is the only permitted provisioning
+exception: preflight does not migrate objects, replace credentials, perform a
+cutover or produce a cutover completion receipt. Other provider probes remain
+read-only.
 Explicit storage qualification can produce a preparation receipt, which alone
 does not prove cutover. Full deployment binds the current storage evidence into
 its plan input digest and repeats checks before execution stages.

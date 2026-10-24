@@ -21,14 +21,13 @@ func newOTABoundaryTestFixture(t *testing.T) *otaBoundaryTestFixture {
 	t.Helper()
 	root := installStorageCutoverMock(t)
 	t.Setenv("STORAGE_KUBECTL_FALLBACK", "")
-	for _, key := range []string{"LKE_OTA_CORE_CUTOVER_ENABLED", "LKE_OTA_SERVICE_EDGE_ENABLED", "LKE_OTA_SERVICE_REGISTRATION_ENABLED", "LKE_OTA_REGISTRAR_REGISTRATION_ENABLED", "LKE_NAMESPACE_INGRESS", "LKE_DEVICE_DOMAIN"} {
+	for _, key := range []string{"LKE_OTA_CORE_CUTOVER_ENABLED", "LKE_OTA_SERVICE_EDGE_ENABLED", "LKE_OTA_SERVICE_REGISTRATION_ENABLED", "LKE_NAMESPACE_INGRESS", "LKE_DEVICE_DOMAIN"} {
 		t.Setenv(key, "")
 	}
 	items, env := otaDeliveryTestFixture(false)
 	env["LKE_OTA_CORE_CUTOVER_ENABLED"] = "true"
 	env["LKE_OTA_SERVICE_EDGE_ENABLED"] = "true"
 	env["LKE_OTA_SERVICE_REGISTRATION_ENABLED"] = "true"
-	env["LKE_OTA_REGISTRAR_REGISTRATION_ENABLED"] = "false"
 	env["VIDEO_CLOUD_DOMAIN"] = "video.example.invalid"
 	env["LKE_DEVICE_DOMAIN"] = "device.video.example.invalid"
 	for _, object := range items {
@@ -97,7 +96,6 @@ func TestStorageReinitializationOTABoundaryRequiresSelectedHandoff(t *testing.T)
 		{"core-missing", "LKE_OTA_CORE_CUTOVER_ENABLED", ""},
 		{"edge-disabled", "LKE_OTA_SERVICE_EDGE_ENABLED", "false"},
 		{"registration-disabled", "LKE_OTA_SERVICE_REGISTRATION_ENABLED", "false"},
-		{"legacy-registrar-enabled", "LKE_OTA_REGISTRAR_REGISTRATION_ENABLED", "true"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newOTABoundaryTestFixture(t)

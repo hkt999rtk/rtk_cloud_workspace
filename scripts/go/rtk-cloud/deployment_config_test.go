@@ -635,16 +635,16 @@ func TestDeploymentPreflightAcceptancePassesWithMatchingRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	for path, contents := range map[string]string{
-		"state/provider-preflight.env": "LKE_CLUSTER_ID=123\n",
-		"env/stack.env":                "CLOUD_STACK_NAME=" + cfg.Values["CLOUD_STACK_NAME"] + "\n",
+		"env/stack.env": "CLOUD_STACK_NAME=" + cfg.Values["CLOUD_STACK_NAME"] + "\n",
 	} {
 		writeTestFile(t, filepath.Join(cfg.RuntimeRoot, path), contents)
 	}
 	for path, contents := range map[string]string{
-		"kube/kubeconfig.yaml": "apiVersion: v1\n",
-		"openbao/unseal-key":   "test-unseal-key\n",
-		"openbao/root-token":   "test-root-token\n",
-		"runtime/postgres":     "test-postgres-password\n",
+		"deployment/provider-preflight.env": "PROVIDER_REGION=us-sea\n",
+		"kube/kubeconfig.yaml":              "apiVersion: v1\n",
+		"openbao/unseal-key":                "test-unseal-key\n",
+		"openbao/root-token":                "test-root-token\n",
+		"runtime/postgres":                  "test-postgres-password\n",
 	} {
 		if err := store.write(path, []byte(contents), true); err != nil {
 			t.Fatal(err)
@@ -678,7 +678,7 @@ func TestDeploymentPreflightEphemeralRejectsExistingStack(t *testing.T) {
 	t.Setenv("GHCR_PULL_TOKEN", "redacted-ghcr")
 	writeTestFile(t, filepath.Join(home, ".ssh", "id_ed25519_rtkcloud"), "private-placeholder")
 	writeTestFile(t, filepath.Join(home, ".ssh", "id_ed25519_rtkcloud.pub"), "public-placeholder")
-	writeTestFile(t, filepath.Join(cfg.RuntimeRoot, "adapters", "lke", "account.env"), "LKE_ACTIVE_SERVICE_LIMIT=20\n")
+	writeTestLKEAccount(t, cfg.Environment, "LKE_ACTIVE_SERVICE_LIMIT=20\n")
 
 	var out bytes.Buffer
 	checks := defaultDeploymentPreflightChecks()
@@ -1046,7 +1046,7 @@ func TestResolveDeploymentConfigRejectsProviderKeyInEnvironment(t *testing.T) {
 	}
 }
 
-func TestResolveCheckedInDeploymentConfigsAndStagingOTAIntent(t *testing.T) {
+func TestResolveCheckedInDeploymentConfigsAndSharedServiceIntent(t *testing.T) {
 	workspace, err := workspaceRoot()
 	if err != nil {
 		t.Fatal(err)
@@ -1057,9 +1057,6 @@ func TestResolveCheckedInDeploymentConfigsAndStagingOTAIntent(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if environment != "staging" {
-				return
-			}
 			cfg.RuntimeRoot = t.TempDir()
 			if err := materializeDeploymentRuntime(cfg); err != nil {
 				t.Fatal(err)
@@ -1069,16 +1066,23 @@ func TestResolveCheckedInDeploymentConfigsAndStagingOTAIntent(t *testing.T) {
 				t.Fatal(err)
 			}
 			for key, want := range map[string]string{
-				"LKE_OTA_SERVICE_REGISTRATION_ENABLED":   "true",
-				"LKE_OTA_CORE_CUTOVER_ENABLED":           "true",
-				"LKE_OTA_SERVICE_EDGE_ENABLED":           "true",
-				"LKE_OTA_REGISTRAR_REGISTRATION_ENABLED": "false",
+				"LKE_OTA_SERVICE_REGISTRATION_ENABLED":           "true",
+				"LKE_OTA_CORE_CUTOVER_ENABLED":                   "true",
+				"LKE_OTA_SERVICE_EDGE_ENABLED":                   "true",
+				"LKE_VIDEO_STORAGE_SERVICE_REGISTRATION_ENABLED": "true",
+				"LKE_VIDEO_STORAGE_CORE_CUTOVER_ENABLED":         "false",
+				"LKE_WEBRTC_SERVICE_REGISTRATION_ENABLED":        "true",
+				"LKE_WEBRTC_SERVICE_EDGE_ENABLED":                "false",
+				"LKE_WEBRTC_CORE_CUTOVER_ENABLED":                "false",
 			} {
 				if _, found := cfg.Values[key]; found {
 					t.Fatalf("provider switch %s escaped its adapter layer", key)
 				}
-				if cfg.AdapterValues[key] != want || adapter[key] != want {
-					t.Fatalf("%s: selected=%q materialized=%q want=%q", key, cfg.AdapterValues[key], adapter[key], want)
+				if _, found := cfg.AdapterValues[key]; found {
+					t.Fatalf("shared alias %s retained a duplicate adapter source", key)
+				}
+				if deploymentLegacyLKEValues(cfg.Values, environment)[key] != want || adapter[key] != want {
+					t.Fatalf("%s: projected=%q materialized=%q want=%q", key, deploymentLegacyLKEValues(cfg.Values, environment)[key], adapter[key], want)
 				}
 			}
 		})
@@ -1128,6 +1132,7 @@ func TestResolveDeploymentConfigAllowsTrackedNonSecretServiceSettings(t *testing
 }
 
 func TestMaterializeStagingE2EDeploymentConfigRequiresStorageReceiptBeforeReset(t *testing.T) {
+	makeIsolatedTestSecretStore(t, "staging")
 	workspace := writeDeploymentFixture(t, "staging", "lke")
 	appendFile(t, filepath.Join(workspace, "cloud_deploy", "architectures", "kubernetes", "workloads.env"), "VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED=true\n")
 	envRoot := filepath.Join(workspace, "cloud_env", "staging", "runtime")
@@ -1184,11 +1189,11 @@ func TestSelectLKENodeTypeDeterministicAndValidatesPins(t *testing.T) {
 func TestResolveDeploymentConfigRejectsUnimplementedMutation(t *testing.T) {
 	for _, adapter := range []string{"eks", "gke"} {
 		workspace := writeDeploymentFixture(t, "prod", adapter)
-		if err := runDeployment([]string{"plan", "--workspace", workspace, "--environment", "prod"}); err != nil {
-			t.Fatalf("%s plan failed: %v", adapter, err)
+		if err := runDeployment([]string{"plan", "--workspace", workspace, "--environment", "prod"}); err != exitCode(1) {
+			t.Fatalf("%s incomplete adapter must not produce an executable complete plan: %v", adapter, err)
 		}
 		err := runDeployment([]string{"provision", "--workspace", workspace, "--environment", "prod", "--confirm", "video-cloud-prod"})
-		if err == nil || !strings.Contains(err.Error(), "not implemented") {
+		if err == nil || !strings.Contains(err.Error(), "retired") {
 			t.Fatalf("%s mutation got %v", adapter, err)
 		}
 	}
@@ -1314,19 +1319,23 @@ func TestLKEAccountStateRequiredOnlyForMutation(t *testing.T) {
 	if err := validateLKEEnvironmentStateBeforeMutation(cfg); err == nil || !strings.Contains(err.Error(), "provider account state is required") {
 		t.Fatalf("missing account state got %v", err)
 	}
-	writeTestFile(t, filepath.Join(cfg.RuntimeRoot, "adapters", "lke", "account.env"), "LKE_ACTIVE_SERVICE_LIMIT=20\n")
+	writeTestLKEAccount(t, cfg.Environment, "LKE_ACTIVE_SERVICE_LIMIT=20\n")
 	if err := materializeDeploymentRuntime(cfg); err != nil {
 		t.Fatal(err)
 	}
-	preflight := readTestFile(t, filepath.Join(cfg.RuntimeRoot, "state", "provider-preflight.env"))
+	profilePath, err := deploymentProviderProfilePath(cfg.Environment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preflight := readTestFile(t, profilePath)
 	for _, want := range []string{"PROVIDER_ACTIVE_SERVICE_LIMIT=20", "PROVIDER_REGION=us-sea"} {
 		if !strings.Contains(preflight, want+"\n") {
 			t.Fatalf("provider preflight missing %s: %q", want, preflight)
 		}
 	}
 	adapterConfig := readTestFile(t, filepath.Join(cfg.RuntimeRoot, "adapters", "lke", "config.env"))
-	if !strings.Contains(adapterConfig, "LKE_LINODE_ACTIVE_SERVICE_LIMIT=20") {
-		t.Fatalf("adapter config missing quota compatibility key:\n%s", adapterConfig)
+	if strings.Contains(adapterConfig, "LKE_LINODE_ACTIVE_SERVICE_LIMIT=") {
+		t.Fatalf("adapter config leaked mutable operator quota:\n%s", adapterConfig)
 	}
 }
 
@@ -1412,7 +1421,7 @@ func writeDeploymentFixture(t *testing.T, environment, adapter string) string {
 	}
 	workloads.WriteString("MQTT_HARD_ANTI_AFFINITY=true\nPOSTGRES_LIMIT_MEMORY=4Gi\nCLOUD_LOGGER_LIMIT_MEMORY=2Gi\nVIDEO_CLOUD_OTA_TRUSTED_MANIFEST_KEYS_JSON={}\nCERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM=ed25519\nCERTIFICATE_APP_CSR_KEY_ALGORITHMS=ed25519,p256\nCERTIFICATE_DEVICE_CSR_KEY_ALGORITHMS=ed25519,p256\nEDGE_REPLICAS=1\nEDGE_MAX_CONNECTIONS=400000\nTURN_REPLICAS=1\nTURN_MIN_PORT=49152\nTURN_MAX_PORT=49200\n")
 	files := map[string]string{
-		"cloud_deploy/architectures/kubernetes/architecture.env":   "DEPLOYMENT_RUNTIME=kubernetes\nNODE_CLASS_LABEL_KEY=rtk.io/node-class\nDEFAULT_WORKLOAD_NODE_CLASS=general\n",
+		"cloud_deploy/architectures/kubernetes/architecture.env":   "DEPLOYMENT_RUNTIME=kubernetes\nDEPLOYMENT_PREFLIGHT_VALIDITY_SECONDS=3600\nDEPLOYMENT_UPGRADE_WINDOW_SECONDS=3600\nDEPLOYMENT_ROLLOUT_TIMEOUT_SECONDS=300\nDEPLOYMENT_POSTGRES_BACKUP_ENABLED=false\nNODE_CLASS_LABEL_KEY=rtk.io/node-class\nDEFAULT_WORKLOAD_NODE_CLASS=general\nMQTT_FOUNDATION_REGISTRATION_ENABLED=false\nACCOUNT_MANAGER_SERVICE_REGISTRATION_ENABLED=false\nACCOUNT_MANAGER_SERVICE_REGISTRATION_PORT=9444\nOTA_SERVICE_REGISTRATION_ENABLED=false\nOTA_CORE_CUTOVER_ENABLED=false\nOTA_SERVICE_EDGE_ENABLED=false\nSHADOW_WORKER_REGISTRATION_ENABLED=false\nSHADOW_HTTP_CORE_CUTOVER_ENABLED=false\nVIDEO_STORAGE_SERVICE_REGISTRATION_ENABLED=false\nVIDEO_STORAGE_CORE_CUTOVER_ENABLED=false\nWEBRTC_SERVICE_REGISTRATION_ENABLED=false\nWEBRTC_SERVICE_EDGE_ENABLED=false\nWEBRTC_CORE_CUTOVER_ENABLED=false\n",
 		"cloud_deploy/architectures/kubernetes/capacity.env":       "CAPACITY_TARGET_CONNECTIONS=1000\nCAPACITY_CONNECTIONS_PER_MQTT_POD=20000\nCAPACITY_ACTIVE_DEVICES=1000\nCAPACITY_ACTIVE_DEVICES_PER_API_POD=40000\nCAPACITY_SYSTEM_RESERVED_CPU_MILLI=1000\nCAPACITY_SYSTEM_RESERVED_MEMORY_MIB=1536\n",
 		"cloud_deploy/architectures/kubernetes/topology.env":       "NODE_CLASS_GENERAL_MIN_COUNT=2\nNODE_CLASS_GENERAL_MIN_VCPU=4\nNODE_CLASS_GENERAL_MIN_MEMORY_GIB=8\nNODE_CLASS_BROKER_MIN_COUNT=2\nNODE_CLASS_BROKER_MIN_VCPU=4\nNODE_CLASS_BROKER_MIN_MEMORY_GIB=8\nNODE_CLASS_DATABASE_MIN_COUNT=1\nNODE_CLASS_DATABASE_MIN_VCPU=8\nNODE_CLASS_DATABASE_MIN_MEMORY_GIB=16\n",
 		"cloud_deploy/architectures/kubernetes/workloads.env":      workloads.String(),
@@ -1425,6 +1434,15 @@ func writeDeploymentFixture(t *testing.T, environment, adapter string) string {
 		"cloud_deploy/dns_adapters/godaddy/schema.env":             "DNS_ADAPTER_NAME=godaddy\n",
 		filepath.Join("cloud_env", environment, "environment.env"): "CLOUD_STACK_NAME=video-cloud-" + environment + "\nCLOUD_DNS_ROOT_DOMAIN=example.test\nDEPLOYMENT_LOCATION=us-west\n",
 		filepath.Join("cloud_env", environment, "deployment.env"):  "DEPLOYMENT_ARCHITECTURE=kubernetes\nDEPLOYMENT_ADAPTER=" + adapter + "\nDNS_ADAPTER=godaddy\n",
+	}
+	for _, role := range environmentAuthRoles {
+		for _, key := range role {
+			value := "true"
+			if key == "DEVICE_API_AUTH_APP_PKI_ENABLED" || key == "APP_API_AUTH_PRODUCT_PKI_ENABLED" {
+				value = "false"
+			}
+			files["cloud_deploy/architectures/kubernetes/architecture.env"] += key + "=" + value + "\n"
+		}
 	}
 	for path, body := range files {
 		writeTestFile(t, filepath.Join(root, path), body)
@@ -1441,5 +1459,151 @@ func appendFile(t *testing.T, path, body string) {
 	defer f.Close()
 	if _, err = f.WriteString(body); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSharedWorkloadImagesUseArchitectureForEveryEnvironment(t *testing.T) {
+	root := mustWorkspaceRoot(t)
+	baseline, err := readStrictEnv(filepath.Join(root, "cloud_deploy", "architectures", "kubernetes", "architecture.env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keys []string
+	for _, role := range environmentProviderImageKeys {
+		keys = append(keys, environmentProviderImageConfigKey(role))
+	}
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		t.Run(environment, func(t *testing.T) {
+			actualOverrides, err := readOptionalStrictEnv(filepath.Join(root, "cloud_env", environment, "overrides", "architecture.env"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			workspace := writeDeploymentFixture(t, environment, "lke")
+			path := filepath.Join(workspace, "cloud_deploy", "architectures", "kubernetes", "architecture.env")
+			body := readTestFile(t, path)
+			for _, key := range keys {
+				if !immutableEnvironmentImage.MatchString(baseline[key]) || actualOverrides[key] != "" {
+					t.Fatalf("%s must use the shared immutable %s", environment, key)
+				}
+				body += key + "=" + baseline[key] + "\n"
+			}
+			writeTestFile(t, path, body)
+			cfg, err := resolveDeploymentConfig(workspace, environment, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, key := range keys {
+				if cfg.Values[key] != baseline[key] || cfg.AdapterResolved[key] != "" {
+					t.Fatalf("%s did not resolve from shared architecture", key)
+				}
+			}
+			compat := deploymentLegacyLKEValues(appendMap(cfg.Values, cfg.AdapterResolved), environment)
+			for _, role := range environmentProviderImageKeys {
+				if compat[role] != baseline[environmentProviderImageConfigKey(role)] {
+					t.Fatalf("%s renderer image differs from the maintained common setting", role)
+				}
+			}
+			writeTestFile(t, path, body+"LKE_POSTGRES_IMAGE=postgres:16-alpine\n")
+			if _, err := resolveDeploymentConfig(workspace, environment, ""); err == nil || !strings.Contains(err.Error(), "provider key LKE_POSTGRES_IMAGE is not allowed in architecture") {
+				t.Fatalf("provider boundary was weakened: %v", err)
+			}
+		})
+	}
+}
+
+func TestSharedPKIConsumerDefaultsResolveAndRenderAcrossEnvironments(t *testing.T) {
+	root := mustWorkspaceRoot(t)
+	baseline, err := readStrictEnv(filepath.Join(root, "cloud_deploy", "architectures", "kubernetes", "architecture.env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		t.Run(environment, func(t *testing.T) {
+			overrides, err := readOptionalStrictEnv(filepath.Join(root, "cloud_env", environment, "overrides", "architecture.env"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			workspace := writeDeploymentFixture(t, environment, "lke")
+			path := filepath.Join(workspace, "cloud_deploy", "architectures", "kubernetes", "architecture.env")
+			body := readTestFile(t, path)
+			var keys []string
+			for _, domain := range managedPKIDomains {
+				for _, prefix := range []string{"PKI_REQUIRED_CONSUMERS_", "PKI_REQUIRED_BUNDLE_CONSUMERS_"} {
+					key := prefix + strings.ToUpper(domain)
+					if baseline[key] == "" || overrides[key] != "" {
+						t.Fatalf("%s must consume the shared nonempty %s", environment, key)
+					}
+					keys = append(keys, key)
+					body += key + "=" + baseline[key] + "\n"
+				}
+			}
+			writeTestFile(t, path, body)
+			cfg, err := resolveDeploymentConfig(workspace, environment, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			env, _, _ := completeEnvironmentRenderFixture(environment)
+			for _, key := range keys {
+				if cfg.Values[key] != baseline[key] {
+					t.Fatalf("%s did not resolve from the common architecture", key)
+				}
+				env[key] = cfg.Values[key]
+			}
+			env["PKI_REQUIRE_USER_MFA"] = "true"
+			controller := map[string]any{"kind": "Deployment", "metadata": map[string]any{"name": "pki-controller", "namespace": "video-cloud-" + environment + "-video-cloud"}, "spec": map[string]any{"template": map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"name": "pki-controller"}}}}}}
+			if err := applyEnvironmentControllerPolicy(env, controller); err != nil {
+				t.Fatal("shared consumer defaults cannot render controller policy", err)
+			}
+		})
+	}
+}
+
+func TestObservedOpenBaoBaselineResolvesFromSharedArchitecture(t *testing.T) {
+	root := mustWorkspaceRoot(t)
+	common, err := readStrictEnv(filepath.Join(root, "cloud_deploy", "architectures", "kubernetes", "architecture.env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := []string{"OPENBAO_STORAGE_BACKEND", "OPENBAO_DATA_STORAGE", "OPENBAO_AUDIT_STORAGE", "OPENBAO_POD_MANAGEMENT_POLICY", "OPENBAO_UPDATE_STRATEGY", "OPENBAO_MIN_REPLICAS", "OPENBAO_NODE_CLASS", "OPENBAO_REQUEST_CPU", "OPENBAO_REQUEST_MEMORY"}
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		t.Run(environment, func(t *testing.T) {
+			overrides, err := readOptionalStrictEnv(filepath.Join(root, "cloud_env", environment, "overrides", "architecture.env"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for key := range overrides {
+				if strings.HasPrefix(key, "OPENBAO_") {
+					t.Fatal("environment duplicates the common OpenBao baseline", key)
+				}
+			}
+			workspace := writeDeploymentFixture(t, environment, "lke")
+			workloadsPath := filepath.Join(workspace, "cloud_deploy", "architectures", "kubernetes", "workloads.env")
+			workloads, err := readStrictEnv(workloadsPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, key := range keys {
+				delete(workloads, key)
+			}
+			writeTestFile(t, workloadsPath, sortedEnvContents(workloads))
+			path := filepath.Join(workspace, "cloud_deploy", "architectures", "kubernetes", "architecture.env")
+			body := readTestFile(t, path)
+			for _, key := range keys {
+				if common[key] == "" {
+					t.Fatal("shared observed OpenBao baseline is missing", key)
+				}
+				body += key + "=" + common[key] + "\n"
+			}
+			writeTestFile(t, path, body)
+			cfg, err := resolveDeploymentConfig(workspace, environment, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, key := range keys {
+				if cfg.Values[key] != common[key] {
+					t.Fatal("OpenBao baseline did not resolve from common architecture", key)
+				}
+			}
+		})
 	}
 }

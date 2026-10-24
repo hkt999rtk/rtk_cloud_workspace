@@ -722,6 +722,52 @@ func TestCoverageAggregateRejectsMissingAndMalformedInputs(t *testing.T) {
 	}
 }
 
+func TestGoCoverageCommandExtendsOnlyWorkspaceToolingTimeout(t *testing.T) {
+	workspace := t.TempDir()
+	moduleDir := filepath.Join(workspace, "module")
+	bin := filepath.Join(workspace, "bin")
+	for _, dir := range []string{moduleDir, bin} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Capture the real command builder without running any nested Go tests.
+	stub := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$COVERAGE_COMMAND_ARGS\"\nexit 7\n"
+	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(stub), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	for _, tc := range []struct{ name, timeout string }{
+		{"workspace-tooling", "180m"},
+		{"video-cloud", "20m"},
+	} {
+		for _, profile := range []string{"unit", "pr"} {
+			t.Run(tc.name+"/"+profile, func(t *testing.T) {
+				outDir := t.TempDir()
+				argsPath := filepath.Join(outDir, "command-args")
+				t.Setenv("COVERAGE_COMMAND_ARGS", argsPath)
+				module := coverageModule{Name: tc.name, Path: "module", Packages: []string{"./..."}, CoverPackages: []string{"./..."}}
+				err := runGoCoverageModuleProfile(workspace, outDir, filepath.Join(outDir, "coverage.log"), coverageConfig{}, module, "", "HEAD", profile, &coverageCaseResult{})
+				if err == nil || !strings.Contains(err.Error(), "before producing a profile") {
+					t.Fatalf("capture command failure = %v", err)
+				}
+				got := readTestFile(t, argsPath)
+				want := "test\n-json\n-count=1\n-timeout=" + tc.timeout + "\n"
+				if tc.name == "workspace-tooling" {
+					want += "-failfast\n-skip=^(TestHistoricalCoreSourceRetainsTwoOriginalServerRequestIDs|TestHistoricalLateBootstrapCompletesFromOriginalSourceAndPairedCRLs)$\n"
+				}
+				want += "./...\n-coverprofile=" + filepath.Join(outDir, "modules", tc.name, "coverage.out") + "\n"
+				if profile == "pr" {
+					want += "-coverpkg=./...\n"
+				}
+				if got != want {
+					t.Fatalf("Go coverage command = %q, want %q", got, want)
+				}
+			})
+		}
+	}
+}
+
 func TestPRCoverageRequiresEnvironmentBeforeExecutingGo(t *testing.T) {
 	workspace := t.TempDir()
 	moduleDir := filepath.Join(workspace, "module")

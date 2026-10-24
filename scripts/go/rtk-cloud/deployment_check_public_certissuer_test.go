@@ -13,7 +13,7 @@ import (
 func deploymentRequiredIngressFixture(t *testing.T) certIssuerIngressList {
 	t.Helper()
 	var list certIssuerIngressList
-	raw := `{"items":[{"metadata":{"namespace":"video-cloud-staging-video-cloud","annotations":{"nginx.ingress.kubernetes.io/ssl-passthrough":"true"}},"spec":{"ingressClassName":"nginx","rules":[{"host":"issuer.example","http":{"paths":[{"path":"/","pathType":"Prefix","backend":{"service":{"name":"certissuer","port":{"number":9443}}}}]}}]}}]}`
+	raw := `{"items":[{"metadata":{"namespace":"video-cloud-staging-video-cloud","annotations":{"nginx.ingress.kubernetes.io/ssl-passthrough":"true","nginx.ingress.kubernetes.io/backend-protocol":"HTTPS"}},"spec":{"ingressClassName":"nginx","rules":[{"host":"issuer.example","http":{"paths":[{"path":"/","pathType":"Prefix","backend":{"service":{"name":"certissuer","port":{"number":9443}}}}]}}]}}]}`
 	if err := json.Unmarshal([]byte(raw), &list); err != nil {
 		t.Fatal(err)
 	}
@@ -21,10 +21,14 @@ func deploymentRequiredIngressFixture(t *testing.T) certIssuerIngressList {
 }
 
 func TestDeploymentPublicCertIssuerRequiresExactExistingRoute(t *testing.T) {
-	for _, name := range []string{"valid", "missing", "wrong-host", "foreign-owner", "duplicate", "terminating-TLS", "wrong-path", "wrong-port", "wrong-service", "wrong-class", "wrong-path-type"} {
+	for _, name := range []string{"valid", "scoped-class", "foreign-scoped-class", "missing", "wrong-host", "foreign-owner", "duplicate", "terminating-TLS", "wrong-path", "wrong-port", "wrong-service", "wrong-class", "wrong-path-type"} {
 		t.Run(name, func(t *testing.T) {
 			list := deploymentRequiredIngressFixture(t)
 			switch name {
+			case "scoped-class":
+				list.Items[0].Spec.IngressClassName = "video-cloud-staging-nginx"
+			case "foreign-scoped-class":
+				list.Items[0].Spec.IngressClassName = "video-cloud-dev-nginx"
 			case "missing":
 				list.Items = nil
 			case "wrong-host":
@@ -47,7 +51,7 @@ func TestDeploymentPublicCertIssuerRequiresExactExistingRoute(t *testing.T) {
 				list.Items[0].Spec.Rules[0].HTTP.Paths[0].PathType = "Exact"
 			}
 			err := validateRequiredCertIssuerPublicIngress("video-cloud-staging", "issuer.example", 9443, list)
-			if (err == nil) != (name == "valid") {
+			if (err == nil) != (name == "valid" || name == "scoped-class") {
 				t.Fatalf("%s: %v", name, err)
 			}
 		})
@@ -70,7 +74,7 @@ func TestDeploymentPublicCertIssuerProbeRejectsPartialSuccessAndRedacts(t *testi
 				ctx, cancel = context.WithTimeout(ctx, 50*time.Millisecond)
 				defer cancel()
 			}
-			err := runDeploymentCertIssuerPublicProbe(ctx, root, "staging", "selected-kube", "issuer.example")
+			err := runDeploymentCertIssuerPublicProbe(ctx, root, "staging", filepath.Join(root, "config"), "selected-kube", "issuer.example")
 			if tc.want == "" {
 				if err != nil {
 					t.Fatal(err)
@@ -105,7 +109,11 @@ func TestDeploymentPublicCertIssuerConfigurationAndInventoryFailClosed(t *testin
 				list := deploymentRequiredIngressFixture(t)
 				list.Items[0].Spec.Rules[0].Host = "certissuer.video-cloud-staging.example.test"
 				raw, _ := json.Marshal(list)
-				body = "printf '%s' '" + string(raw) + "'"
+				body = `case " $* " in
+ *" get deployments "*) printf '%s' '{"items":[{"apiVersion":"apps/v1","kind":"Deployment","metadata":{"name":"certissuer","namespace":"video-cloud-staging-video-cloud"},"spec":{"template":{"spec":{"containers":[{"name":"certissuer","env":[{"name":"CERT_ISSUER_LISTEN_ADDR","value":":9443"}],"ports":[{"containerPort":9443,"name":"https"}]}]}}}}]}';;
+ *" get service "*) printf '%s' '{"apiVersion":"v1","kind":"Service","metadata":{"name":"certissuer","namespace":"video-cloud-staging-video-cloud"},"spec":{"ports":[{"port":9443,"targetPort":"https","protocol":"TCP"}]}}';;
+ *) printf '%s' '` + string(raw) + `' ;;
+ esac`
 				_ = os.MkdirAll(filepath.Join(cfg.Workspace, "scripts"), 0700)
 				_ = os.WriteFile(filepath.Join(cfg.Workspace, "scripts", "check-certissuer-app-mtls.sh"), []byte("printf '%s\\n' 'PASS: public CertIssuer mTLS validation and anonymous TLS denial verified'"), 0700)
 			}

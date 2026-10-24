@@ -41,7 +41,7 @@ func (c deploymentCredentialChecker) checkStorageReadOnly(store provisionObjectS
 
 var rolloutImagePattern = regexp.MustCompile(`^ghcr\.io/([a-z0-9_.-]+(?:/[a-z0-9_.-]+)+)@sha256:[a-f0-9]{64}$`)
 
-func (c deploymentCredentialChecker) checkRolloutImage(values map[string]string, image string) deploymentCredentialCheck {
+func (c deploymentCredentialChecker) checkRolloutImage(environment string, values map[string]string, image string) deploymentCredentialCheck {
 	check := deploymentCredentialCheck{Name: "GHCR release image"}
 	match := rolloutImagePattern.FindStringSubmatch(image)
 	if match == nil {
@@ -49,6 +49,10 @@ func (c deploymentCredentialChecker) checkRolloutImage(values map[string]string,
 		return check
 	}
 	check.Name += " " + image
+	if !secretEnvironmentPattern.MatchString(environment) {
+		check.Detail = "explicit environment is required for private image qualification"
+		return check
+	}
 	username, token := values["GHCR_PULL_USERNAME"], values["GHCR_PULL_TOKEN"]
 	if username == "" || token == "" {
 		check.Detail = "GHCR_PULL_USERNAME and GHCR_PULL_TOKEN are required"
@@ -85,7 +89,7 @@ func (c deploymentCredentialChecker) checkRolloutImage(values map[string]string,
 			return check
 		}
 	}
-	if err := pullRolloutImageContext(c.checkContext(), username, token, image); err != nil {
+	if err := pullRolloutImageContext(c.checkContext(), environment, username, token, image); err != nil {
 		check.Detail = err.Error()
 		var pullErr *deploymentImagePullError
 		if errors.As(err, &pullErr) {
@@ -102,12 +106,23 @@ type deploymentImagePullError struct{ code, detail string }
 
 func (e *deploymentImagePullError) Error() string { return e.detail }
 
-func pullRolloutImage(username, token, image string) error {
-	return pullRolloutImageContext(context.Background(), username, token, image)
-}
-
-func pullRolloutImageContext(parent context.Context, username, token, image string) error {
-	dir, err := os.MkdirTemp("", "rtk-rollout-pull-")
+func pullRolloutImageContext(parent context.Context, environment, username, token, image string) error {
+	// Credentials belong to the explicitly selected environment even during a
+	// read-only pull check. Do not use the system temp directory or CWD.
+	path, err := privateDeploymentStatePath(environment, "deployment/tmp/.image-pull-path-check")
+	if err != nil {
+		return errors.New("selected private environment directory unavailable for image qualification")
+	}
+	store, err := newSecretStore("", environment)
+	if err != nil {
+		return errors.New("explicit environment is required for private image qualification")
+	}
+	for _, directory := range []string{store.ConfigRoot, store.Root, filepath.Join(store.Root, "deployment"), filepath.Dir(path)} {
+		if err := ensurePrivateDirectory(directory); err != nil {
+			return errors.New("cannot prepare selected environment's private image qualification directory")
+		}
+	}
+	dir, err := os.MkdirTemp(filepath.Dir(path), "image-pull-")
 	if err != nil {
 		return errors.New("cannot create private Docker credential directory")
 	}
@@ -204,13 +219,17 @@ func checkRolloutTLS(options rolloutTLSOptions) deploymentCredentialCheck {
 }
 
 type rolloutSecurityContext struct {
-	RunAsUser *int64 `json:"runAsUser"`
-	FSGroup   *int64 `json:"fsGroup"`
+	RunAsUser          *int64  `json:"runAsUser"`
+	RunAsGroup         *int64  `json:"runAsGroup"`
+	RunAsNonRoot       *bool   `json:"runAsNonRoot"`
+	SupplementalGroups []int64 `json:"supplementalGroups"`
+	FSGroup            *int64  `json:"fsGroup"`
 }
 type rolloutContainer struct {
 	SecurityContext rolloutSecurityContext `json:"securityContext"`
 	VolumeMounts    []struct {
-		Name string `json:"name"`
+		Name     string `json:"name"`
+		ReadOnly bool   `json:"readOnly"`
 	} `json:"volumeMounts"`
 }
 type rolloutPod struct {
@@ -227,6 +246,20 @@ type rolloutPod struct {
 			} `json:"items"`
 		} `json:"secret"`
 	} `json:"volumes"`
+}
+
+func rolloutOriginalRootGroupTLSReader(pod, container rolloutSecurityContext) bool {
+	uid, gid, nonRoot := container.RunAsUser, container.RunAsGroup, container.RunAsNonRoot
+	if uid == nil {
+		uid = pod.RunAsUser
+	}
+	if gid == nil {
+		gid = pod.RunAsGroup
+	}
+	if nonRoot == nil {
+		nonRoot = pod.RunAsNonRoot
+	}
+	return uid != nil && *uid == 10001 && gid != nil && *gid == 10001 && nonRoot != nil && *nonRoot && pod.FSGroup == nil && len(pod.SupplementalGroups) == 1 && pod.SupplementalGroups[0] == 0
 }
 
 func includeStatefulSetClaimVolumes(value any) {
@@ -365,10 +398,10 @@ func checkRolloutMountsJSON(raw []byte, name string, requireDirectSecret bool) d
 								if m < 0 || m > 0o777 {
 									return errors.New("invalid Secret file mode")
 								}
-								if m&0o004 != 0 || (uid != nil && *uid == 0 && m&0o400 != 0) || (pod.SecurityContext.FSGroup != nil && *pod.SecurityContext.FSGroup >= 0 && m&0o040 != 0) {
+								if m&0o004 != 0 || (uid != nil && *uid == 0 && m&0o400 != 0) || (pod.SecurityContext.FSGroup != nil && *pod.SecurityContext.FSGroup >= 0 && m&0o040 != 0) || (m == 0o440 && mount.ReadOnly && rolloutOriginalRootGroupTLSReader(pod.SecurityContext, container.SecurityContext)) {
 									continue
 								}
-								return errors.New("restricted Secret mount lacks provable read access; declare matching Pod fsGroup and group-read mode")
+								return errors.New("restricted Secret mount lacks provable read access; declare matching Pod fsGroup or the reviewed non-root supplementary-root-group TLS profile and group-read mode")
 							}
 						}
 					}

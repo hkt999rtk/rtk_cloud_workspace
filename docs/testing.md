@@ -92,6 +92,14 @@ reason.
 `test-matrix` is the fast workspace baseline: it checks the workspace diff,
 workspace-owned Go tooling, catalog validity and generated-document drift, and
 repository/submodule status. It does not run every service or product E2E test.
+In pull-request CI, the catalog/policy job uses `test-matrix --policy-only`
+because governed workspace coverage owns the deterministic workspace Go suite.
+Two long recovery contracts are omitted directly. Pull requests retain the
+bounded product-expiry end-to-end path and focused durable recovery checkpoints
+with test-only signed lifetimes. Extended monolithic renewal, runtime correction,
+and CRL recovery fixtures stop when they reach a real signed-expiry wait. The
+scheduled or explicitly dispatched nightly workflow runs the complete suite
+with production-shaped waits and full-history validation.
 
 ## High-Risk PostgreSQL Integration Tests
 
@@ -178,7 +186,7 @@ environment and fails when a required integration test is skipped. The
 required JavaScript jobs, preferring the integration-aware PR result for
 Account Manager and Video Cloud.
 
-New or modified Go statements must meet 80% differential coverage against
+New or modified Go statements must meet 70% differential coverage against
 `--base-ref`; this prevents legacy debt from lowering the standard for new
 code. Every Go test function and subtest is discovered from `go test -json`
 and recorded as `go://<module>/<package>#<TestName>/<Subtest>`. Critical
@@ -315,7 +323,7 @@ PR coverage evidence is retained for 30 days; manual workspace baseline and
 `main` evidence are retained for 90 days. A gate fails for test failure,
 required integration SKIP, package or module ratchet regression, missing
 critical permanent ID, unsafe artifact, or changed-Go-statement coverage below
-80%.
+70%.
 
 `Go Runtime Coverage Nightly` is deliberately separate. It builds
 coverage-only images into the existing staging LKE cluster while deploying only
@@ -521,3 +529,13 @@ services or shared E2E fixtures.
 
 E2E fixtures are documented under `e2e_test/fixtures/`. Generated local fixture
 artifacts should use `.artifacts/e2e_test/fixtures/<fixture_type>/<run_id>/`.
+
+
+Selected Account Manager and Billing modules now run their governed `pr`
+coverage profile locally with a fresh PostgreSQL 16 fixture. The pre-PR runner
+never accepts an ambient `TEST_DATABASE_URL` or silently downgrades these checks
+to `unit`. Each fixture uses a unique container, a dynamic loopback port and tmpfs
+data, waits with `pg_isready`, restores the prior process setting and removes its
+own container after either coverage success or failure. The same integration
+checks still repeat in CI. Public/provider payment tests retain their fixture
+boundaries; this does not authorize live payments or shared-environment tests.

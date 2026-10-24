@@ -114,13 +114,13 @@ func TestLKEWebRTCEdgeRollbackWaitsForCoreHandlerRestoration(t *testing.T) {
 	}
 }
 
-func TestLKEDeployRejectsWebRTCCoreCutoverBeforeEdgeExists(t *testing.T) {
+func TestRetiredLKEDeployRejectsWebRTCCoreCutoverBeforeEdgeExists(t *testing.T) {
 	logPath := fakeKubectl(t)
 	t.Setenv("LKE_WEBRTC_CORE_CUTOVER_ENABLED", "true")
 	t.Setenv("LKE_WEBRTC_SERVICE_EDGE_ENABLED", "false")
 	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "LKE_VIDEO_CLOUD_IMAGE": "example.test/video-cloud:reviewed", "VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED": "false"}
 	err := lkeDeployWorkloads(provisionPaths{}, env, provisionOptions{workloads: []string{"video-cloud"}})
-	if err == nil || !strings.Contains(err.Error(), "requires the WebRTC edge route") {
+	if err == nil || !strings.Contains(err.Error(), "static PKI templates are retired") {
 		t.Fatalf("core cutover without edge was accepted: %v", err)
 	}
 	log, readErr := os.ReadFile(logPath)

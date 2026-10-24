@@ -11,6 +11,10 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"gopkg.in/yaml.v3"
+
+	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 )
 
 // deploymentCheckRuntime belongs to one checker invocation. Legacy callers leave
@@ -24,7 +28,13 @@ type deploymentCheckRuntime struct {
 	retryDelay     time.Duration
 	mu             sync.Mutex
 	cache          map[string]*deploymentCheckRead
+	preflightPlan  *deploymentplan.Plan
+	pendingHealth  map[string]bool
+	frozenBackend  *environmentKubernetesBackend
+	frozenContext  string
 }
+
+const deploymentReadMaxAttempts = 3
 
 type deploymentCheckRead struct {
 	done   chan struct{}
@@ -34,11 +44,74 @@ type deploymentCheckRead struct {
 
 func newDeploymentCheckRuntime(ctx context.Context, environment string) *deploymentCheckRuntime {
 	return &deploymentCheckRuntime{
-		ctx: ctx, environment: environment, requestTimeout: 10 * time.Second,
-		processTimeout: 20 * time.Second, sqlTimeout: 30 * time.Second,
+		ctx: ctx, environment: environment, requestTimeout: 30 * time.Second,
+		processTimeout: 45 * time.Second, sqlTimeout: 30 * time.Second,
 		retryDelay: 200 * time.Millisecond, cache: map[string]*deploymentCheckRead{},
 	}
 }
+
+// Qualification and execution share the backend's frozen selected identity.
+// Legacy health checks continue using their explicitly selected path.
+func newFrozenDeploymentCheckRuntime(ctx context.Context, environment string, backend environmentKubernetesBackend) *deploymentCheckRuntime {
+	runtime := newDeploymentCheckRuntime(ctx, environment)
+	backend.KubeconfigContent = append([]byte(nil), backend.KubeconfigContent...)
+	runtime.frozenBackend = &backend
+	var config struct {
+		Current string `yaml:"current-context"`
+	}
+	_ = yaml.Unmarshal(backend.KubeconfigContent, &config)
+	runtime.frozenContext = config.Current
+	return runtime
+}
+
+func (r *deploymentCheckRuntime) frozenArguments(args []string) ([]string, error) {
+	if r.frozenBackend == nil {
+		return args, nil
+	}
+	result := make([]string, 0, len(args))
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		if arg == "--" {
+			return append(result, args[index:]...), nil
+		}
+		flag, _, _ := strings.Cut(arg, "=")
+		if strings.HasPrefix(arg, "-s") && !strings.HasPrefix(arg, "--") {
+			return nil, errors.New("deployment.access.kubeconfig: command cannot override the qualified frozen Kubernetes server")
+		}
+		switch flag {
+		case "--server", "--token", "--user", "--cluster", "--client-certificate", "--client-key", "--certificate-authority", "--insecure-skip-tls-verify", "--tls-server-name", "--username", "--password", "--as", "--as-group", "--as-uid":
+			return nil, errors.New("deployment.access.kubeconfig: command cannot override the qualified frozen Kubernetes cluster or authentication")
+		}
+		switch {
+		case arg == "--kubeconfig":
+			if index+1 >= len(args) {
+				return nil, errors.New("deployment.access.kubeconfig: selected Kubernetes path argument is incomplete")
+			}
+			index++
+		case strings.HasPrefix(arg, "--kubeconfig="):
+		case arg == "--context" || strings.HasPrefix(arg, "--context="):
+			contextName := strings.TrimPrefix(arg, "--context=")
+			if arg == "--context" {
+				if index+1 >= len(args) {
+					return nil, errors.New("deployment.access.kubeconfig: selected Kubernetes context argument is incomplete")
+				}
+				index++
+				contextName = args[index]
+			}
+			if contextName == "" || contextName != r.frozenContext {
+				return nil, errors.New("deployment.access.kubeconfig: command context differs from the qualified frozen Kubernetes identity")
+			}
+		default:
+			result = append(result, arg)
+		}
+	}
+	return result, nil
+}
+
+// Created only from checker-owned validation messages, never subprocess stderr.
+type deploymentValidationError struct{ message string }
+
+func (e *deploymentValidationError) Error() string { return e.message }
 
 type deploymentRuntimeError struct{ code, detail string }
 
@@ -49,6 +122,41 @@ func (e *deploymentRuntimeError) Error() string {
 	return e.detail + " [" + e.code + "]"
 }
 func (e *deploymentRuntimeError) CheckCode() string { return e.code }
+
+func transientDeploymentReadError(err error) bool {
+	var classified interface{ CheckCode() string }
+	if !errors.As(err, &classified) {
+		return false
+	}
+	switch classified.CheckCode() {
+	case "KUBE_TIMEOUT", "KUBE_RATE_LIMITED", "KUBE_UNAVAILABLE":
+		return true
+	}
+	return false
+}
+
+// Find the actual API verb, never a resource/argument named get or a command
+// inside kubectl exec. Unknown global flag forms do not enable retries.
+func deploymentKubectlGetIndex(args []string) int {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--kubeconfig", "--context", "--request-timeout", "-n", "--namespace":
+			i++
+			continue
+		case "-A", "--all-namespaces":
+			continue
+		}
+		if strings.HasPrefix(arg, "--") && strings.Contains(arg, "=") {
+			continue
+		}
+		if arg == "get" {
+			return i
+		}
+		return -1
+	}
+	return -1
+}
 
 // The original diagnostic is retained only in memory for classification. Never
 // include raw kubectl/psql output, arguments, or credential-bearing URLs in errors.
@@ -98,7 +206,7 @@ func secretCheckSummary(message string) error {
 			return &deploymentRuntimeError{code, message}
 		}
 	}
-	return errors.New(message)
+	return &deploymentValidationError{message}
 }
 
 func secretCheckKubectl(runtimes []*deploymentCheckRuntime, combined bool, args ...string) ([]byte, error) {
@@ -121,18 +229,30 @@ func (r *deploymentCheckRuntime) cached(key string, load func() ([]byte, error))
 		r.mu.Unlock()
 		entry.output, entry.err = load()
 		r.mu.Lock()
+		if err := r.ctx.Err(); err != nil {
+			entry.err = classifyDeploymentRuntimeError(r.ctx, nil, err, false)
+		}
 		if entry.err != nil {
-			// This immutable per-run snapshot also remembers an unavailable read.
-			// Dependents must not repeat the same failed inventory request N times.
 			entry.output = nil
+			// Concurrent dependents share this bounded attempt, but a later read
+			// must obtain fresh evidence after a transient failure. Permanent or
+			// malformed-input failures remain deduplicated for this invocation.
+			var classified interface{ CheckCode() string }
+			if transientDeploymentReadError(entry.err) || errors.As(entry.err, &classified) && classified.CheckCode() == "CHECK_CANCELLED" {
+				delete(r.cache, key)
+			}
 		}
 		close(entry.done)
 		r.mu.Unlock()
 		return entry.output, entry.err
 	}
 	r.mu.Unlock()
+	deploymentMeasurementCacheHit(r.ctx)
 	select {
 	case <-entry.done:
+		if err := r.ctx.Err(); err != nil {
+			return nil, classifyDeploymentRuntimeError(r.ctx, nil, err, false)
+		}
 		return entry.output, entry.err
 	case <-r.ctx.Done():
 		return nil, classifyDeploymentRuntimeError(r.ctx, nil, r.ctx.Err(), false)
@@ -143,11 +263,13 @@ func (r *deploymentCheckRuntime) kubectl(combined bool, args ...string) ([]byte,
 	if err := r.ctx.Err(); err != nil {
 		return nil, classifyDeploymentRuntimeError(r.ctx, nil, err, false)
 	}
-	get, namespace, kubeconfig := -1, "", ""
+	var normalizeErr error
+	args, normalizeErr = r.frozenArguments(args)
+	if normalizeErr != nil {
+		return nil, normalizeErr
+	}
+	get, namespace, kubeconfig := deploymentKubectlGetIndex(args), "", ""
 	for i, arg := range args {
-		if arg == "get" && get < 0 {
-			get = i
-		}
 		if i+1 < len(args) {
 			if arg == "-n" || arg == "--namespace" {
 				namespace = args[i+1]
@@ -293,13 +415,89 @@ func decodeDeploymentCheckInventory(raw []byte, resource string) ([]json.RawMess
 	return inventory.Items, nil
 }
 
+// Progress identifies only the API operation and a recognized object identity.
+// Never publish kubeconfig paths, selectors, exec commands or SQL text.
+func deploymentRuntimeProgressTarget(args []string, sql bool) (string, string) {
+	namespace, verb, target := "", "", ""
+	permissionAction := "permissions"
+	allNamespaces := false
+	for i, arg := range args {
+		if arg == "--" {
+			break
+		}
+		if (arg == "-n" || arg == "--namespace") && i+1 < len(args) {
+			namespace = args[i+1]
+		} else if strings.HasPrefix(arg, "--namespace=") {
+			namespace = strings.TrimPrefix(arg, "--namespace=")
+		}
+		switch arg {
+		case "-A", "--all-namespaces", "--all-namespaces=true":
+			allNamespaces = true
+		case "--all-namespaces=false":
+			allNamespaces = false
+		}
+		if (arg == "get" || arg == "exec" || arg == "auth") && verb == "" {
+			verb = arg
+			if i+1 < len(args) {
+				target = args[i+1]
+				if arg == "get" && i+2 < len(args) && !strings.HasPrefix(args[i+2], "-") && !strings.Contains(target, "/") {
+					target += "/" + args[i+2]
+				}
+				if arg == "auth" && target == "can-i" && i+3 < len(args) {
+					permissionAction = environmentProgressPermissionAction(args[i+2])
+					target = args[i+3]
+				}
+			}
+		}
+	}
+	action := ""
+	switch verb {
+	case "get":
+		action = "read"
+	case "exec":
+		action = "pki"
+		if sql {
+			action = "sql"
+		}
+	case "auth":
+		action = permissionAction
+	default:
+		return "", ""
+	}
+	kind, name, named := strings.Cut(target, "/")
+	if !named && verb == "exec" && !strings.HasPrefix(target, "-") {
+		kind, name, named = "pod", target, true
+	}
+	if !named && verb == "get" {
+		action = "inventory"
+	}
+	kind = environmentProgressKinds[strings.ToLower(strings.Split(kind, ".")[0])]
+	if kind == "" || named && name == "" || sql && kind != "Pod" {
+		return action, ""
+	}
+	switch kind {
+	case "Namespace", "PersistentVolume", "Node", "ClusterRole", "ClusterRoleBinding", "IngressClass", "ValidatingWebhookConfiguration":
+		namespace = ""
+	}
+	if !named {
+		if verb == "get" {
+			if allNamespaces {
+				namespace = ""
+			}
+			return action, environmentProgressResourceID(kind, namespace, "")
+		}
+		if verb == "auth" {
+			return action, environmentProgressResourceID(kind, namespace, "")
+		}
+		return action, ""
+	}
+	return action, environmentProgressResourceID(kind, namespace, name)
+}
+
 func (r *deploymentCheckRuntime) run(combined bool, args ...string) ([]byte, error) {
-	read, sql := false, false
+	read, sql := deploymentKubectlGetIndex(args) >= 0, false
 	commandArgs := append([]string(nil), args...)
 	for i, arg := range commandArgs {
-		if arg == "get" {
-			read = true
-		}
 		if arg == "--" {
 			if i+1 < len(commandArgs) && commandArgs[i+1] == "psql" {
 				sql = true
@@ -308,13 +506,33 @@ func (r *deploymentCheckRuntime) run(combined bool, args ...string) ([]byte, err
 			break
 		}
 	}
-	timeout := r.processTimeout
+	// GETs have a budget for concurrent API reads; exec/SQL retain their
+	// previous budgets and are never retried, even if an argument says get.
+	timeout, requestTimeout := min(r.processTimeout, 20*time.Second), min(r.requestTimeout, 10*time.Second)
+	if read {
+		timeout, requestTimeout = r.processTimeout, r.requestTimeout
+	}
 	if sql {
 		timeout = r.sqlTimeout
 	}
-	for attempt := 0; ; attempt++ {
+	if r.frozenBackend != nil {
+		commandArgs, err := r.frozenArguments(commandArgs)
+		if err != nil {
+			return nil, err
+		}
 		ctx, cancel := context.WithTimeout(r.ctx, timeout)
-		cmd := exec.CommandContext(ctx, lkeKubectl(), append([]string{"--request-timeout=" + r.requestTimeout.String()}, commandArgs...)...)
+		defer cancel()
+		// The native backend supplies bounded output, sanitized failures and
+		// GET retries. It also records the original gate response once.
+		return r.frozenBackend.command(ctx, nil, commandArgs...)
+	}
+	action, resource := deploymentRuntimeProgressTarget(commandArgs, sql)
+	for attempt := 0; ; attempt++ {
+		if err := r.ctx.Err(); err != nil {
+			return nil, classifyDeploymentRuntimeError(r.ctx, nil, err, sql)
+		}
+		ctx, cancel := context.WithTimeout(r.ctx, timeout)
+		cmd := exec.CommandContext(ctx, lkeKubectl(), append([]string{"--request-timeout=" + requestTimeout.String()}, commandArgs...)...)
 		// Kill the local process group, including credential helpers, on cancellation.
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		cmd.Cancel = func() error {
@@ -330,7 +548,14 @@ func (r *deploymentCheckRuntime) run(combined bool, args ...string) ([]byte, err
 		cmd.WaitDelay = time.Second
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &stdout, &stderr
-		err := cmd.Run()
+		err := func() error {
+			done := environmentDeploymentOperation(ctx, action, resource)
+			defer done()
+			measured := beginDeploymentQuery(ctx, "kubectl")
+			err := cmd.Run()
+			measured(err)
+			return err
+		}()
 		var failure *deploymentRuntimeError
 		if err != nil {
 			failure = classifyDeploymentRuntimeError(ctx, stderr.Bytes(), err, sql)
@@ -341,10 +566,10 @@ func (r *deploymentCheckRuntime) run(combined bool, args ...string) ([]byte, err
 			output = append(output, stderr.Bytes()...)
 		}
 		if err == nil {
+			capturePreflightGateResponse(r.ctx, stdout.Bytes())
 			return output, nil
 		}
-		transient := failure.code == "KUBE_TIMEOUT" || failure.code == "KUBE_RATE_LIMITED" || failure.code == "KUBE_UNAVAILABLE"
-		if !read || !transient || attempt != 0 || r.ctx.Err() != nil {
+		if !read || !transientDeploymentReadError(failure) || attempt+1 >= deploymentReadMaxAttempts || r.ctx.Err() != nil {
 			return output, failure
 		}
 		timer := time.NewTimer(r.retryDelay)

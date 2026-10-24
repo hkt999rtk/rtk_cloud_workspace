@@ -17,7 +17,15 @@ deployment implementation. Missing state is NO-GO until explicitly recovered.
 
 This is the operational entry point for adding `dev`, `staging`, `prod`, `qa`, or another deployment environment. See [`docs/environment-dns-naming.md`](../docs/environment-dns-naming.md) for environment-to-DNS mappings and endpoint naming rules, [`docs/cloud-deployment-architecture.md`](../docs/cloud-deployment-architecture.md) for architecture responsibilities and resolution rules, [`cloud_deploy/README.md`](../cloud_deploy/README.md) for shared defaults and adapter keys, [`docs/storage-credential-lifecycle.md`](../docs/storage-credential-lifecycle.md) for storage operations and credentials, and [`docs/object-storage-policy.md`](../docs/object-storage-policy.md) for canonical naming, namespaces and retention.
 
-To build LKE staging from a fresh clone, complete service acceptance, and run the 1K MQTT/Device Shadow test, follow [`staging-from-scratch.md`](../docs/staging-from-scratch.md). Do not use that procedure for an existing cluster; safely restore the existing environment's ignored `runtime/` first.
+Use `scripts/check-deployment-preflight.sh --environment <environment>
+--operation create` to qualify a brand new dev/staging target. This explicit mode
+uses maintained configuration and selected canonical operator credentials;
+deployment generates the new kubeconfig and runtime state after qualification.
+The existing [`staging-from-scratch.md`](../docs/staging-from-scratch.md) is legacy
+bootstrap history, not current qualification evidence. For an existing cluster,
+restore its original private `~/.config/rtk_cloud/<environment>/` store and use
+explicit owner/state migrations. Restoring checkout `runtime/` cannot restore
+deployment authority.
 
 ## Create the Minimal Configuration
 
@@ -110,51 +118,36 @@ NODE_CLASS_BROKER_MIN_VCPU=4
 NODE_CLASS_BROKER_MIN_MEMORY_GIB=8
 ```
 
+Container image versions are maintained in the shared architecture using
+`POSTGRES_IMAGE`, `INGRESS_CONTROLLER_IMAGE` and `OPENBAO_IMAGE`. Use
+`overrides/architecture.env` only for an explicit environment difference.
+Do not place `LKE_*_IMAGE` keys in architecture files or adapter overrides;
+the compiler supplies those internal renderer roles from the neutral settings.
+Registry credentials remain in the selected private environment store.
+
 An environment does not specify an LKE region, Linode type, or provider account quota. The adapter selects provider resources from the logical location and node-class resource minima. Resolved results are written only to ignored runtime evidence.
 
-`overrides/adapter.env` is reserved for reviewed provider escape hatches; it is not standard environment configuration. Keep it empty for normal dev, staging, and prod environments. The operator stores the provider account limit in ignored runtime:
+`overrides/adapter.env` is reserved for reviewed provider escape hatches; it is not standard environment configuration. Keep it empty for normal dev, staging, and prod environments. The operator-confirmed provider quota lives in the private environment store:
 
 ```env
-# cloud_env/qa/runtime/adapters/lke/account.env
+# ~/.config/rtk_cloud/qa/deployment/adapters/lke/account.env
 LKE_ACTIVE_SERVICE_LIMIT=20
 ```
 
-The actual staging file path is:
+The actual staging path is `~/.config/rtk_cloud/staging/deployment/adapters/lke/account.env`, with `0700` directories and a `0600` file. `20` is an example, not a discovered allowance. Set the active-service safety cap only from Linode account confirmation or a directly observed supported count; never guess or exceed that allowance. `unlimited` requires explicit account-owner confirmation. Live inventory and projected resource usage still have to be checked.
 
-```text
-cloud_env/staging/runtime/adapters/lke/account.env
-```
-
-`LKE_ACTIVE_SERVICE_LIMIT` is the operator's active-service safety cap for the Linode account. It is neither another API secret nor architecture/default configuration. The Linode API does not currently expose an endpoint that can query the exact account ceiling with `LINODE_TOKEN`. Set the cap from Linode's account confirmation, or use a lower conservative cap supported by a directly observed successful concurrent service count and record that evidence in the ignored operator file. Never set it above a confirmed or observed allowance. Before creating any billable resource, deployment compares `current active services + planned resources` with this cap. Stop if no verified cap is available; do not guess.
-
-Cloud Admin batch-job recovery additionally requires a dedicated Account Manager
-job-authorization service credential in the environment SecretStore. It must not
-reuse login, Billing, Video Cloud, factory, or ownership-handoff credentials and
-must never be written to tracked environment files. Persistent `video-cloud-dev`
-qualification uses in-place `provision` followed by `acceptance`; `test` remains a
-destructive ephemeral flow that cleans up its owned stack.
-
-Create the staging account state:
+For an existing legacy environment, preserve its original state through the explicit migration operation:
 
 ```sh
-mkdir -p cloud_env/staging/runtime/adapters/lke
-cp cloud_env/staging/runtime/adapters/lke/account.env.example \
-  cloud_env/staging/runtime/adapters/lke/account.env
-
-chmod 600 cloud_env/staging/runtime/adapters/lke/account.env
+./scripts/deploy-environment.sh provider-import-state \
+  --environment staging \
+  --source-runtime /absolute/original/cloud_env/staging/runtime \
+  --confirm video-cloud-staging
 ```
 
-You may also edit `account.env` directly and replace the example value `20` with the actual limit confirmed by Linode.
+The default original Kubernetes identity is the canonical environment kubeconfig. If it has not been recovered there, specify its exact original private path with `--source-kubeconfig`; no other worktree is searched. The operation verifies cluster/API/CA and recorded node-pool ownership, privately archives original provider bytes, preserves allocated IDs and the confirmed quota, and refuses conflicting destinations. It does not change cloud resources or create GO/completion evidence. Regenerate configuration after import to remove operational IDs and quota from resolved config. Retain the original source until the maintained code cutover is complete, then archive/retire the old operational files through the reviewed migration.
 
-If another workspace with a completed staging setup already has this file, you may safely copy its operator state. Do not commit it:
-
-```sh
-cp /path/to/known-good-workspace/cloud_env/staging/runtime/adapters/lke/account.env \
-  cloud_env/staging/runtime/adapters/lke/account.env
-chmod 600 cloud_env/staging/runtime/adapters/lke/account.env
-```
-
-`20` is only an example of a confirmed account limit. Replace it with the actual limit for your Linode account. The file is under the Git-ignored `runtime/` directory and is not obtained through `git clone`.
+Cloud Admin batch-job recovery additionally requires its dedicated Account Manager job-authorization service credential in the environment SecretStore. It must not reuse login, Billing, Video Cloud, factory, or ownership-handoff credentials. Complete create/upgrade uses the shared deployment engine and exact release; retired full `provision`/`test` flows are not a fallback.
 
 Architecture overrides must not contain provider keys, and adapter overrides must not contain workload, capacity, or topology keys. Unknown keys, invalid types, and cross-layer keys fail during planning.
 
@@ -198,7 +191,7 @@ go run ./scripts/go/rtk-cloud -- deployment preflight \
 go run ./scripts/go/rtk-cloud -- deployment plan --environment qa
 ```
 
-Review the environment, logical location, minimum/effective replicas, aggregate requests for each node class, and effective count in the generic plan. Then review the resolved region and product in adapter-private `runtime/adapters/lke/resolved-resources.env`. Load tests use only normalized `runtime/state/provider-preflight.env`; they do not read adapter-private state. Perform mutation only after the plan is correct:
+Review the environment, logical location, minimum/effective replicas, aggregate requests for each node class, and effective count in the generic plan. Then review the resolved region and product in `runtime/adapters/lke/resolved-resources.env`. Normalized provider region/quota metadata lives in `~/.config/rtk_cloud/<environment>/deployment/provider-preflight.env`; it is not GO evidence, and consumers never fall back to `runtime/state/provider-preflight.env`. Perform mutation only after the plan is correct:
 
 ```sh
 go run ./scripts/go/rtk-cloud -- deployment provision \
@@ -217,9 +210,23 @@ scripts/deploy-environment.sh test --environment staging --confirm video-cloud-s
 scripts/deploy-environment.sh test --environment prod --confirm video-cloud-prod
 ```
 
-`test` always runs `provision -> acceptance -> cleanup`. Cleanup still runs if provisioning or acceptance fails. Based only on that environment's stack ownership, cleanup removes DNS, LKE, VMs, firewalls, VPCs, and empty environment-owned Object Storage buckets. Sanitized test evidence remains in ignored `runtime/artifacts/`. If any provider resource cannot be removed, the entire test must report failure and the environment must not be considered clean. Before running public HTTPS DNS-01, the operator host must have `certbot` installed and the GoDaddy credential must be able to read and write DNS records for `CLOUD_DNS_ROOT_DOMAIN`.
+The intended isolated `test` lifecycle is `provision -> acceptance -> cleanup`.
+Cleanup must still run after an attempted provision or failed acceptance, using
+verified original resource ownership. Any resource that cannot be removed makes
+the test fail. Complete create/bootstrap adapters and legacy test-output writers
+are still being replaced; this entry currently cannot establish complete
+environment qualification. New evidence must use private environment
+`deployment/reports/` or `deployment/artifacts/`. Earlier `runtime/artifacts/`
+paths are historical migration context only. Before public HTTPS DNS-01, the
+operator host needs `certbot` and DNS credentials for the configured DNS root.
 
-LKE mutation requires the operator to provide `LINODE_TOKEN`. Tokens, kubeconfigs, certificates, service secrets, device credentials, SQLite databases, state, and artifacts may exist only in `cloud_env/qa/runtime/` or an operator secret source. They must not be written to the tracked `.env` files above or committed.
+LKE mutation requires the selected environment operator's `LINODE_TOKEN`.
+All local deployment-generated tokens, kubeconfigs, certificates, keys, service
+and device credentials, captured databases, state and artifacts must live under
+`~/.config/rtk_cloud/<environment>/`, including QA, with real `0700` directories
+and regular `0600` files. Online runtime databases remain in their managed
+persistent storage. `cloud_env/` contains configuration only; neither ignored
+files nor an arbitrary operator directory are exceptions to this rule.
 
 ## Review checklist
 
@@ -229,7 +236,7 @@ LKE mutation requires the operator to provide `LINODE_TOKEN`. Tokens, kubeconfig
 - Only values that genuinely differ for this environment are overridden.
 - Architecture overrides contain no `LKE_*`, `EKS_*`, or `GKE_*` keys.
 - Adapter overrides for dev, staging, and prod contain no normal region, product, or quota settings.
-- The provider account limit exists only in ignored adapter runtime and is not version-controlled.
+- The verified provider account limit uses private `deployment/adapters/lke/account.env` and is not version-controlled.
 - A DNS adapter is selected, and the environment contains no provider zone ID or DNS credentials.
 - `deployment plan` succeeds and the resolved plan contains no secrets.
-- `runtime/` remains ignored and contains no state copied from another environment.
+- `runtime/` contains only deterministic secret-free resolved configuration; deployment state uses the selected private environment store.

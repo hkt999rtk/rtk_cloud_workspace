@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,7 +22,7 @@ func TestRecoveryCommandRouting(t *testing.T) {
 	}
 }
 
-func TestRecoveryLegacyRuntimeCopyExcludesSecrets(t *testing.T) {
+func TestRecoveryLegacyRuntimeCopyIsRetired(t *testing.T) {
 	workspace, err := workspaceRoot()
 	if err != nil {
 		t.Fatal(err)
@@ -45,20 +46,18 @@ func TestRecoveryLegacyRuntimeCopyExcludesSecrets(t *testing.T) {
 	command := func() ([]byte, error) {
 		return exec.Command("bash", filepath.Join(workspace, "scripts/restore-staging-runtime.sh"), "--source-runtime", source, "--target-runtime", target).CombinedOutput()
 	}
-	if b, err := command(); err != nil {
-		t.Fatalf("runtime copy failed: %s", b)
+	output, err := command()
+	var exitError *exec.ExitError
+	if !errors.As(err, &exitError) || exitError.ExitCode() != 2 {
+		t.Fatalf("retired command must exit 2: %v", err)
 	}
-	if _, err = os.Stat(filepath.Join(target, "state/openbao/unseal-key")); !os.IsNotExist(err) {
-		t.Fatal("copied unseal material")
+	if !strings.Contains(string(output), "legacy staging runtime copying is retired") ||
+		!strings.Contains(string(output), "~/.config/rtk_cloud/staging/") ||
+		strings.Contains(string(output), "fixture-secret") {
+		t.Fatalf("missing safe migration guidance: %s", output)
 	}
-	if _, err = os.Stat(filepath.Join(target, "services/video-cloud/video-cloud.env")); !os.IsNotExist(err) {
-		t.Fatal("copied service credentials")
-	}
-	if err = os.WriteFile(filepath.Join(source, "env/stack.env"), []byte("PASSWORD=fixture-secret\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if b, err := command(); err == nil || strings.Contains(string(b), "fixture-secret") {
-		t.Fatal("secret-bearing source accepted or exposed")
+	if _, err = os.Stat(target); !os.IsNotExist(err) {
+		t.Fatal("retired command wrote runtime state")
 	}
 }
 

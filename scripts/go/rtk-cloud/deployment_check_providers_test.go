@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -82,23 +83,44 @@ func TestDeploymentProviderTimeoutCancelsTransport(t *testing.T) {
 	}
 }
 
-func TestDeploymentProviderPlansSixGHCRChecksBeforeBoundedExecution(t *testing.T) {
+func TestDeploymentProviderPlansImageChecksBeforeBoundedExecution(t *testing.T) {
 	clearDeploymentCredentialEnvironment(t)
 	var active, maximum atomic.Int32
 	var mu sync.Mutex
-	pending, running := 0, false
+	pending, planned, running := 0, 0, false
+	release := make(chan struct{})
+	var released sync.Once
+	config := `{"os":"linux","architecture":"amd64"}`
+	configDigest := providerTestDigest(config)
+	manifest := fmt.Sprintf(`{"schemaVersion":2,"config":{"digest":%q},"layers":[]}`, configDigest)
+	var images []string
+	for index := 0; index < environmentDeploymentCheckConcurrency+5; index++ {
+		images = append(images, fmt.Sprintf("ghcr.io/owner/repo-%02d@%s", index, providerTestDigest(manifest)))
+	}
 	checker := providerTestChecker(func(req *http.Request) (*http.Response, error) {
 		n := active.Add(1)
 		defer active.Add(-1)
 		for prior := maximum.Load(); n > prior && !maximum.CompareAndSwap(prior, n); prior = maximum.Load() {
 		}
-		time.Sleep(10 * time.Millisecond)
+		if n == int32(environmentDeploymentCheckConcurrency) {
+			released.Do(func() { close(release) })
+		}
+		select {
+		case <-release:
+		case <-req.Context().Done():
+			return nil, req.Context().Err()
+		}
 		if req.URL.Path == "/token" {
 			return providerTestResponse(200, `{"token":"fixture"}`), nil
 		}
-		return providerTestResponse(200, `{"tags":["main"]}`), nil
+		if strings.Contains(req.URL.Path, "/manifests/") {
+			return providerTestResponse(200, manifest), nil
+		}
+		return providerTestResponse(200, config), nil
 	})
-	results := checker.collectDeploymentChecks(context.Background(), testDeploymentCredentialConfig(), writeDeploymentCredentialEnv(t, "https://fixture.test", "token"), deploymentCredentialCheckOptions{selected: keySet("ghcr"), fast: true}, false, func(check deploymentCredentialCheck) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	results := checker.collectDeploymentChecks(ctx, testDeploymentCredentialConfig(), writeDeploymentCredentialEnv(t, "https://fixture.test", "token"), deploymentCredentialCheckOptions{selected: keySet("ghcr"), images: images, fast: true}, false, func(check deploymentCredentialCheck) {
 		mu.Lock()
 		defer mu.Unlock()
 		if check.Status == "PENDING" {
@@ -108,13 +130,16 @@ func TestDeploymentProviderPlansSixGHCRChecksBeforeBoundedExecution(t *testing.T
 			pending++
 		}
 		if check.Status == "RUNNING" {
+			if !running {
+				planned = pending
+			}
 			running = true
-			if pending != 12 {
-				t.Errorf("expected twelve planned checks before RUNNING, got %d", pending)
+			if pending != planned || pending <= environmentDeploymentCheckConcurrency {
+				t.Errorf("checks were not completely planned before RUNNING: pending=%d planned=%d", pending, planned)
 			}
 		}
 	})
-	if len(results) != 12 || maximum.Load() < 2 || maximum.Load() > 4 {
+	if len(results) != planned || maximum.Load() != int32(environmentDeploymentCheckConcurrency) || active.Load() != 0 {
 		t.Fatalf("results=%d max concurrency=%d", len(results), maximum.Load())
 	}
 	for _, result := range results {
@@ -293,6 +318,7 @@ func TestDeploymentProviderLocalChecksNeedNoCredentialProfile(t *testing.T) {
 }
 
 func TestDeploymentProviderPullContextCancellation(t *testing.T) {
+	makeIsolatedTestSecretStore(t, "dev")
 	dir := t.TempDir()
 	t.Setenv("PATH", dir)
 	path := filepath.Join(dir, "docker")
@@ -302,7 +328,7 @@ func TestDeploymentProviderPullContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	err := pullRolloutImageContext(ctx, "user", "secret-token", "ghcr.io/owner/repo@sha256:"+strings.Repeat("a", 64))
+	err := pullRolloutImageContext(ctx, "dev", "user", "secret-token", "ghcr.io/owner/repo@sha256:"+strings.Repeat("a", 64))
 	if err == nil || !strings.Contains(err.Error(), "TIMEOUT") || strings.Contains(err.Error(), "secret-token") || time.Since(start) > time.Second {
 		t.Fatalf("err=%v elapsed=%s", err, time.Since(start))
 	}
@@ -446,19 +472,26 @@ func TestDeploymentProviderDNSInvalidEndpointIsRedactedBeforeNetwork(t *testing.
 	}
 }
 
-func TestDeploymentProviderFullImagePullConcurrencyTwo(t *testing.T) {
+func deploymentProviderPullConcurrencyFixture(t *testing.T) (deploymentCredentialChecker, []string, string, secretStore) {
+	t.Helper()
 	clearDeploymentCredentialEnvironment(t)
+	store := makeIsolatedTestSecretStore(t, "staging")
 	dir := t.TempDir()
 	slots := t.TempDir()
 	t.Setenv("PATH", dir)
 	t.Setenv("PULL_TEST_SLOTS", slots)
-	script := `#!/bin/sh
-if /bin/mkdir "$PULL_TEST_SLOTS/one" 2>/dev/null; then slot=one
-elif /bin/mkdir "$PULL_TEST_SLOTS/two" 2>/dev/null; then slot=two; : > "$PULL_TEST_SLOTS/saw-two"
-else : > "$PULL_TEST_SLOTS/overflow"; exit 3
-fi
-/bin/sleep 0.05
-/bin/rmdir "$PULL_TEST_SLOTS/$slot"
+	script := "#!/bin/sh\nslot=''\nfor candidate in"
+	for index := 1; index <= environmentDeploymentCheckConcurrency; index++ {
+		script += fmt.Sprintf(" %d", index)
+	}
+	script += `; do
+ if /bin/mkdir "$PULL_TEST_SLOTS/slot-$candidate" 2>/dev/null; then slot=$candidate; break; fi
+done
+if test -z "$slot"; then : > "$PULL_TEST_SLOTS/overflow"; exit 3; fi
+printf '%s\n' "$$" >> "$PULL_TEST_SLOTS/pids"
+while ! test -f "$PULL_TEST_SLOTS/release"; do /bin/sleep 0.01; done
+/bin/sleep 0.02
+/bin/rmdir "$PULL_TEST_SLOTS/slot-$slot"
 `
 	if err := os.WriteFile(filepath.Join(dir, "docker"), []byte(script), 0700); err != nil {
 		t.Fatal(err)
@@ -470,21 +503,109 @@ fi
 		return providerTestResponse(200, ""), nil
 	})
 	var images []string
-	for i := 1; i <= 4; i++ {
+	for i := 1; i <= environmentDeploymentCheckConcurrency+5; i++ {
 		images = append(images, fmt.Sprintf("ghcr.io/owner/repo@sha256:%064x", i))
 	}
-	results := checker.collectDeploymentChecks(context.Background(), testDeploymentCredentialConfig(), writeDeploymentCredentialEnv(t, "https://fixture.test", "token"), deploymentCredentialCheckOptions{selected: keySet("ghcr"), images: images}, true, nil)
+	return checker, images, slots, store
+}
+
+func awaitDeploymentProviderPullLimit(t *testing.T, slots string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		entries, _ := os.ReadDir(slots)
+		active := 0
+		for _, entry := range entries {
+			if strings.HasPrefix(entry.Name(), "slot-") {
+				active++
+			}
+		}
+		raw, _ := os.ReadFile(filepath.Join(slots, "pids"))
+		if active == environmentDeploymentCheckConcurrency && len(strings.Fields(string(raw))) == environmentDeploymentCheckConcurrency {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("full image pull checks did not overlap twelve process slots")
+}
+
+func assertDeploymentProviderPullsJoined(t *testing.T, slots string, store secretStore) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(slots, "pids"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range strings.Fields(string(raw)) {
+		var pid int
+		if _, err := fmt.Sscan(text, &pid); err != nil {
+			t.Fatal(err)
+		}
+		if err := syscall.Kill(pid, 0); err != syscall.ESRCH {
+			t.Fatal("provider checks returned while a pull process remained alive", pid, err)
+		}
+	}
+	entries, err := os.ReadDir(filepath.Join(store.Root, "deployment", "tmp"))
+	if err != nil || len(entries) != 0 {
+		t.Fatal("provider checks returned before private Docker identity cleanup", err, entries)
+	}
+}
+
+func TestDeploymentProviderFullImagePullConcurrencyTwelve(t *testing.T) {
+	checker, images, slots, store := deploymentProviderPullConcurrencyFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	envFile := writeDeploymentCredentialEnv(t, "https://fixture.test", "token")
+	done := make(chan []deploymentCredentialCheck, 1)
+	go func() {
+		done <- checker.collectDeploymentChecks(ctx, testDeploymentCredentialConfig(), envFile, deploymentCredentialCheckOptions{selected: keySet("ghcr"), images: images}, true, nil)
+	}()
+	awaitDeploymentProviderPullLimit(t, slots)
+	writeTestFile(t, filepath.Join(slots, "release"), "release")
+	results := <-done
 	for _, result := range results {
 		if result.Required && !result.Passed {
 			t.Errorf("%+v", result)
 		}
 	}
 	if _, err := os.Stat(filepath.Join(slots, "overflow")); !os.IsNotExist(err) {
-		t.Fatal("more than two concurrent pulls")
+		t.Fatal("more than twelve concurrent pulls")
 	}
-	if _, err := os.Stat(filepath.Join(slots, "saw-two")); err != nil {
-		t.Fatal("pulls never used two slots")
+	raw, _ := os.ReadFile(filepath.Join(slots, "pids"))
+	if len(strings.Fields(string(raw))) != len(images) {
+		t.Fatal("bounded pulls skipped an image")
 	}
+	assertDeploymentProviderPullsJoined(t, slots, store)
+}
+
+func TestDeploymentProviderFullImagePullCancellationJoinsAndCleans(t *testing.T) {
+	checker, images, slots, store := deploymentProviderPullConcurrencyFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	envFile := writeDeploymentCredentialEnv(t, "https://fixture.test", "token")
+	done := make(chan []deploymentCredentialCheck, 1)
+	go func() {
+		done <- checker.collectDeploymentChecks(ctx, testDeploymentCredentialConfig(), envFile, deploymentCredentialCheckOptions{selected: keySet("ghcr"), images: images}, true, nil)
+	}()
+	awaitDeploymentProviderPullLimit(t, slots)
+	cancel()
+	select {
+	case results := <-done:
+		canceled := 0
+		for _, result := range results {
+			if result.Code == "CANCELED" {
+				canceled++
+			}
+		}
+		if canceled < len(images) {
+			t.Fatal("image tasks did not preserve cancellation", results)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancelled provider checks left image pull processes running")
+	}
+	if _, err := os.Stat(filepath.Join(slots, "overflow")); !os.IsNotExist(err) {
+		t.Fatal("cancelled pulls exceeded twelve slots")
+	}
+	assertDeploymentProviderPullsJoined(t, slots, store)
 }
 
 func TestDeploymentProviderCleanupFailureIsReported(t *testing.T) {
@@ -507,11 +628,18 @@ func TestDeploymentProviderCanceledWriteRetainsSeparateCleanupFailure(t *testing
 	clearDeploymentCredentialEnvironment(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	var attempted atomic.Bool
 	checker := providerTestChecker(func(req *http.Request) (*http.Response, error) {
 		switch req.Method {
 		case http.MethodGet:
+			if attempted.Load() {
+				// The ambiguous PUT reached the provider. Guarded cleanup must
+				// see our exact value before attempting its DELETE.
+				return providerTestResponse(200, `[{"data":"rtk-cloud-credential-preflight","ttl":600}]`), nil
+			}
 			return providerTestResponse(200, "[]"), nil
 		case http.MethodPut:
+			attempted.Store(true)
 			cancel()
 			return nil, context.Canceled
 		case http.MethodDelete:
@@ -601,6 +729,7 @@ func TestDeploymentProviderParallelFixtureHalvesSerialTime(t *testing.T) {
 }
 
 func TestDeploymentProviderPullCancellationKillsDescendants(t *testing.T) {
+	makeIsolatedTestSecretStore(t, "dev")
 	dir := t.TempDir()
 	ready := filepath.Join(dir, "ready")
 	orphan := filepath.Join(dir, "orphan")
@@ -618,7 +747,7 @@ wait
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		done <- pullRolloutImageContext(ctx, "user", "token", "ghcr.io/owner/repo@sha256:"+strings.Repeat("a", 64))
+		done <- pullRolloutImageContext(ctx, "dev", "user", "token", "ghcr.io/owner/repo@sha256:"+strings.Repeat("a", 64))
 	}()
 	deadline := time.Now().Add(time.Second)
 	for {

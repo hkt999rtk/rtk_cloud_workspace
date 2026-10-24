@@ -178,7 +178,11 @@ func validateDeploymentUpgradeTargets(targets, live []deploymentUpgradeTarget, i
 }
 
 func deploymentUpgradeCommand(ctx context.Context, command string, args ...string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	deadline := 20 * time.Second
+	if command == "docker" && len(args) > 0 && args[0] == "pull" {
+		deadline = 5 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, command, args...)
 	cmd.WaitDelay = time.Second
@@ -239,10 +243,24 @@ func verifyDeploymentUpgradeRelease(ctx context.Context, workspace string, store
 }
 
 func deploymentUpgradeSimulatorContainer(target deploymentUpgradeTarget) (map[string]any, error) {
-	pod := target.Spec["template"].(map[string]any)["spec"].(map[string]any)
+	template, ok := target.Spec["template"].(map[string]any)
+	if !ok || target.Kind != "Deployment" {
+		return nil, errors.New("payment simulator target must be a Deployment with a Pod template")
+	}
+	pod, ok := template["spec"].(map[string]any)
+	if !ok {
+		return nil, errors.New("payment simulator Pod specification is unavailable")
+	}
+	containers, ok := pod["containers"].([]any)
+	if !ok || len(containers) == 0 {
+		return nil, errors.New("payment simulator containers are unavailable")
+	}
 	var selected map[string]any
-	for _, item := range pod["containers"].([]any) {
-		container := item.(map[string]any)
+	for _, item := range containers {
+		container, ok := item.(map[string]any)
+		if !ok {
+			return nil, errors.New("payment simulator container specification is invalid")
+		}
 		command, _ := container["command"].([]any)
 		if len(command) == 0 || command[0] != "/rtk-billing-payment-simulator" {
 			continue
@@ -351,10 +369,24 @@ func verifyDeploymentUpgradeImageCI(ctx context.Context, workspace, image string
 		return err
 	}
 	sha := strings.TrimSpace(string(shaRaw))
+	return verifyDeploymentUpgradeImageCIAt(ctx, image, sha)
+}
+
+// Unified release qualification passes the manifest's exact source revision;
+// it never resolves a mutable tag or silently substitutes the current checkout.
+func verifyDeploymentUpgradeImageCIAt(ctx context.Context, image, sha string) error {
+	return verifyDeploymentUpgradeImageCIAtWithCommand(ctx, image, sha, deploymentUpgradeCommand)
+}
+
+func verifyDeploymentUpgradeImageCIAtWithCommand(ctx context.Context, image, sha string, run func(context.Context, string, ...string) ([]byte, error)) error {
+	source, err := deploymentUpgradeImageSource(image)
+	if err != nil {
+		return err
+	}
 	if !deploymentUpgradeSHA.MatchString(sha) {
 		return errors.New("candidate source revision is invalid")
 	}
-	raw, err := deploymentUpgradeCommand(ctx, "docker", "image", "inspect", image, "--format", "{{json .Config.Labels}}")
+	raw, err := run(ctx, "docker", "image", "inspect", image, "--format", "{{json .Config.Labels}}")
 	if err != nil {
 		return err
 	}
@@ -364,7 +396,7 @@ func verifyDeploymentUpgradeImageCI(ctx context.Context, workspace, image string
 	}
 	repo := "hkt999rtk/" + source.RepoName
 	for _, workflow := range []string{"ci.yml", "release.yml"} {
-		raw, err := deploymentUpgradeCommand(ctx, "gh", "api", "repos/"+repo+"/actions/workflows/"+workflow+"/runs?head_sha="+sha+"&per_page=100")
+		raw, err := run(ctx, "gh", "api", "repos/"+repo+"/actions/workflows/"+workflow+"/runs?head_sha="+sha+"&per_page=100")
 		if err != nil {
 			return err
 		}
@@ -373,7 +405,7 @@ func verifyDeploymentUpgradeImageCI(ctx context.Context, workspace, image string
 			return fmt.Errorf("%s %s: %w", source.Key, workflow, err)
 		}
 		if workflow == "release.yml" {
-			raw, err = deploymentUpgradeCommand(ctx, "gh", "api", fmt.Sprintf("repos/%s/actions/runs/%d/jobs?per_page=100", repo, runID))
+			raw, err = run(ctx, "gh", "api", fmt.Sprintf("repos/%s/actions/runs/%d/jobs?per_page=100", repo, runID))
 			if err != nil {
 				return err
 			}
@@ -434,6 +466,22 @@ func deploymentUpgradePublishedJob(raw []byte) error {
 }
 
 func verifyDeploymentUpgradeSchemas(store secretStore, workspace string, images []string) error {
+	return verifyDeploymentUpgradeSchemasWithInventory(store, images, func(source lkeServiceImageSource) ([]string, error) {
+		entries, err := os.ReadDir(filepath.Join(workspace, source.RepoPath, "migrations"))
+		if err != nil {
+			return nil, errors.New("candidate migration inventory cannot be read")
+		}
+		var versions []string
+		for _, entry := range entries {
+			if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".sql") {
+				versions = append(versions, entry.Name())
+			}
+		}
+		return versions, nil
+	})
+}
+
+func verifyDeploymentUpgradeSchemasWithInventory(store secretStore, images []string, inventory func(lkeServiceImageSource) ([]string, error)) error {
 	checked := map[string]bool{}
 	for _, image := range images {
 		source, err := deploymentUpgradeImageSource(image)
@@ -444,15 +492,9 @@ func verifyDeploymentUpgradeSchemas(store secretStore, workspace string, images 
 			continue
 		}
 		checked[source.Key] = true
-		entries, err := os.ReadDir(filepath.Join(workspace, source.RepoPath, "migrations"))
+		versions, err := inventory(source)
 		if err != nil {
-			return errors.New("candidate migration inventory cannot be read")
-		}
-		var versions []string
-		for _, entry := range entries {
-			if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".sql") {
-				versions = append(versions, entry.Name())
-			}
+			return err
 		}
 		if len(versions) == 0 {
 			return errors.New("candidate migration inventory is empty")

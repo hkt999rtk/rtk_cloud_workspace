@@ -96,14 +96,29 @@ cloud_env/staging/lke/artifacts/staging-e2e/20260618T085249Z/test_report.md
 
 ## Artifacts
 
-The deployer writes these redacted artifacts under the environment artifact
-directory:
+The deployer writes these operational artifacts under
+`~/.config/rtk_cloud/<environment>/deployment/artifacts/`, using real `0700`
+directories and regular `0600` files. The configured `CLOUD_ENV_NAME` selects
+the store; switching checkouts cannot select a different state location.
+`cloud_env` contains maintained configuration only. The earlier report path
+above is dated historical evidence, not a destination for new deployments.
 
 - `edge-haproxy/edge-vms.json`
 - `edge-haproxy/upstreams.json`
 - `edge-haproxy/haproxy.cfg`
 - `edge-haproxy/install.sh`
 - `edge-haproxy/validation.json`
+
+TURN artifacts follow the same boundary: `coturn-vm/turnNN/` holds each VM's
+`coturn-vm.json`, redacted configuration, install script and validation report;
+`coturn-vm/coturn-vms.json` holds the complete VM list. The transferred Linux
+registrar binary uses `coturn-vm/turnregistrar`, also `0600` on the local host.
+Install scripts and binaries are transferred to their target VM; local execution
+permissions are not required. The relay evidence reader uses the same private
+`coturn-vm/turn01/coturn-vm.json` path. No reader falls back to checkout artifacts
+and the old duplicate top-level `coturn-vm.json` is retired. Preserve original
+checkout evidence for explicit migration/review; do not silently copy it or
+treat these artifacts as complete-environment GO evidence.
 
 `edge-vms.json` uses `edge_vms: []` even when there is only one VM. DNS update
 logic accepts the multi-VM shape, but v1 writes one A record target because

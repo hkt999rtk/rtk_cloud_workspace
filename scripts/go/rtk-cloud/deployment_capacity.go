@@ -68,7 +68,7 @@ var capacityWorkloadRegistry = []capacityWorkloadSpec{
 	{Name: "prometheus", Prefix: "PROMETHEUS"},
 	{Name: "grafana", Prefix: "GRAFANA"},
 	{Name: "loki", Prefix: "LOKI"},
-	{Name: "openbao", Prefix: "OPENBAO"},
+	{Name: "openbao", Prefix: "OPENBAO", SpreadReplicas: true},
 }
 
 func capacitySourceKeys() []string {

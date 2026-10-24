@@ -40,10 +40,10 @@ workspace; it is not necessarily a pure snapshot of those commits.
 | Source checkout | Base commit |
 | --- | --- |
 | Account Manager | `4341a05ec727` |
-| Billing | `aedaafe4eeae` |
+| Billing | `ff166d4effd3` |
 | Video Cloud | `0429fe118b30` |
-| Cloud Admin | `4035e920404d` |
-| Cloud Frontend | `475b9fe80d6c` |
+| Cloud Admin | `18ee6ba39409` |
+| Cloud Frontend | `153b95a9583b` |
 
 Refresh from the workspace root with `go run ./scripts/go/rtk-cloud -- schema generate`. Run `go run ./scripts/go/rtk-cloud -- schema generate --check` in CI or before review. Docker, Go, Python, and `scripts/requirements-database-schema.txt` are required. See [the design and usage guide](database-er-process.md) for the complete schema-to-ER process and environment comparison commands.
 

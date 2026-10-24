@@ -157,7 +157,7 @@ spec:
         - name: writable-state
           emptyDir: {}
 `, videoNS, env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkeDeploymentImagePullSecretsManifest(env), lkeEnvValue(env, "LKE_VIDEO_CLOUD_IMAGE"),
-		firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_ENV"), env["ACCOUNT_MANAGER_ENV"], env["CLOUD_ENV_NAME"], "staging"), lkeVideoCloudAPIBaseURL(env), platformNS,
+		firstNonEmpty(env["CLOUD_ENV_NAME"], os.Getenv("ACCOUNT_MANAGER_ENV"), env["ACCOUNT_MANAGER_ENV"], "staging"), lkeVideoCloudAPIBaseURL(env), platformNS,
 		lkeAccountManagerInternalURL(env), lkeBlobEnvironmentManifest(env, "video-cloud-runtime"), videoStorageServiceInstanceID, accountNS, videoStorageServiceIdentitySecretName)
 }
 

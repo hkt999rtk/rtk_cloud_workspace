@@ -25,19 +25,20 @@ func TestDeploymentPreflightClusterDiscoveryUsesSelectedIDAndFreshRead(t *testin
 		t.Run(source, func(t *testing.T) {
 			t.Setenv("LKE_CLUSTER_ID", "")
 			t.Setenv("LKE_CLUSTER_LABEL", "")
+			makeIsolatedTestSecretStore(t, "dev")
 			paths := provisionPaths{EnvRoot: t.TempDir()}
-			env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-dev"}
+			env := map[string]string{"CLOUD_ENV_NAME": "dev", "CLOUD_STACK_NAME": "video-cloud-dev"}
 			switch source {
 			case "process":
 				t.Setenv("LKE_CLUSTER_ID", "123")
 				env["LKE_CLUSTER_ID"] = "456"
-				writeTestFile(t, filepath.Join(paths.EnvRoot, "adapters", "lke", "state.env"), "LKE_CLUSTER_ID=789\n")
+				writeTestLKEState(t, "dev", "LKE_CLUSTER_ID=123\n")
 				writeTestFile(t, filepath.Join(paths.EnvRoot, "env", "stack.env"), "LKE_CLUSTER_ID=999\n")
 			case "resolved-env":
 				env["LKE_CLUSTER_ID"] = "123"
-				writeTestFile(t, filepath.Join(paths.EnvRoot, "adapters", "lke", "state.env"), "LKE_CLUSTER_ID=789\n")
+				writeTestLKEState(t, "dev", "LKE_CLUSTER_ID=123\n")
 			case "adapter-state":
-				writeTestFile(t, filepath.Join(paths.EnvRoot, "adapters", "lke", "state.env"), "LKE_CLUSTER_ID=123\n")
+				writeTestLKEState(t, "dev", "LKE_CLUSTER_ID=123\n")
 				writeTestFile(t, filepath.Join(paths.EnvRoot, "env", "stack.env"), "LKE_CLUSTER_ID=999\n")
 			case "stack-state":
 				writeTestFile(t, filepath.Join(paths.EnvRoot, "env", "stack.env"), "LKE_CLUSTER_ID=123\n")
@@ -46,6 +47,12 @@ func TestDeploymentPreflightClusterDiscoveryUsesSelectedIDAndFreshRead(t *testin
 				"/lke/clusters/123": `{"id":123,"label":"renamed-existing-cluster","region":"us-sea"}`,
 			})
 			cluster, err := discoverDeploymentPreflightLKECluster(context.Background(), "test-private-token", paths, env, false)
+			if source == "stack-state" {
+				if err == nil {
+					t.Fatal("legacy stack configuration selected an operational cluster ID")
+				}
+				return
+			}
 			if err != nil || cluster.ID != 123 || cluster.Label != "renamed-existing-cluster" {
 				t.Fatalf("selected %s cluster was misclassified: cluster=%+v error=%v", source, cluster, err)
 			}
@@ -70,8 +77,9 @@ func TestDeploymentPreflightSelectedClusterCannotBeClassifiedAbsent(t *testing.T
 		t.Run(scenario.name, func(t *testing.T) {
 			t.Setenv("LKE_CLUSTER_ID", "")
 			t.Setenv("LKE_CLUSTER_LABEL", "")
+			makeIsolatedTestSecretStore(t, "dev")
 			paths := provisionPaths{EnvRoot: t.TempDir()}
-			env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-dev", "LKE_CLUSTER_ID": scenario.id, "LKE_CLUSTER_LABEL": scenario.label}
+			env := map[string]string{"CLOUD_ENV_NAME": "dev", "CLOUD_STACK_NAME": "video-cloud-dev", "LKE_CLUSTER_ID": scenario.id, "LKE_CLUSTER_LABEL": scenario.label}
 			log := fakeDeploymentPreflightLKERead(t, map[string]string{"/lke/clusters/123": scenario.response})
 			_, err := discoverDeploymentPreflightLKECluster(context.Background(), "private-token-marker", paths, env, false)
 			if err == nil || errors.Is(err, errLKEMissingCluster) || !strings.Contains(err.Error(), scenario.cause) {
@@ -157,7 +165,7 @@ func TestDeploymentPreflightClusterLabelDiscoveryRequiresCompleteInventory(t *te
 			t.Setenv("LKE_CLUSTER_ID", "")
 			t.Setenv("LKE_CLUSTER_LABEL", "")
 			log := fakeDeploymentPreflightLKERead(t, scenario.responses)
-			cluster, err := discoverDeploymentPreflightLKECluster(context.Background(), "private-token-marker", provisionPaths{EnvRoot: t.TempDir()}, map[string]string{"CLOUD_STACK_NAME": "video-cloud-dev"}, false)
+			cluster, err := discoverDeploymentPreflightLKECluster(context.Background(), "private-token-marker", provisionPaths{EnvRoot: t.TempDir()}, map[string]string{"CLOUD_ENV_NAME": "dev", "CLOUD_STACK_NAME": "video-cloud-dev"}, false)
 			if scenario.id != 0 && (err != nil || cluster.ID != scenario.id) {
 				t.Fatalf("later-page existing cluster was missed: cluster=%+v err=%v", cluster, err)
 			}

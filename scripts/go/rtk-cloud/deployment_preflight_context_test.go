@@ -39,7 +39,7 @@ func TestDeploymentPreflightContextKillsStalledProviderDiscovery(t *testing.T) {
 	t.Setenv("LINODE_TOKEN", "test-provider-token")
 	t.Setenv("GHCR_PULL_USERNAME", "test-operator")
 	t.Setenv("GHCR_PULL_TOKEN", "test-registry-token")
-	writeTestFile(t, filepath.Join(cfg.RuntimeRoot, "adapters", "lke", "account.env"), "LKE_ACTIVE_SERVICE_LIMIT=20\n")
+	writeTestLKEAccount(t, cfg.Environment, "LKE_ACTIVE_SERVICE_LIMIT=20\n")
 	bin := t.TempDir()
 	started := filepath.Join(bin, "provider-started")
 	t.Setenv("PREFLIGHT_PROVIDER_STARTED", started)
@@ -78,7 +78,7 @@ func TestDeploymentPreflightContextKillsStalledSelectedClusterRead(t *testing.T)
 	defer cancel()
 	result := make(chan error, 1)
 	go func() {
-		_, err := discoverDeploymentPreflightLKECluster(ctx, "private-token", paths, map[string]string{"CLOUD_STACK_NAME": "video-cloud-dev"}, false)
+		_, err := discoverDeploymentPreflightLKECluster(ctx, "private-token", paths, map[string]string{"CLOUD_ENV_NAME": "dev", "CLOUD_STACK_NAME": "video-cloud-dev"}, false)
 		result <- err
 	}()
 	requirePreflightCommandCancellation(t, started, cancel, result)
@@ -112,7 +112,7 @@ esac
 	defer cancel()
 	result := make(chan error, 1)
 	go func() {
-		_, err := discoverDeploymentPreflightLKECluster(ctx, "private-token", paths, map[string]string{"CLOUD_STACK_NAME": "video-cloud-dev"}, false)
+		_, err := discoverDeploymentPreflightLKECluster(ctx, "private-token", paths, map[string]string{"CLOUD_ENV_NAME": "dev", "CLOUD_STACK_NAME": "video-cloud-dev"}, false)
 		result <- err
 	}()
 	requirePreflightCommandCancellation(t, started, cancel, result)

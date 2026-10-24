@@ -53,6 +53,49 @@ func TestWorkspaceValidationRunsBeforeMerge(t *testing.T) {
 	}
 }
 
+func TestPRBoundsExtendedWallClockExpiryWaitsOwnedByNightlyWorkflow(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const testPattern = "(TestHistoricalCoreSourceRetainsTwoOriginalServerRequestIDs|TestHistoricalLateBootstrapCompletesFromOriginalSourceAndPairedCRLs)"
+	backup, err := os.ReadFile(filepath.Join(workspace, ".github", "workflows", "postgres-backup-image.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(backup), "-skip '^"+testPattern+"$'") {
+		t.Fatal("PostgreSQL backup PR job must leave wall-clock expiry recovery to nightly CI")
+	}
+	if !strings.Contains(string(backup), historicalWallClockExpirySkipEnv+": '1'") {
+		t.Fatal("PostgreSQL backup PR job must skip shared signed-expiry waits")
+	}
+	coverage, err := os.ReadFile(filepath.Join(workspace, "scripts", "go", "rtk-cloud", "test_coverage.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(coverage), "-skip=^"+testPattern+"$") {
+		t.Fatal("workspace PR coverage must leave wall-clock expiry recovery to nightly CI")
+	}
+	if !strings.Contains(string(coverage), "historicalWallClockExpirySkipEnv: \"1\"") {
+		t.Fatal("workspace PR coverage must skip shared signed-expiry waits")
+	}
+	productExpiry, err := os.ReadFile(filepath.Join(workspace, "scripts", "go", "rtk-cloud", "deployment_create_product_session_expiry_e2e_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	productSource := string(productExpiry)
+	if !strings.Contains(productSource, "if (runtimeCorrection || second || postCleanup) && !postCleanupCheckpoint {\n\t\tskipHistoricalWallClockExpiry(t, wait)\n\t}") {
+		t.Fatal("extended product expiry/recovery E2E variants must leave their initial real signed-expiry wait to nightly CI except for the bounded PR checkpoint")
+	}
+	nightly, err := os.ReadFile(filepath.Join(workspace, ".github", "workflows", "workspace-expiry-recovery-nightly.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(nightly), "schedule:") || !strings.Contains(string(nightly), "workflow_dispatch:") || strings.Contains(string(nightly), "-run ") || strings.Contains(string(nightly), historicalWallClockExpirySkipEnv) {
+		t.Fatal("nightly workflow must run the complete workspace suite with real signed-expiry waits")
+	}
+}
+
 func TestRegisteredServiceChainHasNonSkippingWorkspaceCIRunner(t *testing.T) {
 	workspace, err := workspaceRoot()
 	if err != nil {

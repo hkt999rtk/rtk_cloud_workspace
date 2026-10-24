@@ -7,15 +7,79 @@ CHECK_PHASE="${RTK_CLOUD_CHECK_SCRIPT_PHASE:-post-deploy}"
 CHECK_READ_ONLY="${RTK_CLOUD_CHECK_SCRIPT_READ_ONLY:-false}"
 case "$CHECK_PHASE" in
   pre-deploy)
-    printf '%s\n' 'Pre-deploy deployability check (pre-deploy): Validate prerequisites for the selected deployment operation. Use --operation image-upgrade to qualify existing Pod image updates. Run before deployment.'
-    printf '%s\n' 'No cloud resources are persisted by this check. Default full-deployment checks desired inputs and safe route migration; a private managed upgrade plan additionally validates Kubernetes update admission with server dry-run. Image-upgrade additionally requires live health, exact CI images and local startup fixtures; --fast cannot qualify it.'
+    cat <<'PREFLIGHT_PURPOSE'
+Pre-deploy deployability check (pre-deploy)
+  Validate prerequisites before deployment.
+  For existing Pod image updates, use --operation image-upgrade.
+
+Operation
+  - Default: complete upgrade of an existing Kubernetes environment.
+  - --operation create detects fresh creation or an unfinished original
+    dev checkpoint and qualifies the appropriate prerequisites.
+  - Original-checkpoint qualification preserves the execution fence and
+    OpenBao/PKI identities; it never starts deployment.
+  - Original recovery inputs are resolved from journal-bound evidence in
+    the selected canonical store; no extra recovery operation is needed.
+  - Fresh dev/staging create qualifies provider allocation and native
+    bootstrap without requiring an existing kubeconfig.
+
+Validation and results
+  - Runs complete validation; every required gate must pass.
+  - Missing capability or evidence means NO-GO.
+  - Builds the exact plan from settings, live identity references and
+    formal CI image-manifest.json artifacts.
+  - Saves checked bindings and evidence with an expiry time.
+  - Deployment verifies and reuses valid evidence, runs live checks,
+    then performs post-deploy acceptance.
+
+Provider access
+  - Checks the configured media bucket; may create it if missing and
+    no storage cutover is required.
+  - Other provider probes are read-only.
+  - No data migration or credential replacement.
+
+Required inputs
+  - Existing Kubernetes upgrades use the selected kubeconfig.
+  - Fresh create uses selected operator credentials, verified target
+    absence and formal CI images; deployment creates new runtime state.
+  - No pre-existing bindings or local release file is required.
+  - Existing upgrades need no local Linode cluster ID or account quota state.
+  - Private schema-1 plans are retired.
+
+PREFLIGHT_PURPOSE
     ;;
   post-deploy)
-    printf '%s\n' 'Post-deploy environment health check (post-deploy): Verify deployed Secret bindings, PKI, required public mTLS and environment workload readiness. Run after deployment or when diagnosing the current environment.'
+    cat <<'HEALTH_PURPOSE'
+Post-deploy environment health check (post-deploy)
+  Run after deployment or to diagnose the current environment.
+
+Checks
+  - Deployed Secret bindings and PKI.
+  - Required public mTLS endpoints.
+  - Environment workload readiness.
+  - Selected provider and input checks.
+
+Scope
+  - Reports the current environment's health.
+  - Use check-deployment-preflight.sh before deploying a new target.
+  - Full application acceptance requires separate application tests.
+
+Execution mode
+HEALTH_PURPOSE
     if [[ "$CHECK_READ_ONLY" == true ]]; then
-      printf '%s\n' 'This entry point is read-only. It checks current health, not pre-deploy deployability or full application acceptance. --fast only reduces validation depth.'
+      cat <<'HEALTH_READ_ONLY'
+  - This entry point is read-only.
+  - --fast reduces validation depth.
+
+HEALTH_READ_ONLY
     else
-      printf '%s\n' 'check-deployment-credentials.sh is the post-deploy compatibility entry point. Standard provider validation may use temporary DNS or storage writes. Use check-deployment-health.sh for read-only checks; --fast only reduces validation depth.'
+      cat <<'HEALTH_COMPATIBILITY'
+  - Compatibility entry point: check-deployment-credentials.sh.
+  - Provider validation may use temporary DNS or storage writes.
+  - Use check-deployment-health.sh for read-only checks.
+  - --fast reduces validation depth.
+
+HEALTH_COMPATIBILITY
     fi
     ;;
   *)
@@ -30,6 +94,14 @@ esac
 CHECK_ARGS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --fast|-fast|--fast=*|-fast=*)
+      if [[ "$CHECK_PHASE" == pre-deploy ]]; then
+        printf '%s\n' 'error: --fast is not supported by preflight; omit it to run complete validation' >&2
+        exit 2
+      fi
+      CHECK_ARGS+=("$1")
+      shift
+      ;;
     --phase|-phase)
       if [[ $# -lt 2 || "$2" != "$CHECK_PHASE" ]]; then
         printf 'error: this script requires --phase %s\n' "$CHECK_PHASE" >&2

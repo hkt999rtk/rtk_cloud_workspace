@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENVIRONMENT="${1:-staging}"
@@ -13,14 +14,14 @@ HELPER="$ROOT/scripts/check-certissuer-app-helper.pl"
 TIMEOUT_SECONDS="${RTK_CERTISSUER_CHECK_TIMEOUT_SECONDS:-20}"
 fail() { printf 'FAIL [%s]: %s\n' "$1" "$2" >&2; exit 1; }
 
-[[ "$ENVIRONMENT" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]] || fail CONFIG_INVALID 'invalid deployment environment name'
+[[ "$ENVIRONMENT" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ && "$ENVIRONMENT" != . && "$ENVIRONMENT" != .. ]] || fail CONFIG_INVALID 'invalid deployment environment name'
 [[ "$TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]] && ((TIMEOUT_SECONDS <= 300)) || fail CONFIG_INVALID 'probe timeout must be between 1 and 300 seconds'
 ENV_FILE="$ROOT/cloud_env/$ENVIRONMENT/environment.env"
 [[ -f "$ENV_FILE" && -f "$ROOT/cloud_env/$ENVIRONMENT/deployment.env" ]] || fail ENVIRONMENT_MISSING "deployment environment does not exist: $ENVIRONMENT"
 command -v kubectl >/dev/null || fail TOOL_MISSING 'kubectl is required'
 command -v perl >/dev/null || fail TOOL_MISSING 'Perl with JSON::PP is required'
 perl -MJSON::PP -e 1 2>/dev/null || fail TOOL_MISSING 'Perl JSON::PP is required'
-[[ -f "$HELPER" && -f "$ROOT/scripts/check-certissuer-app-socket.pl" ]] || fail TOOL_MISSING 'CertIssuer probe helper is missing'
+[[ -f "$HELPER" && -f "$ROOT/scripts/check-certissuer-app-socket.pl" && -f "$ROOT/scripts/check-certissuer-app-managed.pl" ]] || fail TOOL_MISSING 'CertIssuer probe helper is missing'
 
 STACK="$(awk -F= '$1 == "CLOUD_STACK_NAME" {sub(/^[^=]*=/, ""); sub(/\r$/, ""); print; exit}' "$ENV_FILE")"
 [[ "$STACK" == "video-cloud-$ENVIRONMENT" ]] || fail CONFIG_INVALID 'environment identity has a missing or mismatched CLOUD_STACK_NAME'
@@ -29,7 +30,7 @@ KUBECONFIG_PATH="${RTK_CLOUD_KUBECONFIG:-${RTK_CLOUD_LKE_KUBECONFIG:-${KUBECONFI
 [[ -s "$KUBECONFIG_PATH" ]] || fail KUBECONFIG_MISSING "kubeconfig is missing for $ENVIRONMENT"
 
 ACCOUNT_NAMESPACE="$STACK-account-manager"
-TMP="$(mktemp -d)"
+TMP="$(perl "$HELPER" private-temp "$CONFIG_ROOT" "$ENVIRONMENT")"
 trap 'rm -rf "$TMP"' EXIT
 run_probe() {
   local stage="$1" status
@@ -49,8 +50,15 @@ POD="$(printf '%s' "$RESULT" | perl "$HELPER" pod)"
 run_probe socket-detection exec "$POD" -c app -- sh -c 'printf "%s" "${APP_CERT_ISSUER_SOCKET:-}"'
 SOCKET="$RESULT"
 
-# The incomplete request must reach validation without issuing a certificate.
-if [[ -n "$SOCKET" && -z "$PUBLIC_HOST" ]]; then
+# The public request must connect directly to its explicit public origin. The
+# managed socket may target an internal issuer and cannot qualify that route.
+ANONYMOUS_CONTAINER=app
+if [[ -n "$SOCKET" && -n "$PUBLIC_HOST" ]]; then
+  MODE=tls
+  ANONYMOUS_CONTAINER=pkimanagement
+  run_probe managed-tls exec -i "$POD" -c pkimanagement -- perl - "$PUBLIC_HOST" "$SOCKET" "$ENVIRONMENT" \
+    <"$ROOT/scripts/check-certissuer-app-managed.pl"
+elif [[ -n "$SOCKET" ]]; then
   MODE=socket
   run_probe socket exec -i "$POD" -c app -- perl - <"$ROOT/scripts/check-certissuer-app-socket.pl"
 else
@@ -87,15 +95,22 @@ printf '%s' "$RESULT" | perl "$HELPER" response "$MODE"
 
 if [[ -n "$PUBLIC_HOST" ]]; then
   # Use the same verified server trust and SNI, deliberately without a client identity.
-  run_probe anonymous exec "$POD" -c app -- sh -c '
+  if [[ "$ANONYMOUS_CONTAINER" == pkimanagement ]]; then
+    run_probe anonymous exec -i "$POD" -c pkimanagement -- perl - "$PUBLIC_HOST" "$SOCKET" "$ENVIRONMENT" anonymous \
+      <"$ROOT/scripts/check-certissuer-app-managed.pl"
+  else
+    run_probe anonymous exec "$POD" -c app -- sh -c '
 set -eu
 host="$1"
+ca="${APP_CERT_ISSUER_CA_FILE:-}"
+[ -n "$ca" ] && [ -r "$ca" ] || { printf "CERTISSUER_CONFIG_INVALID\n" >&2; exit 2; }
 { printf "POST /v1/certificates/app/issue HTTP/1.1\r\nHost: %s\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}" "$host"; } |
   timeout 12 openssl s_client -quiet -connect "$host:443" -servername "$host" \
-    -verify_return_error -verify_hostname "$host" -CAfile "$APP_CERT_ISSUER_CA_FILE" 2>&1 && status=0 || status=$?
+    -verify_return_error -verify_hostname "$host" -CAfile "$ca" 2>&1 && status=0 || status=$?
 # Exit classification occurs locally; do not mistake connectivity failure for denial.
 printf "\nRTK_ANONYMOUS_EXIT=%s\n" "$status"
 ' _ "$PUBLIC_HOST"
+  fi
   printf '%s' "$RESULT" | perl "$HELPER" anonymous
   printf '%s\n' 'PASS: public CertIssuer mTLS validation and anonymous TLS denial verified'
 fi

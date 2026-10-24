@@ -23,12 +23,14 @@ type deploymentCheckOptions struct {
 	environment, environmentRoot, workspace, report string
 	phase                                           string
 	operation                                       string
+	parentPlanSHA256, emailKeyRepairProof           string
 	timeout                                         time.Duration
 	requireMigration, requireProduct                bool
 	qualification                                   deploymentCredentialCheckOptions
 }
 
 type deploymentCheckDependencies struct {
+	bucket                                         func(context.Context, deploymentConfig, io.Writer) error
 	guard                                          func([]string) error
 	resolve                                        func(string, string, string) (deploymentConfig, error)
 	store                                          func(string) (secretStore, error)
@@ -47,6 +49,7 @@ func defaultDeploymentCheckDependencies() deploymentCheckDependencies {
 		resolve:   resolveDeploymentConfig,
 		store:     func(environment string) (secretStore, error) { return newSecretStore("", environment) },
 		preflight: defaultDeploymentCheckPreflight,
+		bucket:    prepareDeploymentMediaBucket,
 		local:     verifySecretStoreContents, bindings: verifySecretStoreK8SBindings,
 		runtime: verifySecretStoreK8SRuntime, migration: verifyPKIMigrationDatabaseSecret,
 		product: verifyProductPKIReadiness, workloads: verifyDeploymentWorkloadHealth,
@@ -65,7 +68,9 @@ func parseDeploymentCheckOptions(args []string, out io.Writer) (deploymentCheckO
 	fs := flag.NewFlagSet("deployment check", flag.ContinueOnError)
 	fs.SetOutput(out)
 	o.phase = deploymentCheckPostDeploy
-	fs.StringVar(&o.operation, "operation", "full-deployment", "full-deployment or image-upgrade (preserves existing workload configuration)")
+	fs.StringVar(&o.operation, "operation", "full-deployment", "full-deployment (complete upgrade), create (automatic checkpoint detection), or image-upgrade")
+	fs.StringVar(&o.parentPlanSHA256, "parent-plan-sha256", "", "recovery only: original canonical create owner")
+	fs.StringVar(&o.emailKeyRepairProof, "email-key-repair-proof", "", "recovery only: original canonical verified initial-email repair proof")
 	var selectedPhase string
 	fs.Func("phase", "pre-deploy (can deploy) or post-deploy (existing runtime health; default)", func(v string) error {
 		if v != deploymentCheckPreDeploy && v != deploymentCheckPostDeploy {
@@ -81,12 +86,14 @@ func parseDeploymentCheckOptions(args []string, out io.Writer) (deploymentCheckO
 	fs.StringVar(&o.environmentRoot, "environment-root", "", "explicit environment root")
 	fs.StringVar(&o.workspace, "workspace", "", "workspace root")
 	fs.StringVar(&o.report, "report", "", "write a sanitized JSON report (0600)")
-	fs.DurationVar(&o.timeout, "timeout", 0, "overall deadline (default: fast 2m, standard 10m)")
+	fs.DurationVar(&o.timeout, "timeout", 0, "overall deadline (default: complete pre-deploy 45m, post-deploy fast 2m, other checks 10m)")
 	fs.BoolVar(&o.requireMigration, "require-pki-migration", false, "require PKI migration-owner binding")
 	fs.BoolVar(&o.requireProduct, "require-product-pki", false, "require active pinned Product Device Root")
 	q := &o.qualification
-	fs.BoolVar(&q.fast, "fast", false, "image metadata only; retains the selected phase checks (does not select a phase)")
-	fs.BoolVar(&q.readOnly, "read-only", false, "suppress DNS/storage writes and receipts; --image still pulls")
+	if deploymentCheckBannerPhase(args) == deploymentCheckPostDeploy {
+		fs.BoolVar(&q.fast, "fast", false, "reduced validation depth for post-deploy health checks only")
+	}
+	fs.BoolVar(&q.readOnly, "read-only", false, "suppress provider canaries and receipts; pre-deploy may create a missing configured media bucket; --image still pulls")
 	fs.StringVar(&selected, "checks", "", "linode,ghcr,dns,storage,tls,mounts; selected phase prerequisites always apply")
 	fs.Func("image", "repeatable GHCR digest-pinned image for linux/amd64", func(v string) error { q.images = append(q.images, v); return nil })
 	fs.Func("manifest", "repeatable complete rendered workload JSON", func(v string) error { q.manifests = append(q.manifests, v); return nil })
@@ -103,8 +110,11 @@ func parseDeploymentCheckOptions(args []string, out io.Writer) (deploymentCheckO
 	if err := fs.Parse(args); err != nil {
 		return o, err
 	}
-	if o.operation != "full-deployment" && o.operation != "image-upgrade" {
-		return o, errors.New("--operation must be full-deployment or image-upgrade")
+	if o.operation != "full-deployment" && o.operation != "image-upgrade" && o.operation != "create" {
+		return o, errors.New("--operation must be full-deployment, create or image-upgrade")
+	}
+	if o.operation == "create" && (o.phase != deploymentCheckPreDeploy || o.operation == "image-upgrade") {
+		return o, errors.New("create qualification requires complete pre-deploy checks")
 	}
 	if fs.NArg() != 0 {
 		return o, errors.New("unexpected positional arguments; use --flag=value for boolean values")
@@ -114,6 +124,22 @@ func parseDeploymentCheckOptions(args []string, out io.Writer) (deploymentCheckO
 	}
 	visited := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { visited[f.Name] = true })
+	if o.operation == "create" {
+		if o.phase != deploymentCheckPreDeploy {
+			return o, errors.New("create qualification is preflight only")
+		}
+		allowed := map[string]bool{"environment": true, "workspace": true, "environment-root": true, "phase": true, "operation": true, "timeout": true, "read-only": true, "report": true, "parent-plan-sha256": true, "email-key-repair-proof": true}
+		for name := range visited {
+			if !allowed[name] {
+				return o, errors.New("recovery preflight requires complete checks and forbids scoped, repair or execution options")
+			}
+		}
+		if o.parentPlanSHA256 != "" && !environmentPreflightDigest.MatchString(o.parentPlanSHA256) {
+			return o, errors.New("recovery requires the exact original parent plan SHA-256")
+		}
+	} else if visited["parent-plan-sha256"] || visited["email-key-repair-proof"] {
+		return o, errors.New("checkpoint overrides require create preflight")
+	}
 	if visited["env-file"] || visited["shared-env-file"] {
 		return o, errors.New("--env-file and --shared-env-file are retired; use the selected environment SecretStore")
 	}
@@ -139,6 +165,9 @@ func parseDeploymentCheckOptions(args []string, out io.Writer) (deploymentCheckO
 	}
 	if o.timeout == 0 {
 		o.timeout = 10 * time.Minute
+		if o.phase == deploymentCheckPreDeploy && o.operation != "image-upgrade" {
+			o.timeout = defaultCompleteDeploymentTimeout
+		}
 		if q.fast {
 			o.timeout = 2 * time.Minute
 		}
@@ -236,6 +265,7 @@ type deploymentCheckReport struct {
 type deploymentCheckReporter struct {
 	mu      sync.Mutex
 	out     io.Writer
+	log     io.Writer
 	results map[string]deploymentCheckResult
 	running map[string]time.Time
 	started time.Time
@@ -297,9 +327,19 @@ func (r *deploymentCheckReporter) emit(c deploymentCredentialCheck) {
 	}
 	c.Required = c.Required || prior.Required
 	r.results[id] = deploymentCheckResult{ID: id, Status: status, Code: c.Code, Resource: c.Resource, Required: c.Required, DurationMS: c.DurationMS, Attempts: c.Attempts, DependsOn: c.DependsOn, Message: c.Detail, NextAction: c.NextAction, EvidenceTime: c.EvidenceTime, EvidenceLevel: c.EvidenceLevel, Reused: c.Reused}
-	fmt.Fprintf(r.out, "[%s] %s duration=%dms attempts=%d code=%s: %s\n", status, id, c.DurationMS, c.Attempts, c.Code, c.Detail)
+	if r.log != nil {
+		fmt.Fprintf(r.log, "%s %s duration=%dms attempts=%d code=%s: %s\n", deploymentStatusLabelColor(status, false), id, c.DurationMS, c.Attempts, c.Code, c.Detail)
+		if !deploymentStatusSuccessful(status) {
+			fmt.Fprintf(r.out, "%s %s code=%s: %s\n", deploymentStatusLabel(r.out, status), id, c.Code, c.Detail)
+		}
+	} else {
+		fmt.Fprintf(r.out, "%s %s duration=%dms attempts=%d code=%s: %s\n", deploymentStatusLabel(r.out, status), id, c.DurationMS, c.Attempts, c.Code, c.Detail)
+	}
 	if c.NextAction != "" {
 		fmt.Fprintf(r.out, "  next: %s\n", c.NextAction)
+		if r.log != nil {
+			fmt.Fprintf(r.log, "  next: %s\n", c.NextAction)
+		}
 	}
 }
 
@@ -324,7 +364,12 @@ func (r *deploymentCheckReporter) heartbeat(ctx context.Context, done <-chan str
 					remaining = 0
 				}
 			}
-			fmt.Fprintf(r.out, "[PROGRESS] elapsed=%s remaining=%s running=%s\n", time.Since(r.started).Round(time.Second), remaining.Round(time.Second), strings.Join(ids, ","))
+			if r.log != nil {
+				fmt.Fprintf(r.log, "[PROGRESS] elapsed=%s remaining=%s running=%s\n", time.Since(r.started).Round(time.Second), remaining.Round(time.Second), strings.Join(ids, ","))
+				fmt.Fprintf(r.out, "[PROGRESS] running=%s\n", strings.Join(ids, ","))
+			} else {
+				fmt.Fprintf(r.out, "[PROGRESS] elapsed=%s remaining=%s running=%s\n", time.Since(r.started).Round(time.Second), remaining.Round(time.Second), strings.Join(ids, ","))
+			}
 			r.mu.Unlock()
 		}
 	}
@@ -513,12 +558,12 @@ func executeDeploymentCheck(ctx context.Context, o deploymentCheckOptions, cfg d
 		}
 	}
 	// The live groups depend only on the three local prerequisites and share
-	// the same snapshot runtime; at most four are active in this phase.
+	// the same snapshot runtime and the shared deployment query limit.
 	for _, t := range tasks[:3] {
 		runTask(t)
 	}
 	var live sync.WaitGroup
-	liveLimit := make(chan struct{}, 4)
+	liveLimit := make(chan struct{}, environmentDeploymentCheckConcurrency)
 	for _, t := range tasks[3:] {
 		live.Add(1)
 		go func(t task) {
@@ -533,15 +578,15 @@ func executeDeploymentCheck(ctx context.Context, o deploymentCheckOptions, cfg d
 		}(t)
 	}
 	live.Wait()
-	allowWrites := true
+	runtimeReady := true
 	for _, t := range tasks {
 		if t.required && !passed[t.id] {
-			allowWrites = false
+			runtimeReady = false
 		}
 	}
-	providers := deps.collect(ctx, cfg, q.envFile, q, allowWrites, reporter.emit)
+	providers := deps.collect(ctx, cfg, q.envFile, q, runtimeReady && !q.readOnly, reporter.emit)
 	if o.operation == "image-upgrade" {
-		ready := allowWrites
+		ready := runtimeReady
 		for _, provider := range providers {
 			if provider.Required && provider.Status != "PASS" {
 				ready = false
@@ -571,6 +616,10 @@ func writeDeploymentCheckReport(path string, report deploymentCheckReport) error
 	if err != nil {
 		return err
 	}
+	return writePrivateDeploymentReportJSON(path, data)
+}
+
+func writePrivateDeploymentReportJSON(path string, data []byte) error {
 	f, err := os.CreateTemp(filepath.Dir(path), ".deployment-check-*.json")
 	if err != nil {
 		return errors.New("cannot create deployment check report")
@@ -592,6 +641,29 @@ func writeDeploymentCheckReport(path string, report deploymentCheckReport) error
 func runDeploymentCheck(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	o, err := parseDeploymentCheckOptions(args, io.Discard)
+	if err == nil && o.phase == deploymentCheckPreDeploy && o.operation != "image-upgrade" {
+		if o.qualification.selected != nil || len(o.qualification.images) != 0 || len(o.qualification.manifests) != 0 || o.qualification.tls.cert != "" {
+			fmt.Fprintln(os.Stderr, "error: complete preflight derives every required check and image from the CI image manifests; use credentials-check for scoped provider checks")
+			return exitCode(2)
+		}
+		forward := []string{"--environment", o.environment, "--timeout", o.timeout.String()}
+		if o.operation == "create" {
+			forward = append(forward, "--operation", o.operation)
+		}
+		if o.parentPlanSHA256 != "" {
+			forward = append(forward, "--parent-plan-sha256", o.parentPlanSHA256)
+		}
+		if o.emailKeyRepairProof != "" {
+			forward = append(forward, "--email-key-repair-proof", o.emailKeyRepairProof)
+		}
+		for _, pair := range [][2]string{{"--workspace", o.workspace}, {"--environment-root", o.environmentRoot}, {"--report", o.report}} {
+			if pair[1] != "" {
+				forward = append(forward, pair[0], pair[1])
+			}
+		}
+		return runUnifiedEnvironmentDeploymentWithDependencies(ctx, "preflight", forward, os.Stdout, os.Stderr, defaultUnifiedDeploymentDependencies())
+	}
 	return runDeploymentCheckWithDependencies(ctx, args, os.Stdout, os.Stderr, defaultDeploymentCheckDependencies())
 }
 
@@ -630,6 +702,7 @@ func runDeploymentCheckWithDependencies(parent context.Context, args []string, o
 	ctx, cancel := context.WithTimeout(parent, o.timeout)
 	defer cancel()
 	reporter := newDeploymentCheckReporter(out)
+	reporter.log, _ = parent.Value(environmentProgressLogKey{}).(io.Writer)
 	fmt.Fprintf(out, "Deployment check: phase=%s operation=%s environment=%s fast=%t read-only=%t timeout=%s; selected checks only, not release approval\n", o.phase, o.operation, cfg.Environment, o.qualification.fast, o.qualification.readOnly, o.timeout)
 	done, heartbeatDone := make(chan struct{}), make(chan struct{})
 	go func() { defer close(heartbeatDone); reporter.heartbeat(ctx, done) }()
@@ -642,6 +715,10 @@ func runDeploymentCheckWithDependencies(parent context.Context, args []string, o
 	report := reporter.snapshot(cfg.Environment, o.phase, o.qualification.fast, o.qualification.readOnly)
 	if reporter.scope != "" {
 		report.Scope = reporter.scope
+	}
+	if o.phase == deploymentCheckPreDeploy && deps.bucket != nil && cfg.Adapter == "lke" && cfg.Storage.RuntimeMedia.Bucket != "" && !cfg.Storage.RuntimeMediaCutoverRequired {
+		report.ReadOnly = false // A missing configured bucket may be created.
+		report.Scope = strings.TrimSuffix(report.Scope, "; read-only: write permissions unverified") + "; configured media bucket creation permitted when missing; other provider probes remain read-only"
 	}
 	if o.operation == "full-deployment" && o.phase == deploymentCheckPreDeploy {
 		verdict := "NO-GO"
@@ -666,17 +743,27 @@ func runDeploymentCheckWithDependencies(parent context.Context, args []string, o
 	}
 	fmt.Fprintln(out, "Check summary (stable check ID order):")
 	for _, check := range report.Checks {
-		fmt.Fprintf(out, "  [%s] %s %s\n", check.Status, check.ID, check.Code)
+		fmt.Fprintf(out, "  %s %s %s\n", deploymentStatusLabel(out, check.Status), check.ID, check.Code)
 		if check.Status == "FAIL" || check.Status == "ERROR" || (check.Status == "BLOCKED" && check.Code != "DEPENDENCY_FAILED" && check.Code != "PREREQUISITE_FAILED") {
 			fmt.Fprintf(out, "    cause: %s\n    next: %s\n", check.Message, check.NextAction)
 		}
 	}
-	fmt.Fprintf(out, "overall: %s required=%d pass=%d fail=%d error=%d blocked=%d skipped=%d duration=%dms\n", report.Overall, report.Coverage["required"], report.Coverage["PASS"], report.Coverage["FAIL"], report.Coverage["ERROR"], report.Coverage["BLOCKED"], report.Coverage["SKIPPED"], report.DurationMS)
+	summary := fmt.Sprintf("overall: %s required=%d pass=%d fail=%d error=%d blocked=%d skipped=%d", report.Overall, report.Coverage["required"], report.Coverage["PASS"], report.Coverage["FAIL"], report.Coverage["ERROR"], report.Coverage["BLOCKED"], report.Coverage["SKIPPED"])
+	if reporter.log != nil {
+		fmt.Fprintf(reporter.log, "%s duration=%dms\n", summary, report.DurationMS)
+		fmt.Fprintln(out, summary)
+	} else {
+		fmt.Fprintf(out, "%s duration=%dms\n", summary, report.DurationMS)
+	}
 	slowest := append([]deploymentCheckResult{}, report.Checks...)
 	sort.SliceStable(slowest, func(i, j int) bool { return slowest[i].DurationMS > slowest[j].DurationMS })
 	for i := 0; i < len(slowest) && i < 3; i++ {
 		if slowest[i].DurationMS > 0 {
-			fmt.Fprintf(out, "slowest: %s %dms\n", slowest[i].ID, slowest[i].DurationMS)
+			detailOutput := out
+			if reporter.log != nil {
+				detailOutput = reporter.log
+			}
+			fmt.Fprintf(detailOutput, "slowest: %s %dms\n", slowest[i].ID, slowest[i].DurationMS)
 		}
 	}
 	if report.Overall != "PASS" {
