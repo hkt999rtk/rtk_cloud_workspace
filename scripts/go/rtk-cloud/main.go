@@ -1204,6 +1204,7 @@ func runTestMatrixWithBaseline(args []string, baseline func(string) error) error
 	}
 	fs := flag.NewFlagSet("test-matrix", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	policyOnly := fs.Bool("policy-only", false, "validate workspace policy and inventory without repeating the governed Go coverage suite")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -1223,7 +1224,7 @@ func runTestMatrixWithBaseline(args []string, baseline func(string) error) error
 	if err := runCmd(workspace, "git", "diff", "--check"); err != nil {
 		return err
 	}
-	if err := baseline(workspace); err != nil {
+	if err := runTestMatrixBaseline(workspace, *policyOnly, baseline); err != nil {
 		return err
 	}
 	fmt.Fprintln(os.Stdout)
@@ -1257,6 +1258,14 @@ func runTestMatrixWithBaseline(args []string, baseline func(string) error) error
 		}
 	}
 	return nil
+}
+
+func runTestMatrixBaseline(workspace string, policyOnly bool, baseline func(string) error) error {
+	if policyOnly {
+		fmt.Fprintln(os.Stdout, "SKIP: governed Go coverage job owns the workspace test suite")
+		return nil
+	}
+	return baseline(workspace)
 }
 
 type serviceTestSpec struct {

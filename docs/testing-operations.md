@@ -63,6 +63,11 @@ Fast baseline:
 (cd scripts/go && go run ./rtk-cloud -- test-matrix)
 ```
 
+The pull-request catalog/policy job uses `test-matrix --policy-only`; the
+workspace coverage job runs the complete Go suite once. This keeps catalog,
+coverage-policy, inventory, generated-document, and repository checks while
+avoiding duplicate real-time expiry/recovery tests.
+
 More complete local validation:
 
 ```sh

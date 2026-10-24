@@ -59,10 +59,9 @@ jobs:
           cache: false
       - name: Validate catalog, policy, inventory, and generated docs
         working-directory: scripts/go
-        env:
-          # Keep the workspace-wide Go test binaries from peaking together on shared runners.
-          GOFLAGS: -p=1
-        run: go run ./rtk-cloud -- test-matrix
+        # The workspace-tooling coverage job below is the single owner of the
+        # complete Go suite, including real-time expiry/recovery contracts.
+        run: go run ./rtk-cloud -- test-matrix --policy-only
       - name: Test private Zammad bootstrap safety
         run: python3 tests/bootstrap_zammad_test.py -v
 

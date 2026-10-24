@@ -92,6 +92,9 @@ reason.
 `test-matrix` is the fast workspace baseline: it checks the workspace diff,
 workspace-owned Go tooling, catalog validity and generated-document drift, and
 repository/submodule status. It does not run every service or product E2E test.
+In pull-request CI, the catalog/policy job uses `test-matrix --policy-only`
+because the governed workspace coverage job is the single owner of the complete
+workspace Go suite and its real-time expiry/recovery contracts.
 
 ## High-Risk PostgreSQL Integration Tests
 
