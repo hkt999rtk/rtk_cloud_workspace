@@ -17,6 +17,26 @@ import (
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 )
 
+const historicalRealTimeExpiryEnv = "RTK_HISTORICAL_REALTIME_EXPIRY"
+
+func historicalExpiryDuration(realtime, quick time.Duration) time.Duration {
+	if os.Getenv(historicalRealTimeExpiryEnv) == "1" {
+		return realtime
+	}
+	return quick
+}
+
+func TestHistoricalExpiryDurationKeepsLongWaitsOnlyWhenExplicit(t *testing.T) {
+	t.Setenv(historicalRealTimeExpiryEnv, "")
+	if got := historicalExpiryDuration(45*time.Second, 2*time.Second); got != 2*time.Second {
+		t.Fatal("PR fixture did not select the short genuine expiry", got)
+	}
+	t.Setenv(historicalRealTimeExpiryEnv, "1")
+	if got := historicalExpiryDuration(45*time.Second, 2*time.Second); got != 45*time.Second {
+		t.Fatal("nightly fixture did not retain the real-time expiry", got)
+	}
+}
+
 // The original seed is issued by its real native Job boundary. Its lifetime is
 // selected before signing; expiry is observed by elapsed wall time, never by
 // editing a certificate, receipt, or recorded native row.
@@ -117,7 +137,7 @@ func (f *acceptedCoreExecutionContract) completeOriginalSessionPrefix(t *testing
 			if err := readExecutionJSON(filepath.Join(f.store.Root, "deployment/create", f.e.Journal.PlanSHA256, "bootstrap/service/session-intent.json"), &intent); err != nil {
 				return err
 			}
-			originalCertificate, originalState = historicalOriginalSessionLeaf(t, f, intent.SessionID, 45*time.Second)
+			originalCertificate, originalState = historicalOriginalSessionLeaf(t, f, intent.SessionID, historicalExpiryDuration(45*time.Second, 2*time.Second))
 			f.protocol["historical_sessions"].(map[string]managedSessionState)[originalState.Session] = originalState
 			recordHistoricalBootstrapIssuance(t, f, originalState, originalCertificate)
 			f.protocol["custody"] = map[string]string{"/run/pki-bootstrap/bootstrap.key": f.key, "/run/pki-bootstrap/bootstrap.csr": f.csr, "/run/pki-bootstrap/bootstrap.crt": originalCertificate}
@@ -184,7 +204,7 @@ func (f *acceptedCoreExecutionContract) completeOriginalSessionPrefix(t *testing
 	f.review = r.Review
 	lifetime := 3 * time.Hour
 	if expired {
-		lifetime = 45 * time.Second
+		lifetime = historicalExpiryDuration(45*time.Second, 2*time.Second)
 	}
 	certificate, state := historicalOriginalSessionLeaf(t, f, r.RenewedIntent.SessionID, lifetime)
 	runtime.ServiceSessionRecovery = r

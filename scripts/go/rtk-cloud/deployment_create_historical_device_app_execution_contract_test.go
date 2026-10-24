@@ -123,7 +123,7 @@ func (f *acceptedCoreExecutionContract) activateHistoricalTrustAuthority(t *test
 	if root.ID == "14c1a269-e32e-4eac-aa93-db5ad8e85f7e" || root.ID == "734487b8-abcf-40be-a813-8b52c64f7954" {
 		// The original publication starts valid, then genuinely expires during
 		// the later session transition. Never rewrite an accepted CRL to age it.
-		nextUpdate = time.Now().UTC().Add(10 * time.Minute)
+		nextUpdate = time.Now().UTC().Add(historicalExpiryDuration(10*time.Minute, time.Minute))
 	}
 	crl, err := x509.CreateRevocationList(rand.Reader, &x509.RevocationList{Number: big.NewInt(1), ThisUpdate: time.Now().UTC().Add(-time.Minute), NextUpdate: nextUpdate}, cert, key)
 	if err != nil {

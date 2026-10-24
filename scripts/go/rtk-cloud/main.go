@@ -1189,8 +1189,8 @@ var runWorkspaceBaselineCmd = runCmd
 
 func runTestMatrix(args []string) error {
 	return runTestMatrixWithBaseline(args, func(workspace string) error {
-		// The nightly expiry workflow owns the real-time recovery contract. Running
-		// it here would turn every baseline into a wall-clock expiry wait.
+		// Workspace coverage owns the quick genuine-expiry recovery contract. The
+		// nightly workflow repeats it with production-duration test lifetimes.
 		return runWorkspaceBaselineCmd(workspace, "go", "test", "-json", "-failfast", "-timeout=180m", "-skip=^TestHistoricalLateBootstrapCompletesFromOriginalSourceAndPairedCRLs$", "./scripts/go/...")
 	})
 }

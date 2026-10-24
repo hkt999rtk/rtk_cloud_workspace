@@ -754,7 +754,7 @@ func TestGoCoverageCommandExtendsOnlyWorkspaceToolingTimeout(t *testing.T) {
 				got := readTestFile(t, argsPath)
 				want := "test\n-json\n-count=1\n-timeout=" + tc.timeout + "\n"
 				if tc.name == "workspace-tooling" {
-					want += "-failfast\n-skip=^TestHistoricalLateBootstrapCompletesFromOriginalSourceAndPairedCRLs$\n"
+					want += "-failfast\n"
 				}
 				want += "./...\n-coverprofile=" + filepath.Join(outDir, "modules", tc.name, "coverage.out") + "\n"
 				if profile == "pr" {

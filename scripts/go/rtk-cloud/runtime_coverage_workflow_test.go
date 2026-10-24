@@ -70,14 +70,14 @@ func TestPRSkipsRealTimeExpiryRecoveryOwnedByNightlyWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(coverage), "-skip=^"+testName+"$") {
-		t.Fatal("workspace PR coverage must skip the wall-clock expiry contract")
+	if strings.Contains(string(coverage), "-skip=^"+testName+"$") {
+		t.Fatal("workspace PR coverage must run the complete contract with short genuine expiries")
 	}
 	nightly, err := os.ReadFile(filepath.Join(workspace, ".github", "workflows", "workspace-expiry-recovery-nightly.yml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(nightly), "schedule:") || !strings.Contains(string(nightly), "workflow_dispatch:") || !strings.Contains(string(nightly), "-run '^"+testName+"$'") {
+	if !strings.Contains(string(nightly), "schedule:") || !strings.Contains(string(nightly), "workflow_dispatch:") || !strings.Contains(string(nightly), "RTK_HISTORICAL_REALTIME_EXPIRY: \"1\"") || !strings.Contains(string(nightly), "-run '^"+testName+"$'") {
 		t.Fatal("nightly workflow must own the exact real-time expiry recovery contract")
 	}
 }
