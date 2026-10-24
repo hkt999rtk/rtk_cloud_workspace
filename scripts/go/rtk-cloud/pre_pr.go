@@ -28,11 +28,14 @@ type prePRSelection struct {
 var (
 	prePRRunCmd                    = runCmd
 	prePRRunMatrix                 = runTestMatrix
+	prePRRunMatrixWithBaseline     = runTestMatrixWithBaseline
+	prePRLoadCoverageConfig        = loadCoverageConfig
 	prePRRunCoverage               = runTestCoverage
 	prePRRunInventory              = runTestInventory
 	prePRRunUI                     = runTestUI
 	prePRStartVideoCloudPRFixtures = startVideoCloudPRFixtures
 	prePRRunFixtureCommand         = runPrePRFixtureCommand
+	prePRStartPostgresPRFixture    = startPostgresPRFixture
 )
 
 func runPrePR(args []string) error {
@@ -79,11 +82,22 @@ func runPrePR(args []string) error {
 		return nil
 	}
 
+	coalesceWorkspaceTests := false
+	if selection.Policy && *runMatrix && slices.Contains(selection.GoModules, "workspace-tooling") {
+		cfg, err := prePRLoadCoverageConfig(workspace)
+		if err != nil {
+			return err
+		}
+		coalesceWorkspaceTests = prePRWorkspaceCoverageIncludesBaseline(cfg)
+	}
+
 	fmt.Fprintln(os.Stdout, "\n== diff check ==")
 	if err := prePRRunCmd(workspace, "git", "diff", "--check", strings.TrimSpace(*baseRef)+"..."+strings.TrimSpace(*headRef)); err != nil {
 		return err
 	}
-	if selection.Policy && *runMatrix {
+	if coalesceWorkspaceTests {
+		fmt.Fprintln(os.Stdout, "\nWorkspace matrix will run with complete governed Go coverage after selected service fixtures; workspace tests execute once.")
+	} else if selection.Policy && *runMatrix {
 		fmt.Fprintln(os.Stdout, "\n== workspace policy matrix ==")
 		if err := prePRRunMatrix(nil); err != nil {
 			return err
@@ -109,15 +123,43 @@ func runPrePR(args []string) error {
 			return err
 		}
 	}
+	for _, module := range []string{"account-manager", "billing-service"} {
+		if !slices.Contains(goModules, module) {
+			continue
+		}
+		fmt.Fprintf(os.Stdout, "\n== local %s PostgreSQL PR coverage ==\n", module)
+		cleanup, err := prePRStartPostgresPRFixture(module)
+		if err != nil {
+			return err
+		}
+		err = prePRRunCoverage([]string{"--profile", "pr", "--module", module, "--base-ref", strings.TrimSpace(*baseRef), "--head-ref", strings.TrimSpace(*headRef), "--run-id", *runID + "-" + module + "-pr"})
+		cleanup()
+		if err != nil {
+			return err
+		}
+		goModules = removePrePRModule(goModules, module)
+	}
 	if len(goModules) > 0 {
-		fmt.Fprintln(os.Stdout, "\n== affected Go coverage ==")
-		if err := prePRRunCoverage([]string{
-			"--profile", "unit",
-			"--module", strings.Join(goModules, ","),
-			"--base-ref", strings.TrimSpace(*baseRef),
-			"--head-ref", strings.TrimSpace(*headRef),
-			"--run-id", *runID + "-go",
-		}); err != nil {
+		coverage := func(string) error {
+			fmt.Fprintln(os.Stdout, "\n== affected Go coverage ==")
+			return prePRRunCoverage([]string{
+				"--profile", "unit",
+				"--module", strings.Join(goModules, ","),
+				"--base-ref", strings.TrimSpace(*baseRef),
+				"--head-ref", strings.TrimSpace(*headRef),
+				"--run-id", *runID + "-go",
+			})
+		}
+		var err error
+		if coalesceWorkspaceTests {
+			// Keep the existing coverage fixture environment: native workspace
+			// bridge tests need the selected Video Cloud PostgreSQL fixture.
+			fmt.Fprintln(os.Stdout, "\n== workspace policy matrix with covered baseline ==")
+			err = prePRRunMatrixWithBaseline(nil, coverage)
+		} else {
+			err = coverage(workspace)
+		}
+		if err != nil {
 			return err
 		}
 	}
@@ -151,6 +193,18 @@ func runPrePR(args []string) error {
 	}
 	fmt.Fprintln(os.Stdout, "\nLocal pre-PR checks passed. CI-only integration checks listed above still run on the PR.")
 	return nil
+}
+
+// Coalescing is valid only while governed coverage selects the entire module
+// exercised by the standalone workspace baseline. Narrowed or changed coverage
+// configuration retains the independent baseline invocation.
+func prePRWorkspaceCoverageIncludesBaseline(cfg coverageConfig) bool {
+	for _, module := range cfg.Modules {
+		if module.Name == "workspace-tooling" {
+			return module.Kind == "go" && module.Path == "scripts/go" && slices.Equal(module.Packages, []string{"./..."})
+		}
+	}
+	return false
 }
 
 func selectPrePRChecks(workspace, baseRef, headRef string) (prePRSelection, error) {
@@ -225,7 +279,7 @@ func printPrePRPlan(out io.Writer, baseRef, headRef string, selection prePRSelec
 	fmt.Fprintf(out, "- Go coverage: %s\n", prePRList(selection.GoModules))
 	fmt.Fprintf(out, "- JavaScript coverage: %s\n", prePRList(selection.NodeModules))
 	fmt.Fprintf(out, "- Cloud Admin desktop/mobile E2E: %t\n", runUI && slices.Contains(selection.NodeModules, "cloud-admin-web"))
-	fmt.Fprintf(out, "- CI-only integration checks: %s\n", strings.Join(prePRIntegrationChecks(selection), ", "))
+	fmt.Fprintf(out, "- Integration checks also repeated by CI: %s\n", strings.Join(prePRIntegrationChecks(selection), ", "))
 	fmt.Fprintln(out, "- Shared staging: never")
 }
 
@@ -259,8 +313,9 @@ func runPrePRFixtureCommand(dir string, env []string, name string, args ...strin
 }
 
 // startVideoCloudPRFixtures supplies the same isolated dependencies as the
-// repository PR profile. The short-lived credentials are local test values and
-// are placed in this process only after the workspace baseline checks finish.
+// repository PR profile. Its local credentials also activate the workspace's
+// native bridge tests when its complete covered baseline is coalesced with the
+// selected Go coverage. A standalone matrix remains before fixture setup.
 func startVideoCloudPRFixtures(workspace string) (func(), error) {
 	if _, err := prePRRunFixtureCommand("", nil, "docker", "info"); err != nil {
 		return nil, errors.New("Docker is required for local Video Cloud PostgreSQL/EMQX coverage")

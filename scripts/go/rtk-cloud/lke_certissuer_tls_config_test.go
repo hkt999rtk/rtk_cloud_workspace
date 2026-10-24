@@ -81,7 +81,7 @@ func TestLKECertIssuerTLSConfigurationCoversInternalAndPublicConnections(t *test
 					}
 				}
 			}
-			if err := yaml.Unmarshal([]byte(lkeCertIssuerDeploymentManifest(env, material, lkeOpenBaoBootstrapResult{})), &deployment); err != nil {
+			if err := yaml.Unmarshal([]byte(historicalLkeCertIssuerDeploymentManifest(env, material, lkeOpenBaoBootstrapResult{})), &deployment); err != nil {
 				t.Fatal(err)
 			}
 			if len(deployment.Spec.Template.Spec.Containers) != 1 {

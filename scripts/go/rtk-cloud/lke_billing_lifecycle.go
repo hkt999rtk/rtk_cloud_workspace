@@ -62,6 +62,9 @@ func lkeBillingAuthorityEnabled(env map[string]string) bool {
 // seeded fixtures, or random generation as fallback for lifecycle credentials.
 func lkeBillingLifecycleSecret(id string) string {
 	if activeCanonicalSecretStore {
+		if activeRuntimeSecretSnapshot != nil {
+			return activeRuntimeSecretSnapshot[lkeSecretFileName(id)]
+		}
 		value, err := readSensitiveFile(filepath.Join(lkeRuntimeSecretStateDir, lkeSecretFileName(id)), "billing lifecycle runtime credential "+id)
 		if err == nil {
 			return value

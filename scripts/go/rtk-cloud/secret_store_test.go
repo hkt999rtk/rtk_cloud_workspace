@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -43,8 +44,25 @@ func TestMain(m *testing.M) {
 	// Package tests use isolated fixture paths. Production execution never sets
 	// this test-only marker and therefore uses the canonical SecretStore.
 	_ = os.Setenv("RTK_CLOUD_TEST_MODE", "1")
+	// Preserve the existing module cache for native Go subprocesses, while
+	// indirect lifecycle calls and individual HOME fixtures use isolated stores.
+	moduleCache, err := exec.Command("go", "env", "GOMODCACHE").Output()
+	if err != nil || strings.TrimSpace(string(moduleCache)) == "" {
+		fmt.Fprintln(os.Stderr, "cannot resolve native Go module cache for isolated tests")
+		os.Exit(1)
+	}
+	testHome, err := os.MkdirTemp("", "rtk-cloud-package-home-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cannot create isolated package environment store")
+		os.Exit(1)
+	}
+	_ = os.Setenv("GOMODCACHE", strings.TrimSpace(string(moduleCache)))
+	_ = os.Setenv("HOME", testHome)
+	_ = os.Unsetenv("RTK_CLOUD_CONFIG_ROOT")
 	_ = os.Setenv("LKE_RUNTIME_SECRET_SEED", "rtk-cloud-go-test")
-	os.Exit(m.Run())
+	code := m.Run()
+	_ = os.RemoveAll(testHome)
+	os.Exit(code)
 }
 
 func TestSecretStoreInitializesEnvironmentIsolatedSecureLayout(t *testing.T) {
@@ -625,10 +643,21 @@ func TestSecretStoreMigrationHelpers(t *testing.T) {
 	}
 }
 
+func managedMQTTMirrorTestBindings(entry secretCatalogEntry) []secretK8SBinding {
+	if entry.ID == "emqx-dashboard-password" {
+		return []secretK8SBinding{{NamespaceSuffix: "-video-cloud", Secret: "mqtt-pki-runtime", Key: "dashboard-password"}}
+	}
+	return entry.K8SBinding
+}
+
+func managedMQTTMirrorTestConsumer(environment string) string {
+	return fmt.Sprintf(`{"apiVersion":"apps/v1","kind":"Deployment","metadata":{"name":"mqtt-pki","namespace":"video-cloud-%s-video-cloud"},"spec":{"template":{"spec":{"containers":[{"name":"mqtt","env":[{"name":"EMQX_DASHBOARD__DEFAULT_PASSWORD","valueFrom":{"secretKeyRef":{"name":"mqtt-pki-runtime","key":"dashboard-password"}}}]},{"name":"pkibroker"}]}}}}`, environment)
+}
+
 func TestSecretStoreVerifiesK8SMirrorBindings(t *testing.T) {
 	store := makeIsolatedTestSecretStore(t, "staging")
 	for _, entry := range rtkSecretCatalog() {
-		if err := store.write(filepath.Join("runtime", entry.ID), []byte("canonical\n"), true); err != nil {
+		if err := store.write(filepath.Join("runtime", entry.ID), []byte(secretStoreBindingFixtureValue(entry.ID)+"\n"), true); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -636,14 +665,14 @@ func TestSecretStoreVerifiesK8SMirrorBindings(t *testing.T) {
 		t.Fatal(err)
 	}
 	var script strings.Builder
-	script.WriteString("#!/bin/sh\ncase \"$*\" in\n")
+	fmt.Fprintf(&script, "#!/bin/sh\ncase \"$*\" in\n  *'get deployment mqtt-pki'*) printf '%%s\\n' '%s' ;;\n", managedMQTTMirrorTestConsumer(store.Environment))
 	secretData := map[string]map[string]string{}
 	for _, entry := range rtkSecretCatalog() {
-		for _, binding := range entry.K8SBinding {
+		for _, binding := range managedMQTTMirrorTestBindings(entry) {
 			if secretData[binding.Secret] == nil {
 				secretData[binding.Secret] = map[string]string{}
 			}
-			secretData[binding.Secret][binding.Key] = "Y2Fub25pY2Fs"
+			secretData[binding.Secret][binding.Key] = base64.StdEncoding.EncodeToString([]byte(secretStoreBindingFixtureValue(entry.ID)))
 		}
 	}
 	for secret, data := range secretData {
@@ -662,6 +691,15 @@ func TestSecretStoreVerifiesK8SMirrorBindings(t *testing.T) {
 	if err := verifySecretStoreK8SBindings(store); err != nil {
 		t.Fatal(err)
 	}
+	if err := store.write("runtime/emqx-dashboard-password", []byte("different\n"), true); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySecretStoreK8SBindings(store); err == nil || !strings.Contains(err.Error(), "mqtt-pki-runtime:dashboard-password") {
+		t.Fatalf("managed MQTT mirror mismatch error = %v", err)
+	}
+	if err := store.write("runtime/emqx-dashboard-password", []byte("canonical\n"), true); err != nil {
+		t.Fatal(err)
+	}
 	if err := store.write("runtime/postgres", []byte("different\n"), true); err != nil {
 		t.Fatal(err)
 	}
@@ -677,21 +715,21 @@ func TestSecretStoreAllowsEmptyHandoffBindingsOnlyWhenWorkerAbsent(t *testing.T)
 	}
 	secretData := map[string]map[string]string{}
 	for _, entry := range rtkSecretCatalog() {
-		if err := store.write(filepath.Join("runtime", entry.ID), []byte("canonical\n"), true); err != nil {
+		if err := store.write(filepath.Join("runtime", entry.ID), []byte(secretStoreBindingFixtureValue(entry.ID)+"\n"), true); err != nil {
 			t.Fatal(err)
 		}
-		for _, binding := range entry.K8SBinding {
+		for _, binding := range managedMQTTMirrorTestBindings(entry) {
 			if secretData[binding.Secret] == nil {
 				secretData[binding.Secret] = map[string]string{}
 			}
-			secretData[binding.Secret][binding.Key] = "Y2Fub25pY2Fs"
+			secretData[binding.Secret][binding.Key] = base64.StdEncoding.EncodeToString([]byte(secretStoreBindingFixtureValue(entry.ID)))
 			if handoffOnlySecret(entry.ID) {
 				secretData[binding.Secret][binding.Key] = ""
 			}
 		}
 	}
 	var script strings.Builder
-	script.WriteString("#!/bin/sh\ncase \"$*\" in\n  *'get deployment account-manager-handoff-worker'*) printf '%s\\n' \"${FAKE_HANDOFF_WORKER:-}\" ;;\n")
+	fmt.Fprintf(&script, "#!/bin/sh\ncase \"$*\" in\n  *'get deployment mqtt-pki'*) printf '%%s\\n' '%s' ;;\n  *'get deployment account-manager-handoff-worker'*) printf '%%s\\n' \"${FAKE_HANDOFF_WORKER:-}\" ;;\n", managedMQTTMirrorTestConsumer(store.Environment))
 	for secret, data := range secretData {
 		payload, err := json.Marshal(map[string]any{"data": data})
 		if err != nil {
@@ -753,7 +791,7 @@ func TestSecretStoreVerificationAndErrorBranches(t *testing.T) {
 	workspace := t.TempDir()
 	store := makeIsolatedTestSecretStore(t, "staging")
 	for _, entry := range rtkSecretCatalog() {
-		if err := store.write(filepath.Join("runtime", entry.ID), []byte("canonical\n"), true); err != nil {
+		if err := store.write(filepath.Join("runtime", entry.ID), []byte(secretStoreBindingFixtureValue(entry.ID)+"\n"), true); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -899,7 +937,7 @@ func TestSecretStoreK8SBindingFailureModes(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, entry := range rtkSecretCatalog() {
-		if err := store.write(filepath.Join("runtime", entry.ID), []byte("canonical\n"), true); err != nil {
+		if err := store.write(filepath.Join("runtime", entry.ID), []byte(secretStoreBindingFixtureValue(entry.ID)+"\n"), true); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -936,14 +974,14 @@ func TestSecretStoreK8SBindingsRetryAndReadEachSecretOnce(t *testing.T) {
 	keys := map[string]string{}
 	secrets := map[string]bool{}
 	for _, entry := range rtkSecretCatalog() {
-		if err := store.write(filepath.Join("runtime", entry.ID), []byte("canonical\n"), true); err != nil {
+		if err := store.write(filepath.Join("runtime", entry.ID), []byte(secretStoreBindingFixtureValue(entry.ID)+"\n"), true); err != nil {
 			t.Fatal(err)
 		}
 		if !supportSecretRequired(store, entry.ID) {
 			continue
 		}
-		for _, binding := range entry.K8SBinding {
-			keys[binding.Key] = base64.StdEncoding.EncodeToString([]byte("canonical"))
+		for _, binding := range managedMQTTMirrorTestBindings(entry) {
+			keys[binding.Key] = base64.StdEncoding.EncodeToString([]byte(secretStoreBindingFixtureValue(entry.ID)))
 			secrets[binding.NamespaceSuffix+"/"+binding.Secret] = true
 		}
 	}
@@ -957,7 +995,7 @@ func TestSecretStoreK8SBindingsRetryAndReadEachSecretOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	kubectl := filepath.Join(dir, "kubectl")
-	script := fmt.Sprintf("#!/bin/sh\nprintf 'x\\n' >> '%s'\nif [ ! -f '%s' ]; then touch '%s'; exit 1; fi\ncat '%s'\n", calls, marker, marker, responseFile)
+	script := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in *'get deployment mqtt-pki'*) printf '%%s\\n' '%s'; exit 0 ;; esac\nprintf '%%s\\n' \"$*\" >> '%s'\nif [ ! -f '%s' ]; then touch '%s'; exit 1; fi\ncat '%s'\n", managedMQTTMirrorTestConsumer(store.Environment), calls, marker, marker, responseFile)
 	if err := os.WriteFile(kubectl, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -966,15 +1004,18 @@ func TestSecretStoreK8SBindingsRetryAndReadEachSecretOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	observed, err := os.ReadFile(calls)
-	if err != nil || strings.Count(string(observed), "x\n") != len(secrets)+1 {
-		t.Fatalf("Kubernetes Secret reads = %d, want %d: %v", strings.Count(string(observed), "x\n"), len(secrets)+1, err)
+	if err != nil || strings.Count(string(observed), "\n") != len(secrets)+1 {
+		t.Fatalf("Kubernetes Secret reads = %d, want %d: %v", strings.Count(string(observed), "\n"), len(secrets)+1, err)
+	}
+	if strings.Count(string(observed), "get secret mqtt-pki-runtime -o json") != 1 || strings.Contains(string(observed), "get secret mqtt-runtime ") {
+		t.Fatal("managed MQTT mirror was not read exactly once from its actual producer")
 	}
 }
 
 func TestSecretStoreK8SBindingsRequireEveryConsumer(t *testing.T) {
 	store := makeIsolatedTestSecretStore(t, "dev")
 	for _, entry := range rtkSecretCatalog() {
-		if err := store.write(filepath.Join("runtime", entry.ID), []byte("canonical\n"), true); err != nil {
+		if err := store.write(filepath.Join("runtime", entry.ID), []byte(secretStoreBindingFixtureValue(entry.ID)+"\n"), true); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -984,7 +1025,7 @@ func TestSecretStoreK8SBindingsRequireEveryConsumer(t *testing.T) {
 	allKeys := map[string]string{}
 	for _, entry := range rtkSecretCatalog() {
 		for _, binding := range entry.K8SBinding {
-			allKeys[binding.Key] = base64.StdEncoding.EncodeToString([]byte("canonical"))
+			allKeys[binding.Key] = base64.StdEncoding.EncodeToString([]byte(secretStoreBindingFixtureValue(entry.ID)))
 		}
 	}
 	withoutAdminJobToken := map[string]string{}
@@ -1009,7 +1050,7 @@ func TestSecretStoreK8SBindingsRequireEveryConsumer(t *testing.T) {
 func TestSyncMissingSecretBindingsPreservesExistingValues(t *testing.T) {
 	store := makeIsolatedTestSecretStore(t, "dev")
 	for _, entry := range rtkSecretCatalog() {
-		if err := store.write(filepath.Join("runtime", entry.ID), []byte("canonical\n"), true); err != nil {
+		if err := store.write(filepath.Join("runtime", entry.ID), []byte(secretStoreBindingFixtureValue(entry.ID)+"\n"), true); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1019,7 +1060,7 @@ func TestSyncMissingSecretBindingsPreservesExistingValues(t *testing.T) {
 	allKeys := map[string]string{}
 	for _, entry := range rtkSecretCatalog() {
 		for _, binding := range entry.K8SBinding {
-			allKeys[binding.Key] = base64.StdEncoding.EncodeToString([]byte("canonical"))
+			allKeys[binding.Key] = base64.StdEncoding.EncodeToString([]byte(secretStoreBindingFixtureValue(entry.ID)))
 		}
 	}
 	before := map[string]string{}
@@ -1289,7 +1330,7 @@ func TestSecretStoreK8SRuntimeReportsCertificateAndIdentityFailuresTogether(t *t
 	kubectl := writeSecretRuntimeKubectl(t, secrets, deployments)
 	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
 	err = verifySecretStoreK8SRuntime(store, time.Now())
-	if err == nil || !strings.Contains(err.Error(), "not currently valid") || !strings.Contains(err.Error(), "identity is not proven") {
+	if err == nil || !strings.Contains(err.Error(), "not currently valid") || !strings.Contains(err.Error(), "not ready for post-deploy PKI health acceptance") {
 		t.Fatalf("combined live validation error = %v", err)
 	}
 }
@@ -1714,7 +1755,7 @@ func TestKubernetesProvisionProductionSecretStoreResetFailsClosed(t *testing.T) 
 		t.Fatal(err)
 	}
 	for _, entry := range rtkSecretCatalog() {
-		if err := store.write(filepath.Join("runtime", entry.ID), []byte("canonical\n"), true); err != nil {
+		if err := store.write(filepath.Join("runtime", entry.ID), []byte(secretStoreBindingFixtureValue(entry.ID)+"\n"), true); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1730,4 +1771,11 @@ func TestKubernetesProvisionProductionSecretStoreResetFailsClosed(t *testing.T) 
 	if activeCanonicalSecretStore || activeSecretEnvironmentRoot != "" {
 		t.Fatal("canonical SecretStore state was not restored")
 	}
+}
+
+func secretStoreBindingFixtureValue(id string) string {
+	if id == "payment-reference-encryption" {
+		return base64.StdEncoding.EncodeToString([]byte(strings.Repeat("k", 32)))
+	}
+	return "canonical"
 }

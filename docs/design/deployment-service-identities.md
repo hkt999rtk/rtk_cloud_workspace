@@ -126,25 +126,30 @@ The [Dev PKI runbook](../product-services-dev-pki.md) describes the public
 CertIssuer repair and the image-only update boundary for an existing managed
 PKI stack. Initial enrollment and auxiliary PKI upgrades are separate operations.
 
-## Dev/Staging full workload overwrite policy
+## Complete environment upgrades
 
-An environment operator may authorize complete managed Deployment-spec
-replacement in Dev/Staging through the reviewed schema-1 plan at
-`~/.config/rtk_cloud/<environment>/deployment/managed-upgrade.json`. The
-`replace-managed-workloads` policy is environment-local, excludes production,
-and is consumed by both default full preflight and full deployment. This
-explicit desired-state input supersedes static workload templates for the
-selected complete environment inventory; it does not change CA custody,
-operator authority or the accepted certificate lifecycle.
+Dev, staging and prod use the same maintained managed-PKI renderer and
+qualification/execution plan. Environment-local schema-1 workload snapshots,
+`deployment prepare-upgrade` and automatic `managed-upgrade.json` detection are
+retired. The [readiness standard](../deployment-readiness-standard.md) owns the
+complete-update GO/NO-GO definition; capacity and protection differ through
+explicit configuration, not environment-specific deployment branches.
 
-The plan permits declared nonidentity workload configuration changes while
-retaining and checking issuer/identity PVCs, mounted trust/CRLs, Secret bindings,
-bootstrap/credential plumbing and StatefulSet/DaemonSet provider owners. It
-requires exact-release CI/pulls, schemas/startup and server-side dry-run before
-mutation, fences plan and owner drift, writes private rollback specs, and
-requires actual desired specs plus PKI/public mTLS after rollout. Whole-plan
-replacement must never call the legacy static CertIssuer Secret/material
-reconciler. See [Full managed workload upgrade](../deployment-operations.md#full-managed-workload-upgrade)
-for the normative operational schema, gates and limits. A future root/identity
-replacement is an explicit accepted lifecycle operation, followed by a fresh
-workload plan; a permissive boolean alone is insufficient deployment evidence.
+Normal upgrades retain original issuers, identity/private-key state, trust pins,
+CRLs, Secrets and persistent owners through typed lifecycle references and exact
+UID bindings. Live workload specs are not desired-state templates. Existing
+owners and identity references are observed in memory by the shared compiler.
+Preflight produces private `deployment/identity-bindings.json` evidence only from
+actual observations, and complete qualification binds it to the exact plan.
+No bindings file or manual adoption command is required before the first check.
+New target resources receive UIDs only when created. Volume references do not
+prove persistent contents or seal state. An incompatible OpenBao storage/PKI
+profile requires a qualified compatible target or explicit verified transition;
+observations never authorize replacing an issuer, seal or Root.
+
+Nonidentity workload settings come from maintained configuration and the exact
+selected release. Incompatible identity/storage/schema changes remain explicit
+migration blockers. The configured environment operator retains PKI authority;
+recovery quorum does not add a second `pki_admin` approval. See the
+[deployment runbook](../deployment-operations.md#retired-schema-1-managed-workload-upgrade)
+for adoption, plan review, qualification and execution boundaries.

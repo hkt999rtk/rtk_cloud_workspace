@@ -32,6 +32,35 @@ if ($mode eq 'bounded') {
     alarm 0;
     exit(($status & 127) ? 128 + ($status & 127) : $status >> 8);
 }
+if ($mode eq 'private-temp') {
+    require File::Spec;
+    require File::Temp;
+    my ($config_root, $environment) = @ARGV;
+    @ARGV == 2 && defined($config_root) && length($config_root)
+        && defined($environment) && $environment =~ /\A[a-zA-Z0-9][a-zA-Z0-9_.-]*\z/
+        && $environment ne '.' && $environment ne '..'
+        or fail('TEMP_PATH_INVALID', 'cannot resolve private environment probe directory');
+    # Same explicit config-root/default environment selection as SecretStore.
+    # Reject unsafe existing components; never repair permissions or fall back.
+    my $root = File::Spec->canonpath(File::Spec->rel2abs($config_root));
+    $root !~ m{/(?:\.|\.\.)(?:/|\z)}
+        or fail('TEMP_PATH_INVALID', 'private environment probe directory must use a canonical path');
+    my $path = $root;
+    for my $part ('', $environment, 'deployment', 'tmp') {
+        $path = File::Spec->catdir($path, $part) if length $part;
+        my @info = lstat($path);
+        if (!@info) {
+            mkdir($path, 0700) or fail('TEMP_PATH_INVALID', 'cannot create private environment probe directory');
+            @info = lstat($path);
+        }
+        @info && -d _ && !-l _ && ($info[2] & 0777) == 0700 && $info[4] == $>
+            or fail('TEMP_PATH_INVALID', 'private environment probe directory must be owned, real and mode 0700');
+    }
+    my $temporary = eval { File::Temp::tempdir('certissuer-public-XXXXXXXX', DIR => $path, CLEANUP => 0) };
+    defined($temporary) && !$@ or fail('TEMP_PATH_INVALID', 'cannot create private environment probe directory');
+    print $temporary;
+    exit 0;
+}
 
 local $/;
 my $raw = <STDIN> // '';
@@ -39,15 +68,18 @@ if ($mode eq 'failure') {
     my ($stage, $status) = @ARGV;
     # Only emit allowlisted classifications, never command stderr or credentials.
     fail('PROBE_TIMEOUT', "$stage probe exceeded its time limit")
-        if $status == 124 || $status == 142 || $raw =~ /timed out|deadline exceeded|CERTISSUER_SOCKET_TIMEOUT/i;
+        if $status == 124 || $status == 142 || $raw =~ /timed out|deadline exceeded|CERTISSUER_SOCKET_TIMEOUT|CERTISSUER_MANAGED_PROBE_TIMEOUT/i;
+    fail('PROBE_CANCELLED', "$stage probe was cancelled") if $raw =~ /CERTISSUER_MANAGED_PROBE_CANCELLED/;
+    fail('ANONYMOUS_DENIAL_UNVERIFIED', 'anonymous request did not prove client-certificate rejection')
+        if $raw =~ /CERTISSUER_ANONYMOUS_DENIAL_UNVERIFIED/;
     fail('K8S_FORBIDDEN', "$stage probe lacks Kubernetes permission") if $raw =~ /\bForbidden\b/i;
     fail('K8S_UNAUTHORIZED', "$stage probe requires Kubernetes authentication") if $raw =~ /\bUnauthorized\b/i;
     fail('TLS_HOSTNAME_INVALID', 'CertIssuer server certificate does not match its hostname')
-        if $raw =~ /hostname mismatch|verify error:num=62\b/i;
+        if $raw =~ /hostname mismatch|verify error:num=62\b|CERTISSUER_TLS_HOSTNAME_INVALID/i;
     fail('TLS_CERTIFICATE_INVALID', 'CertIssuer TLS certificate verification failed; check the CA chain and certificate validity')
-        if $raw =~ /certificate verify failed|verify error:num=|self.signed certificate|unable to get.*issuer/i;
+        if $raw =~ /certificate verify failed|verify error:num=|self.signed certificate|unable to get.*issuer|CERTISSUER_TLS_CERTIFICATE_INVALID/i;
     fail('TLS_HANDSHAKE_FAILED', 'CertIssuer TLS handshake failed; check client identity and TLS settings')
-        if $raw =~ /ssl.*alert|tls.*alert|handshake failure/i;
+        if $raw =~ /ssl.*alert|tls.*alert|handshake failure|CERTISSUER_TLS_HANDSHAKE_FAILED/i;
     fail('CONFIG_INVALID', 'CertIssuer HTTPS origin or client certificate settings are incomplete')
         if $raw =~ /CERTISSUER_CONFIG_INVALID|CertIssuer (?:origin|socket) is unset|origin must use HTTPS/;
     fail('TOOL_MISSING', "$stage probe requires a missing executable or runtime module")
@@ -56,6 +88,12 @@ if ($mode eq 'failure') {
         if $raw =~ /CertIssuer socket is unavailable/;
     fail('RESPONSE_INVALID', 'managed CertIssuer socket returned an invalid HTTP response')
         if $raw =~ /CertIssuer socket returned an invalid response/;
+    fail('MANAGED_IDENTITY_INVALID', 'the original managed Account Manager identity is unavailable or invalid')
+        if $raw =~ /CERTISSUER_MANAGED_IDENTITY_INVALID/;
+    fail('MANAGED_IDENTITY_CHANGED', 'the managed Account Manager identity changed during public qualification; retry with current state')
+        if $raw =~ /CERTISSUER_MANAGED_STATE_CHANGED/;
+    fail('RESPONSE_INVALID', 'managed public CertIssuer probe returned an invalid or oversized response')
+        if $raw =~ /CERTISSUER_MANAGED_RESPONSE_INVALID/;
     fail('TRANSPORT_FAILED', "$stage probe could not complete; check Kubernetes connectivity and the selected workload");
 }
 if ($mode eq 'anonymous') {

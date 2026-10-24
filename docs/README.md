@@ -10,19 +10,24 @@ in the owning service repository; shared wire and payload contracts belong in
 | Goal | Document |
 | --- | --- |
 | Prepare, deploy, restore, accept, or remove an environment | [Deployment Operations Guide](deployment-operations.md) |
-| Review pending v2 preflight, deployment and final-check ordering | [V2 Deployment Script Flow](deployment-script-flow.md) (draft implementation reference) |
+| Establish new OpenBao/Service PKI identities for an explicitly new deployment generation | [New deployment identity lifecycle](deployment-operations.md#new-deployment-identity-lifecycle), [secrets boundary](deployment-secrets-governance.md#deployment-generation-identity-boundary) |
+| Trace current preflight, deployment and final-check scripts | [Current script flow and flow chart](deployment-operations.md#current-script-flow) |
+| Decide complete-environment GO/NO-GO and review production activation requirements | [Unified Deployment Readiness Standard](deployment-readiness-standard.md) |
+| Understand each preflight check, its rationale and failure consequences | [Detailed preflight checklist](deployment-readiness-standard.md#detailed-preflight-checklist) |
+| Understand derived CertIssuer paths and startup settings | [Issuer startup configuration](cloud-deployment-architecture.md#issuer-startup-configuration) |
+| Understand core API MQTT TLS paths and endpoint derivation | [Core API MQTT transport derivation](cloud-deployment-architecture.md#core-api-mqtt-transport-derivation) |
 | Back up or restore matched core data under maintenance | [Core Backup and Restore](backup-restore.md) |
 | Review raw billing backup, replay and 90-day hot retention | [Billing raw-data lifecycle design](design/billing-raw-data-lifecycle.md) |
 | Operate isolated verification, retention authority and recovery fencing | [Billing lifecycle operations](billing-raw-lifecycle-operations.md) |
 | Review Billing backup key location, escrow and rotation | [Billing backup key custody design](design/billing-backup-key-custody.md) |
-| Back up PostgreSQL daily online and rehearse an isolated restore | [Daily PostgreSQL Backup and Restore](postgres-backup-restore.md) |
+| Back up PostgreSQL, verify continuous WAL and rehearse isolated PITR | [PostgreSQL Backup and Restore](postgres-backup-restore.md) |
 | Monitor service health, credentials, capacity and generate PDF reports | [Cloud Monitor](cloud-monitor.md) |
 | Name, retain, migrate or retire Object Storage buckets and objects | [Object Storage Policy](object-storage-policy.md) |
 | Prepare storage credentials and qualify media/OTA cutover | [Storage operations](storage-credential-lifecycle.md) |
 | Prepare the private support ticket backend | [Zammad deployment runbook](deployment/support-ticket-zammad.md) |
 | Prepare and run local, acceptance, qualification, or load tests | [Testing Operations Guide](testing-operations.md) |
 | Create tracked environment intent and overrides | [Environment README](../cloud_env/README.md) |
-| Choose or review DNS names for an environment | [Environment DNS naming](environment-dns-naming.md) |
+| Choose or review environment DNS, LKE cluster, pool and worker display names | [Environment and infrastructure naming](environment-dns-naming.md) |
 | Select a DNS provider, manage records, or review DNS-01 ownership | [DNS Adapter Architecture](dns-adapter-architecture.md) |
 | Find shared API, payload, authentication, or device transport contracts | [Canonical contracts index](../repos/rtk_cloud_contracts_doc/README.md) |
 | Find service implementation, configuration, or package documentation | [Repository Documentation](#repository-documentation) |
@@ -53,7 +58,7 @@ when retrieved alongside an active source.
 | --- | --- | --- |
 | [architecture.md](architecture.md) | Source | Cross-repo boundaries and source-of-truth model. |
 | [Video Cloud STRIDE threat model](../cyber_security/threat_models/rtk_video_cloud-stride-threat-model.md) | Supporting note: draft static assessment | Current code and adjoining trust boundaries, conditional risks, and validation responsibilities; no live environment security sign-off. |
-| [environment-dns-naming.md](environment-dns-naming.md) | Source | Environment identity, stack/root mapping, public endpoint hostname rules, and explicit exceptions. |
+| [environment-dns-naming.md](environment-dns-naming.md) | Source | Environment identity, stack/root mapping, LKE cluster/pool/worker display names, public endpoint hostname rules, and explicit exceptions. |
 | [Database ER model](design/database-er-diagrams.md) | Generated design reference | Tables, columns, declared foreign keys, and evidenced logical references across services. |
 | [Database schema to ER process](design/database-er-process.md) | Source | How schema metadata becomes the ER atlas, checked snapshots, and environment diff reports. |
 | [account-manager-admin-boundary.md](account-manager-admin-boundary.md) | Source | Boundary between Account Manager as backend control plane and Admin as enterprise dashboard/BFF. |
@@ -66,13 +71,13 @@ when retrieved alongside an active source.
 | [dependency-failure-policy.md](dependency-failure-policy.md) | Source | Cross-service dependency failure policy for startup-critical dependencies, request-scoped upstreams, durable async delivery, observability, and optional features. |
 | [backend-release-readiness.md](backend-release-readiness.md) | Supporting note | Backend foundation closeout checklist, validation commands, report status, and remaining release-evidence items. |
 | [deployment-secrets-governance.md](deployment-secrets-governance.md) | Source | Local deployment secret layout, environment/provider/service taxonomy, and handling rules. |
-| [deployment-script-flow.md](deployment-script-flow.md) | Supporting note: draft implementation reference | Reviewed local v2 script dispatch, Mermaid flow chart, exact-plan handoff and integrated final checks; requires separate implementation delivery. |
+| [deployment-readiness-standard.md](deployment-readiness-standard.md) | Source: accepted policy; existing-update checks implemented | Per-item preflight checks, rationale and failure consequences; exact-plan GO/NO-GO and ownership/lifecycle fences; separate bootstrap/production recovery qualification scope. |
 | [Deployment check improvements](design/deployment-check-review-2026-10-03.md) | Supporting note: implemented in this PR | Traditional Chinese implementation report and dated local mock evidence; existing-environment checks only. |
 | [backup-restore.md](backup-restore.md) | Source | Environment-scoped maintenance backup/restore, matched core data, escrow, safety backups, exclusions and qualification gates. |
 | [Billing raw-data lifecycle design](design/billing-raw-data-lifecycle.md) | Supporting note: implementation design | Dedicated billing backup boundary, early off-volume protection, 90-day eligibility, archive verification, authority and recovery gates; activation unqualified. |
 | [Billing lifecycle operations](billing-raw-lifecycle-operations.md) | Source: operations | Isolated controller, disabled activation stages, role credentials, retry/fence protocol, recovery admission and qualification. |
 | [Billing backup key custody design](design/billing-backup-key-custody.md) | Supporting note: implementation design | Off-cluster age/signing custody, independent escrow, CI exclusions, rotation and owner qualification; not deployed. |
-| [postgres-backup-restore.md](postgres-backup-restore.md) | Source: qualification pending | Native PostgreSQL 16 daily full backups, capture-window WAL, private storage, retention, monitoring and isolated restore drills. |
+| [postgres-backup-restore.md](postgres-backup-restore.md) | Source: qualification pending | Native PostgreSQL 16 full backups, continuous WAL freshness/readback, private storage, retention and isolated PITR/restore drills; environment qualification pending. |
 | [cloud-monitor.md](cloud-monitor.md) | Implementation guide | Workspace monitor setup, expected inventory, credential/capacity/performance checks, dedicated probes and PDF reports. |
 | [Deployment service identities](design/deployment-service-identities.md) | Accepted operator authority, portable operator-held Root custody and persistent workload identity boundaries; each environment requires its own qualification. |
 | [PKI operator qualification](design/pki-operator-authority-test-plan.md) | Required operator-mode tests and dated Dev evidence, separate from release qualification. |
@@ -110,7 +115,9 @@ when retrieved alongside an active source.
 | [testing.md](testing.md) | Source | Cross-repository validation commands for pinned snapshots. |
 | [adr/README.md](adr/README.md) | Index | Workspace architecture decision record location and format. |
 
-The active runtime contract is `cloud_env/<environment>/runtime`. References to
+The active resolved-configuration contract is `cloud_env/<environment>/runtime`;
+deployment-generated state belongs in `~/.config/rtk_cloud/<environment>/` under
+the [canonical location policy](deployment-secrets-governance.md#configuration-versus-deployment-generated-data). References to
 `cloud_env/staging/lke` or `cloud_env/staging/linode` below are historical
 evidence, not current operator instructions.
 
@@ -120,7 +127,7 @@ evidence, not current operator instructions.
 | --- | --- |
 | [cloud-deployment-architecture.md](cloud-deployment-architecture.md) | Provider-neutral environment, architecture, adapter, and runtime model. |
 | [cloud-env-layout.md](cloud-env-layout.md) | Tracked environment and ignored runtime directory layout. |
-| [environment-dns-naming.md](environment-dns-naming.md) | Environment-to-DNS naming policy, endpoint roles, overrides, and runtime applicability. |
+| [environment-dns-naming.md](environment-dns-naming.md) | Environment, LKE cluster/pool/worker display and DNS naming policy, endpoint roles, overrides, and runtime applicability. |
 | [deployment-secrets-governance.md](deployment-secrets-governance.md) | Secret ownership, storage, injection, and redaction rules. |
 | [dns-adapter-architecture.md](dns-adapter-architecture.md) | DNS adapter selection, credentials, state, and mutation boundary. |
 | [lke-external-haproxy-edge.md](lke-external-haproxy-edge.md) | Current LKE external HAProxy edge contract. |

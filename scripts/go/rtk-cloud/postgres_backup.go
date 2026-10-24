@@ -41,6 +41,7 @@ type postgresBackupDeployment struct {
 	ImagePullSecret string                `json:"image_pull_secret,omitempty"`
 	Schedule        string                `json:"schedule,omitempty"`
 	TimeZone        string                `json:"time_zone,omitempty"`
+	ScheduleEnabled *bool                 `json:"schedule_enabled,omitempty"`
 	Worker          postgresbackup.Config `json:"worker"`
 }
 

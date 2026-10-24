@@ -46,13 +46,30 @@ type storageObjectProof struct {
 var errStorageEndpointUnassigned = errors.New("Object Storage endpoint is not assigned to this account")
 
 func validateDeploymentStorageActivation(cfg deploymentConfig) error {
+	createPath, err := privateDeploymentStatePath(cfg.Environment, environmentCreateStorageAllocationPath)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Lstat(createPath); err == nil {
+		// Genuine creation is an origin, while an explicit later completed
+		// cutover remains the authority for a changed allocation.
+		if err := validateEnvironmentStorageCutover(cfg.Environment, "media", cfg.Storage.RuntimeMedia); err != nil {
+			return err
+		}
+		if err := validateEnvironmentStorageCutover(cfg.Environment, "ota", cfg.Storage.OTAFirmware); err != nil {
+			return err
+		}
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	if cfg.Storage.RuntimeMediaCutoverRequired {
 		if err := validateEnvironmentStorageCutover(cfg.Environment, "media", cfg.Storage.RuntimeMedia); err != nil {
 			return err
 		}
 	}
 	env := appendMap(cfg.Values, cfg.AdapterResolved)
-	if env["LKE_OTA_SERVICE_REGISTRATION_ENABLED"] == "true" {
+	if env["LKE_OTA_SERVICE_REGISTRATION_ENABLED"] == "true" || env["OTA_SERVICE_REGISTRATION_ENABLED"] == "true" {
 		if cfg.Storage.OTAMode != "dedicated" {
 			return errors.New("enabled OTA service requires dedicated storage")
 		}
@@ -64,6 +81,17 @@ func validateDeploymentStorageActivation(cfg deploymentConfig) error {
 func validateEnvironmentStorageCutover(environment, purpose string, target deploymentStorageTarget) error {
 	body, err := readDeploymentStorageState(environment, storageCutoverReceiptName(purpose))
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			originPath, pathErr := privateDeploymentStatePath(environment, environmentCreateStorageAllocationPath)
+			if pathErr != nil {
+				return pathErr
+			}
+			if _, originErr := os.Lstat(originPath); originErr == nil {
+				return validateEnvironmentCreateStorageOrigin(environment, purpose, target)
+			} else if !errors.Is(originErr, os.ErrNotExist) {
+				return originErr
+			}
+		}
 		return fmt.Errorf("completed %s receipt is unavailable in ~/.config/rtk_cloud/%s/deployment/storage; use storage-import-state for original completed records or finish the managed storage lifecycle", strings.TrimSuffix(storageCutoverReceiptName(purpose), ".json"), environment)
 	}
 	var proof []byte
@@ -985,7 +1013,7 @@ func (c deploymentCredentialChecker) resolveStorageBucket(token string, target d
 		}
 		return bucket, nil
 	}
-	return linodeStorageBucket{}, fmt.Errorf("bucket %s was not found in Linode inventory", target.Bucket)
+	return linodeStorageBucket{}, fmt.Errorf("%w: bucket %s was not found in Linode inventory", errStorageBucketMissing, target.Bucket)
 }
 
 func (c deploymentCredentialChecker) resolveAuthorizedStorageKey(token, access string, target deploymentStorageTarget) (linodeStorageKey, error) {

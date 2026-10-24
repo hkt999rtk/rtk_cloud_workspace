@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -91,29 +90,33 @@ type dnsChallengeState struct {
 	Value  string `json:"value"`
 }
 
-func dnsChallengeStatePath(ctx dnsAdapterContext, adapter string) string {
-	return filepath.Join(ctx.RuntimeRoot, "dns", adapter, "challenges.json")
-}
-
 func readDNSChallenges(ctx dnsAdapterContext, adapter string) ([]dnsChallengeState, error) {
-	body, err := os.ReadFile(dnsChallengeStatePath(ctx, adapter))
-	if os.IsNotExist(err) {
+	body, err := readDNSLocalState(ctx, adapter, "challenges.json")
+	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
 	var out []dnsChallengeState
-	return out, json.Unmarshal(body, &out)
+	if err := decodeEnvironmentJSON(body, &out); err != nil || out == nil {
+		return nil, errors.New("invalid private DNS challenge state")
+	}
+	for _, item := range out {
+		if _, err := dns01RecordName(ctx.RootDomain, item.Domain); err != nil || item.Value == "" {
+			return nil, errors.New("DNS challenge state does not match the selected zone")
+		}
+	}
+	return out, nil
 }
 
 func writeDNSChallenges(ctx dnsAdapterContext, adapter string, values []dnsChallengeState) error {
-	path := dnsChallengeStatePath(ctx, adapter)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	path, err := dnsLocalStatePath(ctx, adapter, "challenges.json")
+	if err != nil {
 		return err
 	}
 	if len(values) == 0 {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 		return nil
@@ -122,7 +125,7 @@ func writeDNSChallenges(ctx dnsAdapterContext, adapter string, values []dnsChall
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(body, '\n'), 0o600)
+	return writeDNSLocalState(ctx, adapter, "challenges.json", append(body, '\n'))
 }
 
 func recordDNSChallenge(ctx dnsAdapterContext, adapter, domain, value string) error {

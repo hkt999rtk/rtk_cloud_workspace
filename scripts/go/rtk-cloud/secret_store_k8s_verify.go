@@ -18,6 +18,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 )
 
 type liveSecretList struct {
@@ -166,6 +168,7 @@ func productPKIRootPin(deployment liveDeployment, environment string) (string, s
 type liveDeployment struct {
 	Metadata struct {
 		Name       string `json:"name"`
+		UID        string `json:"uid"`
 		Generation int64  `json:"generation"`
 	} `json:"metadata"`
 	Spec struct {
@@ -180,9 +183,11 @@ type liveDeployment struct {
 						ValueFrom any    `json:"valueFrom"`
 					} `json:"env"`
 					VolumeMounts []struct {
-						Name      string `json:"name"`
-						MountPath string `json:"mountPath"`
-						ReadOnly  bool   `json:"readOnly"`
+						Name        string `json:"name"`
+						MountPath   string `json:"mountPath"`
+						SubPath     string `json:"subPath"`
+						SubPathExpr string `json:"subPathExpr"`
+						ReadOnly    bool   `json:"readOnly"`
 					} `json:"volumeMounts"`
 				} `json:"containers"`
 				Volumes []struct {
@@ -191,7 +196,11 @@ type liveDeployment struct {
 						SecretName string `json:"secretName"`
 					} `json:"secret"`
 					ConfigMap struct {
-						Name string `json:"name"`
+						Name  string `json:"name"`
+						Items []struct {
+							Key  string `json:"key"`
+							Path string `json:"path"`
+						} `json:"items"`
 					} `json:"configMap"`
 					PersistentVolumeClaim any `json:"persistentVolumeClaim"`
 				} `json:"volumes"`
@@ -240,18 +249,22 @@ type liveDeploymentBootstrapReport struct {
 
 // verifySecretStoreK8SRuntime is a read-only live check. It validates every
 // certificate/key pair stored in a Secret owned by the selected stack and makes
-// PKI-backed workload readiness part of secret verification. The latter catches
-// identities held on PVCs whose authorization can only be proven by the running
-// service. It deliberately has no CRL or OCSP dependency.
+// PKI-backed workload readiness part of health verification. Preflight instead
+// verifies reviewed original owners and records workload health as pending;
+// availability cannot prove a PVC-backed identity's validity. Adopted CRL
+// consumers must retain current acknowledged evidence
+// whose expiration also covers the requested certificate validity cutoff.
 func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 	if err := verifySelectedStackMetadata(store); err != nil {
 		return err
 	}
 	kubeconfig := store.KubeconfigPath()
-	if _, err := os.Stat(kubeconfig); errors.Is(err, os.ErrNotExist) {
-		return nil
-	} else if err != nil {
-		return err
+	if store.checkRuntime == nil || store.checkRuntime.frozenBackend == nil {
+		if _, err := os.Stat(kubeconfig); errors.Is(err, os.ErrNotExist) {
+			return nil
+		} else if err != nil {
+			return err
+		}
 	}
 	stack := "video-cloud-" + store.Environment
 	secretRaw, err := secretCheckKubectl([]*deploymentCheckRuntime{store.checkRuntime}, false, "--kubeconfig", kubeconfig, "get", "secrets", "--all-namespaces", "-o", "json")
@@ -263,6 +276,10 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 		return errors.New("live Kubernetes Secret metadata is invalid")
 	}
 	var failures []string
+	var registryBlocker *deploymentplan.Blocker
+	var activeSecrets map[string]bool
+	var referenceErr error
+	referencesLoaded := false
 	for _, secret := range secrets.Items {
 		if secret.Metadata.Namespace != stack && !strings.HasPrefix(secret.Metadata.Namespace, stack+"-") {
 			continue
@@ -289,8 +306,21 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 				continue
 			}
 			leaf, parseErr := x509.ParseCertificate(identity.Certificate[0])
-			if parseErr != nil || now.Before(leaf.NotBefore) || !now.Before(leaf.NotAfter) {
+			if parseErr != nil {
 				failures = append(failures, fmt.Sprintf("%s %s is not currently valid", label, pair[0]))
+				continue
+			}
+			if now.Before(leaf.NotBefore) || !now.Before(leaf.NotAfter) {
+				if !referencesLoaded {
+					activeSecrets, referenceErr = liveRuntimeSecretReferences(store)
+					referencesLoaded = true
+					if referenceErr != nil {
+						failures = append(failures, referenceErr.Error())
+					}
+				}
+				if referenceErr != nil || activeSecrets["Secret/"+label] {
+					failures = append(failures, fmt.Sprintf("%s %s is not currently valid", label, pair[0]))
+				}
 			}
 		}
 	}
@@ -312,7 +342,7 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 			if err := verifyCertIssuerBootstrapConfiguration(kubeconfig, namespace, deployments, store.checkRuntime); err != nil {
 				failures = append(failures, err.Error())
 			}
-			if err := verifyMountedPKICRLManifests(kubeconfig, namespace, store.Environment, deployments, "certissuer", store.checkRuntime); err != nil {
+			if err := verifyMountedPKICRLManifestsAt(kubeconfig, namespace, store.Environment, deployments, "certissuer", now, store.checkRuntime); err != nil {
 				failures = append(failures, err.Error())
 			}
 			if err := verifyAutomaticDeviceTrustConsumers(store.Environment, kubeconfig, namespace, deployments, now, store.checkRuntime); err != nil {
@@ -335,14 +365,19 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 				if desired == 0 {
 					continue
 				}
-				if deployment.Status.ObservedGeneration < deployment.Metadata.Generation || deployment.Status.UpdatedReplicas != desired || deployment.Status.AvailableReplicas != desired || deployment.Status.UnavailableReplicas != 0 {
-					failures = append(failures, fmt.Sprintf("%s/%s PKI-backed identity is not proven by an available current workload", namespace, deployment.Metadata.Name))
+				if err := store.checkRuntime.checkPKIWorkloadPhase(namespace, deployment); err != nil {
+					failures = append(failures, err.Error())
 				}
 			}
 			if serviceClientController {
 				if serviceClientRegistryConfigured {
-					if err := verifyLiveServiceClientRegistry(kubeconfig, namespace, deployments, store.checkRuntime); err != nil {
-						failures = append(failures, err.Error())
+					if err := verifyLiveServiceClientRegistryAt(kubeconfig, namespace, deployments, now, store.checkRuntime); err != nil {
+						var blocker *deploymentplan.Blocker
+						if errors.As(err, &blocker) && (blocker.ID == "deployment.pki.clock" || blocker.ID == "deployment.pki.registry.stale") {
+							registryBlocker = blocker
+						} else {
+							failures = append(failures, err.Error())
+						}
 					}
 				} else if err := verifyUnadoptedServiceClientRegistry(kubeconfig, stack+"-platform", now, store.checkRuntime); err != nil {
 					failures = append(failures, err.Error())
@@ -359,10 +394,13 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 		if json.Unmarshal(accountRaw, &deployments) != nil {
 			failures = append(failures, "live Account Manager deployment metadata is invalid")
 		} else {
+			if err := verifyAccountRegistrationPublicCRLRuntime(store, now, deployments); err != nil {
+				failures = append(failures, err.Error())
+			}
 			if err := verifyAccountManagerPKIConfiguration(deployments); err != nil {
 				failures = append(failures, err.Error())
 			}
-			if err := verifyMountedPKICRLManifests(kubeconfig, accountNamespace, store.Environment, deployments, "account-manager", store.checkRuntime); err != nil {
+			if err := verifyMountedPKICRLManifestsAt(kubeconfig, accountNamespace, store.Environment, deployments, "account-manager", now, store.checkRuntime); err != nil {
 				failures = append(failures, err.Error())
 			}
 		}
@@ -373,10 +411,17 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 		}
 	}
 	if len(failures) == 0 {
+		if registryBlocker != nil {
+			return registryBlocker
+		}
 		return nil
 	}
 	sort.Strings(failures)
-	return secretCheckSummary(fmt.Sprintf("live Kubernetes secret validation failed: %s", strings.Join(failures, "; ")))
+	summary := secretCheckSummary(fmt.Sprintf("live Kubernetes secret validation failed: %s", strings.Join(failures, "; ")))
+	if registryBlocker != nil {
+		return errors.Join(registryBlocker, summary)
+	}
+	return summary
 }
 
 // Product CA creation waits for receipts from these workloads. If either
@@ -397,6 +442,9 @@ func verifyAutomaticDeviceTrustConsumers(environment, kubeconfig, namespace stri
 		return nil
 	}
 	if controller["PKI_FIXED_DEVICE_ROOT_TRUST"] != "" || controller["PKI_DEV_FIXED_DEVICE_ROOT_TRUST"] != "" {
+		if settings["video-cloud-api-pki/app"]["VIDEO_CLOUD_AUTH_DEVICE_AUTOMATIC_STATE_DIR"] != "" {
+			return verifyManagedDeviceTrustConsumers(environment, kubeconfig, namespace, deployments, settings, now, runtimes...)
+		}
 		return verifyFixedDeviceRootTrust(environment, kubeconfig, namespace, deployments, settings, now, runtimes...)
 	}
 	consumers := firstNonEmpty(controller["PKI_REQUIRED_BUNDLE_CONSUMERS_DEVICE"], controller["PKI_REQUIRED_CONSUMERS_DEVICE"])
@@ -669,7 +717,7 @@ func verifyAccountManagerPKIConfiguration(deployments liveDeploymentList) error 
 				}
 				accountClient := strings.HasPrefix(env.Name, "PKI_MANAGEMENT_ACCOUNT_SERVICE_CLIENT_")
 				serviceOrigin := strings.HasPrefix(env.Name, "PKI_MANAGEMENT_ISSUER_") || strings.HasPrefix(env.Name, "PKI_MANAGEMENT_CONTROLLER_")
-				approvedCRL := env.Name == "PKI_MANAGEMENT_ACCOUNT_SERVICE_CLIENT_SERVER_CRL_MANIFEST"
+				approvedCRL := env.Name == "PKI_MANAGEMENT_ACCOUNT_SERVICE_CLIENT_SERVER_CRL_MANIFEST" || serviceOrigin && (strings.HasSuffix(env.Name, "_SERVER_CRL_MANIFEST") || strings.HasSuffix(env.Name, "_PKI_CONTROLLER_URL") || strings.HasSuffix(env.Name, "_MANAGEMENT_CA"))
 				if !approvedCRL && (accountClient || serviceOrigin) && (strings.Contains(env.Name, "_CRL_MANIFEST") || strings.Contains(env.Name, "_SERVICE_ROOT_") || serviceOrigin && (strings.HasSuffix(env.Name, "_PKI_CONTROLLER_URL") || strings.HasSuffix(env.Name, "_MANAGEMENT_CA"))) && strings.TrimSpace(env.Value) != "" {
 					unsupported = append(unsupported, env.Name)
 				}
@@ -681,6 +729,9 @@ func verifyAccountManagerPKIConfiguration(deployments liveDeploymentList) error 
 		}
 		if appSocket != "" && (managementSocket == "" || appSocket != managementSocket) {
 			return errors.New("Account Manager app and PKI sidecar use different managed socket paths")
+		}
+		if err := verifyManagedAccountOrigins(deployment); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -1022,6 +1073,10 @@ func verifyUnadoptedServiceClientRegistry(kubeconfig, namespace string, now time
 }
 
 func verifyLiveServiceClientRegistry(kubeconfig, namespace string, deployments liveDeploymentList, runtimes ...*deploymentCheckRuntime) error {
+	return verifyLiveServiceClientRegistryAt(kubeconfig, namespace, deployments, time.Now().UTC(), runtimes...)
+}
+
+func verifyLiveServiceClientRegistryAt(kubeconfig, namespace string, deployments liveDeploymentList, validUntil time.Time, runtimes ...*deploymentCheckRuntime) error {
 	var controller *liveDeployment
 	for i := range deployments.Items {
 		if deployments.Items[i].Metadata.Name == "pki-controller" {
@@ -1043,9 +1098,26 @@ func verifyLiveServiceClientRegistry(kubeconfig, namespace string, deployments l
 	issuerID := settings["RTK_DEPLOYMENT_SERVICE_ISSUER_ID"]
 	rootSHA := settings["PKI_SERVICE_CLIENT_ROOT_SHA256"]
 	consumers := settings["PKI_REQUIRED_CONSUMERS_SERVICE"]
-	if issuerID == "" || rootSHA == "" || consumers == "" {
+	if rootSHA == "" || consumers == "" {
 		return errors.New("pki-controller Service client registry issuer settings are incomplete")
 	}
+	issuers := []string{issuerID}
+	if issuerID == "" {
+		var err error
+		issuers, err = readMountedServiceRegistryIssuers(kubeconfig, namespace, *controller, settings, validUntil, runtimes...)
+		if err != nil {
+			return err
+		}
+	}
+	for _, issuer := range issuers {
+		if err := verifyLiveServiceClientRegistryIssuer(kubeconfig, namespace, deployments, issuer, rootSHA, consumers, runtimes...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func verifyLiveServiceClientRegistryIssuer(kubeconfig, namespace string, deployments liveDeploymentList, issuerID, rootSHA, consumers string, runtimes ...*deploymentCheckRuntime) error {
 	podsRaw, err := secretCheckKubectl(runtimes, false, "--kubeconfig", kubeconfig, "-n", namespace, "get", "pods", "-l", "app.kubernetes.io/name=pki-controller", "-o", "json")
 	if err != nil {
 		return secretCheckFailure(err, "cannot read pki-controller Pod metadata")
@@ -1056,22 +1128,38 @@ func verifyLiveServiceClientRegistry(kubeconfig, namespace string, deployments l
 	}
 	output, commandErr := secretCheckKubectl(runtimes, true, "--kubeconfig", kubeconfig, "-n", namespace, "exec", pods.Items[0].Metadata.Name, "--", "/app/pkicontroller", "recovery-inventory-service-client", issuerID, rootSHA, consumers)
 	start, end := strings.IndexByte(string(output), '{'), strings.LastIndexByte(string(output), '}')
-	var report struct {
-		Status                 string `json:"status"`
-		Issuances              int    `json:"issuances"`
-		PendingIssuances       int    `json:"pending_issuances"`
-		InvalidRecords         int    `json:"invalid_records"`
-		UnpublishedRevocations int    `json:"unpublished_revocations"`
-		MissingAcknowledgments int    `json:"missing_acknowledgments"`
-	}
-	if start < 0 || end < start || json.Unmarshal(output[start:end+1], &report) != nil {
+	var report serviceClientInventoryReport
+	if start < 0 || end < start || decodeEnvironmentJSON(output[start:end+1], &report) != nil {
 		return secretCheckFailure(commandErr, "pki-controller Service client registry verification did not return a valid report")
 	}
 	if report.Status == "service-client-registry-inventory-incomplete" {
 		return secretCheckFailure(commandErr, "pki-controller Service client registry inventory did not complete; check controller database grants and query errors")
 	}
-	if commandErr != nil || report.Status != "service-client-registry-inventory-checked" || report.Issuances == 0 || report.PendingIssuances != 0 || report.InvalidRecords != 0 || report.UnpublishedRevocations != 0 || report.MissingAcknowledgments != 0 {
-		return secretCheckFailure(commandErr, fmt.Sprintf("pki-controller Service client registry is incomplete: issuances=%d pending=%d invalid=%d unpublished_revocations=%d missing_acknowledgments=%d", report.Issuances, report.PendingIssuances, report.InvalidRecords, report.UnpublishedRevocations, report.MissingAcknowledgments))
+	for _, runtime := range runtimes {
+		if deferred, err := runtime.deferServiceRegistryAcknowledgments(report, kubeconfig, namespace, issuerID, rootSHA, consumers, deployments); err != nil {
+			return err
+		} else if deferred {
+			return nil
+		}
 	}
+	if commandErr != nil {
+		return secretCheckFailure(commandErr, "pki-controller Service client registry evidence is incomplete, stale or differs from its selected issuer, Root and environment")
+	}
+	if err := validateServiceClientInventoryReport(report, namespace, issuerID, rootSHA, time.Now().UTC()); err != nil {
+		var blocker *deploymentplan.Blocker
+		if errors.As(err, &blocker) {
+			return blocker
+		}
+		return errors.New("pki-controller Service client registry evidence is incomplete or differs from its selected issuer, Root and environment")
+	}
+
 	return nil
+}
+
+func livePKIWorkloadReady(d liveDeployment) bool {
+	replicas := int32(1)
+	if d.Spec.Replicas != nil {
+		replicas = *d.Spec.Replicas
+	}
+	return replicas == 0 || d.Status.ObservedGeneration >= d.Metadata.Generation && d.Status.UpdatedReplicas == replicas && d.Status.AvailableReplicas == replicas && d.Status.UnavailableReplicas == 0
 }

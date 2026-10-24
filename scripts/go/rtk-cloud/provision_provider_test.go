@@ -109,7 +109,6 @@ func TestKubernetesProvisionStepsExposeProviderNeutralOrder(t *testing.T) {
 		"public-https",
 		"certissuer-public-ingress",
 		"write-artifacts",
-		"managed-upgrade-health",
 		"e2e",
 	}
 	if strings.Join(got, ",") != strings.Join(want, ",") {

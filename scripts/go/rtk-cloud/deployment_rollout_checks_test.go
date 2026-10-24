@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -128,6 +129,31 @@ func TestRolloutSecretMountQualification(t *testing.T) {
 	}
 }
 
+func TestRolloutSecretMountAcceptsOnlyReviewedSupplementaryRootGroupReader(t *testing.T) {
+	for _, tc := range []struct {
+		name, pod, container, mount, secret string
+		passed                              bool
+	}{
+		{"exact container profile", `"supplementalGroups":[0]`, `"runAsUser":10001,"runAsGroup":10001,"runAsNonRoot":true`, `"readOnly":true`, `"defaultMode":288`, true},
+		{"effective Pod profile", `"supplementalGroups":[0],"runAsUser":10001,"runAsGroup":10001,"runAsNonRoot":true`, ``, `"readOnly":true`, `"defaultMode":288`, true},
+		{"container UID override", `"supplementalGroups":[0],"runAsUser":10001,"runAsGroup":10001,"runAsNonRoot":true`, `"runAsUser":10002`, `"readOnly":true`, `"defaultMode":288`, false},
+		{"container GID override", `"supplementalGroups":[0],"runAsUser":10001,"runAsGroup":10001,"runAsNonRoot":true`, `"runAsGroup":10002`, `"readOnly":true`, `"defaultMode":288`, false},
+		{"container nonroot override", `"supplementalGroups":[0],"runAsUser":10001,"runAsGroup":10001,"runAsNonRoot":true`, `"runAsNonRoot":false`, `"readOnly":true`, `"defaultMode":288`, false},
+		{"foreign supplementary group", `"supplementalGroups":[10001]`, `"runAsUser":10001,"runAsGroup":10001,"runAsNonRoot":true`, `"readOnly":true`, `"defaultMode":288`, false},
+		{"writable Secret mount", `"supplementalGroups":[0]`, `"runAsUser":10001,"runAsGroup":10001,"runAsNonRoot":true`, `"readOnly":false`, `"defaultMode":288`, false},
+		{"owner-only key", `"supplementalGroups":[0]`, `"runAsUser":10001,"runAsGroup":10001,"runAsNonRoot":true`, `"readOnly":true`, `"defaultMode":256`, false},
+		{"item key override", `"supplementalGroups":[0]`, `"runAsUser":10001,"runAsGroup":10001,"runAsNonRoot":true`, `"readOnly":true`, `"defaultMode":288,"items":[{"key":"tls.key","path":"tls.key","mode":256}]`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := []byte(fmt.Sprintf(`{"securityContext":{%s},"containers":[{"securityContext":{%s},"volumeMounts":[{"name":"pki",%s}]}],"volumes":[{"name":"pki","secret":{%s}}]}`, tc.pod, tc.container, tc.mount, tc.secret))
+			check := checkRolloutMountsJSON(raw, "isolated restricted Secret profile", true)
+			if check.Passed != tc.passed {
+				t.Fatal("supplementary-root-group proof changed another reader or ignored effective overrides", check)
+			}
+		})
+	}
+}
+
 func TestRolloutSecretMountQualificationAcceptsStatefulSetClaimTemplate(t *testing.T) {
 	raw := `{
 		"apiVersion":"apps/v1",
@@ -216,6 +242,7 @@ func TestRolloutReadOnlyStorageLeavesNoReceipt(t *testing.T) {
 }
 
 func TestRolloutPullIsolatedAndRedacted(t *testing.T) {
+	store := makeIsolatedTestSecretStore(t, "dev")
 	dir := t.TempDir()
 	record := filepath.Join(dir, "config-path")
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -230,7 +257,7 @@ exit "${ROLLOUT_TEST_EXIT:-0}"
 	image := "ghcr.io/owner/repo@sha256:" + strings.Repeat("a", 64)
 	for _, exitCode := range []string{"0", "1"} {
 		t.Setenv("ROLLOUT_TEST_EXIT", exitCode)
-		err := pullRolloutImage("user", "token", image)
+		err := pullRolloutImageContext(context.Background(), "dev", "user", "token", image)
 		if (err == nil) != (exitCode == "0") {
 			t.Fatalf("unexpected result %v", err)
 		}
@@ -240,6 +267,9 @@ exit "${ROLLOUT_TEST_EXIT:-0}"
 		path, readErr := os.ReadFile(record)
 		if readErr != nil {
 			t.Fatal(readErr)
+		}
+		if !strings.HasPrefix(string(path), filepath.Join(store.Root, "deployment", "tmp", "image-pull-")) {
+			t.Fatal("credentials were written outside selected environment")
 		}
 		if _, err := os.Stat(string(path)); !os.IsNotExist(err) {
 			t.Fatal("temporary credentials not removed")
@@ -262,7 +292,7 @@ func TestRolloutInvalidRegistryCredentialNeverPulls(t *testing.T) {
 	t.Setenv("ROLLOUT_TEST_MARKER", marker)
 	rolloutWrite(t, filepath.Join(dir, "docker"), "#!/bin/sh\nprintf called > \"$ROLLOUT_TEST_MARKER\"\n", 0700)
 	checker := deploymentCredentialChecker{client: server.Client(), ghcrTokenRoot: server.URL}
-	check := checker.checkRolloutImage(map[string]string{"GHCR_PULL_USERNAME": "selected-user", "GHCR_PULL_TOKEN": "bad-token"}, "ghcr.io/owner/repo@sha256:"+strings.Repeat("a", 64))
+	check := checker.checkRolloutImage("dev", map[string]string{"GHCR_PULL_USERNAME": "selected-user", "GHCR_PULL_TOKEN": "bad-token"}, "ghcr.io/owner/repo@sha256:"+strings.Repeat("a", 64))
 	if check.Passed || strings.Contains(check.Detail, "sensitive") {
 		t.Fatalf("unexpected %+v", check)
 	}
@@ -367,7 +397,7 @@ func TestRolloutTokenExchangeAloneDoesNotProveImageAccess(t *testing.T) {
 	}))
 	defer server.Close()
 	checker := deploymentCredentialChecker{client: server.Client(), ghcrTokenRoot: server.URL + "/token", ghcrRegistryRoot: server.URL}
-	check := checker.checkRolloutImage(map[string]string{"GHCR_PULL_USERNAME": "user", "GHCR_PULL_TOKEN": "token"}, "ghcr.io/owner/repo@sha256:"+strings.Repeat("a", 64))
+	check := checker.checkRolloutImage("dev", map[string]string{"GHCR_PULL_USERNAME": "user", "GHCR_PULL_TOKEN": "token"}, "ghcr.io/owner/repo@sha256:"+strings.Repeat("a", 64))
 	if check.Passed || !strings.Contains(check.Detail, "exact image manifest") {
 		t.Fatalf("unexpected %+v", check)
 	}

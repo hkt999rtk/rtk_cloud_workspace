@@ -22,9 +22,6 @@ func (g *storageReinitializationOTABoundary) verify(body []byte, env map[string]
 	if !storageReinitializationOTATrue(env["LKE_OTA_SERVICE_REGISTRATION_ENABLED"]) {
 		return errors.New("OTA storage-only repair requires selected service registration")
 	}
-	if storageReinitializationOTATrue(env["LKE_OTA_REGISTRAR_REGISTRATION_ENABLED"]) {
-		return errors.New("OTA storage-only repair cannot replace a core OTA registrar")
-	}
 	var inventory struct {
 		Items []map[string]any `json:"items"`
 	}
@@ -33,7 +30,7 @@ func (g *storageReinitializationOTABoundary) verify(body []byte, env map[string]
 	}
 	snapshot := map[string]string{}
 	flags := map[string]any{}
-	for _, key := range []string{"LKE_OTA_CORE_CUTOVER_ENABLED", "LKE_OTA_SERVICE_EDGE_ENABLED", "LKE_OTA_SERVICE_REGISTRATION_ENABLED", "LKE_OTA_REGISTRAR_REGISTRATION_ENABLED"} {
+	for _, key := range []string{"LKE_OTA_CORE_CUTOVER_ENABLED", "LKE_OTA_SERVICE_EDGE_ENABLED", "LKE_OTA_SERVICE_REGISTRATION_ENABLED"} {
 		flags[key] = env[key]
 	}
 	snapshot["selected-handoff"] = storageReinitializationOTABoundaryHash(flags)

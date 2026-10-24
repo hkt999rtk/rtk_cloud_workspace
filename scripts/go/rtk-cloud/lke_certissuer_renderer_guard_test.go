@@ -33,7 +33,7 @@ func TestCertIssuerLegacyRendererGuardPreservesManagedIdentityEvenWhenDown(t *te
 		t.Run(container, func(t *testing.T) {
 			deployment := certIssuerRendererGuardDeployment(t, "["+container+"]")
 			err := lkeValidateCertIssuerLegacyRenderer(deployment)
-			if err == nil || !strings.Contains(err.Error(), "--workloads") || !strings.Contains(err.Error(), "--dns") || strings.Contains(err.Error(), "/private/identity/state.json") {
+			if err == nil || !strings.Contains(err.Error(), "deployment plan") || !strings.Contains(err.Error(), "--plan-sha256") || strings.Contains(err.Error(), "prepare-upgrade") || strings.Contains(err.Error(), "/private/identity/state.json") {
 				t.Fatalf("managed guard missing actionable sanitized error: %v", err)
 			}
 		})

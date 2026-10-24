@@ -79,7 +79,7 @@ func verifyCertIssuerPublicIngress(kubeconfig, stack string, deployments liveDep
 
 func validateCertIssuerPublicIngress(stack string, settings map[string]string, ingresses certIssuerIngressList) error {
 	for _, ingress := range ingresses.Items {
-		if !strings.HasPrefix(ingress.Metadata.Namespace, stack+"-") || ingress.Spec.IngressClassName != "nginx" {
+		if !strings.HasPrefix(ingress.Metadata.Namespace, stack+"-") || !deploymentSupportedIngressClass(stack, ingress.Spec.IngressClassName) {
 			continue
 		}
 		for _, rule := range ingress.Spec.Rules {

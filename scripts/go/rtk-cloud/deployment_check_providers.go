@@ -25,7 +25,7 @@ func (c deploymentCredentialChecker) collectDeploymentChecks(ctx context.Context
 		ctx = context.Background()
 	}
 	c.session = &deploymentProviderSession{inventory: make(map[string]*deploymentInventoryEntry)}
-	c.pullSemaphore = make(chan struct{}, 2)
+	c.pullSemaphore = make(chan struct{}, environmentDeploymentCheckConcurrency)
 	readOnly := options.readOnly || options.fast
 	c.readOnly = readOnly
 	var tasks []deploymentProviderTask
@@ -97,7 +97,7 @@ func (c deploymentCredentialChecker) collectDeploymentChecks(ctx context.Context
 						if options.fast {
 							return checker.checkRolloutImageMetadata(values, image)
 						}
-						return checker.checkRolloutImage(values, image)
+						return checker.checkRolloutImage(cfg.Environment, values, image)
 					})
 					if options.fast {
 						add("provider.ghcr.pull."+image, "Full image pull "+image, image, "full-pull", false, false, nil, nil)
@@ -319,7 +319,7 @@ func (c deploymentCredentialChecker) collectDeploymentChecks(ctx context.Context
 	}
 	jobs := make(chan int)
 	var workers sync.WaitGroup
-	for worker := 0; worker < 4; worker++ {
+	for worker := 0; worker < environmentDeploymentCheckConcurrency; worker++ {
 		workers.Add(1)
 		go func() {
 			defer workers.Done()

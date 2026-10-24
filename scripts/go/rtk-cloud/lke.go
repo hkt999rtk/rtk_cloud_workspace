@@ -450,18 +450,6 @@ func lkePreflight(paths provisionPaths, env map[string]string) error {
 }
 
 func lkePlan(env map[string]string, opts provisionOptions) {
-	if env["RTK_MANAGED_UPGRADE_PLAN_SHA256"] != "" {
-		_, plan, err := managedUpgradeStore(env)
-		if err != nil || plan == nil {
-			fmt.Fprintln(os.Stdout, "Managed upgrade plan is unavailable; deployment will fail closed")
-			return
-		}
-		fmt.Fprintf(os.Stdout, "Managed full workload upgrade: stack=%s plan_sha256=%s replacements=%d retained_controllers=%d\n", plan.Stack, plan.digest, len(plan.Workloads), len(plan.Retained))
-		for _, w := range plan.Workloads {
-			fmt.Fprintf(os.Stdout, "- replace Deployment %s/%s\n", w.Desired.Metadata.Namespace, w.Desired.Metadata.Name)
-		}
-		return
-	}
 	fmt.Fprintln(os.Stdout, "LKE target:")
 	fmt.Fprintf(os.Stdout, "- stack: %s\n", env["CLOUD_STACK_NAME"])
 	fmt.Fprintf(os.Stdout, "- region: %s\n", env["CLOUD_REGION"])
@@ -501,11 +489,6 @@ func lkePlan(env map[string]string, opts provisionOptions) {
 }
 
 func lkeApplyBase(env map[string]string, opts provisionOptions) error {
-	if env["RTK_MANAGED_UPGRADE_PLAN_SHA256"] != "" {
-		// Namespaces, runtime mirrors and system controllers are retained by the
-		// reviewed full workload plan; avoid implicit infrastructure reconciliation.
-		return nil
-	}
 	namespaces := lkeNamespaces(env)
 	if len(opts.workloads) > 0 {
 		wanted := map[string]bool{}
@@ -604,9 +587,6 @@ type lkePublicHTTPSRoute struct {
 }
 
 func lkeApplyPublicHTTPS(paths provisionPaths, env map[string]string, opts provisionOptions) error {
-	if env["RTK_MANAGED_UPGRADE_PLAN_SHA256"] != "" {
-		return lkeDeployCertIssuerPublicIngress(provisionContext{Paths: paths, Env: env, Opts: opts})
-	}
 	if err := lkeValidatePublicEdge(env); err != nil {
 		return err
 	}
@@ -687,7 +667,7 @@ func lkeApplyPublicHTTPS(paths provisionPaths, env map[string]string, opts provi
 	if err := lkeCopyExistingDeviceMTLSAppCASecret(env); err != nil {
 		return err
 	}
-	if env["FACTORY_ENROLL_PUBLIC_ENABLED"] == "true" && env["RTK_MANAGED_UPGRADE_PLAN_SHA256"] == "" {
+	if env["FACTORY_ENROLL_PUBLIC_ENABLED"] == "true" {
 		if err := lkeApplyFactoryMTLSCASecret(paths, env); err != nil {
 			return err
 		}
@@ -1230,7 +1210,7 @@ func parseFirstCertificatePEM(certPEM []byte) (*x509.Certificate, error) {
 }
 
 func lkePublicHTTPSTLSSecretName(env map[string]string) string {
-	return firstNonEmpty(os.Getenv("LKE_PUBLIC_HTTPS_TLS_SECRET"), "video-cloud-staging-public-tls")
+	return firstNonEmpty(env["LKE_PUBLIC_HTTPS_TLS_SECRET"], lkeName(env["CLOUD_STACK_NAME"])+"-public-tls")
 }
 
 func lkePublicHTTPSTLSSecretManifest(env map[string]string, certPEM, keyPEM string) string {
@@ -1549,11 +1529,11 @@ metadata:
 spec:
   ingressClassName: nginx
   tls:
-    - secretName: video-cloud-staging-public-tls
+    - secretName: %s
       hosts:
 %s
   rules:
-%s`, name, lkeIngressNamespace(env), name, env["CLOUD_STACK_NAME"], redirect, redirect, bodySize, annotations, lkePublicHTTPSTLSHostsYAML(routes), rules.String())
+%s`, name, lkeIngressNamespace(env), name, env["CLOUD_STACK_NAME"], redirect, redirect, bodySize, annotations, lkePublicHTTPSTLSSecretName(env), lkePublicHTTPSTLSHostsYAML(routes), rules.String())
 }
 
 func lkePublicHTTPSTLSHostsYAML(routes []lkePublicHTTPSRoute) string {
@@ -1588,6 +1568,7 @@ func lkePublicHTTPSNetworkPolicyManifests(env map[string]string, routes []lkePub
 		manifests = append(manifests, lkeAllowPublicIngressNetworkPolicyManifest(env, namespace, ports))
 	}
 	manifests = append(manifests, lkeAllowPostgresClientsNetworkPolicyManifest(env))
+	manifests = append(manifests, lkeAllowPostgresOpenBaoNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowOpenBaoClientsNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowAccountManagerCertIssuerNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowCloudAdminFactoryEnrollNetworkPolicyManifest(env))
@@ -1933,9 +1914,40 @@ spec:
       ports:
         - protocol: TCP
           port: 8200
-        - protocol: TCP
-          port: 8201
 `, lkeNamespaceName(env, "secrets"), env["CLOUD_STACK_NAME"], lkeNamespaceName(env, "video-cloud"))
+}
+
+// OpenBao's native TLS installer and running host verify their retained
+// identities against the central PKI registry. Keep that one cross-namespace
+// database path separate from the existing application policy.
+func lkeAllowPostgresOpenBaoNetworkPolicyManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-postgres-openbao
+  namespace: %s
+  labels:
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: postgresql
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: %s
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: openbao
+      ports:
+        - protocol: TCP
+          port: 5432
+`, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"], lkeNamespaceName(env, "secrets"))
 }
 
 func lkeAllowAccountManagerCertIssuerNetworkPolicyManifest(env map[string]string) string {
@@ -2056,7 +2068,6 @@ spec:
                   - video-cloud-webrtcservice
                   - video-cloud-videostorage
                   - video-cloud-logingester
-                  - video-cloud-otaregistrar
                   - video-cloud-otaservice
       ports:
         - protocol: TCP
@@ -2203,9 +2214,6 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: video-cloud-api
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: video-cloud-otaregistrar
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: mqtt
@@ -2600,23 +2608,9 @@ func lkeWaitForIngressExternalIP(env map[string]string) (string, error) {
 }
 
 func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provisionOptions) error {
-	if managedUpgradeSelected(opts) {
-		store, plan, err := managedUpgradeStore(env)
-		if err != nil {
-			return err
-		}
-		if plan != nil {
-			return deployManagedUpgrade(paths, env, store, plan)
-		}
-	}
 
-	if len(opts.workloads) == 0 && lkeWorkloadSelected(env, opts, "video-cloud") {
-		if err := lkeRequireCertIssuerRendererCompatibility(env); err != nil {
-			return err
-		}
-		if err := lkeRequireCertIssuerDesiredMaterial(context.Background(), paths, env); err != nil {
-			return err
-		}
+	if lkeWorkloadSelected(env, opts, "video-cloud") {
+		return errors.New("legacy static PKI templates are retired; use deployment plan and preflight, then deployment upgrade with the exact --plan-sha256")
 	}
 	if opts.loggerOnly {
 		if err := ensureLKEDeployImages(env, opts); err != nil {
@@ -2707,20 +2701,7 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 			return err
 		}
 	}
-	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeOTARegistrarRegistrationEnabled(env) {
-		if !lkeOTAEntitlementsRequired(env) {
-			return fmt.Errorf("OTA registration requires strict OTA entitlements on the core API")
-		}
-		if !lkeMQTTFoundationRegistrationEnabled(env) {
-			return fmt.Errorf("OTA registration requires the MQTT foundation registrar")
-		}
-		if !lkeAccountManagerServiceRegistrationEnabled(env) {
-			return fmt.Errorf("OTA registration requires the Account Manager service registration listener")
-		}
-		if err := lkeRequireOTARegistrarIdentitySecret(env); err != nil {
-			return err
-		}
-	}
+
 	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeOTAServiceRegistrationEnabled(env) {
 		if err := lkeRequireOTAServiceInputs(env); err != nil {
 			return err
@@ -2809,7 +2790,7 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 			return err
 		}
 	}
-	if lkeWorkloadSelected(env, opts, "video-cloud") && (lkeMQTTFoundationRegistrationEnabled(env) || lkeShadowWorkerRegistrationEnabled(env) || lkeWebRTCServiceRegistrationEnabled(env) || lkeVideoStorageServiceRegistrationEnabled(env) || lkeLoggerServiceRegistrationEnabled(env) || lkeOTARegistrarRegistrationEnabled(env) || lkeOTAServiceRegistrationEnabled(env)) {
+	if lkeWorkloadSelected(env, opts, "video-cloud") && (lkeMQTTFoundationRegistrationEnabled(env) || lkeShadowWorkerRegistrationEnabled(env) || lkeWebRTCServiceRegistrationEnabled(env) || lkeVideoStorageServiceRegistrationEnabled(env) || lkeLoggerServiceRegistrationEnabled(env) || lkeOTAServiceRegistrationEnabled(env)) {
 		if err := kubectlApply(lkeAllowServiceRegistrationNetworkPolicyManifest(env)); err != nil {
 			return err
 		}
@@ -2988,20 +2969,7 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 			return err
 		}
 	}
-	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeOTARegistrarRegistrationEnabled(env) {
-		if err := kubectlApply(lkeAllowVideoCloudAPIInternalNetworkPolicyManifest(env)); err != nil {
-			return err
-		}
-		if err := kubectlApply(lkeOTARegistrarDeploymentManifest(env)); err != nil {
-			return err
-		}
-		if err := kubectlApply(lkeOTARegistrarServiceManifest(env)); err != nil {
-			return err
-		}
-		if err := runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "rollout", "status", "deployment/video-cloud-otaregistrar", "--timeout", firstNonEmpty(os.Getenv("LKE_WORKLOAD_ROLLOUT_TIMEOUT"), "5m")); err != nil {
-			return err
-		}
-	}
+
 	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeOTAServiceRegistrationEnabled(env) {
 		if lkeOTADedicatedStorage(env) {
 			if lkeObjectStorageCredential(env, "LINODE_OTA_OBJ_ACCESS_KEY_ID") == "" || lkeObjectStorageCredential(env, "LINODE_OTA_OBJ_SECRET_ACCESS_KEY") == "" {
@@ -3301,7 +3269,6 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/mqttfoundat
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/shadowworker ./cmd/shadowworker
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/webrtcservice ./cmd/webrtcservice
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/videostorage ./cmd/videostorage
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/otaregistrar ./cmd/otaregistrar
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/otaservice ./cmd/otaservice
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/clipverifier ./cmd/clipverifier
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/clipuploadpreflight ./cmd/clipuploadpreflight
@@ -3327,7 +3294,6 @@ COPY --from=builder /out/mqttfoundation /app/mqttfoundation
 COPY --from=builder /out/shadowworker /app/shadowworker
 COPY --from=builder /out/webrtcservice /app/webrtcservice
 COPY --from=builder /out/videostorage /app/videostorage
-COPY --from=builder /out/otaregistrar /app/otaregistrar
 COPY --from=builder /out/otaservice /app/otaservice
 COPY --from=builder /out/clipverifier /app/clipverifier
 COPY --from=builder /out/clipuploadpreflight /app/clipuploadpreflight
@@ -3456,8 +3422,13 @@ func runRemoveAllLKE(envRoot string, env map[string]string, confirmed bool) erro
 }
 
 func writeLKEProvisionArtifacts(paths provisionPaths, env map[string]string) (string, error) {
-	dir := filepath.Join(paths.ArtifactsDir, "lke-provision-"+time.Now().UTC().Format("20060102T150405Z"))
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	environment, _, err := lkeProviderTarget(paths, env)
+	if err != nil {
+		return "", err
+	}
+	relative := filepath.Join("deployment", "artifacts", "lke-provision", time.Now().UTC().Format("20060102T150405.000000000Z"), "summary.json")
+	path, err := privateDeploymentStatePath(environment, relative)
+	if err != nil {
 		return "", err
 	}
 	namespaces := []string{}
@@ -3468,30 +3439,11 @@ func writeLKEProvisionArtifacts(paths provisionPaths, env map[string]string) (st
 	for _, workload := range lkeWorkloads(env) {
 		workloads[workload.Name] = workload.Image
 	}
-	managedDigest := ""
-	if env["RTK_MANAGED_UPGRADE_PLAN_SHA256"] != "" {
-		_, plan, err := managedUpgradeStore(env)
-		if err != nil || plan == nil {
-			return "", errors.New("managed upgrade plan changed before artifact generation")
-		}
-		managedDigest = plan.digest
-		workloads = map[string]string{}
-		for _, w := range plan.Workloads {
-			_, images, err := deploymentUpgradeSpec(w.Desired.Spec)
-			if err != nil {
-				return "", err
-			}
-			for name, image := range images {
-				workloads[w.Desired.Metadata.Namespace+"/"+w.Desired.Metadata.Name+"/"+name] = image
-			}
-		}
-	}
 	body, err := json.MarshalIndent(map[string]any{
-		"managed_upgrade_plan_sha256": managedDigest,
-		"provider":                    "lke",
-		"stack":                       env["CLOUD_STACK_NAME"],
-		"region":                      env["CLOUD_REGION"],
-		"namespaces":                  namespaces,
+		"provider":   "lke",
+		"stack":      env["CLOUD_STACK_NAME"],
+		"region":     env["CLOUD_REGION"],
+		"namespaces": namespaces,
 		"domains": map[string]string{
 			"video_cloud":     env["VIDEO_CLOUD_DOMAIN"],
 			"certissuer":      env["VIDEO_CLOUD_CERTISSUER_DOMAIN"],
@@ -3504,10 +3456,10 @@ func writeLKEProvisionArtifacts(paths provisionPaths, env map[string]string) (st
 	if err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "summary.json"), append(body, '\n'), 0o644); err != nil {
+	if err := writePrivateDeploymentState(environment, relative, append(body, '\n')); err != nil {
 		return "", err
 	}
-	return dir, nil
+	return filepath.Dir(path), nil
 }
 
 func lkeNamespaces(env map[string]string) []lkeNamespace {
@@ -4058,6 +4010,9 @@ func lkeSeedRuntimeSecretCacheFromK8SSecretJSONWithOptional(raw []byte, required
 }
 
 func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, opts provisionOptions) error {
+	if lkeWorkloadSelected(env, opts, "video-cloud") {
+		return errors.New("legacy static PKI templates are retired; use deployment upgrade with the exact --plan-sha256")
+	}
 	if err := kubectlApply(lkePostgresSecretManifest(env)); err != nil {
 		return err
 	}
@@ -4099,126 +4054,6 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 			}
 		}
 	}
-	var material lkeCertIssuerMaterial
-	materialReady := false
-	if lkeWorkloadSelected(env, opts, "video-cloud") {
-		var err error
-		material, err = loadOrCreateLKECertIssuerMaterial(paths, env)
-		if err != nil {
-			return err
-		}
-		openBaoTLS, err := loadOrCreateLKEOpenBaoTLSMaterial(paths, env)
-		if err != nil {
-			return err
-		}
-		openBao, err := lkeEnsureOpenBao(paths, env, openBaoTLS)
-		if err != nil {
-			return err
-		}
-		material.RootCACert = openBao.RootCACert
-		material.DeviceCACert = openBao.DeviceCACert
-		material.AppCACert = openBao.AppCACert
-		if err := writeLKEDeviceClientCABundle(paths, material.RootCACert, material.DeviceCACert, material.AppCACert); err != nil {
-			return err
-		}
-		materialReady = true
-		if err := writeLKEVideoCloudRuntimeEnv(paths, env); err != nil {
-			return err
-		}
-		if err := kubectlApply(lkeVideoCloudRuntimeSecretManifestWithFleetReadTokens(env, lkeStagedFleetReadToken(opts), lkeStagedFleetReadPreviousToken(opts))); err != nil {
-			return err
-		}
-		if err := kubectlDeleteSecret(lkeNamespaceName(env, "video-cloud"), "certissuer-runtime"); err != nil {
-			return err
-		}
-		if err := kubectlApply(lkeCertIssuerRuntimeSecretManifest(env, material)); err != nil {
-			return err
-		}
-		if err := kubectlApply(lkeDeviceMTLSAppCASecretManifest(env, lkeClientCABundle(material.RootCACert, material.DeviceCACert, material.AppCACert))); err != nil {
-			return err
-		}
-		if err := kubectlApply(lkeCertIssuerOpenBaoAuthSecretManifest(env, openBao)); err != nil {
-			return err
-		}
-		if err := kubectlApply(lkeCertIssuerServiceManifest(env)); err != nil {
-			return err
-		}
-		if err := kubectlApply(lkeCertIssuerDeploymentManifest(env, material, openBao)); err != nil {
-			return err
-		}
-		if err := runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "rollout", "status", "deployment/certissuer", "--timeout", firstNonEmpty(os.Getenv("LKE_CERTISSUER_ROLLOUT_TIMEOUT"), "5m")); err != nil {
-			return err
-		}
-		if err := kubectlApply(lkeFactoryEnrollRuntimeSecretManifest(env)); err != nil {
-			return err
-		}
-		if err := kubectlApply(lkeFactoryEnrollCertIssuerClientSecretManifest(env, material)); err != nil {
-			return err
-		}
-		if err := kubectlApply(lkeFactoryEnrollServiceManifest(env)); err != nil {
-			return err
-		}
-		if err := kubectlApply(lkeFactoryEnrollDeploymentManifest(env, material)); err != nil {
-			return err
-		}
-		if err := runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "rollout", "status", "deployment/factoryenroll", "--timeout", firstNonEmpty(os.Getenv("LKE_FACTORYENROLL_ROLLOUT_TIMEOUT"), "5m")); err != nil {
-			return err
-		}
-		mqttMaterial, err := loadOrCreateLKEMQTTMaterial(paths, env)
-		if err != nil {
-			return err
-		}
-		if err := kubectlApply(lkeMQTTRuntimeSecretManifest(env, mqttMaterial)); err != nil {
-			return err
-		}
-		if err := kubectlApply(lkeMQTTConfigManifest(env)); err != nil {
-			return err
-		}
-		if err := kubectlApply(lkeMQTTServiceManifest(env)); err != nil {
-			return err
-		}
-		if err := kubectlApply(lkeMQTTHeadlessServiceManifest(env)); err != nil {
-			return err
-		}
-		if err := kubectlApply(lkeAllowEMQXClusterNetworkPolicyManifest(env)); err != nil {
-			return err
-		}
-		// API and worker MQTT clients start before public HTTPS/ACME setup.
-		// Apply their ingress grant here so a later public-edge failure cannot
-		// leave the internal MQTT data plane disconnected.
-		if err := kubectlApply(lkeAllowVideoCloudMQTTClientsNetworkPolicyManifest(env)); err != nil {
-			return err
-		}
-		if err := kubectlApply(lkeAllowVideoCloudAPIInternalNetworkPolicyManifest(env)); err != nil {
-			return err
-		}
-		if lkeEnvBool("LKE_PUBLIC_MQTT_LOADBALANCER") {
-			if err := lkeApplyPublicMQTTNodePort(env); err != nil {
-				return err
-			}
-		}
-		if err := runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "delete", "deployment/mqtt", "--ignore-not-found=true"); err != nil {
-			return err
-		}
-		if err := kubectlApply(lkeMQTTStatefulSetManifest(env, mqttMaterial)); err != nil {
-			return err
-		}
-		if err := runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "rollout", "status", "statefulset/mqtt", "--timeout", firstNonEmpty(os.Getenv("LKE_MQTT_ROLLOUT_TIMEOUT"), "5m")); err != nil {
-			return err
-		}
-		if err := lkeEnsureEMQXCluster(env); err != nil {
-			return err
-		}
-		if err := lkeRemoveK8sCoturnRuntime(env); err != nil {
-			return err
-		}
-		if err := lkeApplyVideoCloudAuxiliaryServices(env, opts); err != nil {
-			return err
-		}
-		if err := lkeConfigureEMQXBilling(paths, env); err != nil {
-			return err
-		}
-	}
 	if lkeWorkloadSelected(env, opts, "billing") {
 		if err := kubectlApply(lkeBillingSecretManifest(env)); err != nil {
 			return err
@@ -4242,12 +4077,9 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 	if !lkeWorkloadSelected(env, opts, "account-manager") {
 		return nil
 	}
-	if !materialReady {
-		var err error
-		material, err = loadOrCreateLKECertIssuerMaterial(paths, env)
-		if err != nil {
-			return err
-		}
+	material, err := loadOrCreateLKECertIssuerMaterial(paths, env)
+	if err != nil {
+		return err
 	}
 	if err := kubectlApply(lkeAccountManagerCertIssuerClientSecretManifest(env, material)); err != nil {
 		return err
@@ -8521,7 +8353,7 @@ spec:
         - name: dashboards
           configMap:
             name: video-cloud-grafana-dashboards
-`, lkeNamespaceName(env, "observability"), env["CLOUD_STACK_NAME"], checksum, env["CLOUD_STACK_NAME"], firstNonEmpty(os.Getenv("LKE_GRAFANA_IMAGE"), env["LKE_GRAFANA_IMAGE"], "grafana/grafana:13.0.2"), lkeGrafanaDataVolumeManifest(env))
+`, lkeNamespaceName(env, "observability"), env["CLOUD_STACK_NAME"], checksum, env["CLOUD_STACK_NAME"], firstNonEmpty(env["LKE_GRAFANA_IMAGE"], os.Getenv("LKE_GRAFANA_IMAGE")), lkeGrafanaDataVolumeManifest(env))
 }
 
 func lkeGrafanaDatasourceURL(env map[string]string) string {
@@ -8658,226 +8490,6 @@ stringData:
   client.key: %q
   ca.crt: %q
 `, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], material.FactoryCert, material.FactoryKey, material.ServiceCA)
-}
-
-func lkeCertIssuerDeploymentManifest(env map[string]string, material lkeCertIssuerMaterial, openBao lkeOpenBaoBootstrapResult) string {
-	tlsConfig := lkeResolveCertIssuerTLSConfig(env)
-	checksum := lkeConfigChecksum(
-		material.ServerCert,
-		material.ServiceCA,
-		material.RootCACert,
-		material.DeviceCACert,
-		material.AppCACert,
-		openBao.RoleID,
-		openBao.SecretID,
-		openBao.TLSCACert,
-		lkeRuntimeSecretValue("postgres"),
-	)
-	return fmt.Sprintf(`apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: certissuer
-  namespace: %s
-  labels:
-    app.kubernetes.io/name: certissuer
-    app.kubernetes.io/part-of: rtk-cloud
-    rtk.realtek.com/provider: lke
-    rtk.realtek.com/stack: %s
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: certissuer
-  template:
-    metadata:
-      annotations:
-        rtk.realtek.com/runtime-checksum: %q
-      labels:
-        app.kubernetes.io/name: certissuer
-        app.kubernetes.io/part-of: rtk-cloud
-        rtk.realtek.com/provider: lke
-        rtk.realtek.com/stack: %s
-    spec:
-      imagePullSecrets:
-        - name: %s
-      containers:
-        - name: certissuer
-          image: %s
-          imagePullPolicy: IfNotPresent
-          command: ["/app/certissuer"]
-          ports:
-            - name: https
-              containerPort: %d
-          env:
-            - name: POSTGRES_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: certissuer-runtime
-                  key: POSTGRES_PASSWORD
-            - name: CERT_ISSUER_LISTEN_ADDR
-              value: ":%d"
-            - name: CERT_ISSUER_SERVER_CERT
-              value: /etc/video-cloud/certissuer/tls.crt
-            - name: CERT_ISSUER_SERVER_KEY
-              value: /etc/video-cloud/certissuer/tls.key
-            - name: CERT_ISSUER_CLIENT_CA
-              value: /etc/video-cloud/certissuer/client-ca.crt
-            - name: CERT_ISSUER_CA_CERT_PATH
-              value: /etc/video-cloud/certissuer/device-ca.crt
-            - name: CERT_ISSUER_APP_CA_CERT_PATH
-              value: /etc/video-cloud/certissuer/app-ca.crt
-            - name: CERT_ISSUER_SIGNER_PROVIDER
-              value: openbao
-            - name: CERT_ISSUER_OPENBAO_PKI_MOUNT
-              value: pki/device
-            - name: CERT_ISSUER_OPENBAO_PKI_ROLE
-              value: factory-device
-            - name: CERT_ISSUER_OPENBAO_GATEWAY_ROLE
-              value: gateway-server
-            - name: CERT_ISSUER_APP_SIGNER_PROVIDER
-              value: openbao
-            - name: CERT_ISSUER_APP_OPENBAO_PKI_MOUNT
-              value: pki/app
-            - name: CERT_ISSUER_APP_OPENBAO_PKI_ROLE
-              value: app-user
-            # Existing LKE environments can still hold the pre-managed-PKI
-            # account-manager client certificate. New material uses the
-            # service:account-manager identity from the PKI design.
-            - name: CERT_ISSUER_APP_CLIENT_CN_PATTERN
-              value: "^(account-manager|service:account-manager)$"
-            - name: OPENBAO_ADDR
-              value: %q
-            - name: OPENBAO_CACERT
-              value: /etc/video-cloud/openbao/ca.crt
-            - name: OPENBAO_AUTH_METHOD
-              value: approle
-            - name: OPENBAO_ROLE_ID_FILE
-              value: /etc/video-cloud/openbao/role_id
-            - name: OPENBAO_SECRET_ID_FILE
-              value: /etc/video-cloud/openbao/secret_id
-            - name: CERT_ISSUER_DB_DSN
-              value: "postgres://postgres:$(POSTGRES_PASSWORD)@postgresql.%s.svc.cluster.local:5432/video_cloud?sslmode=disable"
-          volumeMounts:
-            - name: certissuer-runtime
-              mountPath: /etc/video-cloud/certissuer
-              readOnly: true
-            - name: certissuer-openbao-auth
-              mountPath: /etc/video-cloud/openbao
-              readOnly: true
-      volumes:
-        - name: certissuer-runtime
-          secret:
-            secretName: certissuer-runtime
-        - name: certissuer-openbao-auth
-          secret:
-            secretName: certissuer-openbao-auth
-`, tlsConfig.Namespace, env["CLOUD_STACK_NAME"], checksum, env["CLOUD_STACK_NAME"], lkeImagePullSecretName(env), lkeVideoCloudImage(env), tlsConfig.HTTPSPort, tlsConfig.HTTPSPort, lkeOpenBaoAddr(env), lkeNamespaceName(env, "platform"))
-}
-
-func lkeFactoryEnrollDeploymentManifest(env map[string]string, material lkeCertIssuerMaterial) string {
-	checksum := lkeConfigChecksum(
-		lkeRuntimeSecretValue("postgres"),
-		lkeRuntimeSecretValue("factory-enroll-auth"),
-		lkeFactoryProductionJWTSecret(env),
-		lkeFactoryProductionJWTAudience(env),
-		lkeRuntimeSecretValue("factory-admission"),
-		lkeFactoryAdmissionBaseURL(env),
-		lkeHandoffRuntimeValue(env, lkeFactoryHandoffToken()),
-		lkeCertIssuerBaseURL(env),
-		material.FactoryCert,
-		material.ServiceCA,
-	)
-	return fmt.Sprintf(`apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: factoryenroll
-  namespace: %s
-  labels:
-    app.kubernetes.io/name: factoryenroll
-    app.kubernetes.io/part-of: rtk-cloud
-    rtk.realtek.com/provider: lke
-    rtk.realtek.com/stack: %s
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: factoryenroll
-  template:
-    metadata:
-      annotations:
-        rtk.realtek.com/runtime-checksum: %q
-      labels:
-        app.kubernetes.io/name: factoryenroll
-        app.kubernetes.io/part-of: rtk-cloud
-        rtk.realtek.com/provider: lke
-        rtk.realtek.com/stack: %s
-    spec:
-      imagePullSecrets:
-        - name: %s
-      containers:
-        - name: factoryenroll
-          image: %s
-          imagePullPolicy: IfNotPresent
-          command: ["/app/factoryenroll"]
-          ports:
-            - name: http
-              containerPort: 18443
-          env:
-            - name: POSTGRES_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: factoryenroll-runtime
-                  key: POSTGRES_PASSWORD
-            - name: FACTORY_ENROLL_AUTH_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: factoryenroll-runtime
-                  key: FACTORY_ENROLL_AUTH_KEY
-            - name: FACTORY_ENROLL_PRODUCTION_JWT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: factoryenroll-runtime
-                  key: FACTORY_ENROLL_PRODUCTION_JWT_SECRET
-            - name: FACTORY_ENROLL_PRODUCTION_JWT_AUDIENCE
-              valueFrom:
-                secretKeyRef:
-                  name: factoryenroll-runtime
-                  key: FACTORY_ENROLL_PRODUCTION_JWT_AUDIENCE
-            - name: FACTORY_ENROLL_ACCOUNT_MANAGER_URL
-              value: %q
-            - name: FACTORY_ENROLL_ACCOUNT_MANAGER_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: factoryenroll-runtime
-                  key: FACTORY_ENROLL_ACCOUNT_MANAGER_TOKEN
-            - name: FACTORY_ENROLL_RECOVERY_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: factoryenroll-runtime
-                  key: FACTORY_ENROLL_RECOVERY_TOKEN
-            - name: FACTORY_ENROLL_ADDR
-              value: ":18443"
-            - name: VIDEO_CLOUD_ENV
-              value: "staging"
-            - name: FACTORY_ENROLL_CERT_ISSUER_URL
-              value: %q
-            - name: FACTORY_ENROLL_CERT_ISSUER_CLIENT_CERT
-              value: /etc/video-cloud/factoryenroll/client.crt
-            - name: FACTORY_ENROLL_CERT_ISSUER_CLIENT_KEY
-              value: /etc/video-cloud/factoryenroll/client.key
-            - name: FACTORY_ENROLL_CERT_ISSUER_CA
-              value: /etc/video-cloud/factoryenroll/ca.crt
-            - name: VIDEO_CLOUD_DB_DSN
-              value: "postgres://postgres:$(POSTGRES_PASSWORD)@postgresql.%s.svc.cluster.local:5432/video_cloud?sslmode=disable"
-          volumeMounts:
-            - name: factoryenroll-certissuer-client
-              mountPath: /etc/video-cloud/factoryenroll
-              readOnly: true
-      volumes:
-        - name: factoryenroll-certissuer-client
-          secret:
-            secretName: factoryenroll-certissuer-client
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], checksum, env["CLOUD_STACK_NAME"], lkeImagePullSecretName(env), lkeVideoCloudImage(env), lkeFactoryAdmissionBaseURL(env), lkeCertIssuerBaseURL(env), lkeNamespaceName(env, "platform"))
 }
 
 func lkeFactoryAdmissionBaseURL(env map[string]string) string {
@@ -9240,7 +8852,7 @@ stringData:
   BILLING_HANDOFF_TOKEN: %q
   MQTT_USAGE_SETTLEMENT_TOKEN: %q
   BILLING_DEBIT_SOURCE: "rtk_billing"
-  PAYMENT_SIMULATOR_ENABLED: "true"
+  PAYMENT_SIMULATOR_ENABLED: %q
   PAYMENT_SIMULATOR_RUN_ID: %q
   PAYMENT_SIMULATOR_BASE_URL: %q
   PAYMENT_SIMULATOR_PUBLIC_BASE_URL: %q
@@ -9248,7 +8860,7 @@ stringData:
   PAYMENT_SIMULATOR_SHARED_SECRET: %q
   PAYMENT_SIMULATOR_CALLBACK_SECRET: %q
   PAYMENT_SIMULATOR_SCENARIO: %q
-  NEWEBPAY_ENABLED: "true"
+  NEWEBPAY_ENABLED: %q
   NEWEBPAY_ENVIRONMENT: "sandbox"
   NEWEBPAY_MERCHANT_ID: %q
   NEWEBPAY_HASH_KEY: %q
@@ -9268,8 +8880,8 @@ stringData:
   PAYPAL_CANCEL_URL: %q
   PAYPAL_AFTER_RETURN_URL: %q
   PAYMENT_WORKER_ENABLED: "true"
-  ENVIRONMENT: "staging"
-`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], lkeBillingDatabaseURL(env), lkeRuntimeSecretValue("postgres"), lkeBillingServiceToken(), lkeBillingInternalToken(), lkeBillingDebitToken(), lkeBillingCloudCreationToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkeHandoffRuntimeValue(env, lkeMQTTUsageSettlementToken()), lkePaymentSimulatorRunID(env), lkePaymentSimulatorInternalURL(env), "https://"+lkePaymentSimulatorPublicDomain(env), lkeBillingInternalURL(env)+"/v1/internal/payment-simulator/setup-callback", lkeRuntimeSecretValue("payment-simulator-shared"), lkeRuntimeSecretValue("payment-simulator-callback"), firstNonEmpty(lkeEnvValue(env, "PAYMENT_SIMULATOR_SCENARIO"), "success"), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkeNewebPayEndpointBaseURL(env), lkeNewebPayNotifyURL(env), lkeNewebPayReturnURL(env), lkeNewebPayNotifyURL(env), lkePaymentSimulatorAdminToken(env), lkePaymentReferenceEncryptionKey(env), strconv.FormatBool(lkePayPalEnabled(env)), firstNonEmpty(lkeEnvValue(env, "PAYPAL_ENVIRONMENT"), "sandbox"), lkePayPalSecret(env, "paypal-client-id"), lkePayPalSecret(env, "paypal-client-secret"), lkePayPalSecret(env, "paypal-webhook-id"), lkePayPalReturnURL(env), lkePayPalCancelURL(env), lkePayPalAfterReturnURL(env))
+  ENVIRONMENT: %q
+`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], lkeBillingDatabaseURL(env), lkeRuntimeSecretValue("postgres"), lkeBillingServiceToken(), lkeBillingInternalToken(), lkeBillingDebitToken(), lkeBillingCloudCreationToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkeHandoffRuntimeValue(env, lkeMQTTUsageSettlementToken()), environmentBillingTestSetting(env, "PAYMENT_SIMULATOR_ENABLED"), lkePaymentSimulatorRunID(env), lkePaymentSimulatorInternalURL(env), "https://"+lkePaymentSimulatorPublicDomain(env), lkeBillingInternalURL(env)+"/v1/internal/payment-simulator/setup-callback", lkeRuntimeSecretValue("payment-simulator-shared"), lkeRuntimeSecretValue("payment-simulator-callback"), firstNonEmpty(lkeEnvValue(env, "PAYMENT_SIMULATOR_SCENARIO"), "success"), environmentBillingTestSetting(env, "NEWEBPAY_ENABLED"), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkeNewebPayEndpointBaseURL(env), lkeNewebPayNotifyURL(env), lkeNewebPayReturnURL(env), lkeNewebPayNotifyURL(env), lkePaymentSimulatorAdminToken(env), lkePaymentReferenceEncryptionKey(env), strconv.FormatBool(lkePayPalEnabled(env)), firstNonEmpty(lkeEnvValue(env, "PAYPAL_ENVIRONMENT"), "sandbox"), lkePayPalSecret(env, "paypal-client-id"), lkePayPalSecret(env, "paypal-client-secret"), lkePayPalSecret(env, "paypal-webhook-id"), lkePayPalReturnURL(env), lkePayPalCancelURL(env), lkePayPalAfterReturnURL(env), env["CLOUD_ENV_NAME"])
 }
 
 func lkeCloudAdminBillingSecretManifest(env map[string]string) string {
@@ -10023,6 +9635,9 @@ func lkePlatformAdminEmail(env map[string]string) string {
 
 func lkeRuntimeSecretValue(name string) string {
 	if activeCanonicalSecretStore {
+		if activeRuntimeSecretSnapshot != nil {
+			return activeRuntimeSecretSnapshot[lkeSecretFileName(name)]
+		}
 		path := filepath.Join(lkeRuntimeSecretStateDir, lkeSecretFileName(name))
 		value, err := readSensitiveFile(path, "LKE runtime secret "+name)
 		if err != nil {
@@ -10147,11 +9762,12 @@ func lkeDeploymentManifestWithVideoSurge(env map[string]string, workload lkeWork
 		}
 		if lkeAccountManagerServiceRegistrationEnabled(env) {
 			checksumValues = append(checksumValues, "service-registration-enabled")
-			extraPorts = `            - name: service-reg
-              containerPort: 8443
-`
-			extraEnv += `            - name: ACCOUNT_MANAGER_SERVICE_REGISTRATION_PORT
-              value: "8443"
+			registrationPort := firstNonEmpty(env["ACCOUNT_MANAGER_SERVICE_REGISTRATION_PORT"], "8443")
+			extraPorts = fmt.Sprintf(`            - name: service-reg
+              containerPort: %s
+`, registrationPort)
+			extraEnv += fmt.Sprintf(`            - name: ACCOUNT_MANAGER_SERVICE_REGISTRATION_PORT
+              value: %q
             - name: ACCOUNT_MANAGER_SERVICE_REGISTRATION_SERVER_CERT
               value: "/etc/rtk-account-manager/service-registration/tls.crt"
             - name: ACCOUNT_MANAGER_SERVICE_REGISTRATION_SERVER_KEY
@@ -10160,7 +9776,7 @@ func lkeDeploymentManifestWithVideoSurge(env map[string]string, workload lkeWork
               value: "/etc/rtk-account-manager/service-registration/client-ca.crt"
             - name: ACCOUNT_MANAGER_SERVICE_REGISTRATION_CLIENT_CRL
               value: "/etc/rtk-account-manager/service-registration/client.crl"
-`
+`, registrationPort)
 		}
 		templateAnnotations = fmt.Sprintf(`      annotations:
         rtk.realtek.com/runtime-checksum: %q
@@ -11051,7 +10667,10 @@ func ensureLKEKubeAccess(paths provisionPaths, env map[string]string, allowCreat
 		fmt.Fprintf(os.Stderr, "[lke] kubectl context: %s\n", context)
 		return nil
 	}
-	clusterID := lkeClusterID(paths, env)
+	clusterID, stateErr := lkeClusterID(paths, env)
+	if stateErr != nil {
+		return stateErr
+	}
 	token := resolveLinodeToken(paths.EnvRoot)
 	if clusterID == "" {
 		if token == "" {
@@ -11062,7 +10681,7 @@ func ensureLKEKubeAccess(paths provisionPaths, env map[string]string, allowCreat
 			return err
 		}
 		clusterID = strconv.Itoa(discovered.ID)
-		if err := writeLKEState(paths, discovered); err != nil {
+		if err := writeLKEState(paths, env, discovered); err != nil {
 			return err
 		}
 	}
@@ -11074,19 +10693,7 @@ func ensureLKEKubeAccess(paths provisionPaths, env map[string]string, allowCreat
 		if !isLinodeNotFoundError(err) {
 			return err
 		}
-		fmt.Fprintf(os.Stderr, "[lke] cluster %s is missing; rediscovering LKE cluster\n", clusterID)
-		discovered, discoverErr := discoverLKECluster(token, paths, env, allowCreate)
-		if discoverErr != nil {
-			return discoverErr
-		}
-		clusterID = strconv.Itoa(discovered.ID)
-		if err := writeLKEState(paths, discovered); err != nil {
-			return err
-		}
-		kubeconfig, err = fetchLKEKubeconfig(token, clusterID)
-		if err != nil {
-			return err
-		}
+		return lkeProviderStateBlocker("selected provider cluster is missing; restoring its identity requires explicit recovery, not label rediscovery or creation")
 	}
 	if err := os.MkdirAll(filepath.Dir(stateKubeconfig), 0o755); err != nil {
 		return err
@@ -11099,13 +10706,16 @@ func ensureLKEKubeAccess(paths provisionPaths, env map[string]string, allowCreat
 	return nil
 }
 
-func lkeClusterID(paths provisionPaths, env map[string]string) string {
-	return firstNonEmpty(
-		os.Getenv("LKE_CLUSTER_ID"),
-		env["LKE_CLUSTER_ID"],
-		envFileValue(filepath.Join(paths.EnvRoot, "adapters", "lke", "state.env"), "LKE_CLUSTER_ID"),
-		envFileValue(filepath.Join(paths.EnvRoot, "env", "stack.env"), "LKE_CLUSTER_ID"),
-	)
+func lkeClusterID(paths provisionPaths, env map[string]string) (string, error) {
+	_, _, state, err := readLKEStateForTarget(paths, env)
+	if err != nil {
+		return "", err
+	}
+	selected := firstNonEmpty(os.Getenv("LKE_CLUSTER_ID"), env["LKE_CLUSTER_ID"], state["LKE_CLUSTER_ID"])
+	if state["LKE_CLUSTER_ID"] != "" && selected != state["LKE_CLUSTER_ID"] {
+		return "", lkeProviderStateBlocker("explicit cluster selection conflicts with the selected environment's recorded provider owner")
+	}
+	return selected, nil
 }
 
 type lkeCluster struct {
@@ -11258,7 +10868,10 @@ func ensureLKENodePool(paths provisionPaths, env map[string]string) error {
 		fmt.Fprintln(os.Stderr, "[lke] skipping node pool reconcile: LINODE_TOKEN is not available")
 		return nil
 	}
-	clusterID := lkeClusterID(paths, env)
+	clusterID, stateErr := lkeClusterID(paths, env)
+	if stateErr != nil {
+		return stateErr
+	}
 	if clusterID == "" {
 		cluster, err := discoverLKECluster(token, paths, env, false)
 		if err != nil {
@@ -11377,7 +10990,10 @@ func ensureLKETargetedFleetDatabaseNodePool(paths provisionPaths, env map[string
 		fmt.Fprintln(os.Stderr, "[lke] skipping targeted database node pool ensure: LINODE_TOKEN is not available")
 		return nil
 	}
-	clusterID := lkeClusterID(paths, env)
+	clusterID, stateErr := lkeClusterID(paths, env)
+	if stateErr != nil {
+		return stateErr
+	}
 	if clusterID == "" {
 		cluster, err := discoverLKECluster(token, paths, env, false)
 		if err != nil {
@@ -11417,7 +11033,8 @@ func ensureLKEDatabaseNodePoolExists(paths provisionPaths, env map[string]string
 	desiredCount := lkePostgresNodePoolCount(env)
 	fmt.Fprintf(os.Stderr, "[lke] created missing database node pool %d type=%s count=%d for targeted Fleet deployment\n", created.ID, desiredType, desiredCount)
 	lkeSetPostgresNodePoolEnv(env, created.ID, desiredType, desiredCount)
-	return lkePersistStackEnvValues(paths.EnvRoot, map[string]string{
+	return lkePersistStackEnvValues(paths, env, map[string]string{
+		"LKE_CLUSTER_ID":            clusterID,
 		"LKE_POSTGRES_NODE_POOL_ID": strconv.Itoa(created.ID),
 		"LKE_POSTGRES_NODE_TYPE":    desiredType,
 		"LKE_POSTGRES_NODE_COUNT":   strconv.Itoa(desiredCount),
@@ -11524,7 +11141,8 @@ func ensureLKEPostgresNodePool(paths provisionPaths, env map[string]string, toke
 		}
 		fmt.Fprintf(os.Stderr, "[lke] created postgres node pool %d type=%s count=%d\n", created.ID, desiredType, desiredCount)
 		lkeSetPostgresNodePoolEnv(env, created.ID, desiredType, desiredCount)
-		return lkePersistStackEnvValues(paths.EnvRoot, map[string]string{
+		return lkePersistStackEnvValues(paths, env, map[string]string{
+			"LKE_CLUSTER_ID":            clusterID,
 			"LKE_POSTGRES_NODE_POOL_ID": strconv.Itoa(created.ID),
 			"LKE_POSTGRES_NODE_TYPE":    desiredType,
 			"LKE_POSTGRES_NODE_COUNT":   strconv.Itoa(desiredCount),
@@ -11537,7 +11155,8 @@ func ensureLKEPostgresNodePool(paths provisionPaths, env map[string]string, toke
 		}
 		fmt.Fprintf(os.Stderr, "[lke] created replacement postgres node pool %d type=%s count=%d for immutable type change from pool %d type=%s\n", created.ID, desiredType, desiredCount, pool.ID, pool.Type)
 		lkeSetPostgresNodePoolEnv(env, created.ID, desiredType, desiredCount)
-		return lkePersistStackEnvValues(paths.EnvRoot, map[string]string{
+		return lkePersistStackEnvValues(paths, env, map[string]string{
+			"LKE_CLUSTER_ID":            clusterID,
 			"LKE_POSTGRES_NODE_POOL_ID": strconv.Itoa(created.ID),
 			"LKE_POSTGRES_NODE_TYPE":    desiredType,
 			"LKE_POSTGRES_NODE_COUNT":   strconv.Itoa(desiredCount),
@@ -11557,7 +11176,8 @@ func ensureLKEPostgresNodePool(paths provisionPaths, env map[string]string, toke
 		return err
 	}
 	lkeSetPostgresNodePoolEnv(env, pool.ID, desiredType, desiredCount)
-	return lkePersistStackEnvValues(paths.EnvRoot, map[string]string{
+	return lkePersistStackEnvValues(paths, env, map[string]string{
+		"LKE_CLUSTER_ID":            clusterID,
 		"LKE_POSTGRES_NODE_POOL_ID": strconv.Itoa(pool.ID),
 		"LKE_POSTGRES_NODE_TYPE":    desiredType,
 		"LKE_POSTGRES_NODE_COUNT":   strconv.Itoa(desiredCount),
@@ -11566,7 +11186,10 @@ func ensureLKEPostgresNodePool(paths provisionPaths, env map[string]string, toke
 
 func pruneLKEUnusedNodePools(paths provisionPaths, env map[string]string) error {
 	token := resolveLinodeToken(paths.EnvRoot)
-	clusterID := lkeClusterID(paths, env)
+	clusterID, stateErr := lkeClusterID(paths, env)
+	if stateErr != nil {
+		return stateErr
+	}
 	if token == "" || clusterID == "" {
 		return nil
 	}
@@ -11753,22 +11376,12 @@ func lkeNodePoolHasPostgresPlacement(pool lkeNodePool) bool {
 	return false
 }
 
-func lkePersistStackEnvValues(envRoot string, updates map[string]string) error {
-	statePath := filepath.Join(envRoot, "adapters", "lke", "state.env")
-	raw, err := readEnvFile(statePath)
-	if err != nil && !os.IsNotExist(err) {
+func lkePersistStackEnvValues(paths provisionPaths, env, updates map[string]string) error {
+	environment, stack, state, err := readLKEStateForTarget(paths, env)
+	if err != nil {
 		return err
 	}
-	if raw == nil {
-		raw = map[string]string{}
-	}
-	for key, value := range updates {
-		raw[key] = value
-	}
-	if err := os.MkdirAll(filepath.Dir(statePath), 0o700); err != nil {
-		return err
-	}
-	return writeSortedEnv(statePath, raw, 0o600)
+	return writeLKEProviderState(environment, stack, appendMap(state, updates))
 }
 
 func listLKENodePools(token string, clusterID string) ([]lkeNodePool, error) {
@@ -11785,28 +11398,8 @@ func listLKENodePools(token string, clusterID string) ([]lkeNodePool, error) {
 	return listed.Data, nil
 }
 
-func recoverStaleLKECluster(token string, paths provisionPaths, env map[string]string) (lkeCluster, error) {
-	cluster, err := discoverLKECluster(token, paths, env, true)
-	if err != nil {
-		return lkeCluster{}, err
-	}
-	if err := writeLKEState(paths, cluster); err != nil {
-		return lkeCluster{}, err
-	}
-	kubeconfig, err := fetchLKEKubeconfig(token, strconv.Itoa(cluster.ID))
-	if err != nil {
-		return lkeCluster{}, err
-	}
-	stateKubeconfig := sensitiveEnvironmentPath(paths, "kube", "kubeconfig.yaml")
-	if err := os.MkdirAll(filepath.Dir(stateKubeconfig), 0o755); err != nil {
-		return lkeCluster{}, err
-	}
-	if err := os.WriteFile(stateKubeconfig, kubeconfig, 0o600); err != nil {
-		return lkeCluster{}, err
-	}
-	_ = os.Setenv("RTK_CLOUD_LKE_KUBECONFIG", stateKubeconfig)
-	fmt.Fprintf(os.Stderr, "[lke] wrote kubeconfig: %s\n", stateKubeconfig)
-	return cluster, nil
+func recoverStaleLKECluster(string, provisionPaths, map[string]string) (lkeCluster, error) {
+	return lkeCluster{}, lkeProviderStateBlocker("recorded provider cluster is missing; automatic rediscovery/recreation is retired")
 }
 
 func lkeNodeCount(env map[string]string) (int, error) {
@@ -11847,21 +11440,26 @@ func latestLKEVersion(token string) (string, error) {
 	return listed.Data[0].ID, nil
 }
 
-func writeLKEState(paths provisionPaths, cluster lkeCluster) error {
-	statePath := filepath.Join(paths.EnvRoot, "adapters", "lke", "state.env")
-	if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
+func writeLKEState(paths provisionPaths, env map[string]string, cluster lkeCluster) error {
+	environment, stack, state, err := readLKEStateForTarget(paths, env)
+	if err != nil {
 		return err
 	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "LKE_CLUSTER_ID=%d\n", cluster.ID)
-	fmt.Fprintf(&b, "LKE_CLUSTER_LABEL=%s\n", cluster.Label)
+	if cluster.ID <= 0 || strings.TrimSpace(cluster.Label) == "" {
+		return lkeProviderStateBlocker("observed provider cluster identity is incomplete")
+	}
+	if state["LKE_CLUSTER_ID"] != "" && state["LKE_CLUSTER_ID"] != strconv.Itoa(cluster.ID) {
+		return lkeProviderStateBlocker("observed cluster differs from the recorded provider owner; replacement requires a separate verified migration")
+	}
+	updates := map[string]string{"LKE_CLUSTER_ID": strconv.Itoa(cluster.ID), "LKE_CLUSTER_LABEL": cluster.Label}
 	if cluster.Region != "" {
-		fmt.Fprintf(&b, "LKE_CLUSTER_REGION=%s\n", cluster.Region)
+		updates["LKE_CLUSTER_REGION"] = cluster.Region
 	}
 	if cluster.K8sVersion != "" {
-		fmt.Fprintf(&b, "LKE_CLUSTER_VERSION=%s\n", cluster.K8sVersion)
+		updates["LKE_CLUSTER_VERSION"] = cluster.K8sVersion
 	}
-	return os.WriteFile(statePath, []byte(b.String()), 0o600)
+	// Refreshing cluster metadata must retain recorded node-pool allocations.
+	return writeLKEProviderState(environment, stack, appendMap(state, updates))
 }
 
 func fetchLKEKubeconfig(token, clusterID string) ([]byte, error) {

@@ -55,9 +55,6 @@ func lkeOTACoreCutoverEnabled(env map[string]string) bool {
 }
 
 func lkeRequireOTAServiceInputs(env map[string]string) error {
-	if lkeOTARegistrarRegistrationEnabled(env) {
-		return fmt.Errorf("independent OTA service and core OTA registrar cannot own the same Platform lease")
-	}
 	if !lkeOTAEntitlementsRequired(env) {
 		return fmt.Errorf("OTA service registration requires strict Product OTA entitlements on the core API")
 	}
@@ -84,7 +81,7 @@ func lkeRequireOTAServiceInputs(env map[string]string) error {
 	if err := lkeRequireOTAServiceRuntimeSecrets(env); err != nil {
 		return err
 	}
-	if err := lkeRequireOTARegistrarIdentitySecret(env); err != nil {
+	if err := lkeRequireOTAServiceIdentitySecret(env); err != nil {
 		return err
 	}
 	if !lkeOTADedicatedStorage(env) {
@@ -366,7 +363,7 @@ spec:
 		lkeOTAStorageSecretName(env), lkeOTAStorageSecretName(env),
 		env["VIDEO_CLOUD_OTA_CDN_BASE_URL"], cdnKeyEnv, firstNonEmpty(env["VIDEO_CLOUD_OTA_CDN_TOKEN_NAME"], "__token__"),
 		lkeNamespaceName(env, "billing"), firstNonEmpty(env["VIDEO_CLOUD_BILLING_USAGE_FORWARD_INTERVAL"], "5s"),
-		otaRegistrarInstanceID, accountNS, otaRegistrarIdentitySecretName)
+		otaServiceInstanceID, accountNS, otaServiceIdentitySecretName)
 }
 
 func lkeOTAServiceServiceManifest(env map[string]string) string {

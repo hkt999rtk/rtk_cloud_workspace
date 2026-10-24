@@ -2,6 +2,8 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -92,6 +94,13 @@ func runDestroyEnvironmentResources(args []string) error {
 	}
 	envValues := envroot.Derive(stackValues)
 	stack := firstNonEmpty(envValues["CLOUD_STACK_NAME"], "video-cloud-staging")
+	_, _, providerState, err := readLKEStateForTarget(provisionPaths{EnvRoot: envRoot}, stackValues)
+	if err != nil {
+		return err
+	}
+	if id := providerState["LKE_CLUSTER_ID"]; id != "" {
+		envValues["LKE_CLUSTER_ID"] = id
+	}
 	if *includeObjectStorage && !*onlyLKECluster {
 		if err := validateDestroyBackupConfigurations(workspace, envRoot, envValues); err != nil {
 			return err
@@ -417,48 +426,76 @@ func listLinodeVolumes(token string) ([]linodeVolume, error) {
 }
 
 func deleteDeploymentVolumesWhenDetached(token string, volumeIDs []string, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), max(timeout, time.Second))
+	defer cancel()
+	return deleteDeploymentVolumesWithEvidence(ctx, token, volumeIDs, timeout, readRemovalRecoveryNative, func(token, id string) error {
+		_, err := linodeRequestRaw(token, "DELETE", "/volumes/"+id, "")
+		if err == nil {
+			fmt.Fprintf(os.Stdout, "DELETE REQUEST ACCEPTED: original Linode volume id=%s\n", id)
+		}
+		return err
+	})
+}
+
+func deleteDeploymentVolumesWithEvidence(ctx context.Context, token string, volumeIDs []string, timeout time.Duration, read removalRecoveryReader, deleteVolume func(string, string) error) error {
 	if len(volumeIDs) == 0 {
 		return nil
 	}
-	if strings.TrimSpace(token) == "" {
-		return errors.New("LINODE_TOKEN is required to remove environment persistent volumes")
+	if strings.TrimSpace(token) == "" || read == nil || deleteVolume == nil {
+		return errors.New("selected credentials and exact volume evidence readers are required")
 	}
 	wanted := map[string]bool{}
 	for _, id := range volumeIDs {
+		if _, err := positiveIntValue("volume_id", id); err != nil || wanted[id] {
+			return errors.New("original volume IDs must be distinct positive numeric IDs")
+		}
 		wanted[id] = true
 	}
+	ids := append([]string(nil), volumeIDs...)
+	sort.Strings(ids)
 	deadline := time.Now().Add(timeout)
 	for {
-		volumes, err := listLinodeVolumes(token)
-		if err != nil {
-			return err
-		}
-		remaining := map[string]linodeVolume{}
-		for _, volume := range volumes {
-			if wanted[volume.ID] {
-				remaining[volume.ID] = volume
-			}
-		}
-		if len(remaining) == 0 {
-			return nil
-		}
-		for id, volume := range remaining {
-			if volume.LinodeID != nil || volume.Status != "active" {
+		pending := []string{}
+		for _, id := range ids {
+			raw, err := read(ctx, token, "/volumes/"+id, nil)
+			if errors.Is(err, errRemovalRecoveryNativeNotFound) {
 				continue
 			}
-			if _, err := linodeRequestRaw(token, "DELETE", "/volumes/"+id, ""); err != nil {
-				return fmt.Errorf("delete environment volume %s: %w", id, err)
+			var volume removalRecoveryVolume
+			if err != nil || json.Unmarshal(raw, &volume) != nil || strconv.Itoa(volume.ID) != id {
+				return fmt.Errorf("cannot verify original Linode volume %s through its exact native endpoint", id)
 			}
-		}
-		if time.Now().After(deadline) {
-			ids := make([]string, 0, len(remaining))
-			for id := range remaining {
-				ids = append(ids, id)
+			if volume.LinodeID != nil || volume.Status != "active" {
+				pending = append(pending, id)
+				continue
 			}
-			sort.Strings(ids)
-			return fmt.Errorf("timed out after %s waiting to remove environment volumes: %s", timeout, strings.Join(ids, ", "))
+			deleteErr := deleteVolume(token, id)
+			raw, err = read(ctx, token, "/volumes/"+id, nil)
+			if errors.Is(err, errRemovalRecoveryNativeNotFound) {
+				fmt.Fprintf(os.Stdout, "[VERIFIED] original Linode volume id=%s is absent\n", id)
+				continue
+			}
+			if err != nil || json.Unmarshal(raw, &volume) != nil || strconv.Itoa(volume.ID) != id {
+				return fmt.Errorf("original Linode volume %s deletion cannot be verified; permission and transport failures are not absence", id)
+			}
+			if deleteErr != nil {
+				return fmt.Errorf("original Linode volume %s deletion failed and its exact native endpoint still reports it present", id)
+			}
+			pending = append(pending, id)
 		}
-		time.Sleep(5 * time.Second)
+		if len(pending) == 0 {
+			return nil
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("timed out after %s waiting for exact original Linode volumes to be absent: %s", timeout, strings.Join(pending, ", "))
+		}
+		timer := time.NewTimer(min(5*time.Second, time.Until(deadline)))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return errors.New("exact original volume removal verification timed out")
+		case <-timer.C:
+		}
 	}
 }
 
@@ -609,6 +646,15 @@ func printDestroyExactIDGroup(w *os.File, title string, resources []linodeDestro
 }
 
 func executeLinodeDestroyPlan(token, envRoot string, plan linodeDestroyPlan, includeObjectStorage bool, includeOrphanVolumes bool, orphanVolumeIDs map[string]bool, includeOrphanNodeBalancers bool, orphanNodeBalancerIDs map[string]bool, onlyOrphanVolumes bool, onlyOrphanNodeBalancers bool, onlyLKECluster bool) error {
+	var localState []destroyedLKEFile
+	var store secretStore
+	if !onlyOrphanVolumes && !onlyOrphanNodeBalancers && len(plan.LKEClusters) > 0 {
+		var err error
+		store, localState, err = snapshotDestroyedLKEState(envRoot, plan)
+		if err != nil {
+			return err
+		}
+	}
 	if !onlyOrphanVolumes && !onlyOrphanNodeBalancers {
 		groups := [][]linodeDestroyResource{plan.LKEClusters}
 		if !onlyLKECluster {
@@ -623,10 +669,13 @@ func executeLinodeDestroyPlan(token, envRoot string, plan linodeDestroyPlan, inc
 				if _, err := linodeRequestRaw(token, "DELETE", item.Path, ""); err != nil {
 					return err
 				}
+				fmt.Fprintf(os.Stdout, "DELETE REQUEST ACCEPTED: %s (%s)\n", item.Label, item.Path)
 			}
 		}
-		if err := removeDestroyedLKEState(envRoot); err != nil {
-			return err
+		if len(localState) > 0 {
+			if err := removeDestroyedLKEState(store, localState); err != nil {
+				return err
+			}
 		}
 	}
 	if includeObjectStorage && !onlyLKECluster {
@@ -638,6 +687,7 @@ func executeLinodeDestroyPlan(token, envRoot string, plan linodeDestroyPlan, inc
 			if _, err := linodeRequestRaw(token, "DELETE", item.Path, ""); err != nil {
 				return err
 			}
+			fmt.Fprintf(os.Stdout, "DELETE REQUEST ACCEPTED: %s (%s)\n", item.Label, item.Path)
 		}
 	}
 	if includeOrphanVolumes && !onlyLKECluster {
@@ -655,6 +705,7 @@ func executeLinodeDestroyPlan(token, envRoot string, plan linodeDestroyPlan, inc
 			if _, err := linodeRequestRaw(token, "DELETE", item.Path, ""); err != nil {
 				return err
 			}
+			fmt.Fprintf(os.Stdout, "DELETE REQUEST ACCEPTED: %s (%s)\n", item.Label, item.Path)
 		}
 	}
 	if includeOrphanNodeBalancers && !onlyLKECluster {
@@ -672,35 +723,92 @@ func executeLinodeDestroyPlan(token, envRoot string, plan linodeDestroyPlan, inc
 			if _, err := linodeRequestRaw(token, "DELETE", item.Path, ""); err != nil {
 				return err
 			}
+			fmt.Fprintf(os.Stdout, "DELETE REQUEST ACCEPTED: %s (%s)\n", item.Label, item.Path)
 		}
 	}
 	return nil
 }
 
-func removeDestroyedLKEState(envRoot string) error {
-	stateDir := envRoot
-	backupDir := filepath.Join(envRoot, "backups", "destroy-lke-"+time.Now().UTC().Format("20060102T150405Z"))
-	files := []string{filepath.Join("adapters", "lke", "state.env"), filepath.Join("state", "kubeconfig.yaml")}
-	backedUp := false
-	for _, name := range files {
-		src := filepath.Join(stateDir, name)
-		if _, err := os.Stat(src); err != nil {
+type destroyedLKEFile struct {
+	Relative string
+	Path     string
+	Raw      []byte
+	Info     os.FileInfo
+}
+
+func snapshotDestroyedLKEState(envRoot string, plan linodeDestroyPlan) (secretStore, []destroyedLKEFile, error) {
+	environment, stack, err := lkeProviderTarget(provisionPaths{EnvRoot: envRoot}, nil)
+	if err != nil || stack != plan.Stack {
+		return secretStore{}, nil, errors.New("selected private environment state does not match the destruction plan")
+	}
+	state, err := readLKEProviderState(environment, stack)
+	if err != nil {
+		return secretStore{}, nil, err
+	}
+	if state["LKE_CLUSTER_ID"] != "" {
+		matched := false
+		for _, cluster := range plan.LKEClusters {
+			matched = matched || cluster.ID == state["LKE_CLUSTER_ID"]
+		}
+		if !matched {
+			return secretStore{}, nil, errors.New("destruction plan does not include the original recorded cluster; its private state must remain")
+		}
+	}
+	store, err := newSecretStore("", environment)
+	if err != nil {
+		return store, nil, err
+	}
+	var files []destroyedLKEFile
+	for _, relative := range []string{"deployment/adapters/lke/state.env", "kube/kubeconfig.yaml"} {
+		path, err := privateDeploymentStatePath(environment, relative)
+		if err != nil {
+			return store, nil, err
+		}
+		before, err := os.Lstat(path)
+		if os.IsNotExist(err) {
 			continue
 		}
-		if err := os.MkdirAll(backupDir, 0o755); err != nil {
-			return err
+		if err != nil {
+			return store, nil, err
 		}
-		if err := copyFile(src, filepath.Join(backupDir, name)); err != nil {
-			return err
+		raw, err := readStorageEvidenceFile(path)
+		after, statErr := os.Lstat(path)
+		if err != nil || statErr != nil || !os.SameFile(before, after) || !before.ModTime().Equal(after.ModTime()) {
+			return store, nil, errors.New("private provider state changed while preparing destruction")
 		}
-		if err := os.Remove(src); err != nil {
-			return err
-		}
-		backedUp = true
-		fmt.Fprintf(os.Stdout, "removed local LKE state: %s\n", src)
+		files = append(files, destroyedLKEFile{relative, path, raw, after})
 	}
-	if backedUp {
-		fmt.Fprintf(os.Stdout, "local LKE state backup: %s\n", filepath.Dir(backupDir))
+	return store, files, nil
+}
+
+func removeDestroyedLKEState(store secretStore, files []destroyedLKEFile) error {
+	archive := "migration-backup/destroy-lke-" + postgresBackupRandomID()
+	// A concurrent writer must retain all of its files, even after cloud deletion.
+	for _, file := range files {
+		current, err := os.Lstat(file.Path)
+		raw, readErr := readStorageEvidenceFile(file.Path)
+		if err != nil || readErr != nil || !os.SameFile(file.Info, current) || !file.Info.ModTime().Equal(current.ModTime()) || !bytes.Equal(raw, file.Raw) {
+			return errors.New("private provider state changed after the approved destruction baseline; retain it and reconcile the actual outcome")
+		}
 	}
+	for _, file := range files {
+		path, err := privateDeploymentStatePath(store.Environment, filepath.Join(archive, file.Relative))
+		if err != nil || path != filepath.Join(store.Root, archive, file.Relative) {
+			return errors.New("private archive location or permissions changed")
+		}
+		if err := store.write(filepath.Join(archive, file.Relative), file.Raw, false); err != nil {
+			return err
+		}
+	}
+	for _, file := range files {
+		current, err := os.Lstat(file.Path)
+		if err != nil || !os.SameFile(file.Info, current) || !file.Info.ModTime().Equal(current.ModTime()) {
+			return errors.New("private provider state changed during archival; concurrent data remains")
+		}
+		if err := os.Remove(file.Path); err != nil {
+			return err
+		}
+	}
+	fmt.Fprintf(os.Stdout, "archived removed private LKE state: environment=%s files=%d\n", store.Environment, len(files))
 	return nil
 }

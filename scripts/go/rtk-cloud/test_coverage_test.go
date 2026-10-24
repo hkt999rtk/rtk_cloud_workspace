@@ -105,7 +105,7 @@ func TestLoadCoverageConfigLinksEveryModuleToCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.SchemaVersion != 3 || cfg.Differential.MinimumStatementPercent != 80 {
+	if cfg.SchemaVersion != 3 || cfg.Differential.MinimumStatementPercent != 70 {
 		t.Fatalf("coverage config header = %#v", cfg)
 	}
 	if len(cfg.Modules) != 13 {

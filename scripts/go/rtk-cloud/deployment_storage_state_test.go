@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 )
 
 func mustStorageStatePath(t *testing.T, cfg deploymentConfig, name string) string {
@@ -121,7 +123,7 @@ func TestStorageStateIsEnvironmentOwnedAndPreflightCannotCreateCompletion(t *tes
 	for _, environment := range []string{"dev", "staging", "prod"} {
 		t.Run(environment, func(t *testing.T) {
 			t.Setenv("RTK_CLOUD_CONFIG_ROOT", t.TempDir())
-			cfg := deploymentConfig{Environment: environment, RuntimeRoot: t.TempDir(), Values: map[string]string{}, Storage: deploymentStoragePlan{RuntimeMediaCutoverRequired: true, RuntimeMedia: deploymentStorageTarget{Bucket: "target", Region: "us-sea", Prefix: "environments/stack"}}}
+			cfg := deploymentConfig{Environment: environment, RuntimeRoot: t.TempDir(), Values: map[string]string{"DEPLOYMENT_PREFLIGHT_VALIDITY_SECONDS": "3600"}, Storage: deploymentStoragePlan{RuntimeMediaCutoverRequired: true, RuntimeMedia: deploymentStorageTarget{Bucket: "target", Region: "us-sea", Prefix: "environments/stack"}}}
 			// A receipt in another checkout is never a lookup fallback or proof.
 			if err := writeStorageState(filepath.Join(cfg.RuntimeRoot, "state", "storage-cutover.json"), map[string]any{"environment": environment}); err != nil {
 				t.Fatal(err)
@@ -141,6 +143,11 @@ func TestStorageStateIsEnvironmentOwnedAndPreflightCannotCreateCompletion(t *tes
 			}}
 			if err := runDeploymentPreflightWithChecksContext(context.Background(), cfg, "provision", checks, &output); err == nil || !strings.Contains(output.String(), "deployment.storage.activation") {
 				t.Fatal("preflight did not expose execution's storage blocker", err)
+			}
+			_, err = compileEnvironmentDeploymentWithImages(context.Background(), cfg, "upgrade", environmentRelease{}, nil)
+			blocker, ok := err.(*deploymentplan.Blocker)
+			if !ok || blocker.ID != "deployment.storage.activation" {
+				t.Fatal("common compiler omitted storage activation", err)
 			}
 			after, err := os.ReadDir(filepath.Dir(path))
 			if err != nil || len(after) != len(before) {

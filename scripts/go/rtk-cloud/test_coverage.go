@@ -21,6 +21,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const historicalWallClockExpirySkipEnv = "RTK_SKIP_HISTORICAL_WALL_CLOCK_EXPIRY"
+
 type coverageConfig struct {
 	SchemaVersion int `yaml:"schema_version"`
 	Differential  struct {
@@ -529,6 +531,15 @@ func runGoCoverageModule(workspace, outDir, logPath string, cfg coverageConfig, 
 	return runGoCoverageModuleProfile(workspace, outDir, logPath, cfg, module, baseRef, headRef, "unit", result)
 }
 
+func goCoverageCommandEnvironment(module coverageModule) map[string]string {
+	if module.Name == "workspace-tooling" {
+		// The covered workspace baseline must use the same go.work selection
+		// as test-matrix. Signed wall-clock expiry remains nightly-only.
+		return map[string]string{historicalWallClockExpirySkipEnv: "1"}
+	}
+	return map[string]string{"GOWORK": "off"}
+}
+
 func runGoCoverageModuleProfile(workspace, outDir, logPath string, cfg coverageConfig, module coverageModule, baseRef, headRef, profile string, result *coverageCaseResult) error {
 	moduleDir := filepath.Join(workspace, module.Path)
 	moduleRel := filepath.ToSlash(filepath.Join("modules", module.Name))
@@ -539,13 +550,20 @@ func runGoCoverageModuleProfile(workspace, outDir, logPath string, cfg coverageC
 	}
 	eventsRel := filepath.ToSlash(filepath.Join(moduleRel, "test-events.json"))
 	eventsPath := filepath.Join(outDir, filepath.FromSlash(eventsRel))
-	args := []string{"test", "-json", "-count=1", "-timeout=20m"}
+	timeout := "20m"
+	if module.Name == "workspace-tooling" {
+		timeout = "180m"
+	}
+	args := []string{"test", "-json", "-count=1", "-timeout=" + timeout}
+	if module.Name == "workspace-tooling" {
+		args = append(args, "-failfast", "-skip=^(TestHistoricalCoreSourceRetainsTwoOriginalServerRequestIDs|TestHistoricalLateBootstrapCompletesFromOriginalSourceAndPairedCRLs)$")
+	}
 	args = append(args, module.Packages...)
 	args = append(args, "-coverprofile="+profilePath)
 	if profile == "pr" && len(module.CoverPackages) > 0 {
 		args = append(args, "-coverpkg="+strings.Join(module.CoverPackages, ","))
 	}
-	env := map[string]string{"GOWORK": "off"}
+	env := goCoverageCommandEnvironment(module)
 	if profile == "pr" {
 		for _, name := range module.PRRequiredEnv {
 			if strings.TrimSpace(os.Getenv(name)) == "" {
@@ -619,7 +637,7 @@ func runGoCoverageModuleProfile(workspace, outDir, logPath string, cfg coverageC
 	result.PackageCoveragePath = packageRel
 	var criticalErr error
 	if len(module.CriticalCommand) > 0 {
-		criticalErr = runCoverageCommand(moduleDir, logPath, map[string]string{"GOWORK": "off"}, module.CriticalCommand[0], module.CriticalCommand[1:]...)
+		criticalErr = runCoverageCommand(moduleDir, logPath, goCoverageCommandEnvironment(module), module.CriticalCommand[0], module.CriticalCommand[1:]...)
 		if criticalErr != nil {
 			result.CriticalGate = "FAIL"
 		} else {

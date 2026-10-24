@@ -78,7 +78,7 @@ esac
 	}
 }
 
-func TestLKEOTACoreCutoverStopsBeforeWorkloadMutationWhenLegacyWorkRemains(t *testing.T) {
+func TestRetiredLKEOTACoreCutoverStopsBeforeWorkloadMutationWhenLegacyWorkRemains(t *testing.T) {
 	script := filepath.Join(t.TempDir(), "kubectl")
 	if err := os.WriteFile(script, []byte(`#!/bin/sh
 case "$*" in
@@ -101,7 +101,7 @@ esac
 	t.Setenv("FAKE_LEGACY_DB_JSON", string(encoded))
 	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-dev"}
 	err = lkeDeployWorkloads(provisionPaths{}, env, provisionOptions{workloads: []string{"video-cloud"}})
-	if err == nil || !strings.Contains(err.Error(), "campaigns=1") {
+	if err == nil || !strings.Contains(err.Error(), "static PKI templates are retired") {
 		t.Fatalf("core cutover did not stop on live legacy work before workload apply: %v", err)
 	}
 }

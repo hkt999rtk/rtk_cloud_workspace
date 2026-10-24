@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -120,6 +119,9 @@ func selectedDNSAdapter(paths provisionPaths, env map[string]string) (dnsAdapter
 		return nil, dnsAdapterContext{}, dnsZone{}, err
 	}
 	ctx := dnsContext(paths, env)
+	if err := validateDNSLocalState(ctx, adapter.Name()); err != nil {
+		return nil, ctx, dnsZone{}, err
+	}
 	if err := adapter.Validate(context.Background(), ctx); err != nil {
 		return nil, ctx, dnsZone{}, err
 	}
@@ -147,10 +149,10 @@ func syncDNSRecords(paths provisionPaths, env map[string]string, records []dnsRe
 	if err := adapter.CollectEvidence(ctx, adapterCtx, zone); err != nil {
 		return err
 	}
-	if err := writeSortedEnv(filepath.Join(adapterCtx.RuntimeRoot, "state", "dns.env"), map[string]string{
+	if err := writeDNSLocalState(adapterCtx, adapter.Name(), "dns.env", []byte(sortedEnvContents(map[string]string{
 		"DNS_ADAPTER": adapter.Name(), "DNS_ROOT_DOMAIN": adapterCtx.RootDomain,
 		"DNS_RECORDS_APPLIED": strconv.Itoa(len(records)), "DNS_UPDATED_AT": time.Now().UTC().Format(time.RFC3339),
-	}, 0o600); err != nil {
+	}))); err != nil {
 		return err
 	}
 	for _, record := range records {
@@ -192,16 +194,9 @@ func validateManagedDNSHostname(name string) error {
 }
 
 func writeDNSOwnership(ctx dnsAdapterContext, adapter string, records []dnsRecordSet) error {
-	dir := filepath.Join(ctx.RuntimeRoot, "dns", adapter)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	owned, err := readDNSOwnership(ctx, adapter)
+	if err != nil {
 		return err
-	}
-	path := filepath.Join(dir, "ownership.json")
-	owned := struct {
-		Records []dnsRecordSet `json:"records"`
-	}{}
-	if body, err := os.ReadFile(path); err == nil {
-		_ = json.Unmarshal(body, &owned)
 	}
 	merged := map[string]dnsRecordSet{}
 	for _, record := range append(owned.Records, records...) {
@@ -217,38 +212,72 @@ func writeDNSOwnership(ctx dnsAdapterContext, adapter string, records []dnsRecor
 		}
 		return records[i].Name < records[j].Name
 	})
-	body, err := json.MarshalIndent(map[string]any{"adapter": adapter, "root_domain": ctx.RootDomain, "records": records, "updated_at": time.Now().UTC().Format(time.RFC3339)}, "", "  ")
+	body, err := json.MarshalIndent(map[string]any{"adapter": adapter, "root_domain": ctx.RootDomain, "environment": ctx.Values["CLOUD_ENV_NAME"], "records": records, "updated_at": time.Now().UTC().Format(time.RFC3339)}, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(body, '\n'), 0o600)
+	return writeDNSLocalState(ctx, adapter, "ownership.json", append(body, '\n'))
 }
 
 func removeOwnedDNSRecords(paths provisionPaths, env map[string]string) error {
 	adapterName := firstNonEmpty(env["DNS_ADAPTER"], "godaddy")
-	path := filepath.Join(paths.EnvRoot, "dns", adapterName, "ownership.json")
-	body, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return nil
+	local := dnsContext(paths, env)
+	if _, err := readDNSLocalState(local, adapterName, "ownership.json"); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return dnsStateBlocker("original DNS ownership evidence is missing; removal cannot infer ownership")
+		}
+		return err
 	}
+	ownership, err := readDNSOwnership(local, adapterName)
 	if err != nil {
 		return err
 	}
-	var ownership struct {
-		Records []dnsRecordSet `json:"records"`
+	challenges, err := readDNSChallenges(local, adapterName)
+	if err != nil {
+		return err
 	}
-	if err := json.Unmarshal(body, &ownership); err != nil {
-		return fmt.Errorf("read DNS ownership: %w", err)
+	if len(challenges) != 0 {
+		return dnsStateBlocker("original ACME challenge cleanup evidence remains; complete original ACME cleanup before DNS removal")
+	}
+	if len(ownership.Records) == 0 {
+		return nil
 	}
 	adapter, adapterCtx, zone, err := selectedDNSAdapter(paths, env)
 	if err != nil {
 		return err
 	}
+	if adapter.Name() == "route53" {
+		raw, err := readDNSLocalState(adapterCtx, adapter.Name(), "state.json")
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if err == nil {
+			var state dnsProviderState
+			if decodeEnvironmentJSON(raw, &state) != nil || state.ID != "" && state.ID != zone.ID {
+				return dnsStateBlocker("DNS removal hosted-zone identity differs from the original provider state")
+			}
+		}
+	}
 	ctx := context.Background()
+	// Verify every owned record before the first mutation. A retry may encounter
+	// records removed by an earlier partial run, but a replacement is drift.
 	for _, owned := range ownership.Records {
 		current, err := adapter.GetRecordSet(ctx, adapterCtx, zone, owned.Name, owned.Type)
 		if err != nil {
 			return err
+		}
+		if len(current.Values) != 0 && strings.Join(mergeDNSValues(current.Values), "\x00") != strings.Join(mergeDNSValues(owned.Values), "\x00") {
+			return fmt.Errorf("DNS drift prevents removal of %s %s", owned.Type, owned.Name)
+		}
+	}
+	for _, owned := range ownership.Records {
+		current, err := adapter.GetRecordSet(ctx, adapterCtx, zone, owned.Name, owned.Type)
+		if err != nil {
+			return err
+		}
+		if len(current.Values) == 0 {
+			fmt.Printf("[ALREADY ABSENT] DNS %s %s\n", owned.Type, owned.Name)
+			continue
 		}
 		if strings.Join(mergeDNSValues(current.Values), "\x00") != strings.Join(mergeDNSValues(owned.Values), "\x00") {
 			return fmt.Errorf("DNS drift prevents removal of %s %s", owned.Type, owned.Name)
@@ -256,8 +285,18 @@ func removeOwnedDNSRecords(paths provisionPaths, env map[string]string) error {
 		if err := adapter.DeleteRecordValues(ctx, adapterCtx, zone, owned); err != nil {
 			return err
 		}
+		remaining, err := adapter.GetRecordSet(ctx, adapterCtx, zone, owned.Name, owned.Type)
+		if err != nil {
+			return fmt.Errorf("DNS removal verification failed for %s %s: %w", owned.Type, owned.Name, err)
+		}
+		if len(removeDNSValues(owned.Values, remaining.Values)) != len(owned.Values) {
+			return fmt.Errorf("DNS removal verification failed for %s %s: owned values remain", owned.Type, owned.Name)
+		}
+		fmt.Printf("[DELETED] DNS %s %s\n", owned.Type, owned.Name)
 	}
-	return os.Remove(path)
+	// Keep original ownership evidence so partial cleanup and later retries can
+	// identify exactly the resources this environment had permission to remove.
+	return nil
 }
 
 func waitDNSRecord(domain, value, rootDomain string, values map[string]string) error {
@@ -320,6 +359,12 @@ type goDaddyDNSAdapter struct {
 	apiRoot string
 }
 
+type goDaddyAPIStatusError struct{ StatusCode int }
+
+func (e *goDaddyAPIStatusError) Error() string {
+	return fmt.Sprintf("GoDaddy API request returned HTTP %d", e.StatusCode)
+}
+
 func (*goDaddyDNSAdapter) Name() string { return "godaddy" }
 
 func (a *goDaddyDNSAdapter) credentials(ctx dnsAdapterContext) (string, string) {
@@ -331,7 +376,10 @@ func (a *goDaddyDNSAdapter) credentials(ctx dnsAdapterContext) (string, string) 
 			return key, secret
 		}
 	}
-	environment := firstNonEmpty(envFileValue(filepath.Join(ctx.RuntimeRoot, "env", "stack.env"), "CLOUD_ENV_NAME"), "staging")
+	environment, err := dnsStateEnvironment(ctx)
+	if err != nil {
+		return "", ""
+	}
 	environmentProfile, check := deploymentCredentialValues(defaultDeploymentEnvironmentCredentialFile(environment))
 	if !check.Passed {
 		return "", ""
@@ -426,7 +474,7 @@ func validateDNSMutationAccess(ctx context.Context, adapter dnsAdapter, adapterC
 	return nil
 }
 
-func (a *goDaddyDNSAdapter) request(ctx context.Context, adapterCtx dnsAdapterContext, method, path string, body any) ([]byte, error) {
+func (a *goDaddyDNSAdapter) request(ctx context.Context, adapterCtx dnsAdapterContext, method, path string, body any) (output []byte, resultErr error) {
 	var reader io.Reader
 	if body != nil {
 		raw, err := json.Marshal(body)
@@ -442,6 +490,8 @@ func (a *goDaddyDNSAdapter) request(ctx context.Context, adapterCtx dnsAdapterCo
 	key, secret := a.credentials(adapterCtx)
 	req.Header.Set("Authorization", "sso-key "+key+":"+secret)
 	req.Header.Set("Content-Type", "application/json")
+	measured := beginDeploymentQuery(ctx, "dns-http")
+	defer func() { measured(resultErr) }()
 	resp, err := a.client.Do(req)
 	if err != nil {
 		return nil, sanitizedDeploymentRequestError(err)
@@ -452,7 +502,7 @@ func (a *goDaddyDNSAdapter) request(ctx context.Context, adapterCtx dnsAdapterCo
 		return nil, sanitizedDeploymentRequestError(readErr)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("GoDaddy API request returned HTTP %d", resp.StatusCode)
+		return nil, &goDaddyAPIStatusError{StatusCode: resp.StatusCode}
 	}
 	return raw, nil
 }
@@ -461,6 +511,10 @@ func (a *goDaddyDNSAdapter) GetRecordSet(ctx context.Context, adapterCtx dnsAdap
 	path := fmt.Sprintf("/v1/domains/%s/records/%s/%s", url.PathEscape(zone.Name), url.PathEscape(recordType), url.PathEscape(dnsRecordName(zone.Name, name)))
 	raw, err := a.request(ctx, adapterCtx, http.MethodGet, path, nil)
 	if err != nil {
+		var status *goDaddyAPIStatusError
+		if errors.As(err, &status) && status.StatusCode == http.StatusNotFound {
+			return dnsRecordSet{Name: name, Type: recordType}, nil
+		}
 		return dnsRecordSet{}, err
 	}
 	var records []struct {
@@ -493,10 +547,13 @@ func (a *goDaddyDNSAdapter) UpsertRecordSet(ctx context.Context, adapterCtx dnsA
 
 func (a *goDaddyDNSAdapter) DeleteRecordValues(ctx context.Context, adapterCtx dnsAdapterContext, zone dnsZone, record dnsRecordSet) error {
 	existing, err := a.GetRecordSet(ctx, adapterCtx, zone, record.Name, record.Type)
-	if err != nil {
+	if err != nil || len(existing.Values) == 0 {
 		return err
 	}
 	remaining := removeDNSValues(existing.Values, record.Values)
+	if len(remaining) == len(existing.Values) {
+		return nil
+	}
 	path := fmt.Sprintf("/v1/domains/%s/records/%s/%s", url.PathEscape(zone.Name), url.PathEscape(record.Type), url.PathEscape(dnsRecordName(zone.Name, record.Name)))
 	if len(remaining) == 0 {
 		_, err = a.request(ctx, adapterCtx, http.MethodDelete, path, nil)
@@ -544,13 +601,9 @@ func (a *goDaddyDNSAdapter) CollectEvidence(_ context.Context, ctx dnsAdapterCon
 }
 
 func writeDNSProviderState(ctx dnsAdapterContext, adapter string, state map[string]any) error {
-	dir := filepath.Join(ctx.RuntimeRoot, "dns", adapter)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
 	body, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, "state.json"), append(body, '\n'), 0o600)
+	return writeDNSLocalState(ctx, adapter, "state.json", append(body, '\n'))
 }

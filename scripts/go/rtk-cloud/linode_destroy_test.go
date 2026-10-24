@@ -13,7 +13,14 @@ func makeLinodeDestroyTestEnv(t *testing.T) (string, string) {
 	t.Helper()
 	workspace, envRoot := makeLKETestEnv(t)
 	path := filepath.Join(envRoot, "env", "stack.env")
-	writeTestFile(t, path, readTestFile(t, path)+"\nVIDEO_CLOUD_BLOB_BUCKET=rtk-cloud-staging-runtime-us-sea\nVIDEO_CLOUD_BLOB_REGION=us-sea\n")
+	values, err := readStrictEnv(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	values["VIDEO_CLOUD_BLOB_BUCKET"], values["VIDEO_CLOUD_BLOB_REGION"] = "rtk-cloud-staging-runtime-us-sea", "us-sea"
+	if err := writeSortedEnv(path, values, 0600); err != nil {
+		t.Fatal(err)
+	}
 	return workspace, envRoot
 }
 
@@ -215,8 +222,8 @@ func TestDestroyEnvironmentResourcesDoesNotMatchLegacySharedLoadGenerators(t *te
 
 func TestDestroyLinodeStagingResourcesConfirmedDeletesMatchedResources(t *testing.T) {
 	workspace, envRoot := makeLinodeDestroyTestEnv(t)
-	writeTestFile(t, filepath.Join(envRoot, "adapters", "lke", "state.env"), "LKE_CLUSTER_ID=101\n")
-	writeTestFile(t, filepath.Join(envRoot, "state", "kubeconfig.yaml"), "apiVersion: v1\n")
+	writeTestLKEState(t, "staging", "LKE_CLUSTER_ID=101\n")
+	writeTestCanonicalKube(t, "staging", "apiVersion: v1\n")
 	curlLog := fakeLinodeCurl(t, map[string]string{
 		"/lke/clusters?page_size=500":           `{"data":[{"id":101,"label":"video-cloud-staging-lke","region":"us-sea"}]}`,
 		"/linode/instances?page_size=500":       `{"data":[{"id":201,"label":"video-cloud-staging-edge","region":"us-sea","status":"running","ipv4":["192.0.2.10"],"tags":["video-cloud-staging"]},{"id":203,"label":"video-cloud-staging-turn01","region":"us-sea","status":"running","ipv4":["192.0.2.20"],"tags":["rtk-cloud","video-cloud-staging","coturn-vm"]}]}`,
@@ -261,13 +268,13 @@ func TestDestroyLinodeStagingResourcesConfirmedDeletesMatchedResources(t *testin
 	if strings.Contains(log, "DELETE /volumes") {
 		t.Fatalf("orphan volumes must not be deleted without --include-orphan-volumes, got:\n%s", log)
 	}
-	if _, err := os.Stat(filepath.Join(envRoot, "adapters", "lke", "state.env")); !os.IsNotExist(err) {
+	if _, err := os.Stat(testLKEStatePath(t, "staging")); !os.IsNotExist(err) {
 		t.Fatalf("expected local LKE state to be removed, stat err=%v", err)
 	}
-	if _, err := os.Stat(filepath.Join(envRoot, "state", "kubeconfig.yaml")); !os.IsNotExist(err) {
+	if _, err := os.Stat(testCanonicalKubePath(t, "staging")); !os.IsNotExist(err) {
 		t.Fatalf("expected local LKE kubeconfig to be removed, stat err=%v", err)
 	}
-	backups, err := filepath.Glob(filepath.Join(envRoot, "backups", "destroy-lke-*", "adapters", "lke", "state.env"))
+	backups, err := filepath.Glob(testDestroyedLKEArchiveGlob(t, "staging"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,8 +285,8 @@ func TestDestroyLinodeStagingResourcesConfirmedDeletesMatchedResources(t *testin
 
 func TestDestroyLinodeStagingResourcesOnlyLKEClusterSkipsNonClusterResources(t *testing.T) {
 	workspace, envRoot := makeLinodeDestroyTestEnv(t)
-	writeTestFile(t, filepath.Join(envRoot, "adapters", "lke", "state.env"), "LKE_CLUSTER_ID=101\n")
-	writeTestFile(t, filepath.Join(envRoot, "state", "kubeconfig.yaml"), "apiVersion: v1\n")
+	writeTestLKEState(t, "staging", "LKE_CLUSTER_ID=101\n")
+	writeTestCanonicalKube(t, "staging", "apiVersion: v1\n")
 	curlLog := fakeLinodeCurl(t, map[string]string{
 		"/lke/clusters?page_size=500":           `{"data":[{"id":101,"label":"video-cloud-staging-lke","region":"us-sea"}]}`,
 		"/linode/instances?page_size=500":       `{"data":[{"id":201,"label":"video-cloud-staging-edge","region":"us-sea","status":"running","tags":["video-cloud-staging"]},{"id":203,"label":"video-cloud-staging-turn01","region":"us-sea","status":"running","tags":["rtk-cloud","video-cloud-staging","coturn-vm"]}]}`,
@@ -324,10 +331,10 @@ func TestDestroyLinodeStagingResourcesOnlyLKEClusterSkipsNonClusterResources(t *
 			t.Fatalf("only-lke mode must not delete non-cluster resource %q, got:\n%s", forbidden, log)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(envRoot, "adapters", "lke", "state.env")); !os.IsNotExist(err) {
+	if _, err := os.Stat(testLKEStatePath(t, "staging")); !os.IsNotExist(err) {
 		t.Fatalf("expected local LKE state to be removed, stat err=%v", err)
 	}
-	if _, err := os.Stat(filepath.Join(envRoot, "state", "kubeconfig.yaml")); !os.IsNotExist(err) {
+	if _, err := os.Stat(testCanonicalKubePath(t, "staging")); !os.IsNotExist(err) {
 		t.Fatalf("expected local LKE kubeconfig to be removed, stat err=%v", err)
 	}
 }
@@ -404,8 +411,8 @@ func TestDestroyLinodeStagingResourcesIncludesOrphanVolumesOnlyWhenRequested(t *
 
 func TestDestroyLinodeStagingResourcesOnlyOrphanVolumesSkipsRuntimeResources(t *testing.T) {
 	workspace, envRoot := makeLinodeDestroyTestEnv(t)
-	writeTestFile(t, filepath.Join(envRoot, "adapters", "lke", "state.env"), "LKE_CLUSTER_ID=101\n")
-	writeTestFile(t, filepath.Join(envRoot, "state", "kubeconfig.yaml"), "apiVersion: v1\n")
+	writeTestLKEState(t, "staging", "LKE_CLUSTER_ID=101\n")
+	writeTestCanonicalKube(t, "staging", "apiVersion: v1\n")
 	curlLog := fakeLinodeCurl(t, map[string]string{
 		"/lke/clusters?page_size=500":           `{"data":[{"id":101,"label":"video-cloud-staging-lke","region":"us-sea"}]}`,
 		"/linode/instances?page_size=500":       `{"data":[{"id":201,"label":"video-cloud-staging-edge","region":"us-sea","status":"running","tags":["video-cloud-staging"]}]}`,
@@ -451,17 +458,17 @@ func TestDestroyLinodeStagingResourcesOnlyOrphanVolumesSkipsRuntimeResources(t *
 	if !strings.Contains(log, "DELETE /volumes/501") {
 		t.Fatalf("expected orphan volume delete, got:\n%s", log)
 	}
-	if _, err := os.Stat(filepath.Join(envRoot, "adapters", "lke", "state.env")); err != nil {
+	if _, err := os.Stat(testLKEStatePath(t, "staging")); err != nil {
 		t.Fatalf("only-orphan mode must keep local LKE state, stat err=%v", err)
 	}
-	if _, err := os.Stat(filepath.Join(envRoot, "state", "kubeconfig.yaml")); err != nil {
+	if _, err := os.Stat(testCanonicalKubePath(t, "staging")); err != nil {
 		t.Fatalf("only-orphan mode must keep local LKE kubeconfig, stat err=%v", err)
 	}
 }
 
 func TestDestroyLinodeStagingResourcesOnlyOrphanNodeBalancersSkipsRuntimeResources(t *testing.T) {
 	workspace, envRoot := makeLinodeDestroyTestEnv(t)
-	writeTestFile(t, filepath.Join(envRoot, "adapters", "lke", "state.env"), "LKE_CLUSTER_ID=626244\n")
+	writeTestLKEState(t, "staging", "LKE_CLUSTER_ID=626244\n")
 	curlLog := fakeLinodeCurl(t, map[string]string{
 		"/lke/clusters?page_size=500":           `{"data":[{"id":626244,"label":"video-cloud-staging-lke","region":"us-sea"}]}`,
 		"/linode/instances?page_size=500":       `{"data":[{"id":201,"label":"video-cloud-staging-edge","region":"us-sea","status":"running","tags":["video-cloud-staging"]}]}`,

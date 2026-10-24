@@ -39,3 +39,4 @@ plans or service docs instead.
 
 - [ADR 0001: Commercial Settlement Ownership And Provider Boundary](0001-commercial-settlement-ownership.md)
 - [ADR 0002: Daily PostgreSQL Physical Backups](0002-daily-postgres-physical-backups.md)
+- [ADR 0003: Unified Environment Deployment and Production Qualification](0003-unified-environment-deployment.md)

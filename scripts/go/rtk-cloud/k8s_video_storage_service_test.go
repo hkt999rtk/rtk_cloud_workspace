@@ -86,13 +86,13 @@ func TestLKEVideoStorageServiceRequiresOwnIdentitySecret(t *testing.T) {
 	}
 }
 
-func TestLKEDeployRejectsVideoStorageWithoutFoundationBeforeMutation(t *testing.T) {
+func TestRetiredLKEDeployRejectsVideoStorageWithoutFoundationBeforeMutation(t *testing.T) {
 	logPath := fakeKubectl(t)
 	t.Setenv("LKE_VIDEO_STORAGE_SERVICE_REGISTRATION_ENABLED", "true")
 	t.Setenv("LKE_MQTT_FOUNDATION_REGISTRATION_ENABLED", "false")
 	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "LKE_VIDEO_CLOUD_IMAGE": "example.test/video-cloud:reviewed", "VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED": "false"}
 	err := lkeDeployWorkloads(provisionPaths{}, env, provisionOptions{workloads: []string{"video-cloud"}})
-	if err == nil || !strings.Contains(err.Error(), "requires the MQTT foundation") {
+	if err == nil || !strings.Contains(err.Error(), "static PKI templates are retired") {
 		t.Fatalf("video storage dependency gate did not reject rollout: %v", err)
 	}
 	log, readErr := os.ReadFile(logPath)
@@ -104,7 +104,7 @@ func TestLKEDeployRejectsVideoStorageWithoutFoundationBeforeMutation(t *testing.
 	}
 }
 
-func TestLKEDeployRejectsVideoStorageWithoutDirectS3BeforeMutation(t *testing.T) {
+func TestRetiredLKEDeployRejectsVideoStorageWithoutDirectS3BeforeMutation(t *testing.T) {
 	logPath := fakeKubectl(t)
 	t.Setenv("LKE_VIDEO_STORAGE_SERVICE_REGISTRATION_ENABLED", "true")
 	t.Setenv("LKE_MQTT_FOUNDATION_REGISTRATION_ENABLED", "true")
@@ -113,7 +113,7 @@ func TestLKEDeployRejectsVideoStorageWithoutDirectS3BeforeMutation(t *testing.T)
 	t.Setenv("FAKE_ACCOUNT_MANAGER_REGISTRATION_SERVICE_JSON", `{"spec":{"type":"ClusterIP","selector":{"app.kubernetes.io/name":"account-manager"},"ports":[{"name":"service-reg","port":8443,"targetPort":"service-reg"}]}}`)
 	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "LKE_VIDEO_CLOUD_IMAGE": "example.test/video-cloud:reviewed", "VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED": "false"}
 	err := lkeDeployWorkloads(provisionPaths{}, env, provisionOptions{workloads: []string{"video-cloud"}})
-	if err == nil || !strings.Contains(err.Error(), "requires direct S3 clip upload") {
+	if err == nil || !strings.Contains(err.Error(), "static PKI templates are retired") {
 		t.Fatalf("video storage accepted disabled direct S3: %v", err)
 	}
 	log, readErr := os.ReadFile(logPath)
@@ -180,7 +180,7 @@ func TestLKEVideoStorageCoreCutoverManifestAndPolicyAreOptIn(t *testing.T) {
 	}
 }
 
-func TestLKEVideoStorageCoreCutoverFailsBeforeMutationWithoutReadyEndpoint(t *testing.T) {
+func TestRetiredLKEVideoStorageCoreCutoverFailsBeforeMutationWithoutReadyEndpoint(t *testing.T) {
 	logPath := fakeKubectl(t)
 	t.Setenv("LKE_VIDEO_STORAGE_CORE_CUTOVER_ENABLED", "true")
 	t.Setenv("LKE_VIDEO_STORAGE_SERVICE_REGISTRATION_ENABLED", "true")
@@ -195,7 +195,7 @@ func TestLKEVideoStorageCoreCutoverFailsBeforeMutationWithoutReadyEndpoint(t *te
 		"LINODE_OBJ_ACCESS_KEY_ID": "test-only", "LINODE_OBJ_SECRET_ACCESS_KEY": "test-only",
 	}
 	err := lkeDeployWorkloads(provisionPaths{}, env, provisionOptions{workloads: []string{"video-cloud"}})
-	if err == nil || !strings.Contains(err.Error(), "video storage Service is not private") {
+	if err == nil || !strings.Contains(err.Error(), "static PKI templates are retired") {
 		t.Fatalf("missing registered storage endpoint did not stop cutover: %v", err)
 	}
 	log, readErr := os.ReadFile(logPath)

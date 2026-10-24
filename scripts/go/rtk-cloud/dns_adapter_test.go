@@ -77,7 +77,7 @@ func TestGoDaddyDNSAdapterCredentialsUseEnvironmentStore(t *testing.T) {
 	adapter := &goDaddyDNSAdapter{}
 	ctx := dnsAdapterContext{
 		OperatorEnv: filepath.Join(t.TempDir(), "missing-operator.env"),
-		Values:      map[string]string{"DNS_RECORD_TTL": "600"},
+		Values:      map[string]string{"CLOUD_ENV_NAME": "staging", "DNS_RECORD_TTL": "600"},
 	}
 	key, secret := adapter.credentials(ctx)
 	if key != "profile-key" || secret != "profile-secret" {
@@ -122,7 +122,7 @@ func TestGoDaddyDNSAdapterIgnoresProcessAndLegacyOperatorFiles(t *testing.T) {
 	writeTestFile(t, operatorEnv, "GODADDY_KEY=operator-key\nGODADDY_SECRET=operator-secret\n")
 
 	adapter := &goDaddyDNSAdapter{}
-	key, secret := adapter.credentials(dnsAdapterContext{OperatorEnv: operatorEnv})
+	key, secret := adapter.credentials(dnsAdapterContext{OperatorEnv: operatorEnv, Values: map[string]string{"CLOUD_ENV_NAME": "staging"}})
 	if key != "profile-key" || secret != "profile-secret" {
 		t.Fatalf("canonical environment store must be the only source")
 	}
@@ -195,10 +195,11 @@ func TestRoute53DNS01UsesQuotedMultiValueRecordSet(t *testing.T) {
 }
 
 func TestRoute53CleanupRemovesOnlyRequestedTXTValuesAndCollectsEvidence(t *testing.T) {
+	makeIsolatedTestSecretStore(t, "staging")
 	zone := dnsZone{Name: "example.test", ID: "z1"}
 	ctx := dnsAdapterContext{
 		RootDomain: "example.test", RuntimeRoot: t.TempDir(),
-		Values: map[string]string{"DNS_RECORD_TTL": "600", "DNS_PROPAGATION_TIMEOUT_SECONDS": "1", "DNS_PROPAGATION_INTERVAL_SECONDS": "1"},
+		Values: map[string]string{"CLOUD_ENV_NAME": "staging", "DNS_RECORD_TTL": "600", "DNS_PROPAGATION_TIMEOUT_SECONDS": "1", "DNS_PROPAGATION_INTERVAL_SECONDS": "1"},
 	}
 	fake := &fakeRoute53API{records: []types.ResourceRecordSet{{
 		Name: aws.String("_acme-challenge.api.example.test."), Type: types.RRTypeTxt, TTL: aws.Int64(600),
@@ -228,7 +229,11 @@ func TestRoute53CleanupRemovesOnlyRequestedTXTValuesAndCollectsEvidence(t *testi
 	if err := adapter.CollectEvidence(context.Background(), ctx, zone); err != nil {
 		t.Fatal(err)
 	}
-	state, err := os.ReadFile(filepath.Join(ctx.RuntimeRoot, "dns", "route53", "state.json"))
+	path, err := dnsLocalStatePath(ctx, "route53", "state.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,15 +312,10 @@ func TestRemoveOwnedDNSRecordsStopsOnDrift(t *testing.T) {
 		t.Fatal(err)
 	}
 	runtimeRoot := t.TempDir()
-	dir := filepath.Join(runtimeRoot, "dns", "godaddy")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	env := map[string]string{"CLOUD_ENV_NAME": "staging", "DNS_ADAPTER": "godaddy", "CLOUD_DNS_ROOT_DOMAIN": "example.test", "DNS_RECORD_TTL": "600", "GODADDY_ENV": "prod"}
+	if err := writeDNSOwnership(dnsContext(provisionPaths{EnvRoot: runtimeRoot}, env), "godaddy", []dnsRecordSet{{Name: "api.example.test", Type: "A", Values: []string{"198.51.100.10"}, TTL: 600}}); err != nil {
 		t.Fatal(err)
 	}
-	body, _ := json.Marshal(map[string]any{"records": []dnsRecordSet{{Name: "api.example.test", Type: "A", Values: []string{"198.51.100.10"}, TTL: 600}}})
-	if err := os.WriteFile(filepath.Join(dir, "ownership.json"), body, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	env := map[string]string{"DNS_ADAPTER": "godaddy", "CLOUD_DNS_ROOT_DOMAIN": "example.test", "DNS_RECORD_TTL": "600", "GODADDY_ENV": "prod"}
 	err := removeOwnedDNSRecords(provisionPaths{EnvRoot: runtimeRoot}, env)
 	if err == nil || !strings.Contains(err.Error(), "DNS drift prevents removal") {
 		t.Fatalf("got %v", err)

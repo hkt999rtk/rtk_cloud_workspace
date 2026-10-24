@@ -31,7 +31,7 @@ concurrency:
 jobs:
   runner:
     runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 45
+    timeout-minutes: 210
     steps:
       - uses: actions/checkout@v6
         with:
@@ -52,9 +52,15 @@ jobs:
           GOWORK: 'off'
           RTK_POSTGRES_BACKUP_INTEGRATION: '1'
           RTK_POSTGRES_BACKUP_LARGE_INTEGRATION: '1'
+          RTK_SKIP_HISTORICAL_WALL_CLOCK_EXPIRY: '1'
         run: |
           docker pull postgres:16-alpine
-          go test -timeout=20m -count=1 ./rtk-cloud/internal/postgresbackup ./rtk-cloud/internal/recovery ./internal/cloudmonitor ./rtk-cloud
+          go test -timeout=20m -count=1 ./rtk-cloud/internal/postgresbackup ./rtk-cloud/internal/recovery ./internal/cloudmonitor
+          # The nightly workflow owns the wall-clock certificate/CRL expiry tests.
+          # This job validates every other deployment and recovery contract.
+          go test -failfast -timeout=180m -count=1 \
+            -skip '^(TestHistoricalCoreSourceRetainsTwoOriginalServerRequestIDs|TestHistoricalLateBootstrapCompletesFromOriginalSourceAndPairedCRLs)$' \
+            ./rtk-cloud
       - uses: docker/setup-buildx-action@v3
       - name: Resolve immutable source image
         id: images

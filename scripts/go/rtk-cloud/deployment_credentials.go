@@ -182,7 +182,7 @@ func (c deploymentCredentialChecker) checkWithOptions(cfg deploymentConfig, envF
 				checks = append(checks, c.checkGHCR(values)...)
 			} else {
 				for _, image := range uniqueNonEmpty(options.images...) {
-					checks = append(checks, c.checkRolloutImage(values, image))
+					checks = append(checks, c.checkRolloutImage(cfg.Environment, values, image))
 				}
 			}
 		}
@@ -796,7 +796,13 @@ func (c deploymentCredentialChecker) request(req *http.Request) ([]byte, error) 
 }
 
 func (c deploymentCredentialChecker) requestWithHeaders(req *http.Request) ([]byte, http.Header, error) {
+	measured := beginDeploymentQuery(req.Context(), "provider-http")
 	resp, err := c.client.Do(req)
+	queryErr := err
+	if err == nil && resp.StatusCode >= 400 {
+		queryErr = errors.New("HTTP failure")
+	}
+	measured(queryErr)
 	if err != nil {
 		return nil, nil, sanitizedDeploymentRequestError(err)
 	}

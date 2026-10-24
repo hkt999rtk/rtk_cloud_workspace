@@ -173,7 +173,7 @@ spec:
 		env["CLOUD_STACK_NAME"],
 		lkeDeploymentImagePullSecretsManifest(env),
 		lkeEnvValue(env, "LKE_VIDEO_CLOUD_IMAGE"),
-		firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_ENV"), env["ACCOUNT_MANAGER_ENV"], "staging"),
+		firstNonEmpty(env["CLOUD_ENV_NAME"], os.Getenv("ACCOUNT_MANAGER_ENV"), env["ACCOUNT_MANAGER_ENV"], "staging"),
 		lkeNamespaceName(env, "platform"),
 		lkeMQTTInternalAddr(env),
 		strconv.FormatBool(lkeMQTTTenantNamespaceEnabled(env)),

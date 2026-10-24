@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"flag"
 	"io"
 	"os"
 	"os/exec"
@@ -83,7 +84,7 @@ func TestDeploymentPreDeployPrerequisitesAndUnsafeMigrationBlock(t *testing.T) {
 func TestDeploymentCheckPhaseSelectionAndInvalidCombinations(t *testing.T) {
 	for _, args := range [][]string{
 		{"--phase", "pre-deploy"},
-		{"--phase=pre-deploy", "--phase", "pre-deploy", "--fast"},
+		{"--phase=pre-deploy", "--phase", "pre-deploy"},
 	} {
 		o, err := parseDeploymentCheckOptions(append([]string{"--environment", "staging"}, args...), io.Discard)
 		if err != nil || o.phase != deploymentCheckPreDeploy || !o.qualification.readOnly {
@@ -96,6 +97,7 @@ func TestDeploymentCheckPhaseSelectionAndInvalidCombinations(t *testing.T) {
 	}
 	for _, args := range [][]string{
 		{"--phase", "invalid"},
+		{"--phase=pre-deploy", "--fast"},
 		{"--phase=pre-deploy", "--phase=post-deploy"},
 		{"--phase=pre-deploy", "--read-only=false"},
 		{"--phase=pre-deploy", "--create-missing-object-storage-bucket"},
@@ -106,6 +108,17 @@ func TestDeploymentCheckPhaseSelectionAndInvalidCombinations(t *testing.T) {
 		if _, err := parseDeploymentCheckOptions(append([]string{"--environment", "staging"}, args...), io.Discard); err == nil {
 			t.Fatalf("accepted invalid combination: %v", args)
 		}
+	}
+}
+
+func TestPreflightHelpOmitsRemovedFastOption(t *testing.T) {
+	var help bytes.Buffer
+	if _, err := parseDeploymentCheckOptions([]string{"--phase", "pre-deploy", "--help"}, &help); !errors.Is(err, flag.ErrHelp) || strings.Contains(help.String(), "-fast") {
+		t.Fatal("pre-deploy help still advertises fast", err, help.String())
+	}
+	help.Reset()
+	if _, err := parseUnifiedDeploymentOptions("preflight", []string{"--help"}, &help); !errors.Is(err, flag.ErrHelp) || strings.Contains(help.String(), "-fast") {
+		t.Fatal("direct preflight help still advertises fast", err, help.String())
 	}
 }
 
@@ -127,6 +140,13 @@ func TestDeploymentCheckPurposeAppearsBeforeHelpErrorsOrExternalWork(t *testing.
 			return errors.New("stop after observing banner")
 		}}
 		_ = runDeploymentCheckWithDependencies(context.Background(), []string{"--environment", "staging", "--phase", phase}, &output, &output, deps)
+		if phase == deploymentCheckPreDeploy {
+			for _, detail := range []string{"Default: complete upgrade", "--operation create", "without requiring an existing kubeconfig", "verified target"} {
+				if !strings.Contains(output.String(), detail) {
+					t.Fatal("preflight banner does not explain the selected operation or create boundary", detail, output.String())
+				}
+			}
+		}
 	}
 }
 
@@ -138,6 +158,7 @@ func TestDeploymentPhaseScriptsPrintBeforeBuildAndEnforceTheirPurpose(t *testing
 	bin := t.TempDir()
 	goPath := filepath.Join(bin, "go")
 	if err := os.WriteFile(goPath, []byte(`#!/bin/sh
+[ "$PWD" = "$EXPECTED_WORKSPACE" ] || exit 99
 printf 'BUILD_STARTED\n'
 cat > "$3" <<'CHECKER'
 #!/bin/sh
@@ -149,6 +170,7 @@ chmod +x "$3"
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("EXPECTED_WORKSPACE", workspace)
 	t.Setenv("RTK_CLOUD_CHECK_SCRIPT_PHASE", "")
 	t.Setenv("RTK_CLOUD_CHECK_SCRIPT_READ_ONLY", "")
 	for _, tc := range []struct {
@@ -163,7 +185,9 @@ chmod +x "$3"
 			path := filepath.Join(workspace, "scripts", tc.script)
 			for _, status := range []string{"0", "1", "2"} {
 				t.Setenv("FAKE_PHASE_EXIT", status)
-				output, err := exec.Command("bash", path, "--environment", "staging", "--phase", tc.phase).CombinedOutput()
+				cmd := exec.Command("bash", path, "--environment", "staging", "--phase", tc.phase)
+				cmd.Dir = bin
+				output, err := cmd.CombinedOutput()
 				if err != nil {
 					var failed *exec.ExitError
 					if !errors.As(err, &failed) || failed.ExitCode() != int(status[0]-'0') {
@@ -173,6 +197,13 @@ chmod +x "$3"
 					t.Fatalf("lost exit %s", status)
 				}
 				text := string(output)
+				if tc.phase == deploymentCheckPreDeploy {
+					var nativeBanner bytes.Buffer
+					printDeploymentCheckPurpose(&nativeBanner, deploymentCheckPreDeploy)
+					if !strings.HasPrefix(text, nativeBanner.String()) {
+						t.Fatal("shell preflight description differs from the native operation/capability description", text)
+					}
+				}
 				if !strings.Contains(text, "check") || strings.Index(text, "BUILD_STARTED") < strings.Index(text, "("+tc.phase+")") {
 					t.Fatalf("build started before description: %s", text)
 				}
@@ -188,13 +219,69 @@ chmod +x "$3"
 			if tc.readOnly {
 				invalid = append(invalid, []string{"--read-only=false"}, []string{"-read-only=false"}, []string{"--read-only=0"}, []string{"--read-only=FALSE"})
 			}
+			if tc.phase == deploymentCheckPreDeploy {
+				for _, option := range []string{"--fast", "-fast", "--fast=true", "--fast=false", "-fast=false"} {
+					invalid = append(invalid, []string{option})
+				}
+			}
 			for _, args := range invalid {
-				output, err := exec.Command("bash", append([]string{path}, args...)...).CombinedOutput()
+				cmd := exec.Command("bash", append([]string{path}, args...)...)
+				cmd.Dir = bin
+				output, err := cmd.CombinedOutput()
 				var failed *exec.ExitError
 				if !errors.As(err, &failed) || failed.ExitCode() != 2 || !strings.Contains(string(output), "check") || strings.Contains(string(output), "BUILD_STARTED") {
 					t.Fatalf("args=%v err=%v output=%s", args, err, output)
 				}
 			}
 		})
+	}
+}
+
+func TestDeploymentScriptPreservesNativeExitCodesArgumentsAndCleansCompilerOutput(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin, compilerRoot := t.TempDir(), t.TempDir()
+	writeTestFile(t, filepath.Join(bin, "go"), `#!/bin/sh
+[ "$1" = build ] && [ "$2" = -o ] || exit 1
+[ "$PWD" = "$EXPECTED_WORKSPACE" ] || exit 1
+cat > "$3" <<'CLI'
+#!/bin/sh
+printf 'ARG:%s\n' "$@"
+exit "$NATIVE_DEPLOY_EXIT"
+CLI
+chmod +x "$3"
+`)
+	if err := os.Chmod(filepath.Join(bin, "go"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("TMPDIR", compilerRoot)
+	t.Setenv("EXPECTED_WORKSPACE", workspace)
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		for _, status := range []string{"0", "1", "2"} {
+			t.Setenv("NATIVE_DEPLOY_EXIT", status)
+			cmd := exec.Command("bash", filepath.Join(workspace, "scripts", "deploy-environment.sh"), "upgrade", "--environment", environment, "--release", "/reviewed/release with spaces.json")
+			cmd.Dir = bin
+			out, err := cmd.CombinedOutput()
+			if status == "0" {
+				if err != nil {
+					t.Fatal(err, string(out))
+				}
+			} else {
+				var failed *exec.ExitError
+				if !errors.As(err, &failed) || failed.ExitCode() != int(status[0]-'0') {
+					t.Fatal("native exit code lost", status, err, string(out))
+				}
+			}
+			if !strings.Contains(string(out), "ARG:deployment\nARG:upgrade\nARG:--environment\nARG:"+environment+"\nARG:--release\nARG:/reviewed/release with spaces.json\n") {
+				t.Fatal("CLI argument boundaries changed", string(out))
+			}
+			files, err := os.ReadDir(compilerRoot)
+			if err != nil || len(files) != 0 {
+				t.Fatal("compiler output retained", err, files)
+			}
+		}
 	}
 }
