@@ -15,7 +15,7 @@ import (
 func writeEnvironmentCreateExpiredCredentialArchive(ctx context.Context, cfg deploymentConfig, store secretStore, runtime environmentCreateBootstrapRuntime, old environmentCreateServiceCeremony, namespace string, secret deploymentplan.Object) (string, error) {
 	r := runtime.ServiceSessionRecovery
 	if r == nil {
-		return "", managedHistoricalSeedBlock()
+		return "", managedHistoricalSeedBlockAt("archive-runtime")
 	}
 	relative := filepath.Join("deployment/create", runtime.ExecutionSHA256, "bootstrap/service/session-renewal", r.Review, "expired-credential-copies", old.BootstrapSessionID, namespace+".json")
 	// Ordinary producers and a genuinely absent file keep their original
@@ -25,20 +25,20 @@ func writeEnvironmentCreateExpiredCredentialArchive(ctx context.Context, cfg dep
 	}
 	path, err := privateDeploymentStatePath(store.Environment, relative)
 	if err != nil || path != filepath.Join(store.Root, relative) {
-		return "", managedHistoricalSeedBlock()
+		return "", managedHistoricalSeedBlockAt("archive-path")
 	}
 	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
 		// This new immutable archive is an input of the next historical
 		// verification. End the old read phase before publishing it; the
 		// subsequent copy guard must rederive under the enlarged manifest.
 		if runtime.Execution == nil {
-			return "", managedHistoricalSeedBlock()
+			return "", managedHistoricalSeedBlockAt("archive-execution")
 		}
 		if err := runtime.Execution.Check(ctx); err != nil {
 			return "", err
 		}
 		if !managedLateExpiredCredentialArchiveSourceMatches(r, old, namespace, secret, cfg.Values["CLOUD_STACK_NAME"]) {
-			return "", managedHistoricalSeedBlock()
+			return "", managedHistoricalSeedBlockAt("archive-new-source")
 		}
 		if managedLateSourceReuseActive(runtime.Execution) {
 			if err := checkManagedLateSourceReuse(runtime.Execution); err != nil {
@@ -48,13 +48,13 @@ func writeEnvironmentCreateExpiredCredentialArchive(ctx context.Context, cfg dep
 		invalidateManagedLateSourceReuse(runtime.Execution)
 		return writeEnvironmentCreateBootstrapJSON(store, relative, secret)
 	} else if err != nil {
-		return "", managedHistoricalSeedBlock()
+		return "", managedHistoricalSeedBlockAt("archive-lstat")
 	}
 	if err := verifyManagedLatePostNativeCleanupRuntime(ctx, cfg, store, runtime); err != nil {
 		return "", err
 	}
 	if !managedLateExpiredCredentialArchiveSourceMatches(r, old, namespace, secret, cfg.Values["CLOUD_STACK_NAME"]) {
-		return "", managedHistoricalSeedBlock()
+		return "", managedHistoricalSeedBlockAt("archive-existing-source")
 	}
 	return reuseManagedLateExpiredCredentialArchive(store, relative, secret)
 }

@@ -17,10 +17,11 @@ import (
 func advanceHistoricalLateMQTTRootCRL(t *testing.T, device *deviceTrustExecutionContract) (*createMQTTRootCRLArtifact, *createMQTTRootCRLCompletion) {
 	t.Helper()
 	f := device.acceptedCoreExecutionContract
+	waitHistoricalSignedCRLExpiry(t, f, "14c1a269-e32e-4eac-aa93-db5ad8e85f7e")
 	// This connected stage performs source qualification, a dry run, admission,
-	// native import and two independent consumer readbacks.  Ten minutes left
-	// effectively no scheduler headroom (successful runs have taken more than
-	// nine minutes), so use the maintained preparation budget.
+	// native import and two independent consumer readbacks after the signed
+	// test-only CRL has genuinely expired. Keep the maintained preparation budget
+	// for those operations; the test certificate lifetime does not cap execution.
 	ctx, cancel := context.WithTimeout(t.Context(), managedLatePreparationLimit)
 	defer cancel()
 	p := createFoundationRecoveryPlan{Plan: f.p.Plan, Materials: map[string]string{}}

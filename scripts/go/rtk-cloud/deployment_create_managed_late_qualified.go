@@ -258,6 +258,9 @@ func loadManagedLateQualifiedContent(cfg deploymentConfig, store secretStore, e 
 	if difference := managedLateQualifiedAncestryDifference(loaded, &late); difference != "" {
 		return bad("original-source-" + difference)
 	}
+	if err := restoreManagedLateHistoricalCleanupDescriptor(r, &late, a.Plan.Materials); err != nil {
+		return nil, err
+	}
 	if deploymentplan.Digest(derived.Plan) != deploymentplan.Digest(a.Plan.Plan) {
 		return bad("original-bootstrap-plan")
 	}
@@ -330,6 +333,33 @@ func loadManagedLateQualifiedContent(cfg deploymentConfig, store secretStore, e 
 	r.RenewedIntent.SessionID = late.NewSessionID
 	r.RenewedIntent.Subjects = slices.Clone(late.SourceRenewedIntent.Subjects)
 	return r, nil
+}
+
+func restoreManagedLateHistoricalCleanupDescriptor(r *createServiceSessionRecovery, late *createManagedLateSessionRecovery, materials map[string]string) error {
+	bad := func(stage string) error {
+		return environmentCreateBootstrapBlocker("late qualified five-ACK cleanup proof changed: stage=" + stage)
+	}
+	if r == nil || late == nil || late.HistoricalSeedCleanup == nil || materials == nil {
+		return bad("descriptor")
+	}
+	proof := late.HistoricalSeedCleanup
+	if materials[managedHistoricalSeedCleanupMaterial] != deploymentplan.Digest(proof) || proof.SourceSHA != late.SourceSHA || proof.CurrentSession != late.NewSessionID || proof.ClientsSHA != late.OriginalClientsSHA {
+		return bad("lineage")
+	}
+	count := 0
+	for _, observed := range r.StaleSeeds {
+		if observed.Cleanup.SessionID == proof.State.Session && deploymentplan.Digest(observed) == proof.ObservationSHA {
+			count++
+		}
+	}
+	if count != 1 || len(proof.State.Installed) != 5 {
+		return bad("observation")
+	}
+	copy := *proof
+	copy.State.Subjects = slices.Clone(proof.State.Subjects)
+	copy.State.Installed = slices.Clone(proof.State.Installed)
+	r.ManagedHistoricalSeedCleanup = &copy
+	return nil
 }
 
 func validateManagedLateQualifiedRecipes(cfg deploymentConfig, store secretStore, e *environmentCreateExecution, r *createServiceSessionRecovery, p createFoundationRecoveryPlan, late *createManagedLateSessionRecovery, now time.Time) error {

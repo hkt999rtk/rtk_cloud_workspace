@@ -345,7 +345,7 @@ func newCoreExecutionContractAtBoundaryWithHooks(t *testing.T, expired, listener
 		leafPEM = string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
 	}
 	document := func(id, kind, cert, chain, provider string) map[string]any {
-		return map[string]any{"issuer_id": id, "issuer_version": float64(1), "environment": "dev", "trust_domain": "service", "kind": kind, "status": "active", "signer_provider": provider, "signer_reference": "isolated-issuer/1", "certificate_pem": cert, "chain_pem": chain, "certificate_fingerprint_sha256": environmentPreflightBytesSHA256(root.Raw), "trust_bundle_version": environmentPreflightBytesSHA256([]byte(chain))}
+		return map[string]any{"issuer_id": id, "issuer_version": float64(1), "environment": "dev", "trust_domain": "service", "kind": kind, "status": "active", "signer_provider": provider, "signer_reference": "pki-issuers/service/" + id + "/v1", "certificate_pem": cert, "chain_pem": chain, "certificate_fingerprint_sha256": environmentPreflightBytesSHA256(root.Raw), "trust_bundle_version": environmentPreflightBytesSHA256([]byte(chain))}
 	}
 	rootDoc := document(service.Root.ID, "root", rootPEM, rootPEM, "offline")
 	intermediateDoc := document(service.Intermediate.ID, "intermediate", intermediatePEM, intermediatePEM+rootPEM, "openbao")

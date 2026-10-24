@@ -1189,7 +1189,10 @@ var runWorkspaceBaselineCmd = runCmd
 
 func runTestMatrix(args []string) error {
 	return runTestMatrixWithBaseline(args, func(workspace string) error {
-		return runWorkspaceBaselineCmd(workspace, "go", "test", "-json", "-failfast", "-timeout=180m", "./scripts/go/...")
+		// The coverage job owns the real-time expiry recovery contract. Running it
+		// here makes every PR wait for the same certificate and CRL expirations a
+		// second time without adding another independent assertion.
+		return runWorkspaceBaselineCmd(workspace, "go", "test", "-json", "-failfast", "-timeout=180m", "-skip=^TestHistoricalLateBootstrapCompletesFromOriginalSourceAndPairedCRLs$", "./scripts/go/...")
 	})
 }
 

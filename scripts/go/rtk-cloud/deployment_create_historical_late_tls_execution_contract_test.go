@@ -16,6 +16,7 @@ import (
 func advanceHistoricalLateTLSRootCRL(t *testing.T, device *deviceTrustExecutionContract) (*createOpenBaoTLSRootCRLArtifact, *createOpenBaoTLSRootCRLCompletion) {
 	t.Helper()
 	f := device.acceptedCoreExecutionContract
+	waitHistoricalSignedCRLExpiry(t, f, "734487b8-abcf-40be-a813-8b52c64f7954")
 	// Keep the complete TLS root publication on the same maintained preparation
 	// budget as MQTT.  It includes repeated source and native consumer checks and
 	// must not fail only because a healthy run is close to ten minutes.

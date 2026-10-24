@@ -16,6 +16,25 @@ import (
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 )
 
+func waitHistoricalSignedCRLExpiry(t *testing.T, f *acceptedCoreExecutionContract, issuerID string) {
+	t.Helper()
+	records, ok := f.protocol["historical_crls"].(map[string]managedLateCRLRecord)
+	record, found := records[issuerID]
+	if !ok || !found || record.IssuerID != issuerID || record.NextUpdate.IsZero() {
+		t.Fatal("original signed CRL expiry source unavailable", issuerID)
+	}
+	if remaining := time.Until(record.NextUpdate); remaining > 0 {
+		t.Logf("waiting %.1fs for original signed CRL expiry: issuer=%s", remaining.Seconds(), issuerID)
+		timer := time.NewTimer(remaining + 20*time.Millisecond)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-t.Context().Done():
+			t.Fatal("original signed CRL expiry was not observed before test cancellation", issuerID)
+		}
+	}
+}
+
 // Extend the same native registry with genuine signed CRLs for its nine actual
 // authorities. Original publications come from their immutable producer files;
 // intermediate/Device publications use only the original in-memory issuer keys.

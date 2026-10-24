@@ -16,6 +16,10 @@ import (
 func createApplicationFinalizeFixture(t *testing.T, environment string) (deploymentConfig, environmentCreateBootstrapPlan, environmentRelease, environmentCreateBootstrapRuntime, environmentCreateServiceCeremony, map[string]environmentCreateRegisteredIssuer, map[string]environmentCreateRegisteredIssuer, []deploymentplan.Definition) {
 	t.Helper()
 	cfg, p, runtime, service := createServiceRecipeFixture(t, environment)
+	service.Root.Reference = "pki-issuers/service/" + service.Root.ID + "/v1"
+	service.Intermediate.Reference = "pki-issuers/service/" + service.Intermediate.ID + "/v1"
+	service.Root.Document["signer_reference"] = service.Root.Reference
+	service.Intermediate.Document["signer_reference"] = service.Intermediate.Reference
 	cfg.Values["OPENBAO_STORAGE_BACKEND"], cfg.Values["OPENBAO_EFFECTIVE_REPLICAS"] = "file", "1"
 	_, _, release := completeEnvironmentRenderFixture(environment)
 	p.Images = map[string]string{}
@@ -30,8 +34,9 @@ func createApplicationFinalizeFixture(t *testing.T, environment string) (deploym
 		root.ID = []string{"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "cccccccc-cccc-4ccc-8ccc-cccccccccccc", "dddddddd-dddd-4ddd-8ddd-dddddddddddd"}[index]
 		issuer.ID = []string{"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", "ffffffff-ffff-4fff-8fff-ffffffffffff", "11111111-2222-4333-8444-555555555555", "22222222-3333-4444-8555-666666666666"}[index]
 		root.Reference = "pki-issuers/" + domain + "/" + root.ID + "/v1"
+		issuer.Reference = "pki-issuers/" + domain + "/" + issuer.ID + "/v1"
 		root.Document["trust_domain"], root.Document["issuer_id"], root.Document["signer_reference"] = domain, root.ID, root.Reference
-		issuer.Document["trust_domain"], issuer.Document["issuer_id"], issuer.Document["parent_issuer_id"] = domain, issuer.ID, root.ID
+		issuer.Document["trust_domain"], issuer.Document["issuer_id"], issuer.Document["parent_issuer_id"], issuer.Document["signer_reference"] = domain, issuer.ID, root.ID, issuer.Reference
 		roots[domain], intermediates[domain] = root, issuer
 		policy := environmentCreateIssuerPolicy{Domain: domain, Consumers: []string{"actual-consumer"}, BundleConsumers: []string{"actual-consumer"}}
 		if domain == "mqtt" {
@@ -405,6 +410,28 @@ func TestFinalIssuerRetainsEveryNativeSigningDomainAndControllerRoot(t *testing.
 	roots["app"] = root
 	if _, err := configureEnvironmentCreateFinalIssuer(p, roots, intermediates, definitions); err == nil {
 		t.Fatal("pending native signing domain entered normal final issuer runtime")
+	}
+}
+
+func TestFinalIssuerRejectsNonCanonicalSigningReferenceBeforeRuntimeValidation(t *testing.T) {
+	cfg, p, _, runtime, service, roots, intermediates, _ := createApplicationFinalizeFixture(t, "dev")
+	roots["service"], intermediates["service"] = service.Root, service.Intermediate
+	for _, domain := range []string{"service", "app", "mqtt", "openbao_tls"} {
+		issuer := intermediates[domain]
+		issuer.Reference = "pki-issuers/" + domain + "/" + issuer.ID + "/v1"
+		issuer.Document["signer_reference"] = issuer.Reference
+		intermediates[domain] = issuer
+	}
+	broken := intermediates["service"]
+	broken.Reference = "isolated-issuer/1"
+	broken.Document["signer_reference"] = broken.Reference
+	intermediates["service"] = broken
+	definitions, err := renderEnvironmentCreateManagedServiceDefinitions(context.Background(), cfg, p, runtime, service)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := configureEnvironmentCreateFinalIssuer(p, roots, intermediates, definitions); err == nil || !strings.Contains(err.Error(), "signing reference") {
+		t.Fatal("noncanonical signer reference reached late registry-only runtime validation", err)
 	}
 }
 

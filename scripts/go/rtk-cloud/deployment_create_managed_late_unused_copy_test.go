@@ -10,7 +10,7 @@ import (
 )
 
 func TestManagedLateUnusedHistoricalCopyRequiresExactAdmittedEmptySession(t *testing.T) {
-	for _, mode := range []string{"original", "saved-expired", "active", "sealed", "future-expiry", "expiry-drift", "session-drift", "issuer-drift", "root-drift", "fingerprint-drift", "other-active", "one-ack", "five-acks", "eight-acks", "saved-used", "saved-sealed", "saved-fingerprint", "malformed-saved", "subject-drift", "missing-subject", "source-sha", "missing-remaining", "duplicate-source", "unknown-source", "copy-uid", "invalid-uid", "copy-name", "copy-namespace", "source-namespace"} {
+	for _, mode := range []string{"original", "saved-expired", "successor-current-issuer", "active", "sealed", "future-expiry", "expiry-drift", "session-drift", "issuer-drift", "root-drift", "fingerprint-drift", "other-active", "one-ack", "five-acks", "eight-acks", "saved-used", "saved-sealed", "saved-fingerprint", "malformed-saved", "subject-drift", "missing-subject", "source-sha", "missing-remaining", "duplicate-source", "unknown-source", "copy-uid", "invalid-uid", "copy-name", "copy-namespace", "source-namespace"} {
 		t.Run(mode, func(t *testing.T) {
 			state, observed, ceremony, subjects, now := managedHistoricalSeedFixture(t)
 			state.Installed, state.OtherActive = nil, 0
@@ -28,6 +28,8 @@ func TestManagedLateUnusedHistoricalCopyRequiresExactAdmittedEmptySession(t *tes
 			switch mode {
 			case "saved-expired":
 				saved.Status, savedChanged = "expired", true
+			case "successor-current-issuer":
+				ceremony.Intermediate.ID = "99999999-9999-4999-8999-999999999999"
 			case "active", "sealed":
 				state.Status = mode
 			case "future-expiry":
@@ -94,11 +96,46 @@ func TestManagedLateUnusedHistoricalCopyRequiresExactAdmittedEmptySession(t *tes
 			}
 			before := deploymentplan.Digest(deploymentplan.Object{"recovery": r, "copy": ceremony, "observation": observed, "native": state})
 			got := managedLateUnusedHistoricalCopyMatches(r, observed, ceremony, ceremony.BootstrapCredentialNamespace, state, subjects, now)
-			if got != (mode == "original" || mode == "saved-expired") {
+			if got != (mode == "original" || mode == "saved-expired" || mode == "successor-current-issuer") {
 				t.Fatal("unused copy accepted changed source or used session", mode)
 			}
 			if before != deploymentplan.Digest(deploymentplan.Object{"recovery": r, "copy": ceremony, "observation": observed, "native": state}) {
 				t.Fatal("copy validation changed original source")
+			}
+		})
+	}
+}
+
+func TestManagedLateUnusedHistoricalCopyAcceptsOnlyQualifiedStalePrefix(t *testing.T) {
+	state, observed, ceremony, subjects, now := managedHistoricalSeedFixture(t)
+	state.Installed, state.OtherActive = nil, 0
+	ceremony.BootstrapSessionID = state.Session
+	ceremony.BootstrapCredentialSecret = "service-bootstrap-" + state.Session
+	ceremony.BootstrapCredentialNamespace = "video-cloud-dev-video-cloud"
+	ceremony.BootstrapCredentialNamespaces = []string{"video-cloud-dev-video-cloud", "video-cloud-dev-account-manager", "video-cloud-dev-secrets"}
+	ceremony.CredentialUIDs = cloneStringMap(observed.UIDs)
+	r := &createServiceSessionRecovery{ManagedLateSession: &createManagedLateSessionRecovery{SourceCeremony: ceremony}, StaleSeeds: []createServiceSessionObserved{observed}}
+	accepted := deploymentplan.Digest(r.StaleSeeds)
+	// A separately authenticated later observation may be appended without
+	// changing the qualified original prefix.
+	later := observed
+	later.Cleanup.SessionID = "99999999-9999-4999-8999-999999999999"
+	r.StaleSeeds = append(r.StaleSeeds, later)
+	if stage := managedLateUnusedHistoricalCopyMismatchAtAuthority(r, observed, ceremony, ceremony.BootstrapCredentialNamespace, state, subjects, now, accepted); stage != "" {
+		t.Fatal("qualified stale prefix refused before remaining phase", stage)
+	}
+	for _, tc := range []struct {
+		name     string
+		observed createServiceSessionObserved
+		sha      string
+	}{
+		{name: "later observation", observed: later, sha: accepted},
+		{name: "non-prefix digest", observed: observed, sha: deploymentplan.Digest([]createServiceSessionObserved{later})},
+		{name: "foreign digest", observed: observed, sha: strings.Repeat("e", 64)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if stage := managedLateUnusedHistoricalCopyMismatchAtAuthority(r, tc.observed, ceremony, ceremony.BootstrapCredentialNamespace, state, subjects, now, tc.sha); stage == "" {
+				t.Fatal("unqualified stale observation admitted")
 			}
 		})
 	}

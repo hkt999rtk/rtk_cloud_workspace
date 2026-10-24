@@ -107,6 +107,43 @@ func TestManagedLateExpiredUnusedRejectsInstalledLiveOrChangedAuthority(t *testi
 	}
 }
 
+func TestManagedLateExpiredHistoricalCopySelectsItsPreservedCeremony(t *testing.T) {
+	priorState, priorCeremony, _, _ := managedLateExpiredRenewalNegativeSessionFixture()
+	originalState := priorState
+	originalState.Session = "44444444-4444-4444-8444-444444444444"
+	originalCeremony := priorCeremony
+	originalCeremony.BootstrapSessionID = originalState.Session
+	late := &createManagedLateSessionRecovery{
+		SourceCeremony: priorCeremony,
+		ExpiredRenewal: &createManagedLateExpiredRenewal{
+			PriorSession: priorState,
+			PriorLate: &createManagedLateSessionRecovery{
+				OriginalSession:      originalState.Session,
+				OriginalSessionState: originalState,
+				SourceCeremony:       originalCeremony,
+			},
+		},
+	}
+	for _, tc := range []struct {
+		name     string
+		session  string
+		ceremony environmentCreateServiceCeremony
+		state    managedSessionState
+		ok       bool
+	}{
+		{name: "prior unused", session: priorState.Session, ceremony: priorCeremony, state: priorState, ok: true},
+		{name: "original used", session: originalState.Session, ceremony: originalCeremony, state: originalState, ok: true},
+		{name: "foreign", session: "99999999-9999-4999-8999-999999999999"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ceremony, state, ok := managedLateExpiredHistoricalCopySource(late, createServiceSessionObserved{Cleanup: environmentBootstrapCleanupBinding{SessionID: tc.session}})
+			if ok != tc.ok || ok && (deploymentplan.Digest(ceremony) != deploymentplan.Digest(tc.ceremony) || deploymentplan.Digest(state) != deploymentplan.Digest(tc.state)) {
+				t.Fatal("historical copy selected the current successor or foreign authority")
+			}
+		})
+	}
+}
+
 func managedLateExpiredRenewalNegativePinsFixture() *createManagedLateExpiredRenewal {
 	sha := strings.Repeat("a", 64)
 	state, service, _, _ := managedLateExpiredRenewalNegativeSessionFixture()

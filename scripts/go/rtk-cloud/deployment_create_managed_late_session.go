@@ -26,7 +26,8 @@ const (
 )
 
 type createManagedLateSessionRecovery struct {
-	ExpiredRenewal                                                                *createManagedLateExpiredRenewal `json:"ExpiredRenewal,omitempty"`
+	ExpiredRenewal                                                                *createManagedLateExpiredRenewal    `json:"ExpiredRenewal,omitempty"`
+	HistoricalSeedCleanup                                                         *createManagedHistoricalSeedCleanup `json:"HistoricalSeedCleanup,omitempty"`
 	ParentSHA, SourceOwnerSHA                                                     string
 	Mode                                                                          managedLateSessionMode
 	CoreSourceSHA                                                                 string
@@ -429,6 +430,14 @@ func prepareManagedLateSessionSeed(ctx context.Context, cfg deploymentConfig, st
 		return err
 	}
 	if err := prepareManagedLateLogCandidates(ctx, cfg, store, e, b, p, r, late); err != nil {
+		return err
+	}
+	// Bind the fully prepared in-memory descriptor before authenticating and
+	// rebinding the inherited five-ACK cleanup proof. The descriptor is not
+	// published until every proof and material digest below is complete.
+	r.ManagedLateSession = late
+	r.Candidate = late.OwnerCandidate
+	if err := qualifyManagedLateHistoricalSeedCleanup(ctx, cfg, store, e, b, r, p); err != nil {
 		return err
 	}
 	p.Materials["accepted-service-core-late-session-source-descriptor"] = managedLateSessionSourceDigest(late)

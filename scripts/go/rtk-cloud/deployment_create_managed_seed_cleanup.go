@@ -102,11 +102,11 @@ func qualifyManagedHistoricalSeedCleanup(ctx context.Context, cfg deploymentConf
 		return nil
 	}
 	if e == nil || p == nil || p.Materials == nil || store.Root != e.Store.Root || b.Store.Root != store.Root || e.Check(ctx) != nil || r.ManagedTransportRecovery == nil || r.ManagedTransportRecovery.Partial == nil {
-		return managedHistoricalSeedBlock()
+		return managedHistoricalSeedBlockAt("qualification-base-runtime")
 	}
 	if r.ManagedCorePartial != nil {
 		if r.Review != r.ManagedCorePartial.OriginalRepairReview || managedCoreObservationSource(store, e, r.ManagedCorePartial) != nil {
-			return managedHistoricalSeedBlock()
+			return managedHistoricalSeedBlockAt("qualification-core-source")
 		}
 	} else if _, _, err := managedApplicationInterruptedLeaseSource(e, e.Journal, r); err != nil {
 		return err
@@ -175,7 +175,7 @@ func verifyManagedHistoricalSeedCleanup(ctx context.Context, cfg deploymentConfi
 		return false, nil
 	}
 	if e == nil || e.Check(ctx) != nil || store.Root != e.Store.Root || current.BootstrapSessionID != proof.CurrentSession || deploymentplan.Digest(observed) != proof.ObservationSHA || !environmentPreflightDigest.MatchString(r.Review) {
-		return false, managedHistoricalSeedBlock()
+		return false, managedHistoricalSeedBlockAt("verify-proof-runtime")
 	}
 	review, schema, err := managedHistoricalSeedAdmissionContext(r)
 	if err != nil {
@@ -183,22 +183,22 @@ func verifyManagedHistoricalSeedCleanup(ctx context.Context, cfg deploymentConfi
 	}
 	artifact, source, err := loadAdmittedCreateRecovery(store, e, review)
 	if err != nil || artifact.Plan.Schema != schema || artifact.Plan.ParentJournalSHA != proof.SourceSHA || deploymentplan.Digest(source) != proof.SourceSHA || artifact.Plan.Materials[managedHistoricalSeedCleanupMaterial] != deploymentplan.Digest(proof) || artifact.Plan.Materials["accepted-service-core-managed-application-current-clients"] != proof.ClientsSHA {
-		return false, managedHistoricalSeedBlock()
+		return false, managedHistoricalSeedBlockAt("verify-admitted-source")
 	}
 	original := *e
 	original.Journal = source
 	if r.ManagedCorePartial != nil {
 		if artifact.Plan.Materials["accepted-service-core-managed-complete-observation-action"] != deploymentplan.Digest(string(managedCoreFinalizeComplete)) {
-			return false, managedHistoricalSeedBlock()
+			return false, managedHistoricalSeedBlockAt("verify-core-action")
 		}
 
 		if r.Review != r.ManagedCorePartial.OriginalRepairReview || managedCoreObservationSource(store, &original, r.ManagedCorePartial) != nil {
-			return false, managedHistoricalSeedBlock()
+			return false, managedHistoricalSeedBlockAt("verify-core-observation")
 		}
 	} else {
 		_, _, forward, err := loadManagedApplicationInterruptedSource(store, &original)
 		if err != nil || forward.Previous == nil || forward.Previous.Previous == nil || forward.Previous.Previous.Previous != nil || !managedApplicationInterruptedNativeCheckpoint(store, &original) {
-			return false, managedHistoricalSeedBlock()
+			return false, managedHistoricalSeedBlockAt("verify-application-source")
 		}
 	}
 	subjects, err := environmentCreateBootstrapSubjects(cfg)
@@ -211,18 +211,18 @@ func verifyManagedHistoricalSeedCleanup(ctx context.Context, cfg deploymentConfi
 	}
 	snapshot, err := validateManagedHistoricalSeedState(state, observed, current, subjects, time.Now().UTC())
 	if err != nil || deploymentplan.Digest(snapshot) != deploymentplan.Digest(proof.State) {
-		return false, managedHistoricalSeedBlock()
+		return false, managedHistoricalSeedBlockAt("verify-native-state")
 	}
 	return true, e.Check(ctx)
 }
 
 func managedHistoricalSeedAdmissionContext(r *createServiceSessionRecovery) (string, string, error) {
 	if r == nil || !environmentPreflightDigest.MatchString(r.Review) {
-		return "", "", managedHistoricalSeedBlock()
+		return "", "", managedHistoricalSeedBlockAt("admission-context")
 	}
 	if r.ManagedLateSession != nil {
 		if r.Review != r.ManagedLateSession.Review || r.ManagedLateSession.Mode != managedLateSessionACKReady || !environmentPreflightDigest.MatchString(r.ManagedLateSession.SourceSHA) {
-			return "", "", managedHistoricalSeedBlock()
+			return "", "", managedHistoricalSeedBlockAt("admission-late-context")
 		}
 		return r.ManagedLateSession.Review, managedLateSessionSchema, nil
 	}
@@ -231,7 +231,7 @@ func managedHistoricalSeedAdmissionContext(r *createServiceSessionRecovery) (str
 	}
 	core := r.ManagedCorePartial
 	if core.OriginalRepairReview != r.Review || !environmentPreflightDigest.MatchString(core.ForwardReview) || core.ForwardReview == core.OriginalRepairReview || !environmentPreflightDigest.MatchString(core.SourceSHA) || validateManagedCorePartialJournal(core.Plan, core.Journal) != nil {
-		return "", "", managedHistoricalSeedBlock()
+		return "", "", managedHistoricalSeedBlockAt("admission-core-context")
 	}
 	return core.ForwardReview, "rtk-cloud.create-managed-complete-issuer-partial-recovery/v1", nil
 }

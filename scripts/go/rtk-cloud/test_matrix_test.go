@@ -18,7 +18,7 @@ func TestRunTestMatrixUsesExtendedWorkspaceTestTimeout(t *testing.T) {
 	if err := runTestMatrix(nil); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"go", "test", "-json", "-failfast", "-timeout=180m", "./scripts/go/..."}
+	want := []string{"go", "test", "-json", "-failfast", "-timeout=180m", "-skip=^TestHistoricalLateBootstrapCompletesFromOriginalSourceAndPairedCRLs$", "./scripts/go/..."}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("workspace baseline command = %q, want %q", got, want)
 	}

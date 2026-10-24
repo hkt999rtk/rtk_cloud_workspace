@@ -137,8 +137,9 @@ func verifyEnvironmentTargetWorkloads(ctx context.Context, plan *deploymentplan.
 		return targetWorkloadBlocker("", "complete plan and runtime image verification required")
 	}
 	standaloneRedis := false
-	if len(recordedOwners) > 0 {
-		if len(recordedOwners) != 1 || !environmentRedisTargetPodPlan(plan) || len(objects) != 1 || len(recordedOwners[0]) != 1 {
+	redisTarget := environmentRedisTargetPodPlan(plan)
+	if redisTarget || len(recordedOwners) > 0 {
+		if len(recordedOwners) != 1 || !redisTarget || len(objects) != 1 || len(recordedOwners[0]) != 1 {
 			return targetWorkloadBlocker("", "standalone Redis helper requires its exact staged recipe and recorded Pod owner")
 		}
 		resource, pod := plan.Resources[0], objects[0]

@@ -610,45 +610,54 @@ func managedLateExpiredRenewalBinding(f *createManagedLateExpiredRenewal, late *
 
 // Finalization authority is already independently proved by the caller. These
 // branches authorize retirement of the exact retained e1/e0 copies only.
+func managedLateExpiredHistoricalCopySource(late *createManagedLateSessionRecovery, observed createServiceSessionObserved) (environmentCreateServiceCeremony, managedSessionState, bool) {
+	if late == nil || late.ExpiredRenewal == nil || late.ExpiredRenewal.PriorLate == nil {
+		return environmentCreateServiceCeremony{}, managedSessionState{}, false
+	}
+	f := late.ExpiredRenewal
+	switch observed.Cleanup.SessionID {
+	case f.PriorSession.Session:
+		return late.SourceCeremony, f.PriorSession, true
+	case f.PriorLate.OriginalSession:
+		return f.PriorLate.SourceCeremony, f.PriorLate.OriginalSessionState, true
+	default:
+		return environmentCreateServiceCeremony{}, managedSessionState{}, false
+	}
+}
+
 func verifyManagedLateExpiredHistoricalCopy(ctx context.Context, cfg deploymentConfig, store secretStore, runtime environmentCreateBootstrapRuntime, current environmentCreateServiceCeremony, observed createServiceSessionObserved, artifact *createFoundationRecoveryArtifact) (bool, bool, error) {
 	late := runtime.ServiceSessionRecovery.ManagedLateSession
 	f := late.ExpiredRenewal
 	if f == nil {
 		return false, false, nil
 	}
-	prior := f.PriorLate
-	var expected environmentCreateServiceCeremony
-	var saved managedSessionState
-	switch observed.Cleanup.SessionID {
-	case f.PriorSession.Session:
-		expected = late.SourceCeremony
-		saved = f.PriorSession
-	case prior.OriginalSession:
-		expected = prior.SourceCeremony
-		saved = prior.OriginalSessionState
-	default:
+	expected, saved, handled := managedLateExpiredHistoricalCopySource(late, observed)
+	if !handled {
 		return false, false, nil
 	}
-	bad := func() (bool, bool, error) { return false, true, managedHistoricalSeedBlock() }
+	bad := func(stage string) (bool, bool, error) { return false, true, managedHistoricalSeedBlockAt(stage) }
 	if deploymentplan.Digest(observed.Cleanup) != deploymentplan.Digest(expected.CleanupBinding) || deploymentplan.Digest(observed.UIDs) != deploymentplan.Digest(expected.CredentialUIDs) {
-		return bad()
+		return bad("expired-copy-owner")
 	}
 	state, _, err := readManagedSessionState(ctx, cfg, runtime, saved.Session)
 	if err != nil {
 		return false, true, err
 	}
-	if state.Status != "expired" || state.OtherActive != 0 || !managedLateOriginalSessionUnchanged(saved, state, time.Now().UTC()) || !state.Expires.Equal(saved.Expires) || state.Fingerprint != saved.Fingerprint || state.Issuer != current.Intermediate.ID || state.Root != current.Root.RootFingerprint {
-		return bad()
+	// The current ceremony may use a same-key ICA successor. Retirement is
+	// authorized by the exact preserved ceremony for this historical session,
+	// never by the successor selected for the new session.
+	if state.Status != "expired" || state.OtherActive != 0 || !managedLateOriginalSessionUnchanged(saved, state, time.Now().UTC()) || !state.Expires.Equal(saved.Expires) || state.Fingerprint != saved.Fingerprint || state.Issuer != expected.Intermediate.ID || state.Root != expected.Root.RootFingerprint {
+		return bad("expired-copy-state")
 	}
 	if saved.Session == f.PriorSession.Session {
 		if len(state.Installed) != 0 || artifact.Plan.Materials[managedLateExpiredRenewalMaterial+"descriptor"] != managedLateExpiredRenewalDigest(f) {
-			return bad()
+			return bad("expired-copy-unused-descriptor")
 		}
 	} else {
 		descriptor := managedCoreCompletedSession{Action: string(managedCoreRestoreOnly), Session: state.Session, Issuer: state.Issuer, Root: state.Root, Fingerprint: state.Fingerprint, Expires: state.Expires, Subjects: slices.Clone(state.Subjects), Installed: slices.Clone(state.Installed)}
 		slices.Sort(descriptor.Installed)
 		if len(state.Installed) != 8 || slices.Contains(state.Installed, "service:video-cloud-logingester") || artifact.Plan.Materials["accepted-service-core-managed-complete-current-session"] != deploymentplan.Digest(descriptor) {
-			return bad()
+			return bad("expired-copy-eight-ack-descriptor")
 		}
 	}
 	return true, true, runtime.Execution.Check(ctx)

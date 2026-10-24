@@ -192,14 +192,14 @@ func managedLateTerminalCapabilitySourceView(ctx context.Context, cfg deployment
 
 func qualifyManagedLateHistoricalSeedCleanup(ctx context.Context, cfg deploymentConfig, store secretStore, e *environmentCreateExecution, b environmentKubernetesBackend, r *createServiceSessionRecovery, p *createFoundationRecoveryPlan) error {
 	if r == nil || r.ManagedLateSession == nil {
-		return managedHistoricalSeedBlock()
+		return managedHistoricalSeedBlockAt("qualification-runtime")
 	}
 	late := r.ManagedLateSession
 	if late.Mode == managedLateSessionMQTTRepair || late.Mode == managedLateSessionOpenBaoTLSRepair {
 		return nil
 	}
 	if late.Mode != managedLateSessionACKReady || !environmentBootstrapOwnerUUID.MatchString(late.NewSessionID) || late.NewSessionID == late.OriginalSession {
-		return managedHistoricalSeedBlock()
+		return managedHistoricalSeedBlockAt("qualification-session")
 	}
 	source, err := authenticateManagedLateObservationSource(cfg, store, e, r, p, late, late.Mode)
 	if err != nil {
@@ -221,11 +221,15 @@ func qualifyManagedLateHistoricalSeedCleanup(ctx context.Context, cfg deployment
 		expectedPrevious = late.ExpiredRenewal.PriorLate.OriginalSession
 	}
 	if proof == nil || proof.CurrentSession != expectedPrevious {
-		return managedHistoricalSeedBlock()
+		return managedHistoricalSeedBlockAt("qualification-proof-session")
 	}
 	proof.CurrentSession = late.NewSessionID // planned authority, no future UID/state
-	r.ManagedHistoricalSeedCleanup = proof
-	p.Materials[managedHistoricalSeedCleanupMaterial] = deploymentplan.Digest(proof)
+	copy := *proof
+	copy.State.Subjects = slices.Clone(proof.State.Subjects)
+	copy.State.Installed = slices.Clone(proof.State.Installed)
+	r.ManagedHistoricalSeedCleanup = &copy
+	late.HistoricalSeedCleanup = &copy
+	p.Materials[managedHistoricalSeedCleanupMaterial] = deploymentplan.Digest(&copy)
 	if err := prepareManagedLateOriginalSeedRetirement(store, e, r, late); err != nil {
 		return err
 	}
@@ -241,11 +245,11 @@ func qualifyManagedLateHistoricalSeedCleanup(ctx context.Context, cfg deployment
 func verifyManagedLateHistoricalSeedCleanup(ctx context.Context, cfg deploymentConfig, store secretStore, runtime environmentCreateBootstrapRuntime, current environmentCreateServiceCeremony, observed createServiceSessionObserved) (bool, error) {
 	r, e := runtime.ServiceSessionRecovery, runtime.Execution
 	if r == nil || r.ManagedLateSession == nil || e == nil || e.Check(ctx) != nil {
-		return false, managedHistoricalSeedBlock()
+		return false, managedHistoricalSeedBlockAt("late-runtime")
 	}
 	late := r.ManagedLateSession
 	if late.Mode != managedLateSessionACKReady || current.BootstrapSessionID != late.NewSessionID || r.Review != late.Review {
-		return false, managedHistoricalSeedBlock()
+		return false, managedHistoricalSeedBlockAt("late-current-session")
 	}
 	artifact, err := verifyManagedLateNativeFinalization(ctx, cfg, store, runtime, current)
 	if err != nil {
@@ -257,7 +261,7 @@ func verifyManagedLateHistoricalSeedCleanup(ctx context.Context, cfg deploymentC
 	}
 	clients, err := readManagedSessionClientsPreserved(ctx, cfg, runtime, current, subjects)
 	if err != nil || clients != late.OriginalClientsSHA {
-		return false, managedHistoricalSeedBlock()
+		return false, managedHistoricalSeedBlockAt("late-preserved-clients")
 	}
 	if late.ExpiredRenewal != nil {
 		if matched, handled, err := verifyManagedLateExpiredHistoricalCopy(ctx, cfg, store, runtime, current, observed, artifact); handled {
@@ -266,11 +270,11 @@ func verifyManagedLateHistoricalSeedCleanup(ctx context.Context, cfg deploymentC
 	}
 	if observed.Cleanup.SessionID == late.OriginalSession {
 		if deploymentplan.Digest(observed.Cleanup) != deploymentplan.Digest(late.SourceCeremony.CleanupBinding) || deploymentplan.Digest(observed.UIDs) != deploymentplan.Digest(late.SourceCeremony.CredentialUIDs) {
-			return false, managedHistoricalSeedBlock()
+			return false, managedHistoricalSeedBlockAt("late-original-copy")
 		}
 		old, _, err := readManagedSessionState(ctx, cfg, runtime, late.OriginalSession)
 		if err != nil || old.Status != "expired" || old.OtherActive != 0 || old.Expires.After(time.Now().UTC()) || old.Session != late.OriginalSession || old.Issuer != current.Intermediate.ID || old.Root != current.Root.RootFingerprint {
-			return false, managedHistoricalSeedBlock()
+			return false, managedHistoricalSeedBlockAt("late-original-state")
 		}
 		declared := map[string]bool{}
 		for _, subject := range subjects {
@@ -279,17 +283,17 @@ func verifyManagedLateHistoricalSeedCleanup(ctx context.Context, cfg deploymentC
 		seen := map[string]bool{}
 		for _, subject := range old.Installed {
 			if !declared[subject] || seen[subject] {
-				return false, managedHistoricalSeedBlock()
+				return false, managedHistoricalSeedBlockAt("late-original-ack-set")
 			}
 			seen[subject] = true
 		}
 		if len(seen) != 8 || seen["service:video-cloud-logingester"] || !slices.Equal(old.Subjects, subjects) {
-			return false, managedHistoricalSeedBlock()
+			return false, managedHistoricalSeedBlockAt("late-original-eight-acks")
 		}
 		descriptor := managedCoreCompletedSession{Action: string(managedCoreRestoreOnly), Session: old.Session, Issuer: old.Issuer, Root: old.Root, Fingerprint: old.Fingerprint, Expires: old.Expires, Subjects: slices.Clone(old.Subjects), Installed: slices.Clone(old.Installed)}
 		slices.Sort(descriptor.Installed)
 		if artifact.Plan.Materials["accepted-service-core-managed-complete-current-session"] != deploymentplan.Digest(descriptor) {
-			return false, managedHistoricalSeedBlock()
+			return false, managedHistoricalSeedBlockAt("late-original-descriptor")
 		}
 		return true, e.Check(ctx)
 	}
@@ -298,14 +302,14 @@ func verifyManagedLateHistoricalSeedCleanup(ctx context.Context, cfg deploymentC
 		return false, nil
 	}
 	if proof.CurrentSession != late.NewSessionID || proof.ClientsSHA != late.OriginalClientsSHA || proof.ObservationSHA != deploymentplan.Digest(observed) {
-		return false, managedHistoricalSeedBlock()
+		return false, managedHistoricalSeedBlockAt("late-five-ack-proof")
 	}
 	if r.ManagedLateRemaining != nil {
 		if err := managedLateRemainingHistoricalCleanupAuthority(store, e, r, proof); err != nil {
 			return false, err
 		}
 	} else if proof.SourceSHA != late.SourceSHA || artifact.Plan.Materials[managedHistoricalSeedCleanupMaterial] != deploymentplan.Digest(proof) {
-		return false, managedHistoricalSeedBlock()
+		return false, managedHistoricalSeedBlockAt("late-five-ack-authority")
 	}
 	old, _, err := readManagedSessionState(ctx, cfg, runtime, proof.State.Session)
 	if err != nil {
@@ -313,7 +317,7 @@ func verifyManagedLateHistoricalSeedCleanup(ctx context.Context, cfg deploymentC
 	}
 	snapshot, err := validateManagedHistoricalSeedState(old, observed, current, subjects, time.Now().UTC())
 	if err != nil || deploymentplan.Digest(snapshot) != deploymentplan.Digest(proof.State) {
-		return false, managedHistoricalSeedBlock()
+		return false, managedHistoricalSeedBlockAt("late-five-ack-state")
 	}
 	return true, e.Check(ctx)
 }

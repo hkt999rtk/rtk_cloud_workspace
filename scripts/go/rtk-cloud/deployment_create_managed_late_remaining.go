@@ -220,14 +220,14 @@ func loadManagedLateRemainingSource(ctx context.Context, cfg deploymentConfig, s
 		var marker createManagedLateRemainingAuthority
 		var archived createManagedLateRemaining
 		if createOpenBaoACKCompletionRead(store, managedLateRemainingAuthorityPath(remaining.ParentSHA), &marker) != nil || !environmentPreflightDigest.MatchString(marker.Review) || createOpenBaoACKCompletionRead(store, filepath.Join("deployment/create/openbao-recovery", marker.Review, managedLateRemainingFilename), &archived) != nil || !managedLateRemainingCleanupBaseMatches(remaining, &archived) || restoreManagedLateRemainingHistoricalCleanup(r, archived.HistoricalSeedCleanup) != nil {
-			return nil, managedHistoricalSeedBlock()
+			return nil, managedHistoricalSeedBlockAt("remaining-existing-marker")
 		}
 		remaining.Authority, err = readManagedLateRemainingAuthority(store, remaining)
 		if err != nil || remaining.Authority == nil || remaining.CleanupOnly && (remaining.InstalledAt.Before(remaining.Authority.AdmittedAt) || remaining.InstalledAt.After(remaining.Authority.Deadline) || e.Journal.Entries[388].StartedAt.Before(remaining.Authority.AdmittedAt)) {
-			return nil, managedHistoricalSeedBlock()
+			return nil, managedHistoricalSeedBlockAt("remaining-existing-authority")
 		}
 	} else if !errors.Is(statErr, os.ErrNotExist) {
-		return nil, managedHistoricalSeedBlock()
+		return nil, managedHistoricalSeedBlockAt("remaining-marker-lstat")
 	}
 	if remaining.CleanupOnly {
 		path := filepath.Join(store.Root, managedLateInstalledCleanupPath(remaining.ParentSHA))
@@ -414,7 +414,7 @@ func verifyManagedLateRemainingCurrent(ctx context.Context, cfg deploymentConfig
 	if remaining.CurrentSourceSHA != "" && priorCleanup != nil {
 		proof := r.ManagedHistoricalSeedCleanup
 		if proof == nil || proof.SourceSHA != deploymentplan.Digest(e.Journal) || priorCleanup.SourceSHA != remaining.SourceSHA {
-			return managedHistoricalSeedBlock()
+			return managedHistoricalSeedBlockAt("remaining-refreshed-proof")
 		}
 		copy := *proof
 		copy.SourceSHA = remaining.SourceSHA // unchanged original authority; actual389 is separately qualified above
@@ -422,13 +422,13 @@ func verifyManagedLateRemainingCurrent(ctx context.Context, cfg deploymentConfig
 		p.Materials[managedHistoricalSeedCleanupMaterial] = deploymentplan.Digest(&copy)
 	}
 	if priorCleanup != nil && deploymentplan.Digest(priorCleanup) != deploymentplan.Digest(r.ManagedHistoricalSeedCleanup) {
-		return managedHistoricalSeedBlock()
+		return managedHistoricalSeedBlockAt("remaining-proof-drift")
 	}
 	if err := restoreManagedLateRemainingHistoricalCleanup(r, r.ManagedHistoricalSeedCleanup); err != nil {
 		return err
 	}
 	if remaining.StaleSeedsSHA != deploymentplan.Digest(r.StaleSeeds) {
-		return managedHistoricalSeedBlock()
+		return managedHistoricalSeedBlockAt("remaining-stale-seed-set")
 	}
 	if _, err := managedLateOriginalVolumePins(p.Materials); err != nil {
 		return err
@@ -560,7 +560,7 @@ func restoreManagedLateRemainingQualifiedSource(r *createServiceSessionRecovery,
 // must replace that inherited pin after the fresh native checks complete.
 func bindManagedLateRemainingHistoricalCleanupMaterial(r *createServiceSessionRecovery, materials map[string]string) error {
 	if r == nil || r.ManagedLateRemaining == nil || materials == nil || restoreManagedLateRemainingHistoricalCleanup(r, r.ManagedLateRemaining.HistoricalSeedCleanup) != nil {
-		return managedHistoricalSeedBlock()
+		return managedHistoricalSeedBlockAt("remaining-bind-historical-proof")
 	}
 	materials[managedHistoricalSeedCleanupMaterial] = deploymentplan.Digest(r.ManagedHistoricalSeedCleanup)
 	return nil
@@ -577,7 +577,7 @@ func managedLateRemainingCleanupBaseMatches(current, archived *createManagedLate
 
 func prepareManagedLateRemainingCopyRetirement(store secretStore, e *environmentCreateExecution, r *createServiceSessionRecovery) error {
 	if r == nil || r.ManagedLateRemaining == nil || r.ManagedLateSession == nil || r.ManagedLateSession.ExpiredRenewal == nil || r.ManagedLateSession.ExpiredRenewal.PriorLate == nil {
-		return managedHistoricalSeedBlock()
+		return managedHistoricalSeedBlockAt("remaining-retirement-runtime")
 	}
 	for _, late := range []*createManagedLateSessionRecovery{r.ManagedLateSession, r.ManagedLateSession.ExpiredRenewal.PriorLate} {
 		if err := prepareManagedLateOriginalSeedRetirement(store, e, r, late); err != nil {
@@ -590,29 +590,29 @@ func prepareManagedLateRemainingCopyRetirement(store secretStore, e *environment
 
 func restoreManagedLateRemainingHistoricalCleanup(r *createServiceSessionRecovery, proof *createManagedHistoricalSeedCleanup) error {
 	if r == nil || r.ManagedLateRemaining == nil || r.ManagedLateSession == nil || proof == nil {
-		return managedHistoricalSeedBlock()
+		return managedHistoricalSeedBlockAt("remaining-restore-runtime")
 	}
 	remaining, late := r.ManagedLateRemaining, r.ManagedLateSession
 	if proof.SourceSHA != remaining.SourceSHA || proof.CurrentSession != late.NewSessionID || proof.ClientsSHA != late.OriginalClientsSHA || remaining.StaleSeedsSHA != deploymentplan.Digest(r.StaleSeeds) {
-		return managedHistoricalSeedBlock()
+		return managedHistoricalSeedBlockAt("remaining-restore-lineage")
 	}
 	var observed *createServiceSessionObserved
 	for i := range r.StaleSeeds {
 		if r.StaleSeeds[i].Cleanup.SessionID == proof.State.Session {
 			if observed != nil {
-				return managedHistoricalSeedBlock()
+				return managedHistoricalSeedBlockAt("remaining-restore-duplicate-observation")
 			}
 			observed = &r.StaleSeeds[i]
 		}
 	}
 	if observed == nil || proof.ObservationSHA != deploymentplan.Digest(observed) {
-		return managedHistoricalSeedBlock()
+		return managedHistoricalSeedBlockAt("remaining-restore-observation")
 	}
 	s := proof.State
 	state := managedSessionState{Session: s.Session, Issuer: s.Issuer, Root: s.Root, Fingerprint: s.Fingerprint, Status: s.Status, Expires: s.Expires, Subjects: slices.Clone(s.Subjects), Installed: slices.Clone(s.Installed)}
 	snapshot, err := validateManagedHistoricalSeedState(state, *observed, r.Ceremony, late.SourceRenewedIntent.Subjects, time.Now().UTC())
 	if err != nil || deploymentplan.Digest(snapshot) != deploymentplan.Digest(s) {
-		return managedHistoricalSeedBlock()
+		return managedHistoricalSeedBlockAt("remaining-restore-state")
 	}
 	copy := *proof
 	copy.State.Subjects, copy.State.Installed = slices.Clone(s.Subjects), slices.Clone(s.Installed)
@@ -622,17 +622,17 @@ func restoreManagedLateRemainingHistoricalCleanup(r *createServiceSessionRecover
 
 func managedLateRemainingHistoricalCleanupAuthority(store secretStore, e *environmentCreateExecution, r *createServiceSessionRecovery, proof *createManagedHistoricalSeedCleanup) error {
 	if r == nil || r.ManagedLateRemaining == nil || proof == nil || deploymentplan.Digest(proof) != deploymentplan.Digest(r.ManagedLateRemaining.HistoricalSeedCleanup) || proof.SourceSHA != r.ManagedLateRemaining.SourceSHA || proof.CurrentSession != r.ManagedLateRemaining.SessionID {
-		return managedHistoricalSeedBlock()
+		return managedHistoricalSeedBlockAt("remaining-cleanup-proof")
 	}
 	if err := verifyManagedLateRemainingAuthorityCurrent(store, e, r.ManagedLateRemaining); err != nil {
 		return err
 	}
 	if r.ManagedLateRemaining.Authority == nil {
-		return managedHistoricalSeedBlock()
+		return managedHistoricalSeedBlockAt("remaining-cleanup-authority")
 	}
 	var a createFoundationRecoveryArtifact
 	if createOpenBaoACKCompletionRead(store, filepath.Join("deployment/create/openbao-recovery", r.ManagedLateRemaining.Authority.Review, "qualification.json"), &a) != nil || a.Plan.Materials[managedHistoricalSeedCleanupMaterial] != deploymentplan.Digest(proof) || a.Plan.Materials["accepted-service-core-managed-application-current-clients"] != proof.ClientsSHA {
-		return managedHistoricalSeedBlock()
+		return managedHistoricalSeedBlockAt("remaining-cleanup-materials")
 	}
 	return nil
 }

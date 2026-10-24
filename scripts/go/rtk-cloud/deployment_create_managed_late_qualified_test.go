@@ -262,6 +262,70 @@ func TestManagedLateQualifiedDescriptorStrictJSONRoundTrip(t *testing.T) {
 	}
 }
 
+func TestManagedLateQualifiedDescriptorRestoresExactFiveACKCleanupProof(t *testing.T) {
+	state, observed, ceremony, subjects, now := managedHistoricalSeedFixture(t)
+	snapshot, err := validateManagedHistoricalSeedState(state, observed, ceremony, subjects, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	late := &createManagedLateSessionRecovery{
+		SourceSHA:          strings.Repeat("a", 64),
+		NewSessionID:       "99999999-9999-4999-8999-999999999999",
+		OriginalClientsSHA: strings.Repeat("b", 64),
+	}
+	late.HistoricalSeedCleanup = &createManagedHistoricalSeedCleanup{
+		SourceSHA:      late.SourceSHA,
+		CurrentSession: late.NewSessionID,
+		ObservationSHA: deploymentplan.Digest(observed),
+		ClientsSHA:     late.OriginalClientsSHA,
+		State:          snapshot,
+	}
+	materials := map[string]string{managedHistoricalSeedCleanupMaterial: deploymentplan.Digest(late.HistoricalSeedCleanup)}
+	r := &createServiceSessionRecovery{StaleSeeds: []createServiceSessionObserved{observed}}
+	if err := restoreManagedLateHistoricalCleanupDescriptor(r, late, materials); err != nil || r.ManagedHistoricalSeedCleanup == nil || deploymentplan.Digest(r.ManagedHistoricalSeedCleanup) != materials[managedHistoricalSeedCleanupMaterial] {
+		t.Fatal("exact archived five-ACK proof was not restored", err)
+	}
+	before := deploymentplan.Digest(late.HistoricalSeedCleanup)
+	r.ManagedHistoricalSeedCleanup.State.Installed[0] = "caller-only-change"
+	if deploymentplan.Digest(late.HistoricalSeedCleanup) != before {
+		t.Fatal("restored proof aliases the archived descriptor")
+	}
+	for _, mode := range []string{"missing-material", "changed-source", "changed-current", "changed-clients", "changed-observation", "missing-observation", "duplicate-observation", "four-acks"} {
+		t.Run(mode, func(t *testing.T) {
+			var candidate createManagedLateSessionRecovery
+			if json.Unmarshal(mustProviderRecoveryJSON(late), &candidate) != nil {
+				t.Fatal("clone descriptor")
+			}
+			candidateMaterials := map[string]string{managedHistoricalSeedCleanupMaterial: deploymentplan.Digest(candidate.HistoricalSeedCleanup)}
+			candidateRecovery := &createServiceSessionRecovery{StaleSeeds: []createServiceSessionObserved{observed}}
+			switch mode {
+			case "missing-material":
+				delete(candidateMaterials, managedHistoricalSeedCleanupMaterial)
+			case "changed-source":
+				candidate.HistoricalSeedCleanup.SourceSHA = strings.Repeat("c", 64)
+			case "changed-current":
+				candidate.HistoricalSeedCleanup.CurrentSession = "88888888-8888-4888-8888-888888888888"
+			case "changed-clients":
+				candidate.HistoricalSeedCleanup.ClientsSHA = strings.Repeat("c", 64)
+			case "changed-observation":
+				candidate.HistoricalSeedCleanup.ObservationSHA = strings.Repeat("c", 64)
+			case "missing-observation":
+				candidateRecovery.StaleSeeds = nil
+			case "duplicate-observation":
+				candidateRecovery.StaleSeeds = append(candidateRecovery.StaleSeeds, observed)
+			case "four-acks":
+				candidate.HistoricalSeedCleanup.State.Installed = candidate.HistoricalSeedCleanup.State.Installed[:4]
+			}
+			if mode != "missing-material" {
+				candidateMaterials[managedHistoricalSeedCleanupMaterial] = deploymentplan.Digest(candidate.HistoricalSeedCleanup)
+			}
+			if restoreManagedLateHistoricalCleanupDescriptor(candidateRecovery, &candidate, candidateMaterials) == nil {
+				t.Fatal("changed or unbound five-ACK proof restored")
+			}
+		})
+	}
+}
+
 func TestManagedLateQualifiedRecipeDoesNotRebaselineOrWidenScope(t *testing.T) {
 	store, _, late, _ := managedLateQualifiedPreviewsFixture(t)
 	_ = store

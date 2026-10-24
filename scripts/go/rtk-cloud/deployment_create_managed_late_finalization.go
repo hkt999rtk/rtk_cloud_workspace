@@ -91,7 +91,7 @@ func managedLateVerifiedProgressPrefix(store secretStore, e *environmentCreateEx
 
 func prepareManagedLateOriginalSeedRetirement(store secretStore, e *environmentCreateExecution, r *createServiceSessionRecovery, late *createManagedLateSessionRecovery) error {
 	if r == nil || late == nil || r.ManagedTransportRecovery == nil || r.ManagedTransportRecovery.Partial == nil {
-		return managedHistoricalSeedBlock()
+		return managedHistoricalSeedBlockAt("prepare-retirement-runtime")
 	}
 	var observed createServiceSessionObserved
 	sourceReview := r.ManagedTransportRecovery.Partial.SourceReview
@@ -101,19 +101,19 @@ func prepareManagedLateOriginalSeedRetirement(store secretStore, e *environmentC
 	path := filepath.Join(store.Root, "deployment/create", late.ParentSHA, "bootstrap/service/session-renewal", sourceReview, "observed.json")
 	var state managedSessionState
 	if readExecutionJSON(path, &observed) != nil || decodeEnvironmentJSON(observed.Session, &state) != nil || state.Session != late.OriginalSession || state.Issuer != late.SourceCeremony.Intermediate.ID || state.Root != late.SourceCeremony.Root.RootFingerprint || state.Fingerprint != late.OriginalSessionState.Fingerprint || !state.Expires.Equal(late.OriginalSessionState.Expires) || observed.Reader != late.SourceCeremony.CustodyReader || deploymentplan.Digest(observed.Cleanup) != deploymentplan.Digest(late.SourceCeremony.CleanupBinding) || deploymentplan.Digest(observed.UIDs) != deploymentplan.Digest(late.SourceCeremony.CredentialUIDs) {
-		return managedHistoricalSeedBlock()
+		return managedHistoricalSeedBlockAt("prepare-retirement-observation")
 	}
 	count := 0
 	for _, old := range r.StaleSeeds {
 		if old.Cleanup.SessionID == late.OriginalSession {
 			count++
 			if deploymentplan.Digest(old) != deploymentplan.Digest(observed) {
-				return managedHistoricalSeedBlock()
+				return managedHistoricalSeedBlockAt("prepare-retirement-duplicate")
 			}
 		}
 	}
 	if count > 1 {
-		return managedHistoricalSeedBlock()
+		return managedHistoricalSeedBlockAt("prepare-retirement-count")
 	}
 	if count == 0 {
 		r.StaleSeeds = append(r.StaleSeeds, observed)
@@ -137,10 +137,12 @@ func managedLateFinalizationEqual(a, b environmentCreateBootstrapFinalization) b
 }
 
 func verifyManagedLateNativeFinalization(ctx context.Context, cfg deploymentConfig, store secretStore, runtime environmentCreateBootstrapRuntime, current environmentCreateServiceCeremony) (*createFoundationRecoveryArtifact, error) {
-	bad := func() (*createFoundationRecoveryArtifact, error) { return nil, managedHistoricalSeedBlock() }
+	bad := func(stage string) (*createFoundationRecoveryArtifact, error) {
+		return nil, managedHistoricalSeedBlockAt(stage)
+	}
 	r, e := runtime.ServiceSessionRecovery, runtime.Execution
 	if r == nil || r.ManagedLateSession == nil || e == nil || e.Check(ctx) != nil {
-		return bad()
+		return bad("finalization-runtime")
 	}
 	late := r.ManagedLateSession
 	if err := beginManagedLateTerminalHistoricalSourcePhase(ctx, cfg, store, e, r); err != nil {
@@ -153,16 +155,16 @@ func verifyManagedLateNativeFinalization(ctx context.Context, cfg deploymentConf
 	verified := createOpenBaoACKCompletionEntry(e.Journal, "openbao-host-ack-verified-"+late.OriginalRepairReview)
 	var verification deploymentplan.Object
 	if verified == nil || verified.State != "completed" || verified.Phase != "openbao-host-ack-verification" || decodeEnvironmentJSON(verified.Receipt, &verification) != nil || verified.IntentSHA256 != activeTransportJournalDigest(verification) || verification["late_review_sha256"] != late.Review || verification["session_id"] != late.NewSessionID || verified.CompletedAt.IsZero() {
-		return bad()
+		return bad("finalization-host-ack")
 	}
 	finalizer := createOpenBaoACKCompletionEntry(e.Journal, "service-session-finalize")
 	intent := deploymentplan.Object{"session_id": current.BootstrapSessionID, "issuer_id": current.Intermediate.ID, "cleanup_binding": current.CleanupBinding}
 	if finalizer == nil || finalizer.Phase != "bootstrap" || finalizer.State != "pending" && finalizer.State != "completed" || finalizer.IntentSHA256 != activeTransportJournalDigest(intent) || finalizer.StartedAt.Before(verified.CompletedAt) || current.BootstrapSessionID != late.NewSessionID || r.Review != late.Review || len(e.Journal.KubernetesLeases) != len(bounded.Journal.KubernetesLeases) {
-		return bad()
+		return bad("finalization-entry")
 	}
 	var first createServiceSessionObserved
 	if createOpenBaoACKCompletionRead(store, filepath.Join("deployment/create", late.ParentSHA, "bootstrap/service/session-observed.json"), &first) != nil || first.Cleanup.SessionID != r.Intent.SessionID {
-		return bad()
+		return bad("finalization-original-observation")
 	}
 	oldCopies := append([]createServiceSessionObserved{first}, r.StaleSeeds...)
 	if err := validateManagedLateFinalizerTail(e.Journal, late, current, finalizer, oldCopies); err != nil {
@@ -172,40 +174,40 @@ func verifyManagedLateNativeFinalization(ctx context.Context, cfg deploymentConf
 	raw, err := readEnvironmentCreateRegistryJSON(ctx, cfg, runtime, query)
 	var native environmentCreateBootstrapFinalization
 	if err != nil || decodeEnvironmentJSON(raw, &native) != nil || native.FinalizedAt.Before(finalizer.StartedAt) {
-		return bad()
+		return bad("finalization-native-row")
 	}
 	var observed createManagedLateSeedObservation
 	if createOpenBaoACKCompletionRead(store, filepath.Join("deployment/create/openbao-recovery", late.Review, "managed-late-seed-observed.json"), &observed) != nil || observed.Review != late.Review || observed.Parent != late.ParentSHA || observed.KeySHA != late.OriginalKeySHA || observed.CSRSHA != late.OriginalCSRSHA {
-		return bad()
+		return bad("finalization-seed-observation")
 	}
 	marker, err := runtime.Backend.command(ctx, nil, "--namespace", current.BootstrapCredentialNamespace, "exec", "deployment/"+current.CustodyReader, "--container", "custody", "--", "cat", "/run/pki-bootstrap/bootstrap.finalized.json")
 	var tombstone managedLateCustodyTombstone
 	state, _, stateErr := readManagedSessionState(ctx, cfg, runtime, late.NewSessionID)
 	subjects, subjectsErr := environmentCreateBootstrapSubjects(cfg)
 	if err != nil || stateErr != nil || subjectsErr != nil || decodeEnvironmentJSON(marker, &tombstone) != nil || !managedLateFinalizedSessionCurrent(state, observed, late, subjects, native, tombstone, time.Now().UTC()) {
-		return bad()
+		return bad("finalization-state")
 	}
 	if r.ManagedLateRemaining != nil && r.ManagedLateRemaining.ResidualCleanup != nil && !managedLateResidualFinalizationBeforeExpiry(r, observed, state, native, time.Now().UTC()) {
-		return bad()
+		return bad("finalization-residual-deadline")
 	}
 	if _, err := runtime.Backend.command(ctx, nil, "--namespace", current.BootstrapCredentialNamespace, "exec", "deployment/"+current.CustodyReader, "--container", "custody", "--", "/bin/sh", "-ec", `test ! -e /run/pki-bootstrap/bootstrap.key && test ! -e /run/pki-bootstrap/bootstrap.csr && test ! -e /run/pki-bootstrap/bootstrap.crt`); err != nil {
-		return bad()
+		return bad("finalization-custody-tombstone")
 	}
 	for _, namespace := range current.BootstrapCredentialNamespaces {
 		secret, err := runtime.Backend.Read(ctx, "Secret/"+namespace+"/"+current.BootstrapCredentialSecret)
 		if err != nil || secret != nil {
-			return bad()
+			return bad("finalization-current-copy-retirement")
 		}
 	}
 	clients, err := readManagedSessionClientsPreserved(ctx, cfg, runtime, current, subjects)
 	if err != nil || clients != late.OriginalClientsSHA {
-		return bad()
+		return bad("finalization-preserved-clients")
 	}
 	return artifact, e.Check(ctx)
 }
 
 func validateManagedLateFinalizerTail(j environmentCreateJournal, late *createManagedLateSessionRecovery, current environmentCreateServiceCeremony, finalizer *environmentCreateJournalEntry, stale []createServiceSessionObserved) error {
-	bad := func() error { return managedHistoricalSeedBlock() }
+	bad := func(stage string) error { return managedHistoricalSeedBlockAt(stage) }
 	index := -1
 	for i, entry := range j.Entries {
 		if entry.Key == "openbao-host-ack-verified-"+late.OriginalRepairReview {
@@ -213,7 +215,7 @@ func validateManagedLateFinalizerTail(j environmentCreateJournal, late *createMa
 		}
 	}
 	if index < 0 {
-		return bad()
+		return bad("finalizer-tail-host-ack")
 	}
 	copies := map[string]string{}
 	for _, ns := range current.BootstrapCredentialNamespaces {
@@ -231,30 +233,30 @@ func validateManagedLateFinalizerTail(j environmentCreateJournal, late *createMa
 	seenKeys := map[string]bool{}
 	for _, entry := range j.Entries[index+1:] {
 		if seenKeys[entry.Key] {
-			return bad()
+			return bad("finalizer-tail-duplicate")
 		}
 		seenKeys[entry.Key] = true
 		if entry.Key == "service-session-finalize" {
 			if finalizeSeen || entry.IntentSHA256 != finalizer.IntentSHA256 {
-				return bad()
+				return bad("finalizer-tail-finalize")
 			}
 			finalizeSeen = true
 			continue
 		}
 		if entry.Key == "bootstrap-renewed-cleanup-custody-"+late.Review {
 			if !finalizeSeen || cleanupSeen || entry.Phase != "bootstrap" || entry.State != "completed" || entry.CompletedAt.IsZero() {
-				return bad()
+				return bad("finalizer-tail-custody")
 			}
 			var receipt deploymentplan.Object
 			if decodeEnvironmentJSON(entry.Receipt, &receipt) != nil || entry.IntentSHA256 != activeTransportJournalDigest(receipt) || receipt["session_id"] != late.NewSessionID || receipt["key_sha256"] != late.OriginalKeySHA || receipt["csr_sha256"] != late.OriginalCSRSHA {
-				return bad()
+				return bad("finalizer-tail-custody-receipt")
 			}
 			cleanupSeen = true
 			continue
 		}
 		uid, ok := copies[entry.Key]
 		if !ok || entry.Phase != "bootstrap" || entry.State != "completed" || entry.CompletedAt.IsZero() {
-			return bad()
+			return bad("finalizer-tail-copy-entry")
 		}
 		var receipt struct {
 			ID     string `json:"resource_id"`
@@ -262,7 +264,7 @@ func validateManagedLateFinalizerTail(j environmentCreateJournal, late *createMa
 			Absent bool   `json:"absent"`
 		}
 		if decodeEnvironmentJSON(entry.Receipt, &receipt) != nil || receipt.UID != uid || !receipt.Absent {
-			return bad()
+			return bad("finalizer-tail-copy-receipt")
 		}
 		// Bind the resource/name/namespace/session from the original current or
 		// archived observed UID inventory; no same-UID foreign intent is accepted.
@@ -276,17 +278,17 @@ func validateManagedLateFinalizerTail(j environmentCreateJournal, late *createMa
 				expectedID := "Secret/" + ns + "/service-bootstrap-" + sid
 				expected := deploymentplan.Object{"resource_id": expectedID, "uid": expectedUID, "session_id": sid}
 				if matched || receipt.ID != expectedID || entry.IntentSHA256 != activeTransportJournalDigest(expected) || sid == late.NewSessionID && (finalizeSeen || ns == current.BootstrapCredentialNamespace) || sid != late.NewSessionID && (!finalizeSeen || !cleanupSeen) {
-					return bad()
+					return bad("finalizer-tail-copy-order")
 				}
 				matched = true
 			}
 		}
 		if !matched || finalizeSeen && !cleanupSeen {
-			return bad()
+			return bad("finalizer-tail-copy-match")
 		}
 	}
 	if !finalizeSeen || !cleanupSeen {
-		return bad()
+		return bad("finalizer-tail-incomplete")
 	}
 	return nil
 }
@@ -297,27 +299,41 @@ func allowManagedLateExpiredCredentialCopy(ctx context.Context, cfg deploymentCo
 		return false, nil
 	}
 	if r.ManagedLateRemaining != nil && r.ManagedLateRemaining.ResidualCleanup != nil && !managedLateResidualCopyAllowed(r, s, namespace) {
-		return false, managedHistoricalSeedBlock()
+		return false, managedHistoricalSeedBlockAt("copy-residual-approval")
 	}
 	late := r.ManagedLateSession
 	if !slices.Contains(late.SourceCeremony.BootstrapCredentialNamespaces, namespace) {
-		return false, managedHistoricalSeedBlock()
+		return false, managedHistoricalSeedBlockAt("copy-source-namespace")
 	}
 	for _, observed := range r.StaleSeeds {
 		if observed.Cleanup.SessionID == s.BootstrapSessionID && observed.UIDs[namespace] == s.CredentialUIDs[namespace] {
 			state, _, err := readManagedSessionState(ctx, cfg, runtime, s.BootstrapSessionID)
 			subjects, subjectsErr := environmentCreateBootstrapSubjects(cfg)
 			if err != nil || subjectsErr != nil {
-				return false, managedHistoricalSeedBlock()
+				return false, managedHistoricalSeedBlockAt("copy-native-state")
 			}
 			if len(state.Installed) == 0 {
-				if !managedLateUnusedHistoricalCopyMatches(r, observed, s, namespace, state, subjects, time.Now().UTC()) {
-					return false, managedHistoricalSeedBlock()
+				// An expired-renewal source already carries the admitted original
+				// observation and native no-mint descriptor. Authenticate that
+				// authority before consulting the later remaining-phase snapshot;
+				// finalization necessarily retires these copies before that snapshot
+				// exists.
+				if _, _, exactExpiredSource := managedLateExpiredHistoricalCopySource(late, observed); exactExpiredSource {
+					allowed, err := verifyManagedHistoricalSeedCleanup(ctx, cfg, runtime.Execution.Store, runtime, r.Ceremony, observed)
+					return allowed, err
 				}
-				// This fresh proof includes the finalized row, tombstone,
-				// current-copy/file absence and all eleven installed clients.
-				if _, err := verifyManagedLateNativeFinalization(ctx, cfg, runtime.Execution.Store, runtime, r.Ceremony); err != nil {
+				// Earlier unused seeds are bound by the exact stale-set prefix in
+				// the admitted Core/Application recovery. Later e0/e1 observations
+				// use the expired-renewal branch above. The remaining-phase digest
+				// is deliberately unavailable until after finalization retires these
+				// copies.
+				artifact, err := verifyManagedLateNativeFinalization(ctx, cfg, runtime.Execution.Store, runtime, r.Ceremony)
+				if err != nil {
 					return false, err
+				}
+				accepted := artifact.Plan.Materials["accepted-service-core-managed-partial-stale-seeds"]
+				if stage := managedLateUnusedHistoricalCopyMismatchAtAuthority(r, observed, s, namespace, state, subjects, time.Now().UTC(), accepted); stage != "" {
+					return false, managedHistoricalSeedBlockAt("copy-unused-history-" + stage)
 				}
 				return true, runtime.Execution.Check(ctx)
 			}
@@ -325,7 +341,7 @@ func allowManagedLateExpiredCredentialCopy(ctx context.Context, cfg deploymentCo
 			if err != nil || allowed {
 				return allowed, err
 			}
-			return false, managedHistoricalSeedBlock()
+			return false, managedHistoricalSeedBlockAt("copy-used-history")
 		}
 	}
 	var first createServiceSessionObserved
@@ -335,34 +351,135 @@ func allowManagedLateExpiredCredentialCopy(ctx context.Context, cfg deploymentCo
 		}
 		state, _, err := readManagedSessionState(ctx, cfg, runtime, s.BootstrapSessionID)
 		if err != nil || state.Status != "expired" || state.Expires.After(time.Now().UTC()) || state.OtherActive != 0 || len(state.Installed) != 0 || state.Issuer != s.Intermediate.ID || state.Root != s.Root.RootFingerprint {
-			return false, managedHistoricalSeedBlock()
+			return false, managedHistoricalSeedBlockAt("copy-first-native-state")
 		}
 		return true, runtime.Execution.Check(ctx)
 	}
-	return false, managedHistoricalSeedBlock()
+	return false, managedHistoricalSeedBlockAt("copy-observation-match")
 }
 
 // This grants no source authority: the caller has already verified the actual
 // finalizer, the admitted stale observation and original installed clients.
 // A used seed must continue through its separate exact ACK-history proof.
 func managedLateUnusedHistoricalCopyMatches(r *createServiceSessionRecovery, observed createServiceSessionObserved, copy environmentCreateServiceCeremony, namespace string, state managedSessionState, subjects []string, now time.Time) bool {
-	if r == nil || r.ManagedLateSession == nil || r.ManagedLateRemaining == nil || r.ManagedLateRemaining.StaleSeedsSHA != deploymentplan.Digest(r.StaleSeeds) || !slices.Contains(r.ManagedLateSession.SourceCeremony.BootstrapCredentialNamespaces, namespace) || !slices.Contains(copy.BootstrapCredentialNamespaces, namespace) || !environmentBootstrapOwnerUUID.MatchString(copy.CredentialUIDs[namespace]) || copy.BootstrapSessionID != observed.Cleanup.SessionID || copy.CredentialUIDs[namespace] != observed.UIDs[namespace] || copy.BootstrapCredentialSecret != "service-bootstrap-"+observed.Cleanup.SessionID {
-		return false
+	return managedLateUnusedHistoricalCopyMismatch(r, observed, copy, namespace, state, subjects, now) == ""
+}
+
+func managedLateUnusedHistoricalCopyMismatch(r *createServiceSessionRecovery, observed createServiceSessionObserved, copy environmentCreateServiceCeremony, namespace string, state managedSessionState, subjects []string, now time.Time) string {
+	if r == nil || r.ManagedLateSession == nil || r.ManagedLateRemaining == nil {
+		return "runtime"
+	}
+	return managedLateUnusedHistoricalCopyMismatchAtAuthority(r, observed, copy, namespace, state, subjects, now, r.ManagedLateRemaining.StaleSeedsSHA)
+}
+
+func managedLateUnusedHistoricalCopyMismatchAtAuthority(r *createServiceSessionRecovery, observed createServiceSessionObserved, copy environmentCreateServiceCeremony, namespace string, state managedSessionState, subjects []string, now time.Time, acceptedStaleSeedsSHA string) string {
+	if r == nil || r.ManagedLateSession == nil {
+		return "runtime"
+	}
+	if !managedLateAdmittedStaleObservation(r.StaleSeeds, observed, acceptedStaleSeedsSHA) {
+		return "stale-seed-set"
+	}
+	if !slices.Contains(r.ManagedLateSession.SourceCeremony.BootstrapCredentialNamespaces, namespace) {
+		return "source-namespace"
+	}
+	if !slices.Contains(copy.BootstrapCredentialNamespaces, namespace) {
+		return "copy-namespace"
+	}
+	if !environmentBootstrapOwnerUUID.MatchString(copy.CredentialUIDs[namespace]) {
+		return "copy-owner"
+	}
+	if copy.BootstrapSessionID != observed.Cleanup.SessionID {
+		return "copy-session"
+	}
+	if copy.CredentialUIDs[namespace] != observed.UIDs[namespace] {
+		return "observation-owner"
+	}
+	if copy.BootstrapCredentialSecret != "service-bootstrap-"+observed.Cleanup.SessionID {
+		return "copy-name"
 	}
 	count := 0
 	for _, stale := range r.StaleSeeds {
 		if stale.Cleanup.SessionID == observed.Cleanup.SessionID {
 			if deploymentplan.Digest(stale) != deploymentplan.Digest(observed) {
-				return false
+				return "observation-drift"
 			}
 			count++
 		}
 	}
 	var saved managedSessionState
-	if count != 1 || decodeEnvironmentJSON(observed.Session, &saved) != nil || saved.Session != observed.Cleanup.SessionID || state.Status != "expired" {
+	if count != 1 {
+		return "observation-count"
+	}
+	if decodeEnvironmentJSON(observed.Session, &saved) != nil {
+		return "observation-state"
+	}
+	if saved.Session != observed.Cleanup.SessionID {
+		return "saved-session"
+	}
+	if state.Status != "expired" {
+		return "native-status"
+	}
+	if len(subjects) != 9 {
+		return "subject-count"
+	}
+	if len(state.Installed) != 0 {
+		return "native-installed"
+	}
+	if len(saved.Installed) != 0 {
+		return "saved-installed"
+	}
+	// The stale observation can predate a same-key ICA successor. Its exact
+	// admitted native issuer remains authoritative for retiring that old copy;
+	// binding it to the current ceremony's successor ID rejects valid history.
+	historicalCopy := copy
+	historicalCopy.Intermediate.ID = saved.Issuer
+	if !managedSessionMayRenew(state, historicalCopy, subjects, now) {
+		return "native-renewable-state"
+	}
+	if state.Session != saved.Session {
+		return "session-lineage"
+	}
+	if state.Issuer != saved.Issuer {
+		return "issuer-lineage"
+	}
+	if state.Root != saved.Root {
+		return "root-lineage"
+	}
+	if state.Fingerprint != saved.Fingerprint {
+		return "fingerprint-lineage"
+	}
+	if !state.Expires.Equal(saved.Expires) {
+		return "expiry-lineage"
+	}
+	if !slices.Equal(state.Subjects, saved.Subjects) {
+		return "subject-lineage"
+	}
+	if saved.Status != "active" && saved.Status != "expired" {
+		return "saved-status"
+	}
+	return ""
+}
+
+// A later recovery may append separately authenticated e0/e1 observations.
+// Accept only the unique original prefix whose digest was captured by the
+// qualified Core/Application plan, and only an exact member of that prefix.
+func managedLateAdmittedStaleObservation(stale []createServiceSessionObserved, observed createServiceSessionObserved, acceptedSHA string) bool {
+	if !environmentPreflightDigest.MatchString(acceptedSHA) {
 		return false
 	}
-	return managedLateExpiredUnusedSession(state, saved, copy, subjects, now)
+	for i := 1; i <= len(stale); i++ {
+		if deploymentplan.Digest(stale[:i]) != acceptedSHA {
+			continue
+		}
+		count := 0
+		for _, candidate := range stale[:i] {
+			if candidate.Cleanup.SessionID == observed.Cleanup.SessionID && deploymentplan.Digest(candidate) == deploymentplan.Digest(observed) {
+				count++
+			}
+		}
+		return count == 1
+	}
+	return false
 }
 
 func managedLateCompletedCredentialRetirement(ctx context.Context, cfg deploymentConfig, runtime environmentCreateBootstrapRuntime, s environmentCreateServiceCeremony, namespace string) (bool, error) {
@@ -372,7 +489,7 @@ func managedLateCompletedCredentialRetirement(ctx context.Context, cfg deploymen
 	e := runtime.Execution
 	uid := s.CredentialUIDs[namespace]
 	if e == nil || e.Check(ctx) != nil || !environmentBootstrapOwnerUUID.MatchString(uid) {
-		return false, managedHistoricalSeedBlock()
+		return false, managedHistoricalSeedBlockAt("completed-copy-runtime")
 	}
 	key := "bootstrap-copy-retire-" + namespace + "-" + s.BootstrapSessionID
 	entry := createOpenBaoACKCompletionEntry(e.Journal, key)
@@ -383,11 +500,11 @@ func managedLateCompletedCredentialRetirement(ctx context.Context, cfg deploymen
 	intent := deploymentplan.Object{"resource_id": id, "uid": uid, "session_id": s.BootstrapSessionID}
 	expected := deploymentplan.Object{"resource_id": id, "uid": uid, "absent": true}
 	if entry.Phase != "bootstrap" || entry.State != "completed" || entry.StartedAt.IsZero() || entry.CompletedAt.Before(entry.StartedAt) || entry.IntentSHA256 != activeTransportJournalDigest(intent) || activeTransportJournalDigest(jsonRawObject(entry.Receipt)) != activeTransportJournalDigest(expected) {
-		return false, managedHistoricalSeedBlock()
+		return false, managedHistoricalSeedBlockAt("completed-copy-receipt")
 	}
 	actual, err := runtime.Backend.Read(ctx, id)
 	if err != nil || actual != nil {
-		return false, managedHistoricalSeedBlock()
+		return false, managedHistoricalSeedBlockAt("completed-copy-readback")
 	}
 	return true, e.Check(ctx)
 }

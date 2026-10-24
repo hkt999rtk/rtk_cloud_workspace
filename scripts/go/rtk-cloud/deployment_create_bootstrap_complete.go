@@ -488,6 +488,10 @@ func configureEnvironmentCreateFinalIssuer(p environmentCreateBootstrapPlan, roo
 			if issuer.Environment != p.Environment || issuer.Domain != domain || issuer.Status != "active" || issuer.RootFingerprint != root.RootFingerprint || issuer.Reference == "" {
 				return nil, environmentCreateBootstrapBlocker("final issuer signing mount differs from its original active lineage")
 			}
+			reference := regexp.MustCompile(`^pki-issuers/` + regexp.QuoteMeta(domain) + `/` + regexp.QuoteMeta(issuer.ID) + `/v[1-9][0-9]*$`)
+			if !reference.MatchString(issuer.Reference) || deploymentplan.String(issuer.Document["signer_reference"]) != issuer.Reference {
+				return nil, environmentCreateBootstrapBlocker("final issuer signing reference differs from its registered native lineage")
+			}
 		}
 	}
 	servicePolicy := findEnvironmentCreateDomainPolicy(p, "service")

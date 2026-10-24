@@ -64,7 +64,7 @@ func managedLateResidualHistoricalResourceSubject(resource deploymentplan.Resour
 
 func managedLateResidualAcceptedHistoricalSubjects(store secretStore, e *environmentCreateExecution, session string, current environmentCreateServiceCeremony) (map[string]bool, error) {
 	if e == nil || len(e.Journal.Entries) < 400 || !environmentBootstrapOwnerUUID.MatchString(session) {
-		return nil, managedHistoricalSeedBlock()
+		return nil, managedHistoricalSeedBlockAt("residual-history-runtime")
 	}
 	out := map[string]bool{}
 	for _, entry := range e.Journal.Entries[:400] {
@@ -93,7 +93,7 @@ func managedLateResidualAcceptedHistoricalSubjects(store secretStore, e *environ
 		}
 		for _, resource := range plan.Resources {
 			if receipt.Owners[resource.ID] != journal.Owners[resource.ID] {
-				return nil, managedHistoricalSeedBlock()
+				return nil, managedHistoricalSeedBlockAt("residual-history-owner")
 			}
 			resource.UID = journal.Owners[resource.ID]
 			if subject := managedLateResidualHistoricalResourceSubject(resource, session, e.Journal.Stack, e.Journal.Environment, current.Root.RootFingerprint); subject != "" {
@@ -171,7 +171,7 @@ func verifyManagedLateResidualInstalledHistory(ctx context.Context, cfg deployme
 		return false, err
 	}
 	if !managedLateResidualInstalledHistoryMatches(r, observed, current, state, subjects, accepted, time.Now().UTC()) {
-		return false, managedHistoricalSeedBlock()
+		return false, managedHistoricalSeedBlockAt("residual-history-match")
 	}
 	return true, runtime.Execution.Check(ctx)
 }

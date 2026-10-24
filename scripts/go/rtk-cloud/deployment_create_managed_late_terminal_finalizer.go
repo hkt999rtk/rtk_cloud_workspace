@@ -287,7 +287,7 @@ func verifyManagedLateTerminalFinalizerSource(ctx context.Context, cfg deploymen
 	if len(e.Journal.Entries) > 396 {
 		var first createServiceSessionObserved
 		if createOpenBaoACKCompletionRead(store, filepath.Join("deployment/create", e.Journal.PlanSHA256, "bootstrap/service/session-observed.json"), &first) != nil {
-			return managedHistoricalSeedBlock()
+			return managedHistoricalSeedBlockAt("terminal-finalizer-original-observation")
 		}
 		if err := validateManagedLateFinalizerTail(e.Journal, r.ManagedLateSession, r.Ceremony, &e.Journal.Entries[395], append([]createServiceSessionObserved{first}, r.StaleSeeds...)); err != nil {
 			return err

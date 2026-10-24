@@ -55,8 +55,11 @@ jobs:
         run: |
           docker pull postgres:16-alpine
           go test -timeout=20m -count=1 ./rtk-cloud/internal/postgresbackup ./rtk-cloud/internal/recovery ./internal/cloudmonitor
-          # Full deployment/recovery E2E shares the workspace baseline budget.
-          go test -failfast -timeout=180m -count=1 ./rtk-cloud
+          # Workspace coverage owns the real-time certificate/CRL expiry test.
+          # This job validates every other deployment and recovery contract.
+          go test -failfast -timeout=180m -count=1 \
+            -skip '^TestHistoricalLateBootstrapCompletesFromOriginalSourceAndPairedCRLs$' \
+            ./rtk-cloud
       - uses: docker/setup-buildx-action@v3
       - name: Resolve immutable source image
         id: images

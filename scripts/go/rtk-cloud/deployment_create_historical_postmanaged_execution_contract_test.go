@@ -12,6 +12,12 @@ import (
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 )
 
+// Connected recovery tests cross a genuine temporary-seed expiry boundary.
+// Three minutes leaves scheduler headroom for the native fixture setup while
+// keeping the qualification practical; production lifetimes and validators are
+// not changed by this test-only window.
+const historicalTemporarySeedExpiryWindow = 3 * time.Minute
+
 // Capture the exact native ledger pointer and six retained host-volume owners
 // before the admission is frozen. Later application recovery may authenticate
 // these values, but it must never reconstruct or append them to an older
@@ -194,7 +200,7 @@ func historicalCompleteOriginalSessionHooks(t *testing.T) coreExecutionContractH
 
 func newHistoricalPostManagedExecutionContractWithHooks(t *testing.T, hooks *coreExecutionContractHooks, seedLifetime ...time.Duration) (*deviceTrustExecutionContract, *createServiceSessionRecovery) {
 	t.Helper()
-	lifetime := 10 * time.Minute
+	lifetime := historicalTemporarySeedExpiryWindow
 	if len(seedLifetime) > 1 || len(seedLifetime) == 1 && seedLifetime[0] <= 0 {
 		t.Fatal("one positive original native managed seed lifetime required")
 	}
@@ -250,7 +256,7 @@ func assertHistoricalAdmittedGeneration(t *testing.T, f *acceptedCoreExecutionCo
 func TestHistoricalPostManagedCompletesOriginalTransportAndBothAPIExports(t *testing.T) {
 	// This source loader requires two hours of remaining native seed life.
 	// Select that lifetime before the actual issuer signs it; Core recovery's
-	// separate default uses a ten-minute seed and waits for its genuine expiry.
+	// separate default uses a short signed seed and waits for its genuine expiry.
 	hooks := historicalCompleteOriginalSessionHooks(t)
 	device, r := newHistoricalPostManagedExecutionContractWithHooks(t, &hooks, 3*time.Hour)
 	f := device.acceptedCoreExecutionContract

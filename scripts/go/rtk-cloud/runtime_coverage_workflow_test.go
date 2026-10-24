@@ -53,6 +53,28 @@ func TestWorkspaceValidationRunsBeforeMerge(t *testing.T) {
 	}
 }
 
+func TestPRRunsRealTimeExpiryRecoveryOnlyInWorkspaceCoverage(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const testName = "TestHistoricalLateBootstrapCompletesFromOriginalSourceAndPairedCRLs"
+	backup, err := os.ReadFile(filepath.Join(workspace, ".github", "workflows", "postgres-backup-image.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(backup), "-skip '^"+testName+"$'") {
+		t.Fatal("PostgreSQL backup PR job must leave the real-time expiry recovery contract to workspace coverage")
+	}
+	coverage, err := os.ReadFile(filepath.Join(workspace, ".github", "workflows", "go-coverage-governance.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(coverage), "-skip '^"+testName+"$'") {
+		t.Fatal("workspace coverage must retain the real-time expiry recovery contract")
+	}
+}
+
 func TestRegisteredServiceChainHasNonSkippingWorkspaceCIRunner(t *testing.T) {
 	workspace, err := workspaceRoot()
 	if err != nil {
