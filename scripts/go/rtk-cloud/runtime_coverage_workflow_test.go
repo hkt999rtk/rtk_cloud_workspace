@@ -79,6 +79,14 @@ func TestPROmitsAllWallClockExpiryWaitsOwnedByNightlyWorkflow(t *testing.T) {
 	if !strings.Contains(string(coverage), "historicalWallClockExpirySkipEnv: \"1\"") {
 		t.Fatal("workspace PR coverage must skip shared signed-expiry waits")
 	}
+	productExpiry, err := os.ReadFile(filepath.Join(workspace, "scripts", "go", "rtk-cloud", "deployment_create_product_session_expiry_e2e_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	productSource := string(productExpiry)
+	if !strings.Contains(productSource, "wait := time.Until(x.oldSession.Expires.Add(time.Millisecond))\n\tskipHistoricalWallClockExpiry(t, wait)\n\tif wait > 0") {
+		t.Fatal("product expiry/recovery E2E must leave its initial real signed-expiry wait to nightly CI")
+	}
 	nightly, err := os.ReadFile(filepath.Join(workspace, ".github", "workflows", "workspace-expiry-recovery-nightly.yml"))
 	if err != nil {
 		t.Fatal(err)

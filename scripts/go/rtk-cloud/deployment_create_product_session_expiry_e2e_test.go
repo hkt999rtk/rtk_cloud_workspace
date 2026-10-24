@@ -997,7 +997,9 @@ func runProductSessionExpiryOuter(t *testing.T, runtimeCorrection bool, laterRen
 	if err != nil {
 		t.Fatal(err)
 	}
-	if wait := time.Until(x.oldSession.Expires.Add(time.Millisecond)); wait > 0 {
+	wait := time.Until(x.oldSession.Expires.Add(time.Millisecond))
+	skipHistoricalWallClockExpiry(t, wait)
+	if wait > 0 {
 		timer := time.NewTimer(wait)
 		defer timer.Stop()
 		select {
