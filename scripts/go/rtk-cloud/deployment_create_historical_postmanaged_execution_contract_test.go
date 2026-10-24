@@ -16,9 +16,7 @@ import (
 // Three minutes leaves scheduler headroom for the native fixture setup while
 // keeping the qualification practical; production lifetimes and validators are
 // not changed by this test-only window.
-func historicalTemporarySeedExpiryWindow() time.Duration {
-	return historicalExpiryDuration(3*time.Minute, 4*time.Second)
-}
+const historicalTemporarySeedExpiryWindow = 3 * time.Minute
 
 // Capture the exact native ledger pointer and six retained host-volume owners
 // before the admission is frozen. Later application recovery may authenticate
@@ -202,7 +200,7 @@ func historicalCompleteOriginalSessionHooks(t *testing.T) coreExecutionContractH
 
 func newHistoricalPostManagedExecutionContractWithHooks(t *testing.T, hooks *coreExecutionContractHooks, seedLifetime ...time.Duration) (*deviceTrustExecutionContract, *createServiceSessionRecovery) {
 	t.Helper()
-	lifetime := historicalTemporarySeedExpiryWindow()
+	lifetime := historicalTemporarySeedExpiryWindow
 	if len(seedLifetime) > 1 || len(seedLifetime) == 1 && seedLifetime[0] <= 0 {
 		t.Fatal("one positive original native managed seed lifetime required")
 	}

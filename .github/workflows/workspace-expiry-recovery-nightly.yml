@@ -31,10 +31,8 @@ jobs:
         with:
           go-version-file: scripts/go/go.mod
           cache: false
-      - name: Run original-source expiry and recovery contract
+      - name: Run original-source expiry and recovery contracts
         working-directory: scripts/go
-        env:
-          RTK_HISTORICAL_REALTIME_EXPIRY: "1"
         run: >-
           go test -count=1 -timeout=110m ./rtk-cloud
-          -run '^TestHistoricalLateBootstrapCompletesFromOriginalSourceAndPairedCRLs$'
+          -run '^(TestHistoricalCoreSourceRetainsTwoOriginalServerRequestIDs|TestHistoricalLateBootstrapCompletesFromOriginalSourceAndPairedCRLs)$'

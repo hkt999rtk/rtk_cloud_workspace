@@ -64,10 +64,10 @@ Fast baseline:
 ```
 
 The pull-request catalog/policy job uses `test-matrix --policy-only`; the
-workspace coverage job runs the complete Go suite once with short, genuine
-certificate expiries. Nightly and explicit dispatch repeat the connected
-recovery contract with its long real-time lifetimes, so pull requests do not
-wait more than an hour for certificates to expire.
+workspace coverage job runs the deterministic Go suite once. Two connected
+recovery contracts that intentionally wait for signed certificates or CRLs to
+expire run only in the scheduled or explicitly dispatched nightly workflow, so
+pull requests do not spend up to an hour waiting on wall-clock expiry.
 
 More complete local validation:
 

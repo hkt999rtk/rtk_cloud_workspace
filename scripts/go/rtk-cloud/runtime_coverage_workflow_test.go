@@ -53,32 +53,32 @@ func TestWorkspaceValidationRunsBeforeMerge(t *testing.T) {
 	}
 }
 
-func TestPRSkipsRealTimeExpiryRecoveryOwnedByNightlyWorkflow(t *testing.T) {
+func TestPROmitsWallClockExpiryRecoveryOwnedByNightlyWorkflow(t *testing.T) {
 	workspace, err := workspaceRoot()
 	if err != nil {
 		t.Fatal(err)
 	}
-	const testName = "TestHistoricalLateBootstrapCompletesFromOriginalSourceAndPairedCRLs"
+	const testPattern = "(TestHistoricalCoreSourceRetainsTwoOriginalServerRequestIDs|TestHistoricalLateBootstrapCompletesFromOriginalSourceAndPairedCRLs)"
 	backup, err := os.ReadFile(filepath.Join(workspace, ".github", "workflows", "postgres-backup-image.yml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(backup), "-skip '^"+testName+"$'") {
-		t.Fatal("PostgreSQL backup PR job must leave the real-time expiry recovery contract to nightly CI")
+	if !strings.Contains(string(backup), "-skip '^"+testPattern+"$'") {
+		t.Fatal("PostgreSQL backup PR job must leave wall-clock expiry recovery to nightly CI")
 	}
 	coverage, err := os.ReadFile(filepath.Join(workspace, "scripts", "go", "rtk-cloud", "test_coverage.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(coverage), "-skip=^"+testName+"$") {
-		t.Fatal("workspace PR coverage must run the complete contract with short genuine expiries")
+	if !strings.Contains(string(coverage), "-skip=^"+testPattern+"$") {
+		t.Fatal("workspace PR coverage must leave wall-clock expiry recovery to nightly CI")
 	}
 	nightly, err := os.ReadFile(filepath.Join(workspace, ".github", "workflows", "workspace-expiry-recovery-nightly.yml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(nightly), "schedule:") || !strings.Contains(string(nightly), "workflow_dispatch:") || !strings.Contains(string(nightly), "RTK_HISTORICAL_REALTIME_EXPIRY: \"1\"") || !strings.Contains(string(nightly), "-run '^"+testName+"$'") {
-		t.Fatal("nightly workflow must own the exact real-time expiry recovery contract")
+	if !strings.Contains(string(nightly), "schedule:") || !strings.Contains(string(nightly), "workflow_dispatch:") || !strings.Contains(string(nightly), "-run '^"+testPattern+"$'") {
+		t.Fatal("nightly workflow must own both exact wall-clock expiry recovery contracts")
 	}
 }
 
