@@ -94,9 +94,11 @@ workspace-owned Go tooling, catalog validity and generated-document drift, and
 repository/submodule status. It does not run every service or product E2E test.
 In pull-request CI, the catalog/policy job uses `test-matrix --policy-only`
 because governed workspace coverage owns the deterministic workspace Go suite.
-Two long recovery contracts are omitted directly, and shared fixtures stop when
-they reach a real signed certificate or CRL expiry wait. The scheduled or
-explicitly dispatched nightly workflow runs the complete suite with those waits.
+Two long recovery contracts are omitted directly. Pull requests retain one
+bounded product-expiry end-to-end path, while extended renewal, runtime
+correction, and CRL recovery fixtures stop when they reach a real signed-expiry
+wait. The scheduled or explicitly dispatched nightly workflow runs the complete
+suite with those waits.
 
 ## High-Risk PostgreSQL Integration Tests
 

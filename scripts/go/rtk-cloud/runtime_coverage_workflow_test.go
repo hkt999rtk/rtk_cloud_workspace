@@ -53,7 +53,7 @@ func TestWorkspaceValidationRunsBeforeMerge(t *testing.T) {
 	}
 }
 
-func TestPROmitsAllWallClockExpiryWaitsOwnedByNightlyWorkflow(t *testing.T) {
+func TestPRBoundsExtendedWallClockExpiryWaitsOwnedByNightlyWorkflow(t *testing.T) {
 	workspace, err := workspaceRoot()
 	if err != nil {
 		t.Fatal(err)
@@ -84,8 +84,8 @@ func TestPROmitsAllWallClockExpiryWaitsOwnedByNightlyWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	productSource := string(productExpiry)
-	if !strings.Contains(productSource, "wait := time.Until(x.oldSession.Expires.Add(time.Millisecond))\n\tskipHistoricalWallClockExpiry(t, wait)\n\tif wait > 0") {
-		t.Fatal("product expiry/recovery E2E must leave its initial real signed-expiry wait to nightly CI")
+	if !strings.Contains(productSource, "if runtimeCorrection || second || postCleanup {\n\t\tskipHistoricalWallClockExpiry(t, wait)\n\t}") {
+		t.Fatal("extended product expiry/recovery E2E variants must leave their initial real signed-expiry wait to nightly CI")
 	}
 	nightly, err := os.ReadFile(filepath.Join(workspace, ".github", "workflows", "workspace-expiry-recovery-nightly.yml"))
 	if err != nil {
