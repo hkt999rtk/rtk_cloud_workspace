@@ -24,6 +24,7 @@ func waitHistoricalSignedCRLExpiry(t *testing.T, f *acceptedCoreExecutionContrac
 		t.Fatal("original signed CRL expiry source unavailable", issuerID)
 	}
 	if remaining := time.Until(record.NextUpdate); remaining > 0 {
+		skipHistoricalWallClockExpiry(t, remaining)
 		t.Logf("waiting %.1fs for original signed CRL expiry: issuer=%s", remaining.Seconds(), issuerID)
 		timer := time.NewTimer(remaining + 20*time.Millisecond)
 		defer timer.Stop()

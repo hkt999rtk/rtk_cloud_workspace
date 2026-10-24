@@ -53,7 +53,7 @@ func TestWorkspaceValidationRunsBeforeMerge(t *testing.T) {
 	}
 }
 
-func TestPROmitsWallClockExpiryRecoveryOwnedByNightlyWorkflow(t *testing.T) {
+func TestPROmitsAllWallClockExpiryWaitsOwnedByNightlyWorkflow(t *testing.T) {
 	workspace, err := workspaceRoot()
 	if err != nil {
 		t.Fatal(err)
@@ -66,6 +66,9 @@ func TestPROmitsWallClockExpiryRecoveryOwnedByNightlyWorkflow(t *testing.T) {
 	if !strings.Contains(string(backup), "-skip '^"+testPattern+"$'") {
 		t.Fatal("PostgreSQL backup PR job must leave wall-clock expiry recovery to nightly CI")
 	}
+	if !strings.Contains(string(backup), historicalWallClockExpirySkipEnv+": '1'") {
+		t.Fatal("PostgreSQL backup PR job must skip shared signed-expiry waits")
+	}
 	coverage, err := os.ReadFile(filepath.Join(workspace, "scripts", "go", "rtk-cloud", "test_coverage.go"))
 	if err != nil {
 		t.Fatal(err)
@@ -73,12 +76,15 @@ func TestPROmitsWallClockExpiryRecoveryOwnedByNightlyWorkflow(t *testing.T) {
 	if !strings.Contains(string(coverage), "-skip=^"+testPattern+"$") {
 		t.Fatal("workspace PR coverage must leave wall-clock expiry recovery to nightly CI")
 	}
+	if !strings.Contains(string(coverage), "historicalWallClockExpirySkipEnv: \"1\"") {
+		t.Fatal("workspace PR coverage must skip shared signed-expiry waits")
+	}
 	nightly, err := os.ReadFile(filepath.Join(workspace, ".github", "workflows", "workspace-expiry-recovery-nightly.yml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(nightly), "schedule:") || !strings.Contains(string(nightly), "workflow_dispatch:") || !strings.Contains(string(nightly), "-run '^"+testPattern+"$'") {
-		t.Fatal("nightly workflow must own both exact wall-clock expiry recovery contracts")
+	if !strings.Contains(string(nightly), "schedule:") || !strings.Contains(string(nightly), "workflow_dispatch:") || strings.Contains(string(nightly), "-run ") || strings.Contains(string(nightly), historicalWallClockExpirySkipEnv) {
+		t.Fatal("nightly workflow must run the complete workspace suite with real signed-expiry waits")
 	}
 }
 

@@ -16,7 +16,7 @@ jobs:
   expiry-recovery:
     name: Real-time certificate and CRL expiry recovery
     runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 120
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v6
         with:
@@ -31,8 +31,7 @@ jobs:
         with:
           go-version-file: scripts/go/go.mod
           cache: false
-      - name: Run original-source expiry and recovery contracts
+      - name: Run workspace suite with real signed expiry waits
         working-directory: scripts/go
         run: >-
-          go test -count=1 -timeout=110m ./rtk-cloud
-          -run '^(TestHistoricalCoreSourceRetainsTwoOriginalServerRequestIDs|TestHistoricalLateBootstrapCompletesFromOriginalSourceAndPairedCRLs)$'
+          go test -count=1 -timeout=170m ./rtk-cloud

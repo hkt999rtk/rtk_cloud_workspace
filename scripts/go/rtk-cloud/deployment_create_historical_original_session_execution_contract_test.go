@@ -17,6 +17,18 @@ import (
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 )
 
+const historicalWallClockExpirySkipEnv = "RTK_SKIP_HISTORICAL_WALL_CLOCK_EXPIRY"
+
+// Pull-request jobs validate deterministic behavior and leave elapsed signed
+// expiry to the dedicated nightly workflow. The signed source is unchanged;
+// this skips the enclosing test before it starts waiting on wall time.
+func skipHistoricalWallClockExpiry(t *testing.T, remaining time.Duration) {
+	t.Helper()
+	if remaining > 0 && os.Getenv(historicalWallClockExpirySkipEnv) == "1" {
+		t.Skipf("wall-clock signed expiry (remaining %s) runs in Workspace Expiry Recovery Nightly", remaining.Round(time.Second))
+	}
+}
+
 // The original seed is issued by its real native Job boundary. Its lifetime is
 // selected before signing; expiry is observed by elapsed wall time, never by
 // editing a certificate, receipt, or recorded native row.
@@ -53,7 +65,9 @@ func historicalOriginalSessionLeaf(t *testing.T, f *acceptedCoreExecutionContrac
 
 func historicalWaitForOriginalSessionExpiry(t *testing.T, state managedSessionState) {
 	t.Helper()
-	t.Logf("waiting for actual original session expiry: remaining=%s", time.Until(state.Expires).Round(time.Second))
+	remaining := time.Until(state.Expires)
+	skipHistoricalWallClockExpiry(t, remaining)
+	t.Logf("waiting for actual original session expiry: remaining=%s", remaining.Round(time.Second))
 	for state.Expires.After(time.Now().UTC()) {
 		select {
 		case <-t.Context().Done():

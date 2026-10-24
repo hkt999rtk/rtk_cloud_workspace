@@ -439,6 +439,7 @@ func newHistoricalAcceptedCoreRestoreExecutionContract(t *testing.T, hooks ...co
 	t.Logf("original interrupted Core chronology: entries=%d leases=%d Core resources=%d accepted App resources=%d", len(f.e.Journal.Entries), len(f.e.Journal.KubernetesLeases), len(r.ManagedCorePartial.Plan.Resources), len(r.ManagedCorePartial.Apps.Resources))
 	state := f.protocol["historical_sessions"].(map[string]managedSessionState)[f.session]
 	if remaining := time.Until(state.Expires); remaining > 0 {
+		skipHistoricalWallClockExpiry(t, remaining)
 		t.Logf("waiting %.1f seconds for the unchanged signed seed expiry", remaining.Seconds())
 		timer := time.NewTimer(remaining + 20*time.Millisecond)
 		defer timer.Stop()

@@ -532,8 +532,8 @@ func runGoCoverageModule(workspace, outDir, logPath string, cfg coverageConfig, 
 func goCoverageCommandEnvironment(module coverageModule) map[string]string {
 	if module.Name == "workspace-tooling" {
 		// The covered workspace baseline must use the same go.work selection
-		// as test-matrix. Independent service modules remain isolated.
-		return map[string]string{}
+		// as test-matrix. Signed wall-clock expiry remains nightly-only.
+		return map[string]string{historicalWallClockExpirySkipEnv: "1"}
 	}
 	return map[string]string{"GOWORK": "off"}
 }

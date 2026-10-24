@@ -52,6 +52,7 @@ jobs:
           GOWORK: 'off'
           RTK_POSTGRES_BACKUP_INTEGRATION: '1'
           RTK_POSTGRES_BACKUP_LARGE_INTEGRATION: '1'
+          RTK_SKIP_HISTORICAL_WALL_CLOCK_EXPIRY: '1'
         run: |
           docker pull postgres:16-alpine
           go test -timeout=20m -count=1 ./rtk-cloud/internal/postgresbackup ./rtk-cloud/internal/recovery ./internal/cloudmonitor

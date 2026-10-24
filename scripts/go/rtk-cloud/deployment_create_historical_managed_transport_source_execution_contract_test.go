@@ -69,6 +69,7 @@ func newHistoricalManagedTransportSourceExecutionContract(t *testing.T, hooks ..
 		t.Fatal("historical native seed lifetime exceeded its selected bound")
 	}
 	if remaining > 0 {
+		skipHistoricalWallClockExpiry(t, remaining)
 		t.Logf("waiting %.1fs for the original signed temporary seed to expire", remaining.Seconds())
 		timer := time.NewTimer(remaining)
 		defer timer.Stop()
