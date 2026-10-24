@@ -59,8 +59,8 @@ jobs:
           cache: false
       - name: Validate catalog, policy, inventory, and generated docs
         working-directory: scripts/go
-        # The workspace-tooling coverage job below is the single owner of the
-        # complete Go suite, including real-time expiry/recovery contracts.
+        # Workspace coverage below owns the deterministic PR Go suite. The
+        # wall-clock expiry/recovery contract runs in its scheduled workflow.
         run: go run ./rtk-cloud -- test-matrix --policy-only
       - name: Test private Zammad bootstrap safety
         run: python3 tests/bootstrap_zammad_test.py -v

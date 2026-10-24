@@ -55,7 +55,7 @@ jobs:
         run: |
           docker pull postgres:16-alpine
           go test -timeout=20m -count=1 ./rtk-cloud/internal/postgresbackup ./rtk-cloud/internal/recovery ./internal/cloudmonitor
-          # Workspace coverage owns the real-time certificate/CRL expiry test.
+          # The nightly workflow owns the real-time certificate/CRL expiry test.
           # This job validates every other deployment and recovery contract.
           go test -failfast -timeout=180m -count=1 \
             -skip '^TestHistoricalLateBootstrapCompletesFromOriginalSourceAndPairedCRLs$' \

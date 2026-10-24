@@ -53,7 +53,7 @@ func TestWorkspaceValidationRunsBeforeMerge(t *testing.T) {
 	}
 }
 
-func TestPRRunsRealTimeExpiryRecoveryOnlyInWorkspaceCoverage(t *testing.T) {
+func TestPRSkipsRealTimeExpiryRecoveryOwnedByNightlyWorkflow(t *testing.T) {
 	workspace, err := workspaceRoot()
 	if err != nil {
 		t.Fatal(err)
@@ -64,14 +64,21 @@ func TestPRRunsRealTimeExpiryRecoveryOnlyInWorkspaceCoverage(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(backup), "-skip '^"+testName+"$'") {
-		t.Fatal("PostgreSQL backup PR job must leave the real-time expiry recovery contract to workspace coverage")
+		t.Fatal("PostgreSQL backup PR job must leave the real-time expiry recovery contract to nightly CI")
 	}
-	coverage, err := os.ReadFile(filepath.Join(workspace, ".github", "workflows", "go-coverage-governance.yml"))
+	coverage, err := os.ReadFile(filepath.Join(workspace, "scripts", "go", "rtk-cloud", "test_coverage.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(coverage), "-skip '^"+testName+"$'") {
-		t.Fatal("workspace coverage must retain the real-time expiry recovery contract")
+	if !strings.Contains(string(coverage), "-skip=^"+testName+"$") {
+		t.Fatal("workspace PR coverage must skip the wall-clock expiry contract")
+	}
+	nightly, err := os.ReadFile(filepath.Join(workspace, ".github", "workflows", "workspace-expiry-recovery-nightly.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(nightly), "schedule:") || !strings.Contains(string(nightly), "workflow_dispatch:") || !strings.Contains(string(nightly), "-run '^"+testName+"$'") {
+		t.Fatal("nightly workflow must own the exact real-time expiry recovery contract")
 	}
 }
 

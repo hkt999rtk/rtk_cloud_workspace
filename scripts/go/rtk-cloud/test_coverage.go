@@ -554,7 +554,7 @@ func runGoCoverageModuleProfile(workspace, outDir, logPath string, cfg coverageC
 	}
 	args := []string{"test", "-json", "-count=1", "-timeout=" + timeout}
 	if module.Name == "workspace-tooling" {
-		args = append(args, "-failfast")
+		args = append(args, "-failfast", "-skip=^TestHistoricalLateBootstrapCompletesFromOriginalSourceAndPairedCRLs$")
 	}
 	args = append(args, module.Packages...)
 	args = append(args, "-coverprofile="+profilePath)

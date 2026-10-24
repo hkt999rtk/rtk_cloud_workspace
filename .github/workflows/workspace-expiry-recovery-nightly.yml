@@ -1,0 +1,38 @@
+name: Workspace Expiry Recovery Nightly
+
+on:
+  schedule:
+    - cron: "45 16 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: workspace-expiry-recovery-nightly
+  cancel-in-progress: false
+
+jobs:
+  expiry-recovery:
+    name: Real-time certificate and CRL expiry recovery
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          lfs: true
+          submodules: false
+      - name: Initialize workspace submodules
+        env:
+          CI_RUNNER_GITHUB_WORK_KEY: ${{ secrets.CI_RUNNER_GITHUB_WORK_KEY }}
+        run: scripts/ci/init-submodules.sh
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: scripts/go/go.mod
+          cache: false
+      - name: Run original-source expiry and recovery contract
+        working-directory: scripts/go
+        run: >-
+          go test -count=1 -timeout=110m ./rtk-cloud
+          -run '^TestHistoricalLateBootstrapCompletesFromOriginalSourceAndPairedCRLs$'

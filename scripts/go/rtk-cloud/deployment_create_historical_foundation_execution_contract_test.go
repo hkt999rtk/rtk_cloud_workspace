@@ -21,6 +21,37 @@ func historicalOriginalFoundationHooks(t *testing.T) coreExecutionContractHooks 
 	return historicalOriginalFoundationHooksForSession(t, true)
 }
 
+func TestHistoricalOriginalFoundationPreservesAlpineImageRole(t *testing.T) {
+	cfg, bootstrap, _, _ := createServiceRecipeFixture(t, "dev")
+	_, _, release := completeEnvironmentRenderFixture("dev")
+	shared := bootstrap.Image
+	for role := range bootstrap.Images {
+		bootstrap.Images[role] = shared
+	}
+	for role, selected := range release.Images {
+		selected.Reference = shared
+		release.Images[role] = selected
+	}
+	plan := environmentCreatePlan{Release: release}
+
+	historicalOriginalFoundationHooks(t).Configure(&cfg, &plan, &bootstrap)
+	alpine := plan.Release.Images["LKE_ALPINE_IMAGE"].Reference
+	if environmentImageRepository(alpine) != "library/alpine" || bootstrap.Images["LKE_ALPINE_IMAGE"] != alpine || cfg.Values["LKE_ALPINE_IMAGE"] != alpine {
+		t.Fatal("historical recovery fixture lost the controller initializer Alpine image role", alpine)
+	}
+	controller := controllerPermissionFixture("dev")
+	if err := applyControllerIdentityPreparation(controller, plan.Release); err != nil {
+		t.Fatal(err)
+	}
+	initializers := identityPermissionList(environmentPKIPod(controller)["initContainers"])
+	if len(initializers) != 1 {
+		t.Fatal("historical controller listener does not contain its permission initializer")
+	}
+	if err := validateObservedControllerIdentityInitializer(controller, deploymentplan.Map(initializers[0]), plan.Release); err != nil {
+		t.Fatal("historical controller initializer cannot be adopted through its preserved Alpine role", err)
+	}
+}
+
 // The pre-issuance legacy ordering fixture selects absent bootstrap
 // prerequisites before its original foundation is rendered and accepted.
 // Every completed-flow fixture retains the original prerequisite producer.
@@ -51,7 +82,7 @@ func historicalOriginalFoundationHooksForSession(t *testing.T, includeSessionPre
 			for key, value := range map[string]string{"OPENBAO_STORAGE_BACKEND": "file", "OPENBAO_EFFECTIVE_REPLICAS": "1", "OPENBAO_DATA_STORAGE": "10Gi", "OPENBAO_AUDIT_STORAGE": "5Gi", "OPENBAO_POD_MANAGEMENT_POLICY": "OrderedReady", "OPENBAO_UPDATE_STRATEGY": "OnDelete", "DEPLOYMENT_PROTECTION_PROFILE": "standard"} {
 				cfg.Values[key] = value
 			}
-			for _, role := range []string{"LKE_OPENBAO_IMAGE", "LKE_OPENBAO_PKI_IMAGE", "LKE_MQTT_PKI_IMAGE", "LKE_VIDEO_CLOUD_IMAGE", "LKE_POSTGRES_IMAGE", "LKE_INGRESS_IMAGE"} {
+			for _, role := range []string{"LKE_OPENBAO_IMAGE", "LKE_OPENBAO_PKI_IMAGE", "LKE_MQTT_PKI_IMAGE", "LKE_VIDEO_CLOUD_IMAGE", "LKE_POSTGRES_IMAGE", "LKE_ALPINE_IMAGE", "LKE_INGRESS_IMAGE"} {
 				image := bootstrap.Image
 				if role == "LKE_VIDEO_CLOUD_IMAGE" {
 					image = logACKNativeImage
@@ -64,6 +95,17 @@ func historicalOriginalFoundationHooksForSession(t *testing.T, includeSessionPre
 					// This external protocol fixture serves the actual synthetic
 					// manifest bytes under the maintained official repository.
 					image = "registry.k8s.io/ingress-nginx/controller@" + digest
+					cfg.Values[role] = image
+				}
+				if role == "LKE_ALPINE_IMAGE" {
+					_, digest, ok := strings.Cut(image, "@")
+					if !ok {
+						t.Fatal("immutable original Alpine image required")
+					}
+					// Preserve the initializer's semantic image role. Reusing the
+					// application repository makes an otherwise valid retained
+					// permission initializer impossible to adopt after recovery.
+					image = "docker.io/library/alpine@" + digest
 					cfg.Values[role] = image
 				}
 				if role == "LKE_OPENBAO_PKI_IMAGE" {
