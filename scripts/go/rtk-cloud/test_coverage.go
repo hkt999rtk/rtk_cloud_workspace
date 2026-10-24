@@ -21,6 +21,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const historicalWallClockExpirySkipEnv = "RTK_SKIP_HISTORICAL_WALL_CLOCK_EXPIRY"
+
 type coverageConfig struct {
 	SchemaVersion int `yaml:"schema_version"`
 	Differential  struct {

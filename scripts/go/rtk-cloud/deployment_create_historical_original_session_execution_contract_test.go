@@ -17,8 +17,6 @@ import (
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 )
 
-const historicalWallClockExpirySkipEnv = "RTK_SKIP_HISTORICAL_WALL_CLOCK_EXPIRY"
-
 // Pull-request jobs validate deterministic behavior and leave elapsed signed
 // expiry to the dedicated nightly workflow. The signed source is unchanged;
 // this skips the enclosing test before it starts waiting on wall time.
