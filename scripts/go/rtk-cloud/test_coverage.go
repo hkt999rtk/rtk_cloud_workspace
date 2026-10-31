@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -10,12 +11,14 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -558,10 +561,13 @@ func runGoCoverageModuleProfile(workspace, outDir, logPath string, cfg coverageC
 	if module.Name == "workspace-tooling" {
 		args = append(args, "-failfast", "-skip=^(TestHistoricalCoreSourceRetainsTwoOriginalServerRequestIDs|TestHistoricalLateBootstrapCompletesFromOriginalSourceAndPairedCRLs)$")
 	}
+	shardArgs := slices.Clone(args)
 	args = append(args, module.Packages...)
 	args = append(args, "-coverprofile="+profilePath)
 	if profile == "pr" && len(module.CoverPackages) > 0 {
-		args = append(args, "-coverpkg="+strings.Join(module.CoverPackages, ","))
+		coverArg := "-coverpkg=" + strings.Join(module.CoverPackages, ",")
+		args = append(args, coverArg)
+		shardArgs = append(shardArgs, coverArg)
 	}
 	env := goCoverageCommandEnvironment(module)
 	if profile == "pr" {
@@ -572,9 +578,31 @@ func runGoCoverageModuleProfile(workspace, outDir, logPath string, cfg coverageC
 			env[name] = os.Getenv(name)
 		}
 	}
-	commandErr := runCoverageJSONCommand(moduleDir, logPath, eventsPath, env, "go", args...)
+	timingsRel := filepath.ToSlash(filepath.Join(moduleRel, "test-timings.json"))
+	timingsPath := filepath.Join(outDir, filepath.FromSlash(timingsRel))
+	if err := os.Remove(timingsPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	var commandErr error
+	if useWorkspaceCoverageShards(moduleDir, module) {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		commandErr = runGoCoverageShards(ctx, moduleDir, logPath, eventsPath, profilePath, env, shardArgs)
+		stop()
+	} else {
+		// A failed command cannot inherit evidence from an earlier invocation.
+		for _, path := range []string{profilePath, eventsPath, logPath} {
+			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+		}
+		commandErr = runCoverageJSONCommand(moduleDir, logPath, eventsPath, env, "go", args...)
+	}
+	timingsErr := writeGoCoverageTimings(eventsPath, timingsPath)
 	if commandErr != nil && !exists(profilePath) {
 		return fmt.Errorf("Go coverage tests failed before producing a profile: %w", commandErr)
+	}
+	if timingsErr != nil {
+		return fmt.Errorf("write Go test timings: %w", timingsErr)
 	}
 	rawTotal, governedTotal, packages, err := analyzeGoCoverageProfile(profilePath, module, profile)
 	if err != nil {
@@ -647,6 +675,7 @@ func runGoCoverageModuleProfile(workspace, outDir, logPath string, cfg coverageC
 	for kind, rel := range map[string]string{
 		"coverage-profile": profileRel,
 		"go-test-events":   eventsRel,
+		"test-timings":     timingsRel,
 		"unit-inventory":   manifestRel,
 		"junit":            junitRel,
 		"package-report":   packageRel,

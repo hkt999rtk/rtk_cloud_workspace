@@ -93,7 +93,35 @@ reason.
 workspace-owned Go tooling, catalog validity and generated-document drift, and
 repository/submodule status. It does not run every service or product E2E test.
 In pull-request CI, the catalog/policy job uses `test-matrix --policy-only`
-because governed workspace coverage owns the deterministic workspace Go suite.
+because governed workspace coverage is the authoritative pull-request owner of
+the deterministic workspace Go suite. The PostgreSQL Backup Runner workflow
+retains backup, recovery, and Cloud Monitor package qualification with both
+PostgreSQL integration modes enabled, plus its image build. Pull requests also
+run the exact root-package Docker integration test
+`TestPostgresRestoreTunedSourceDocker`; they do not repeat the full `./rtk-cloud`
+suite. The backup workflow's push-to-main and manual publication events retain
+the original complete workspace command, integration flags, and historical
+expiry policy before the image build. Backup workflow and image-source changes
+also select workspace coverage and policy checks for pull requests.
+
+Workspace tooling coverage executes three complementary Go test processes:
+one for each of the two long pull-request checkpoints and one for all remaining
+tests. Their selectors partition the suite without changing its tests, signed
+lifetimes, skip rules, or coverage thresholds. The runner merges their statement
+coverage blocks into one module profile and combines their test events before
+applying the existing inventory and coverage gates. For a reproducible comparison,
+set `RTK_COVERAGE_SERIAL=1` on the same `test-coverage` command to use the original
+single-process execution with the same assertions and gates.
+
+The sharded runner requires `pgrep` (procps on Linux, built in on macOS) to
+clean up its owned descendant processes when canceled. It verifies availability
+before starting children; each shard uses a private OS temporary directory that
+is removed after its processes join, while logs and coverage evidence remain.
+
+The first-stage pull-request latency target is 30–40 minutes. It remains a goal
+until comparable CI runs demonstrate it; the execution layout alone is not
+performance evidence.
+
 Two long recovery contracts are omitted directly. Pull requests retain the
 bounded product-expiry end-to-end path and focused durable recovery checkpoints
 with test-only signed lifetimes. Extended monolithic renewal, runtime correction,
@@ -211,8 +239,17 @@ writes:
     unit-manifest.json
     junit.xml
     test-events.json
+    test-timings.json
     coverage.log
 ```
+
+Each Go module's `test-timings.json` records the observed test-event wall span
+(`event_span_ms`, excluding compilation before the first event), package run
+counts, summed elapsed time, longest run and status, the 20 slowest top-level
+tests with elapsed times and status, and top-level pass/fail/skip counts. Nested
+subtests do not contribute a second duration to those rankings. These
+event-derived metrics do not measure CPU time or distinguish sleep and retry
+time hidden inside a test.
 
 Coverage artifacts are scanned for private keys, bearer tokens, cookies, and
 credential-like JSON values before the run can pass.
