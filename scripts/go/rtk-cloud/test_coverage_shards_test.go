@@ -142,10 +142,10 @@ func roots(t *testing.T) {
   for { entries,err:=os.ReadDir(dir); if err!=nil { t.Fatal(err) }; if len(entries)==3 { break }; if time.Now().After(deadline) { t.Fatal("coverage shards did not execute concurrently") }; time.Sleep(10*time.Millisecond) }
  }
 }
-func TestPRHistoricalLateRootCRLsCompleteDurableCheckpoints(t *testing.T) { roots(t); if first()!=1 { t.Fatal("first") } }
-func TestPRProductPostCleanupCorrectionCompletesDurableCheckpoint(t *testing.T) { roots(t); if second()!=2 { t.Fatal("second") } }
-func TestNewTestAutomaticallyRuns(t *testing.T) { roots(t); if third()!=3 { t.Fatal("third") } }
-func TestHistoricalCoreSourceRetainsTwoOriginalServerRequestIDsNewCase(t *testing.T) { if third()!=3 { t.Fatal("prefix test") } }
+func ` + `TestPRHistoricalLateRootCRLsCompleteDurableCheckpoints` + `(t *testing.T) { roots(t); if first()!=1 { t.Fatal("first") } }
+func ` + `TestPRProductPostCleanupCorrectionCompletesDurableCheckpoint` + `(t *testing.T) { roots(t); if second()!=2 { t.Fatal("second") } }
+func ` + `TestNewTestAutomaticallyRuns` + `(t *testing.T) { roots(t); if third()!=3 { t.Fatal("third") } }
+func ` + `TestHistoricalCoreSourceRetainsTwoOriginalServerRequestIDsNewCase` + `(t *testing.T) { if third()!=3 { t.Fatal("prefix test") } }
 `,
 		"newpackage/fixture.go":      "package extra\nfunc Answer() int { return 42 }\n",
 		"newpackage/fixture_test.go": "package extra\nimport \"testing\"\nfunc TestNewPackageAutomaticallyRuns(t *testing.T) { if Answer()!=42 { t.Fatal(\"answer\") } }\n",
