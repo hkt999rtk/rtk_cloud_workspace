@@ -53,22 +53,84 @@ func TestWorkspaceValidationRunsBeforeMerge(t *testing.T) {
 	}
 }
 
+func TestPostgresBackupWorkflowRetainsFocusedQualificationWithoutWorkspaceSuite(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(workspace, ".github", "workflows", "postgres-backup-image.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var workflow struct {
+		Jobs map[string]struct {
+			Steps []struct {
+				If               string            `yaml:"if"`
+				ContinueOnError  bool              `yaml:"continue-on-error"`
+				WorkingDirectory string            `yaml:"working-directory"`
+				Run              string            `yaml:"run"`
+				Env              map[string]string `yaml:"env"`
+				With             map[string]string `yaml:"with"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(raw, &workflow); err != nil {
+		t.Fatal(err)
+	}
+	packages, rootPR, rootPublish, imageBuild := -1, -1, -1, -1
+	const rootPRCommand = "go test -timeout=20m -count=1 -run '^TestPostgresRestoreTunedSourceDocker$' ./rtk-cloud"
+	const rootPublishCommand = `go test -failfast -timeout=180m -count=1 \
+  -skip '^(TestHistoricalCoreSourceRetainsTwoOriginalServerRequestIDs|TestHistoricalLateBootstrapCompletesFromOriginalSourceAndPairedCRLs)$' \
+  ./rtk-cloud`
+	for i, step := range workflow.Jobs["runner"].Steps {
+		if strings.Contains(step.Run, "go test") {
+			if step.WorkingDirectory != "scripts/go" || step.Env["GOWORK"] != "off" || step.ContinueOnError {
+				t.Fatal("backup qualification must use the isolated Go module and fail closed")
+			}
+			if step.Env["RTK_POSTGRES_BACKUP_INTEGRATION"] != "1" {
+				t.Fatal("backup qualification must enable Docker restore integration")
+			}
+			switch step.If {
+			case "":
+				packages = i
+				for _, word := range strings.Fields(step.Run) {
+					if word == "./rtk-cloud" {
+						t.Fatal("unconditional backup qualification must not duplicate the PR workspace suite")
+					}
+				}
+				if !strings.Contains(step.Run, "docker pull postgres:16-alpine") ||
+					!strings.Contains(step.Run, "go test -timeout=20m -count=1 ./rtk-cloud/internal/postgresbackup ./rtk-cloud/internal/recovery ./internal/cloudmonitor") || step.Env["RTK_POSTGRES_BACKUP_LARGE_INTEGRATION"] != "1" {
+					t.Fatal("every backup event must retain backup, recovery, and monitor package integration")
+				}
+			case "github.event_name == 'pull_request'":
+				rootPR = i
+				if strings.TrimSpace(step.Run) != rootPRCommand {
+					t.Fatal("backup PR root tests must run exactly the Docker tuned-source restore integration")
+				}
+			case "github.event_name != 'pull_request'":
+				rootPublish = i
+				if strings.TrimSpace(step.Run) != rootPublishCommand || step.Env[historicalWallClockExpirySkipEnv] != "1" || step.Env["RTK_POSTGRES_BACKUP_LARGE_INTEGRATION"] != "1" {
+					t.Fatal("push/manual publication must retain its original complete workspace suite and expiry policy")
+				}
+			default:
+				t.Fatalf("unexpected backup qualification condition %q", step.If)
+			}
+		}
+		if step.With["file"] == "cloud_deploy/architectures/kubernetes/postgres-backup/Dockerfile" {
+			imageBuild = i
+		}
+	}
+	if packages < 0 || rootPR <= packages || rootPublish <= packages || imageBuild <= rootPR || imageBuild <= rootPublish {
+		t.Fatal("backup workflow must qualify packages and event-specific root tests before building its image")
+	}
+}
+
 func TestPRBoundsExtendedWallClockExpiryWaitsOwnedByNightlyWorkflow(t *testing.T) {
 	workspace, err := workspaceRoot()
 	if err != nil {
 		t.Fatal(err)
 	}
 	const testPattern = "(TestHistoricalCoreSourceRetainsTwoOriginalServerRequestIDs|TestHistoricalLateBootstrapCompletesFromOriginalSourceAndPairedCRLs)"
-	backup, err := os.ReadFile(filepath.Join(workspace, ".github", "workflows", "postgres-backup-image.yml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(backup), "-skip '^"+testPattern+"$'") {
-		t.Fatal("PostgreSQL backup PR job must leave wall-clock expiry recovery to nightly CI")
-	}
-	if !strings.Contains(string(backup), historicalWallClockExpirySkipEnv+": '1'") {
-		t.Fatal("PostgreSQL backup PR job must skip shared signed-expiry waits")
-	}
 	coverage, err := os.ReadFile(filepath.Join(workspace, "scripts", "go", "rtk-cloud", "test_coverage.go"))
 	if err != nil {
 		t.Fatal(err)

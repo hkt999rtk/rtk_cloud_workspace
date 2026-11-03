@@ -76,7 +76,7 @@ else
   done < <(git diff --name-only "$base_ref" "$head_ref")
   for changed in "${changed_files[@]}"; do
     case "$changed" in
-      scripts/go/*|go.work|go.work.sum|.github/workflows/go-coverage-governance.yml|.github/workflows/workspace-test-baseline.yml|scripts/ci/select-coverage-jobs.sh)
+      scripts/go/*|go.work|go.work.sum|cloud_deploy/architectures/kubernetes/postgres-backup/*|.github/workflows/postgres-backup-image.yml|.github/workflows/go-coverage-governance.yml|.github/workflows/workspace-test-baseline.yml|scripts/ci/select-coverage-jobs.sh)
         add_unique workspace-tooling "${go_modules[@]}"
         policy=true
         ;;

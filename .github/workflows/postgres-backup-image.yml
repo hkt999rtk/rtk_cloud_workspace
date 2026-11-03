@@ -46,7 +46,26 @@ jobs:
         with:
           go-version-file: scripts/go/go.mod
           cache: false
-      - name: Test backup and deployment safety
+      - name: Test backup, recovery, and monitor qualification
+        working-directory: scripts/go
+        env:
+          GOWORK: 'off'
+          RTK_POSTGRES_BACKUP_INTEGRATION: '1'
+          RTK_POSTGRES_BACKUP_LARGE_INTEGRATION: '1'
+        run: |
+          docker pull postgres:16-alpine
+          # Go Coverage Governance owns the complete PR workspace suite.
+          # Keep the backup image's Docker integration qualification here.
+          go test -timeout=20m -count=1 ./rtk-cloud/internal/postgresbackup ./rtk-cloud/internal/recovery ./internal/cloudmonitor
+      - name: Test tuned-source restore integration on pull requests
+        if: github.event_name == 'pull_request'
+        working-directory: scripts/go
+        env:
+          GOWORK: 'off'
+          RTK_POSTGRES_BACKUP_INTEGRATION: '1'
+        run: go test -timeout=20m -count=1 -run '^TestPostgresRestoreTunedSourceDocker$' ./rtk-cloud
+      - name: Test complete deployment safety before publication
+        if: github.event_name != 'pull_request'
         working-directory: scripts/go
         env:
           GOWORK: 'off'
@@ -54,10 +73,6 @@ jobs:
           RTK_POSTGRES_BACKUP_LARGE_INTEGRATION: '1'
           RTK_SKIP_HISTORICAL_WALL_CLOCK_EXPIRY: '1'
         run: |
-          docker pull postgres:16-alpine
-          go test -timeout=20m -count=1 ./rtk-cloud/internal/postgresbackup ./rtk-cloud/internal/recovery ./internal/cloudmonitor
-          # The nightly workflow owns the wall-clock certificate/CRL expiry tests.
-          # This job validates every other deployment and recovery contract.
           go test -failfast -timeout=180m -count=1 \
             -skip '^(TestHistoricalCoreSourceRetainsTwoOriginalServerRequestIDs|TestHistoricalLateBootstrapCompletesFromOriginalSourceAndPairedCRLs)$' \
             ./rtk-cloud

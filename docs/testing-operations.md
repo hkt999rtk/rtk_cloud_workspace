@@ -64,10 +64,31 @@ Fast baseline:
 ```
 
 The pull-request catalog/policy job uses `test-matrix --policy-only`; the
-workspace coverage job runs the deterministic Go suite once. Two connected
-recovery contracts are omitted directly, and any shared fixture that reaches a
-real signed certificate or CRL expiry wait stops there. The scheduled or
-explicitly dispatched nightly workflow runs the complete suite with those waits,
+workspace coverage job is the authoritative owner of the deterministic Go
+suite. Its workspace-tooling runner uses three complementary processes: the two
+long pull-request checkpoints run separately, while the third process runs all
+remaining tests. Coverage counters and test events are combined before the
+existing gates run. Set `RTK_COVERAGE_SERIAL=1` on the same `test-coverage` command
+for a comparison with the original single-process execution and unchanged gates.
+The PostgreSQL Backup Runner retains its focused backup, recovery, monitor, and
+image qualification. Pull requests also run the exact root Docker integration
+`TestPostgresRestoreTunedSourceDocker`, without repeating the full `./rtk-cloud`
+suite. Push-to-main and manual image publication retain their original full
+workspace command, integration flags, and historical expiry policy before the
+image build. Changes to that workflow or image sources select workspace
+coverage and policy for pull requests.
+
+Inspect `coverage/modules/<module>/test-timings.json` in the uploaded module
+evidence for observed test-event wall span (excluding compilation before the
+first event), package run counts and summed/longest elapsed times/status, the
+20 slowest top-level tests, and top-level pass/fail/skip counts. Nested subtest
+durations are not added again. These metrics do not separate CPU, sleep, or
+retry time. The first-stage 30–40 minute pull-request target still requires
+measured CI confirmation.
+
+Two connected recovery contracts are omitted directly, and any shared fixture
+that reaches a real signed certificate or CRL expiry wait stops there. The
+scheduled or explicitly dispatched nightly workflow runs the complete suite with those waits,
 so pull requests do not spend up to an hour waiting on wall-clock expiry.
 
 More complete local validation:
