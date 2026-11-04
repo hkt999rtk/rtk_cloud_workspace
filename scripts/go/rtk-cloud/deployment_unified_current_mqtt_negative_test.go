@@ -89,3 +89,34 @@ func TestCurrentMQTTBindingsSerializedProfileCannotChangeOwnerOrPlacement(t *tes
 		})
 	}
 }
+
+func TestCurrentMQTTBindingsAcceptKubernetesWritableCacheDefaults(t *testing.T) {
+	for _, mode := range []string{"omitted", "read-only", "subpath"} {
+		t.Run(mode, func(t *testing.T) {
+			env, release, live := currentMQTTBindingsFixture(t)
+			for _, object := range live {
+				if deploymentplan.ID(object) != "Deployment/video-cloud-dev-video-cloud/video-cloud-api-pki" {
+					continue
+				}
+				mount := managedNamedField(mqttFoundationPrimary(object)["volumeMounts"], "mqtt-bundle-state")
+				switch mode {
+				case "omitted":
+					delete(mount, "readOnly")
+				case "read-only":
+					mount["readOnly"] = true
+				case "subpath":
+					delete(mount, "readOnly")
+					mount["subPath"] = "different-cache"
+				}
+			}
+			before := deploymentplan.Digest(live)
+			_, err := observeEnvironmentTargetBindings(t.Context(), deploymentConfig{Environment: "dev", Values: env}, release, "upgrade", live)
+			if (err == nil) != (mode == "omitted") {
+				t.Fatalf("unexpected result for %s: %v", mode, err)
+			}
+			if deploymentplan.Digest(live) != before {
+				t.Fatal("observation mutated the original inventory")
+			}
+		})
+	}
+}

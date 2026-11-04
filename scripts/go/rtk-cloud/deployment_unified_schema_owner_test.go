@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 )
 
@@ -467,5 +469,25 @@ func TestSchemaOwnerMaintainedFreshCatalogHasRealProducerAndConsumerEdges(t *tes
 	}
 	if _, err := os.Lstat(store.KubeconfigPath()); !os.IsNotExist(err) {
 		t.Fatal("fresh qualification created native database access material")
+	}
+}
+
+func TestUpgradeRendersPaymentSimulatorWithStartupMigrationDisabled(t *testing.T) {
+	env, _, release := completeEnvironmentRenderFixture("dev")
+	var body deploymentplan.Object
+	if err := yaml.Unmarshal([]byte(lkePaymentSimulatorDeploymentManifest(env)), &body); err != nil {
+		t.Fatal(err)
+	}
+	definitions := []deploymentplan.Definition{{Object: body, Phase: "workload"}}
+	definitions, err := bindEnvironmentInitialSchemaOwner(definitions, "dev", "video-cloud-dev", "upgrade", release, "")
+	if err != nil || len(definitions) != 1 {
+		t.Fatalf("ordinary upgrade changed the schema owner graph: %v", err)
+	}
+	target, err := environmentPaymentSimulatorTarget(deploymentplan.Resource{ID: deploymentplan.ID(body), Desired: definitions[0].Object})
+	if err != nil || target == nil {
+		t.Fatalf("missing selected payment simulator: %v", err)
+	}
+	if err := verifyDeploymentSimulatorMigrationSetting(secretStore{}, *target); err != nil {
+		t.Fatalf("ordinary upgrade must explicitly disable simulator startup migration: %v", err)
 	}
 }

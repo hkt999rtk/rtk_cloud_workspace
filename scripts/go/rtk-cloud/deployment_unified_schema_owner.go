@@ -71,6 +71,22 @@ func environmentBillingSchemaJob(environment, stack string, image environmentRel
 }
 
 func bindEnvironmentInitialSchemaOwner(definitions []deploymentplan.Definition, environment, stack, operation string, release environmentRelease, pullName string, owners ...map[string]string) ([]deploymentplan.Definition, error) {
+	if operation == "upgrade" {
+		// Ordinary upgrades use the separately qualified Billing schema owner.
+		// Keep the simulator from attempting schema writes through its runtime role.
+		for _, definition := range definitions {
+			if definition.Retain || definition.Retire || deploymentplan.ID(definition.Object) != "Deployment/"+stack+"-billing/payment-simulator" {
+				continue
+			}
+			for _, item := range certIssuerObjectList(environmentPKIPod(definition.Object)["containers"]) {
+				container := deploymentplan.Map(item)
+				command := certIssuerObjectList(container["command"])
+				if len(command) > 0 && command[0] == "/rtk-billing-payment-simulator" {
+					setEnvironmentContainerEnv(container, "BILLING_DB_MIGRATE_ON_STARTUP", "false")
+				}
+			}
+		}
+	}
 	if operation != "create" {
 		return definitions, nil
 	}
@@ -178,7 +194,10 @@ func verifyEnvironmentReleaseSchemasForPlan(ctx context.Context, cfg deploymentC
 		return err
 	}
 	images := make([]string, 0, len(release.Images))
-	for _, image := range release.Images {
+	for key, image := range release.Images {
+		if isEnvironmentRetainedDevImage(release, key, image) {
+			continue
+		}
 		if strings.HasPrefix(image.Reference, "ghcr.io/hkt999rtk/") && !strings.Contains(image.Reference, "/rtk_cloud_workspace/postgres-backup@") {
 			images = append(images, image.Reference)
 		}

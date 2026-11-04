@@ -250,6 +250,21 @@ func TestCertIssuerManagedProbeUsesPrivatePipesAndNativeSnapshot(t *testing.T) {
 	}
 }
 
+func TestCertIssuerManagedProbeUsesCurrentIdentityDuringRenewal(t *testing.T) {
+	f := newCertIssuerManagedFixture(t)
+	before := strings.TrimSuffix(f.stateJSON(t), "}") + `,"pending":{"request_id":"pending-request","private_key_pem":"pending-key","csr_pem":"pending-csr"}}`
+	f.write(t, f.state, before, 0600)
+	out, err := f.run(t, map[string]string{"RTK_TEST_NATIVE_PENDING": "1"})
+	if err != nil || !bytes.HasPrefix(out, []byte("HTTP/1.1 400")) {
+		t.Fatalf("current identity could not qualify while renewal is pending: %v %s", err, out)
+	}
+	f.assertPrivateOutput(t, out)
+	after, err := os.ReadFile(f.state)
+	if err != nil || string(after) != before {
+		t.Fatalf("managed identity state changed: %v", err)
+	}
+}
+
 func TestCertIssuerManagedProbeRejectsInvalidStateAndRedactsFailures(t *testing.T) {
 	for _, name := range []string{"malformed", "unknown-field", "duplicate-field", "pending", "domain", "dns-names", "version", "subject", "private-mode", "symlink", "oversized-state", "wrong-environment", "wrong-socket", "digest-mismatch", "native-pending", "native-unknown", "native-error", "rotation", "private-error", "invalid-response", "oversized-stdout", "oversized-stderr"} {
 		t.Run(name, func(t *testing.T) {

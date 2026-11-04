@@ -462,6 +462,12 @@ func compileRenderedEnvironmentDeploymentTarget(ctx context.Context, cfg deploym
 	bindings, backend, store := rendered.Bindings, rendered.Backend, rendered.Store
 	backend.SchemaWorkspace = cfg.Workspace
 	release := rendered.Release
+	if operation == "upgrade" {
+		release, err = bindEnvironmentRetainedDevImages(store, release, live)
+		if err != nil {
+			return nil, err
+		}
+	}
 	configurationDigest := environmentDeploymentSnapshotDigest(ctx, cfg, rendered.Snapshot)
 	nextStep, abortSteps := environmentDeploymentSteps(ctx)
 	defer abortSteps()
@@ -506,6 +512,9 @@ func compileRenderedEnvironmentDeploymentTarget(ctx context.Context, cfg deploym
 	}
 	if err := bindOpenBaoAllocations(definitions, live); err != nil {
 		return nil, environmentCompilationError(err, "deployment.compatibility.openbao", "original OpenBao persistent allocations could not be matched to the target", "verify original OpenBao data/audit claims and immutable allocation compatibility, then repeat preflight")
+	}
+	if err := bindFleetValkeyAllocations(definitions, live, bindings); err != nil {
+		return nil, err
 	}
 	if err := validateEnvironmentPKITransition(definitions, live); err != nil {
 		return nil, err
@@ -661,6 +670,9 @@ func (c *compiledEnvironmentDeployment) FenceInventory(ctx context.Context, plan
 		if currentOwners[id] != uid {
 			return nil, &deploymentplan.Blocker{ID: "deployment.ownership.drift", Resource: id, Cause: "observed original resource owner changed or disappeared", Next: "repeat preflight against the current environment; deployment must not overwrite a replacement owner"}
 		}
+	}
+	if err := verifyEnvironmentRetainedDevImages(c.Store, c.Release, plan, observed); err != nil {
+		return nil, err
 	}
 	if err := plan.CheckWorkloadInventory(live); err != nil {
 		return nil, err

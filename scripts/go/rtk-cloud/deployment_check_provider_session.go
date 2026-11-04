@@ -129,7 +129,8 @@ func (t *deploymentCheckTransport) RoundTrip(req *http.Request) (*http.Response,
 			transient = errors.Is(err, io.EOF) || (errors.As(err, &network) && (network.Timeout() || network.Temporary()))
 		} else if response.StatusCode >= 400 {
 			code = deploymentHTTPCode(response.StatusCode)
-			transient = response.StatusCode == 429 || response.StatusCode == 502 || response.StatusCode == 503 || response.StatusCode == 504
+			transient = response.StatusCode == http.StatusTooManyRequests || response.StatusCode == http.StatusInternalServerError ||
+				response.StatusCode == http.StatusBadGateway || response.StatusCode == http.StatusServiceUnavailable || response.StatusCode == http.StatusGatewayTimeout
 		}
 		trace.record(attempt, code)
 		if safeRetry && transient && attempt == 1 && parent.Err() == nil {

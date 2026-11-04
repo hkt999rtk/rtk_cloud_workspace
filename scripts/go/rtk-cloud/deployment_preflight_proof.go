@@ -389,6 +389,12 @@ func validateEnvironmentPreflightReleaseProofs(proof environmentPreflightProof, 
 		seen[publication.ImageKey] = true
 	}
 	for key, image := range release.Images {
+		if image.RetainedPlanSHA256 != "" {
+			if proof.Operation != "upgrade" || seen[key] || !isEnvironmentRetainedDevImage(release, key, image) {
+				return environmentPreflightProofBlocker("retained dev image does not match its exact owner-only role")
+			}
+			continue
+		}
 		if !immutableEnvironmentImage.MatchString(image.Reference) || strings.HasPrefix(image.Reference, "ghcr.io/hkt999rtk/") && !seen[key] {
 			return environmentPreflightProofBlocker("an immutable selected image lacks its captured exact CI publication proof")
 		}

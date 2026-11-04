@@ -146,6 +146,19 @@ func observeEnvironmentBindings(environment string, release environmentRelease, 
 				binding.PodFields["securityContext"] = value
 			}
 		}
+		if environment == "dev" && ns == b.Stack+"-video-cloud" && name == "video-cloud-api" {
+			// Keep the installed cache access on the exact original dev mount.
+			context := deploymentplan.Map(pod["securityContext"])
+			cacheGroups := certIssuerObjectList(context["supplementalGroups"])
+			claim := managedNamedField(pod["volumes"], "mqtt-bundle-state")
+			app := managedNamedField(pod["containers"], "app")
+			mount := managedNamedField(app["volumeMounts"], "mqtt-bundle-state")
+			if len(cacheGroups) == 1 && cacheGroups[0] == float64(10001) &&
+				deploymentplan.Map(claim["persistentVolumeClaim"])["claimName"] == "video-cloud-api-service-state" &&
+				mount["mountPath"] == "/var/lib/mqtt-trust" && mount["readOnly"] != true && mount["subPath"] == nil && mount["subPathExpr"] == nil {
+				binding.PodFields["securityContext"] = deploymentplan.Object{"supplementalGroups": cacheGroups}
+			}
+		}
 		groups := []string{"containers"}
 		if component == "managed-openbao" || component == "managed-turn" || component == "managed-app-api" || component == "managed-mqtt" || component == "managed-api" || existingMQTTStateConsumer(component, name) || accountManagerSocketConsumer(component, name) || component == "pki-controller" {
 			groups = append(groups, "initContainers")

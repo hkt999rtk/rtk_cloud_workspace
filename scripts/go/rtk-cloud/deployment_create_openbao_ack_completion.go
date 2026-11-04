@@ -177,6 +177,18 @@ func effectiveCreateOpenBaoACKReleaseForInventoryWithCommand(ctx context.Context
 	if proof == nil {
 		return original, nil
 	}
+	image := proof.Recovery.Image.Reference
+	completed, child, err := readCompletedCreateInventoryWorkload(store, cfg.Environment, stack, proof)
+	if err != nil {
+		return environmentRelease{}, err
+	}
+	if completed != nil {
+		id := proof.Recovery.Original.ID
+		image = createOpenBaoInventoryImage(completedCreateInventoryObject(completed, id))
+		if image == "" || child.Owners[id] != proof.Recovery.Original.UID {
+			return bad()
+		}
+	}
 	appOwners, baoOwners := 0, 0
 	for _, object := range live {
 		if deploymentplan.ID(object) == "Deployment/"+stack+"-video-cloud/video-cloud-api-app-pki" {
@@ -189,10 +201,7 @@ func effectiveCreateOpenBaoACKReleaseForInventoryWithCommand(ctx context.Context
 			if deploymentplan.Map(object["metadata"])["uid"] != proof.Recovery.Original.UID {
 				return bad()
 			}
-			pod := environmentPKIPod(object)
-			containers, err := environmentPKINamedFields(pod["containers"])
-			init, initErr := environmentPKINamedFields(pod["initContainers"])
-			if err != nil || initErr != nil || containers["openbao-pki"]["image"] != proof.Recovery.Image.Reference || init["openbao-pki-install"]["image"] != proof.Recovery.Image.Reference {
+			if createOpenBaoInventoryImage(object) != image {
 				return bad()
 			}
 			baoOwners++
@@ -201,10 +210,100 @@ func effectiveCreateOpenBaoACKReleaseForInventoryWithCommand(ctx context.Context
 	if appOwners != 1 || baoOwners != 1 {
 		return bad()
 	}
-	if err := validateCreateCertIssuerPrepareInventory(store, private.CreatePlanSHA256, live); err != nil {
+	if err := validateCreateCertIssuerPrepareInventory(store, private.CreatePlanSHA256, live, completed, child.Owners); err != nil {
 		return environmentRelease{}, err
 	}
+	if completed != nil {
+		// An existing upgrade retains its selected release. The accepted create
+		// image above authenticates the baseline only.
+		return original, nil
+	}
 	return effectiveCreateOpenBaoACKReleaseWithCommand(ctx, cfg, store, private.CreatePlanSHA256, original, run)
+}
+
+// Resolve the installed baseline from the accepted workload of the same archived
+// create execution. An unfinished generation still uses the recovery ACK.
+func readCompletedCreateInventoryWorkload(store secretStore, environment, stack string, proof *createOpenBaoACKCompletion) (*deploymentplan.Plan, deploymentplan.Journal, error) {
+	bad := func(stage string) (*deploymentplan.Plan, deploymentplan.Journal, error) {
+		return nil, deploymentplan.Journal{}, createOpenBaoACKBlock(stage)
+	}
+	base := filepath.Join("deployment/create/openbao-recovery", proof.Review)
+	var owner environmentCreateOwner
+	if createOpenBaoACKCompletionRead(store, filepath.Join(base, "source-owner.json"), &owner) != nil ||
+		owner.Schema != environmentCreateOwnerSchema || owner.Environment != environment || owner.Stack != stack ||
+		owner.PlanSHA256 != proof.Parent || owner.OwnerToken == "" ||
+		filepath.Dir(filepath.Dir(owner.Journal)) != filepath.Join("deployment/create/executions", proof.Parent) ||
+		!strings.HasPrefix(filepath.Base(filepath.Dir(owner.Journal)), "execution-") || filepath.Base(owner.Journal) != "journal.json" {
+		return bad("completed-inventory-owner")
+	}
+	var current environmentCreateJournal
+	if err := createOpenBaoACKCompletionRead(store, owner.Journal, &current); err != nil {
+		return nil, deploymentplan.Journal{}, err
+	}
+	archive := filepath.Join(filepath.Dir(owner.Journal), "owner/owner.json")
+	if current.CompletedAt.IsZero() {
+		if _, err := os.Lstat(filepath.Join(store.Root, archive)); errors.Is(err, os.ErrNotExist) {
+			return nil, deploymentplan.Journal{}, nil
+		}
+		return bad("completed-inventory-journal")
+	}
+	var archived environmentCreateOwner
+	var before environmentCreateJournal
+	if createOpenBaoACKCompletionRead(store, archive, &archived) != nil || deploymentplan.Digest(archived) != deploymentplan.Digest(owner) ||
+		createOpenBaoACKCompletionRead(store, filepath.Join(base, "source-journal.json"), &before) != nil ||
+		!createOpenBaoACKCompletionMembership(before, current, owner) || current.CompletedAt.Before(current.AdmittedAt) ||
+		current.CompletedAt.After(time.Now().UTC()) {
+		return bad("completed-inventory-journal")
+	}
+	verified := createOpenBaoACKCompletionEntry(current, "openbao-host-ack-verified-"+proof.Review)
+	id := "StatefulSet/" + stack + "-secrets/openbao"
+	if proof.Environment != environment || proof.Stack != stack || proof.Recovery.Original.ID != id ||
+		!environmentBootstrapOwnerUUID.MatchString(proof.Recovery.Original.UID) ||
+		verified == nil || verified.Phase != "openbao-host-ack-verification" || !verified.CompletedAt.Equal(proof.CompletedAt) ||
+		verified.IntentSHA256 != activeTransportJournalDigest(proof.Native) ||
+		activeTransportJournalDigest(jsonRawObject(verified.Receipt)) != verified.IntentSHA256 ||
+		proof.Native["statefulset_uid"] != proof.Recovery.Original.UID {
+		return bad("completed-inventory-ack")
+	}
+	for _, entry := range current.Entries {
+		if len(entry.Receipt) == 0 || entry.CompletedAt.Before(entry.StartedAt) {
+			return bad("completed-inventory-journal")
+		}
+	}
+	e := &environmentCreateExecution{Store: store, Journal: current, owner: owner, Directory: filepath.Join(store.Root, filepath.Dir(owner.Journal))}
+	frozen, err := readCreateNormalTailFrozenTarget(store, e)
+	if err != nil {
+		return nil, deploymentplan.Journal{}, err
+	}
+	plan, child, err := readCreateNormalTailWorkloadEffective(store, e, frozen)
+	if err != nil {
+		return nil, deploymentplan.Journal{}, err
+	}
+	if !createOpenBaoACKCompletedChild(plan, child) || plan.Environment != environment || plan.Stack != stack ||
+		plan.CreateParentSHA256 != proof.Parent {
+		return bad("completed-inventory-workload")
+	}
+	return plan, child, nil
+}
+
+func completedCreateInventoryObject(plan *deploymentplan.Plan, id string) deploymentplan.Object {
+	for _, resource := range plan.Resources {
+		if resource.ID == id && deploymentplan.ID(resource.Desired) == id && resource.Action != "retire" {
+			return resource.Desired
+		}
+	}
+	return nil
+}
+
+func createOpenBaoInventoryImage(object deploymentplan.Object) string {
+	pod := environmentPKIPod(object)
+	containers, err := environmentPKINamedFields(pod["containers"])
+	init, initErr := environmentPKINamedFields(pod["initContainers"])
+	image := deploymentplan.String(containers["openbao-pki"]["image"])
+	if err != nil || initErr != nil || !immutableEnvironmentImage.MatchString(image) || init["openbao-pki-install"]["image"] != image {
+		return ""
+	}
+	return image
 }
 
 func publishCreateOpenBaoACKCompletion(ctx context.Context, cfg deploymentConfig, store secretStore, parent, review string, original environmentRelease, ack *createOpenBaoACKRecovery, nativeProof deploymentplan.Object) error {
@@ -370,7 +469,7 @@ func createOpenBaoACKCompletionMembership(before, current environmentCreateJourn
 		j.CompletedAt = time.Time{}
 		return j
 	}
-	if before.Schema != environmentCreateJournalSchema || before.Environment != owner.Environment || before.Stack != owner.Stack || before.PlanSHA256 != owner.PlanSHA256 || before.OwnerToken != owner.OwnerToken || deploymentplan.Digest(identity(before)) != deploymentplan.Digest(identity(current)) || len(current.Entries) < len(before.Entries) || len(current.KubernetesLeases) < len(before.KubernetesLeases) || deploymentplan.Digest(current.KubernetesLeases[:len(before.KubernetesLeases)]) != deploymentplan.Digest(before.KubernetesLeases) {
+	if before.Schema != environmentCreateJournalSchema || before.Environment != owner.Environment || before.Stack != owner.Stack || before.PlanSHA256 != owner.PlanSHA256 || before.OwnerToken != owner.OwnerToken || deploymentplan.Digest(identity(before)) != deploymentplan.Digest(identity(current)) || len(current.Entries) < len(before.Entries) || len(current.KubernetesLeases) < len(before.KubernetesLeases) || len(before.KubernetesLeases) > 0 && deploymentplan.Digest(current.KubernetesLeases[:len(before.KubernetesLeases)]) != deploymentplan.Digest(before.KubernetesLeases) {
 		return false
 	}
 	seen := map[string]bool{}

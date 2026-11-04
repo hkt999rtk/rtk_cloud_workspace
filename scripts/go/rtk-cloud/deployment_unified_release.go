@@ -70,6 +70,10 @@ func environmentReleaseProgressStage(key, step string) string {
 		role = "mqtt-pki"
 	case "LKE_OPENBAO_PKI_IMAGE":
 		role = "openbao-pki"
+	case "LKE_PKI_CONTROLLER_IMAGE":
+		role = "pki-controller"
+	case "LKE_PKI_MANAGEMENT_IMAGE":
+		role = "pki-management"
 	default:
 		for _, source := range lkeServiceImageSources() {
 			if key == source.EnvKey {
@@ -205,6 +209,12 @@ func verifyEnvironmentReleaseWithCommand(ctx context.Context, cfg deploymentConf
 				return environmentReleaseFailure(err, "deployment.release.pull", key, "selected immutable image is unavailable for linux/amd64", environmentReleasePullNext)
 			}
 			pulled[image.Reference] = true
+		}
+		if image.RetainedPlanSHA256 != "" {
+			if !isEnvironmentRetainedDevImage(release, key, image) {
+				return retainedDevImageBlocker(key)
+			}
+			continue
 		}
 		if !strings.HasPrefix(image.Reference, "ghcr.io/hkt999rtk/") {
 			continue

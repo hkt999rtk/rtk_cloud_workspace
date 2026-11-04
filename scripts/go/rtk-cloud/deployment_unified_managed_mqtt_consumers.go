@@ -196,7 +196,13 @@ func bindEnvironmentManagedMQTTConsumersProfile(defs []deploymentplan.Definition
 				c["volumeMounts"] = mergeEnvironmentNamedFields(c["volumeMounts"], []any{deploymentplan.Clone(sourceMounts[role])})
 			}
 			stateVolume := environmentCreateServiceVolume("mqtt-bundle-state", "persistentVolumeClaim", claim)
-			stateMount := environmentCreateServiceMount("mqtt-bundle-state", "/var/lib/mqtt-trust", false)
+			stateMount := deploymentplan.Map(environmentCreateServiceMount("mqtt-bundle-state", "/var/lib/mqtt-trust", false))
+			if current := mounts["mqtt-bundle-state"]; current != nil {
+				// Kubernetes omits false when returning an existing writable mount.
+				if _, explicit := current["readOnly"]; !explicit {
+					delete(stateMount, "readOnly")
+				}
+			}
 			if volumes["mqtt-bundle-state"] != nil && deploymentplan.Digest(volumes["mqtt-bundle-state"]) != deploymentplan.Digest(stateVolume) || mounts["mqtt-bundle-state"] != nil && deploymentplan.Digest(mounts["mqtt-bundle-state"]) != deploymentplan.Digest(stateMount) {
 				return managedMQTTConsumerBlocker(deploymentplan.ID(d.Object), "MQTT CRL cache is not on this consumer's original claim")
 			}
