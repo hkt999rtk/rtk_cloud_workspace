@@ -121,11 +121,11 @@ if ($mode eq 'anonymous') {
 
 sub inspect_state {
     my ($summary, undef, $status) = capture(undef, [], '/app/serviceidentity-bootstrap', 'inspect', $state_path, 'service:account-manager', $root);
-    $status == 0 && $summary =~ /\A\{"subject":"service:account-manager","fingerprint":"[0-9a-f]{64}","public_key_sha256":"[0-9a-f]{64}","root_sha256":"\Q$root\E","state_sha256":"([0-9a-f]{64})","pending":false\}\n?\z/
+    $status == 0 && $summary =~ /\A\{"subject":"service:account-manager","fingerprint":"[0-9a-f]{64}","public_key_sha256":"[0-9a-f]{64}","root_sha256":"\Q$root\E","state_sha256":"([0-9a-f]{64})","pending":(true|false)\}\n?\z/
         or fail('CERTISSUER_MANAGED_IDENTITY_INVALID');
-    return $1;
+    return ($1, $2 eq "true");
 }
-my $before = inspect_state();
+my ($before, $renewing) = inspect_state();
 sysopen(my $state_file, $state_path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
     or fail('CERTISSUER_MANAGED_IDENTITY_INVALID');
 my @info = stat($state_file);
@@ -146,9 +146,12 @@ reap_inputs();
 $hash_status == 0 && $hash =~ /\A\Q$before\E\s+-\n?\z/ or fail('CERTISSUER_MANAGED_STATE_CHANGED');
 
 # Accept only the canonical Go-generated client schema already validated by
-# native inspect. Unknown/pending/server states never select another identity.
+# native inspect. A pending renewal never replaces the installed credential.
 my $string = qr/"(?:[^"\\\x00-\x1f\x7f-\xff]|\\["\\\/bfnrt]|\\u00[0-7][0-9a-fA-F])*"/;
-$raw =~ /\A\s*\{\s*"version"\s*:\s*1\s*,\s*"subject"\s*:\s*"service:account-manager"\s*,\s*"current"\s*:\s*\{\s*"private_key_pem"\s*:\s*($string)\s*,\s*"certificate_chain_pem"\s*:\s*($string)\s*,\s*"installed_at"\s*:\s*$string\s*\}\s*\}\s*\z/
+my $pending = $renewing
+    ? qr/\s*,\s*"pending"\s*:\s*\{\s*"request_id"\s*:\s*$string\s*,\s*"private_key_pem"\s*:\s*$string\s*,\s*"csr_pem"\s*:\s*$string\s*\}/
+    : qr//;
+$raw =~ /\A\s*\{\s*"version"\s*:\s*1\s*,\s*"subject"\s*:\s*"service:account-manager"\s*,\s*"current"\s*:\s*\{\s*"private_key_pem"\s*:\s*($string)\s*,\s*"certificate_chain_pem"\s*:\s*($string)\s*,\s*"installed_at"\s*:\s*$string\s*\}$pending\s*\}\s*\z/
     or fail('CERTISSUER_MANAGED_IDENTITY_INVALID');
 my ($key_json, $cert_json) = ($1, $2);
 sub decode_string {
@@ -174,7 +177,8 @@ if ($status != 0) {
     fail('CERTISSUER_TLS_HANDSHAKE_FAILED') if $diagnostic =~ /ssl.*alert|tls.*alert|handshake failure/i;
     fail('CERTISSUER_MANAGED_TRANSPORT_FAILED');
 }
-inspect_state() eq $before or fail('CERTISSUER_MANAGED_STATE_CHANGED');
+my ($after) = inspect_state();
+$after eq $before or fail('CERTISSUER_MANAGED_STATE_CHANGED');
 $response =~ /\AHTTP\/1\.[01] \d{3}/ or fail('CERTISSUER_MANAGED_RESPONSE_INVALID');
 alarm 0;
 print $response;

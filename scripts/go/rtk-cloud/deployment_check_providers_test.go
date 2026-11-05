@@ -773,3 +773,30 @@ wait
 		t.Fatal("Docker child survived process-group cancellation")
 	}
 }
+
+func TestProviderInternalServerErrorRetriesReadsOnly(t *testing.T) {
+	for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodPost} {
+		t.Run(method, func(t *testing.T) {
+			calls := 0
+			checker := providerTestChecker(func(req *http.Request) (*http.Response, error) {
+				calls++
+				if calls == 1 {
+					return providerTestResponse(http.StatusInternalServerError, ""), nil
+				}
+				return providerTestResponse(http.StatusOK, ""), nil
+			}).withCheckContext(t.Context())
+			req, err := http.NewRequest(method, "https://fixture.test/resource", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = checker.request(req)
+			wantCalls := 2
+			if method == http.MethodPost {
+				wantCalls = 1
+			}
+			if calls != wantCalls || (err == nil) != (wantCalls == 2) {
+				t.Fatalf("calls=%d, want=%d, error=%v", calls, wantCalls, err)
+			}
+		})
+	}
+}

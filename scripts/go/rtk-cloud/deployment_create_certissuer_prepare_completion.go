@@ -312,7 +312,7 @@ func certIssuerPrepareReleaseOverlay(original environmentRelease, image environm
 
 // Current native owner/image is checked separately from the historical complete
 // body: a later qualified same-key session may change its literal SID only.
-func validateCreateCertIssuerPrepareInventory(store secretStore, parent string, live []deploymentplan.Object) error {
+func validateCreateCertIssuerPrepareInventory(store secretStore, parent string, live []deploymentplan.Object, completed *deploymentplan.Plan, owners map[string]string) error {
 	proof, err := readCreateCertIssuerPrepareCompletion(store, parent)
 	if err != nil {
 		return err
@@ -342,6 +342,14 @@ func validateCreateCertIssuerPrepareInventory(store secretStore, parent string, 
 	if foundOriginal != 1 {
 		return certIssuerPrepareCompletionBlock("inventory-original-certissuer")
 	}
+	image := proof.Recovery.Image.Reference
+	if completed != nil {
+		containers, err := environmentPKINamedFields(environmentPKIPod(completedCreateInventoryObject(completed, id))["containers"])
+		image = deploymentplan.String(containers["certissuer"]["image"])
+		if err != nil || len(containers) != 1 || !immutableEnvironmentImage.MatchString(image) || owners[id] != uid {
+			return certIssuerPrepareCompletionBlock("inventory-completed-certissuer")
+		}
+	}
 	found := 0
 	for _, object := range live {
 		if deploymentplan.ID(object) != id {
@@ -350,7 +358,7 @@ func validateCreateCertIssuerPrepareInventory(store secretStore, parent string, 
 		found++
 		metadata := deploymentplan.Map(object["metadata"])
 		containers, err := environmentPKINamedFields(environmentPKIPod(object)["containers"])
-		if metadata["uid"] != uid || metadata["deletionTimestamp"] != nil || err != nil || len(containers) != 1 || containers["certissuer"] == nil || containers["certissuer"]["image"] != proof.Recovery.Image.Reference {
+		if metadata["uid"] != uid || metadata["deletionTimestamp"] != nil || err != nil || len(containers) != 1 || containers["certissuer"] == nil || containers["certissuer"]["image"] != image {
 			return certIssuerPrepareCompletionBlock("inventory-current-certissuer")
 		}
 	}

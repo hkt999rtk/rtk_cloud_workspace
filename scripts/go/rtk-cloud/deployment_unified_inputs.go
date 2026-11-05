@@ -21,9 +21,10 @@ type environmentRelease struct {
 	Images            map[string]environmentReleaseImage `json:"images"`
 }
 type environmentReleaseImage struct {
-	Reference       string                              `json:"reference"`
-	SourceRevision  string                              `json:"source_revision,omitempty"`
-	OTARegistration *environmentOTARegistrationManifest `json:"ota_registration,omitempty"`
+	Reference          string                              `json:"reference"`
+	SourceRevision     string                              `json:"source_revision,omitempty"`
+	RetainedPlanSHA256 string                              `json:"retained_plan_sha256,omitempty"`
+	OTARegistration    *environmentOTARegistrationManifest `json:"ota_registration,omitempty"`
 }
 
 var immutableEnvironmentImage = regexp.MustCompile(`^[a-z0-9][a-z0-9./:_-]*@sha256:[a-f0-9]{64}$`)

@@ -2303,10 +2303,14 @@ and `PKI_MANAGEMENT_IMAGE=<qualified immutable dev digest>` as separate `0600`
 files under `~/.config/rtk_cloud/dev/operator/env/`. Retain the separately
 qualified `PKI_CONTROLLER_IMAGE` override when ordinary rendering must preserve
 the existing Controller-only correction. These dev-only image overrides use a
-scoped rollout followed by standard FULL runtime health. Formal whole-deployment
-release preflight still requires CI/gitlink provenance and may reject these
-local dev digests. The ordinary scoped review must show the one existing Account Manager Deployment UID and the reviewed
-public-file/socket recipe. Apply through the ordinary scoped plan and journal;
+scoped rollout followed by standard FULL runtime health. An ordinary full dev
+upgrade can retain either installed image only on its original Deployment UID
+and named container. Preflight compares the live and planned digests with the
+accepted scoped plan and journal under `deployment/rollback/<planSHA>/`, binds
+that evidence to the selected release, and confirms the image can still be
+pulled. New images and other consumers require formal CI and gitlink
+provenance. The ordinary scoped review must show the one existing Account
+Manager Deployment UID and the reviewed public-file/socket recipe. Apply through the ordinary scoped plan and journal;
 retain its exact baseline, known owner and retry receipts. This profile neither
 creates a CA nor mounts the sidecar's private identity PVC in the app.
 

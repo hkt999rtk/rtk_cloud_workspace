@@ -278,7 +278,7 @@ func TestCreateCertIssuerPreparePublisherCannotRunBeforeNativeAcceptanceOrWithou
 }
 
 func TestCreateCertIssuerPrepareInventoryRequiresExactOriginalNativeOwnerAndRoleImage(t *testing.T) {
-	for _, mode := range []string{"original", "sid-only", "uid", "image", "missing", "duplicate", "extra-container", "ambiguous-name", "terminating", "unrelated-matching-image", "changed-plan", "changed-child-journal"} {
+	for _, mode := range []string{"original", "sid-only", "uid", "image", "missing", "duplicate", "extra-container", "ambiguous-name", "terminating", "unrelated-matching-image", "changed-plan", "changed-child-journal", "completed-image", "completed-stale-image", "completed-wrong-owner"} {
 		t.Run(mode, func(t *testing.T) {
 			f, _ := prepareCertIssuerPublicationFixture(t)
 			core, plan, j := certIssuerPrepareAcceptedFixture(t)
@@ -298,7 +298,22 @@ func TestCreateCertIssuerPrepareInventoryRequiresExactOriginalNativeOwnerAndRole
 			current := deploymentplan.Clone(original.Desired)
 			deploymentplan.Map(current["metadata"])["uid"] = original.UID
 			live := []deploymentplan.Object{current}
+			var completed *deploymentplan.Plan
+			var owners map[string]string
 			switch mode {
+			case "completed-image", "completed-stale-image", "completed-wrong-owner":
+				accepted := original
+				accepted.Desired = deploymentplan.Clone(original.Desired)
+				newImage := "ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api@sha256:" + strings.Repeat("9", 64)
+				mqttFoundationPrimary(accepted.Desired)["image"] = newImage
+				completed = &deploymentplan.Plan{Resources: []deploymentplan.Resource{accepted}}
+				owners = map[string]string{original.ID: original.UID}
+				if mode != "completed-stale-image" {
+					mqttFoundationPrimary(current)["image"] = newImage
+				}
+				if mode == "completed-wrong-owner" {
+					owners[original.ID] = "44444444-4444-4444-8444-444444444444"
+				}
 			case "sid-only":
 				fields, _ := environmentPKINamedFields(mqttFoundationPrimary(current)["env"])
 				fields["PKI_BOOTSTRAP_SESSION_ID"]["value"] = "11111111-1111-4111-8111-111111111111"
@@ -327,14 +342,14 @@ func TestCreateCertIssuerPrepareInventoryRequiresExactOriginalNativeOwnerAndRole
 				j.Accepted = false
 				write(filepath.Join("deployment/rollback", proof.AcceptedPlanSHA, "journal.json"), j)
 			}
-			err := validateCreateCertIssuerPrepareInventory(f.store, f.parent, live)
-			if (err == nil) != (mode == "original" || mode == "sid-only") {
+			err := validateCreateCertIssuerPrepareInventory(f.store, f.parent, live, completed, owners)
+			if (err == nil) != (mode == "original" || mode == "sid-only" || mode == "completed-image") {
 				t.Fatal("unqualified current native role selected", mode, err)
 			}
 		})
 	}
 	f, _ := prepareCertIssuerPublicationFixture(t)
-	if validateCreateCertIssuerPrepareInventory(f.store, f.parent, nil) != nil {
+	if validateCreateCertIssuerPrepareInventory(f.store, f.parent, nil, nil, nil) != nil {
 		t.Fatal("unexecuted image selection requires an overlay")
 	}
 }

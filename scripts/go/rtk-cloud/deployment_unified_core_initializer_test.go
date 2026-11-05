@@ -64,3 +64,44 @@ func TestCoreMQTTStateInitializerRetainsExistingTrustAcrossEnvironments(t *testi
 		})
 	}
 }
+
+func TestCoreMQTTUpgradePreservesInstalledLegacyCacheGroup(t *testing.T) {
+	_, _, release := completeEnvironmentRenderFixture("dev")
+	for _, tc := range []struct {
+		name, claim string
+		group       float64
+		want        bool
+	}{
+		{"approved-cache", "video-cloud-api-service-state", 10001, true},
+		{"foreign-claim", "foreign", 10001, false},
+		{"foreign-group", "video-cloud-api-service-state", 42, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			current := deploymentplan.Object{
+				"apiVersion": "apps/v1", "kind": "Deployment",
+				"metadata": deploymentplan.Object{"name": "video-cloud-api", "namespace": "video-cloud-dev-video-cloud", "uid": "original-api"},
+				"spec": deploymentplan.Object{"template": deploymentplan.Object{"spec": deploymentplan.Object{
+					"securityContext": deploymentplan.Object{"supplementalGroups": []any{tc.group}},
+					"volumes":         []any{deploymentplan.Object{"name": "mqtt-bundle-state", "persistentVolumeClaim": deploymentplan.Object{"claimName": tc.claim}}},
+					"containers": []any{deploymentplan.Object{
+						"name": "app", "image": release.Images["LKE_VIDEO_CLOUD_IMAGE"].Reference,
+						"volumeMounts": []any{deploymentplan.Object{"name": "mqtt-bundle-state", "mountPath": "/var/lib/mqtt-trust"}},
+					}},
+				}}},
+			}
+			bindings, err := observeEnvironmentBindings("dev", release, []deploymentplan.Object{current})
+			if err != nil {
+				t.Fatal(err)
+			}
+			target := deploymentplan.Clone(current)
+			delete(environmentPKIPod(target), "securityContext")
+			if err := applyEnvironmentPodBindings(target, bindings, release); err != nil {
+				t.Fatal(err)
+			}
+			got := deploymentplan.Map(environmentPKIPod(target)["securityContext"])
+			if (deploymentplan.Digest(got) == deploymentplan.Digest(deploymentplan.Object{"supplementalGroups": []any{float64(10001)}})) != tc.want {
+				t.Fatalf("rendered unexpected supplemental groups: %v", got)
+			}
+		})
+	}
+}

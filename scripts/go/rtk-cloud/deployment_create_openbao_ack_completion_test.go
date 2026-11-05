@@ -330,3 +330,66 @@ func TestCreateOpenBaoACKInventoryOverlayRequiresOriginalNativeAllocation(t *tes
 		})
 	}
 }
+
+func TestCreateOpenBaoACKInventoryUsesCompletedWorkload(t *testing.T) {
+	for _, scenario := range []string{"accepted", "stale-ack", "wrong-init-image", "wrong-owner", "wrong-archive", "unaccepted-workload"} {
+		t.Run(scenario, func(t *testing.T) {
+			f := newCreateOpenBaoACKCompletionFixture(t)
+			if err := f.publish(t); err != nil {
+				t.Fatal(err)
+			}
+			live := createOpenBaoACKInventoryFixture(t, f)
+			installed := "ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-openbao-pki@sha256:" + strings.Repeat("f", 64)
+			setImage := func(object deploymentplan.Object, group, role, image string) {
+				managedNamedField(environmentPKIPod(object)[group], role)["image"] = image
+			}
+			setImage(live[3], "containers", "openbao-pki", installed)
+			setImage(live[3], "initContainers", "openbao-pki-install", installed)
+			resource := f.ack.Candidate.Resources[0]
+			resource.Desired = deploymentplan.Clone(live[3])
+			p := &deploymentplan.Plan{Version: deploymentplan.Version, Inputs: deploymentplan.Inputs{
+				Environment: f.owner.Environment, Stack: f.owner.Stack, Operation: "create", CreateParentSHA256: f.owner.PlanSHA256,
+			}, Resources: []deploymentplan.Resource{resource}}
+			at := f.current.Entries[len(f.current.Entries)-1].CompletedAt.Add(time.Second)
+			f.addStage(t, "workload", p, at)
+			child := deploymentplan.Journal{PlanSHA256: p.SHA256(), Accepted: scenario != "unaccepted-workload", AcceptanceStarted: true, Completed: []string{resource.ID}, Owners: map[string]string{resource.ID: resource.UID}}
+			f.write(t, filepath.Join("deployment/rollback", p.SHA256(), "journal.json"), child)
+			f.current.KubernetesLeases = []deploymentplan.LeaseOwner{{Holder: p.SHA256() + ":workload"}}
+			f.current.CompletedAt = at
+			f.write(t, f.owner.Journal, f.current)
+			archived := f.owner
+			if scenario == "wrong-archive" {
+				archived.OwnerToken = strings.Repeat("f", 64)
+			}
+			dir := filepath.Dir(f.owner.Journal)
+			f.write(t, filepath.Join(dir, "owner/owner.json"), archived)
+			f.write(t, filepath.Join(dir, "normal-tail-target.json"), createNormalTailTarget{
+				Schema: createNormalTailTargetSchema, ParentSHA256: f.owner.PlanSHA256, OwnerSHA256: deploymentplan.Digest(f.owner),
+				Plan: p, Pins: map[string]string{"test": f.owner.PlanSHA256},
+			})
+			switch scenario {
+			case "stale-ack":
+				setImage(live[3], "containers", "openbao-pki", f.ack.Image.Reference)
+				setImage(live[3], "initContainers", "openbao-pki-install", f.ack.Image.Reference)
+			case "wrong-init-image":
+				setImage(live[3], "initContainers", "openbao-pki-install", f.ack.Image.Reference)
+			case "wrong-owner":
+				deploymentplan.Map(live[3]["metadata"])["uid"] = "22222222-2222-4222-8222-222222222222"
+			}
+			selected := f.original
+			selected.WorkspaceRevision = strings.Repeat("e", 40)
+			before := createOpenBaoACKStoreSnapshot(t, f.image.store)
+			got, err := effectiveCreateOpenBaoACKReleaseForInventoryWithCommand(t.Context(), f.image.cfg, f.image.store, selected, live, f.image.command(t))
+			if scenario == "accepted" {
+				if err != nil || deploymentplan.Digest(got) != deploymentplan.Digest(selected) {
+					t.Fatalf("completed workload must validate the installed digest and retain the selected release: %v", err)
+				}
+			} else if err == nil {
+				t.Fatal("invalid completed workload or inventory was accepted")
+			}
+			if !reflect.DeepEqual(before, createOpenBaoACKStoreSnapshot(t, f.image.store)) {
+				t.Fatal("checking completed evidence modified the private store")
+			}
+		})
+	}
+}
