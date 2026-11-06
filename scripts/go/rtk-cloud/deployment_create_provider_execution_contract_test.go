@@ -138,8 +138,8 @@ func providerExecutionContractFork(t *testing.T, e *environmentCreateExecution, 
 	p := environmentCreateProviderRecoveryPlan{Schema: "rtk-cloud.provider-create-recovery-plan/v1", RecoveryProfile: profile, OriginalPlanSHA256: e.Journal.PlanSHA256, OriginalJournal: e.owner.Journal, OriginalJournalSHA256: deploymentplan.Digest(e.Journal), OriginalOwnerSHA256: deploymentplan.Digest(e.owner), CheckerSHA256: deploymentplan.Digest("isolated checker"), KubeconfigSHA256: kubeSHA, Plan: plan, Receipts: receipts}
 	sha := deploymentplan.Digest(p)
 	q := deploymentplan.Qualification{PlanSHA256: sha, Decision: "GO"}
-	for _, id := range environmentCreateRequiredGates {
-		q.Gates = append(q.Gates, deploymentplan.GateResult{ID: id, Status: "PASS", Required: true, EvidenceSHA256: deploymentplan.Digest("isolated provider gate:" + id)})
+	for _, id := range environmentProviderRecoveryRequiredGates {
+		q.Gates = append(q.Gates, deploymentplan.GateResult{ID: id, Status: "PASS", Required: true, EvidenceSHA256: sha})
 	}
 	artifact := environmentCreateProviderRecoveryArtifact{Schema: "rtk-cloud.provider-create-recovery-artifact/v1", Plan: p, Qualification: q, QualifiedAt: now, ValidUntil: now.Add(time.Hour)}
 	if err := e.Store.write(filepath.Join("deployment/create/recovery", sha, "qualification.json"), mustProviderRecoveryJSON(artifact), false); err != nil {

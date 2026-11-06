@@ -123,9 +123,25 @@ func TestDeviceMQTTCallbackQualificationChecksOriginalPublicCA(t *testing.T) {
 }
 
 func TestNativeDeviceCallbackRequiresOriginalManagedCallerAdmission(t *testing.T) {
-	_, p, _, _, service, definitions := createdNativeInventoryFixture(t, "dev")
+	cfg, p, release, _, service, definitions := createdNativeInventoryFixture(t, "dev")
 	id := "Deployment/" + p.Stack + "-video-cloud/video-cloud-api-pki"
 	original := createRecipeObject(t, definitions, id)
+	device := deploymentplan.Clone(original)
+	deploymentplan.Map(device["metadata"])["uid"] = "original-device-api"
+	for _, mode := range []string{"false", "true"} {
+		app := mqttFoundationPrimary(device)
+		app["env"] = mergeEnvironmentNamedFields(app["env"], environmentCreateEnv(map[string]string{"VIDEO_CLOUD_MQTT_ENABLED": mode}))
+		bindings, err := observeEnvironmentBindings(cfg.Environment, release, []deploymentplan.Object{device})
+		if err != nil || len(bindings.Pods) != 1 || bindings.Pods[0].DeviceMQTTCallbackOnly != (mode == "false") {
+			t.Fatal("Device API did not observe its original MQTT role", err)
+		}
+		values := environmentCreateProviderValues(cfg)
+		values["VIDEO_CLOUD_MQTT_ENABLED"] = "true"
+		target, err := renderManagedEnvironmentAPI(values, bindings.Pods[0])
+		if err != nil || mqttFoundationEnv(mqttFoundationPrimary(target), "VIDEO_CLOUD_MQTT_ENABLED") != mode {
+			t.Fatal("steady Device API renderer changed its original MQTT role", err)
+		}
+	}
 	ca := createRecipeObject(t, definitions, "ConfigMap/"+p.Stack+"-video-cloud/pki-create-mqtt-callback-ca")
 	if deploymentplan.Map(ca["data"])["ca.crt"] != service.Root.Certificate {
 		t.Fatal("fresh callback borrowed another domain's trust instead of its actual enrolled Service Root")

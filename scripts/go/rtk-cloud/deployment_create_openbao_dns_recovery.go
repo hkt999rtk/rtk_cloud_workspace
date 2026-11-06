@@ -119,8 +119,12 @@ func environmentCreateIssuerIntentSHA(request environmentCreateIssuerRequest) (s
 }
 
 func originalOpenBaoRootCRL(store secretStore, e *environmentCreateExecution, root environmentCreateRegisteredIssuer) (string, error) {
+	return originalCreateRootCRLFile(store, e, root, "openbao_tls")
+}
+
+func originalCreateRootCRLFile(store secretStore, e *environmentCreateExecution, root environmentCreateRegisteredIssuer, domain string) (string, error) {
 	for _, v := range e.Journal.Entries {
-		if v.Key == "pki-initial-root-crl-openbao_tls" && v.State == "completed" {
+		if v.Key == "pki-initial-root-crl-"+domain && v.State == "completed" {
 			var receipt struct {
 				Issuer string `json:"issuer_id"`
 				File   string `json:"crl_file"`
@@ -140,5 +144,5 @@ func originalOpenBaoRootCRL(store secretStore, e *environmentCreateExecution, ro
 			return filepath.ToSlash(receipt.File), nil
 		}
 	}
-	return "", createProviderRecoveryBlock("original active OpenBao Root CRL receipt differs")
+	return "", createProviderRecoveryBlock("original active Root CRL receipt differs")
 }

@@ -478,14 +478,30 @@ func executeEnvironmentCreateWithRuntime(ctx context.Context, cfg deploymentConf
 		}
 		bootstrapCtx = context.WithValue(bootstrapCtx, environmentCreatePublicTLSKey{}, plan.PublicTLS)
 	}
-	compiled, err := compileCreatedEnvironmentTarget(bootstrapCtx, cfg, plan, store, bindings, execution.Journal.PlanSHA256)
-	if err != nil {
-		return err
-	}
 	workload := createOpenBaoACKCompletionEntry(execution.Journal, "kubernetes/workload")
+	var compiled *compiledEnvironmentDeployment
+	if r := runtime.ServiceAuthorizationRecovery; r != nil && r.ManagedHosts != nil && r.ManagedHosts.ApplicationsAccepted && workload != nil && workload.State != "completed" {
+		recorded, _, err := readStagingWorkloadAllocationCheckpoint(store, execution)
+		if err != nil {
+			return err
+		}
+		if recorded != nil {
+			compiled = &compiledEnvironmentDeployment{Plan: recorded, Release: plan.Release, Bindings: bindings, Backend: runtime.Backend, Store: store, Configuration: cfg}
+		}
+	}
+	if compiled == nil {
+		compiled, err = compileCreatedEnvironmentTarget(bootstrapCtx, cfg, plan, store, bindings, execution.Journal.PlanSHA256)
+		if err != nil {
+			return err
+		}
+	}
 	var originalWorkload *deploymentplan.Plan
 	if workload != nil {
-		originalWorkload, err = readEnvironmentCreateStageInput(store, execution, "workload")
+		stage, err := freshCreateWorkloadStage(store, execution)
+		if err != nil {
+			return err
+		}
+		originalWorkload, err = readEnvironmentCreateStageInput(store, execution, stage)
 		if err != nil {
 			return err
 		}
@@ -495,7 +511,7 @@ func executeEnvironmentCreateWithRuntime(ctx context.Context, cfg deploymentConf
 				return err
 			}
 		}
-		journal, exists, readErr := readEnvironmentCreateStageProgress(store, execution, "workload", originalWorkload)
+		journal, exists, readErr := readEnvironmentCreateStageProgress(store, execution, stage, originalWorkload)
 		if readErr != nil {
 			return readErr
 		}
@@ -515,6 +531,10 @@ func executeEnvironmentCreateWithRuntime(ctx context.Context, cfg deploymentConf
 	if err != nil {
 		return err
 	}
+	return finishEnvironmentCreateRouting(bootstrapCtx, cfg, plan, receipts, store, operator, execution, compiled, out)
+}
+
+func finishEnvironmentCreateRouting(bootstrapCtx context.Context, cfg deploymentConfig, plan *environmentCreatePlan, receipts map[string]environmentCreateProviderReceipt, store secretStore, operator map[string]string, execution *environmentCreateExecution, compiled *compiledEnvironmentDeployment, out io.Writer) error {
 	if err := configureEnvironmentCreateExternalDataPlanes(bootstrapCtx, cfg, plan, receipts, store, operator, execution); err != nil {
 		return err
 	}

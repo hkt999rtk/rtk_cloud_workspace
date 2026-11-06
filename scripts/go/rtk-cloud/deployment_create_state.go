@@ -279,7 +279,7 @@ func loadEnvironmentCreateAdmittedGeneration(store secretStore, parent, artifact
 	recoveryPath := filepath.Join(store.Root, "deployment/create/recovery", parent, "qualification.json")
 	if _, err := os.Lstat(recoveryPath); err == nil {
 		var artifact environmentCreateProviderRecoveryArtifact
-		if readExecutionJSON(recoveryPath, &artifact) != nil || artifact.Schema != "rtk-cloud.provider-create-recovery-artifact/v1" || deploymentplan.Digest(artifact.Plan) != parent || deploymentplan.Digest(artifact) != artifactSHA || artifact.Qualification.PlanSHA256 != parent || artifact.Qualification.Decision != "GO" || !environmentCreateQualificationGatesValid(artifact.Qualification) {
+		if readExecutionJSON(recoveryPath, &artifact) != nil || artifact.Schema != "rtk-cloud.provider-create-recovery-artifact/v1" || deploymentplan.Digest(artifact.Plan) != parent || deploymentplan.Digest(artifact) != artifactSHA || artifact.Qualification.PlanSHA256 != parent || artifact.Qualification.Decision != "GO" || artifact.Plan.Plan.Environment != store.Environment || artifact.Plan.Plan.Stack != "video-cloud-"+store.Environment || !environmentProviderRecoveryGatesValid(artifact.Qualification, parent) {
 			return plan, "", environmentCreateStateBlock("admitted provider recovery qualification is unavailable or changed")
 		}
 		return artifact.Plan.Plan, artifact.Plan.Plan.ConfigurationSHA256, nil

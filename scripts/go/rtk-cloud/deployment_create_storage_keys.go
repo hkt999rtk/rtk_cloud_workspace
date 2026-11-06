@@ -122,7 +122,7 @@ func establishProviderRecoveryStorageKeys(ctx context.Context, cfg deploymentCon
 		if err != nil {
 			return err
 		}
-		label := "rtk-cloud-dev-new-" + item.purpose + "-" + original[:16]
+		label := "rtk-cloud-" + cfg.Environment + "-new-" + item.purpose + "-" + original[:16]
 		request, err := json.Marshal(map[string]any{"label": label, "bucket_access": []map[string]string{{"bucket_name": item.target.Bucket, "region": item.target.Region, "permissions": "read_write"}}})
 		if err != nil {
 			return err
@@ -197,7 +197,7 @@ func establishProviderRecoveryStorageKeys(ctx context.Context, cfg deploymentCon
 	if err := old.Check(ctx); err != nil {
 		return err
 	}
-	manifest := map[string]any{"environment": "dev", "original_plan_sha256": original, "validated_at": time.Now().UTC(), "keys": evidence, "old_keys_revoked": false}
+	manifest := map[string]any{"environment": cfg.Environment, "original_plan_sha256": original, "validated_at": time.Now().UTC(), "keys": evidence, "old_keys_revoked": false}
 	if err := store.write(filepath.Join(base, "verified-promotion-intent.json"), mustProviderRecoveryJSON(manifest), true); err != nil {
 		return err
 	}

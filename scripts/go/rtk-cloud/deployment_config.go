@@ -170,6 +170,8 @@ func runDeployment(args []string) error {
 			return runCreateNormalTailRuntimeSourceCapture(args[1:])
 		case "recover-create-provider":
 			return runEnvironmentCreateProviderRecovery(args[1:])
+		case "recover-create-service-authorization":
+			return runCreateServiceAuthorizationRecovery(args[1:])
 		case "recover-create-foundation":
 			return runEnvironmentCreateFoundationRecovery(args[1:])
 		case "recover-create-service-root-crl-installed":

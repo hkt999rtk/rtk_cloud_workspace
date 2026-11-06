@@ -68,6 +68,9 @@ func withEnvironmentRenderInputs(cfg deploymentConfig, store secretStore, releas
 	if err := projectVideoStorageRenderInputs(cfg, snapshot.MediaStorage, values); err != nil {
 		return err
 	}
+	if snapshot.MediaStorage.Version != 0 && !lkeVideoStorageCoreCutoverEnabled(values) {
+		projectCoreMediaAllocation(values, snapshot.MediaStorage)
+	}
 	return withEnvironmentRenderValues(store, release, snapshot, values, render)
 }
 
@@ -412,9 +415,13 @@ func renderEnvironmentDeploymentTarget(ctx context.Context, cfg deploymentConfig
 	var definitions []deploymentplan.Definition
 	var runtimeDependencies []deploymentplan.Definition
 	nextStep("deployment.renderer.target")
+	catalogBindings, err := freshProductCatalogBindings(ctx, cfg, store, bindings)
+	if err != nil {
+		return nil, err
+	}
 	err = withEnvironmentRenderInputs(cfg, store, release, snapshot, func(values map[string]string) error {
 		var err error
-		definitions, err = renderEnvironmentResources(values, bindings, release, support)
+		definitions, err = renderEnvironmentResources(values, catalogBindings, release, support)
 		if err == nil {
 			runtimeDependencies, err = renderEnvironmentRuntimeDependencyDefinitions(values, snapshot.Secrets, snapshot.Operator)
 			definitions = append(definitions, runtimeDependencies...)
@@ -441,6 +448,14 @@ func renderEnvironmentDeploymentTarget(ctx context.Context, cfg deploymentConfig
 	definitions, err = bindFreshProductTargetDefinitions(ctx, cfg, store, bindings, definitions)
 	if err != nil {
 		return nil, err
+	}
+	if runtime, ok := ctx.Value(environmentCreateBootstrapRuntimeKey{}).(environmentCreateBootstrapRuntime); ok && runtime.ServiceAuthorizationRecovery != nil {
+		bindCreateServiceAuthorizationController(definitions, release.Stack, runtime.ServiceAuthorizationRecovery.ControllerImage)
+		if runtime.ServiceAuthorizationRecovery.SingleAPIOwner {
+			for _, definition := range definitions {
+				bindStagingSingleAPIOwner(definition.Object, release.Stack)
+			}
+		}
 	}
 	nextStep("")
 	return &renderedEnvironmentTarget{Snapshot: snapshot, Definitions: definitions, RuntimeDependencies: runtimeDependencies, Live: live, Bindings: bindings, Backend: backend, Store: store, Release: release}, nil
@@ -514,6 +529,9 @@ func compileRenderedEnvironmentDeploymentTarget(ctx context.Context, cfg deploym
 		return nil, environmentCompilationError(err, "deployment.compatibility.openbao", "original OpenBao persistent allocations could not be matched to the target", "verify original OpenBao data/audit claims and immutable allocation compatibility, then repeat preflight")
 	}
 	if err := bindFleetValkeyAllocations(definitions, live, bindings); err != nil {
+		return nil, err
+	}
+	if err := bindPlatformDataAllocation(definitions, live, bindings, "postgresql", "PostgreSQL"); err != nil {
 		return nil, err
 	}
 	if err := validateEnvironmentPKITransition(definitions, live); err != nil {

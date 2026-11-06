@@ -93,6 +93,7 @@ func finalizeEnvironmentCreateServiceSession(ctx context.Context, client *enviro
 		return finishManagedLatePostNativeCleanup(ctx, cfg, store, runtime, s)
 	}
 	key := environmentCreateServiceFinalizationKey(runtime)
+	stagingRecovery := cfg.Environment == "staging" && runtime.ServiceAuthorizationRecovery != nil && key == "service-session-finalize"
 	intent, _ := json.Marshal(deploymentplan.Object{"session_id": s.BootstrapSessionID, "issuer_id": s.Intermediate.ID, "cleanup_binding": s.CleanupBinding})
 	if managedLateTerminalFinalizerRequested(runtime) {
 		if err := verifyManagedLateTerminalFinalizerMutation(ctx, cfg, store, runtime); err != nil {
@@ -112,11 +113,16 @@ func finalizeEnvironmentCreateServiceSession(ctx context.Context, client *enviro
 				}
 			}
 		}
-		if runtime.ProductIdentityScope != "" && createOpenBaoACKCompletionEntry(runtime.Execution.Journal, key) != nil {
-			entry := createOpenBaoACKCompletionEntry(runtime.Execution.Journal, key)
+		entry := createOpenBaoACKCompletionEntry(runtime.Execution.Journal, key)
+		if entry != nil && (runtime.ProductIdentityScope != "" || stagingRecovery) {
 			sha, _ := environmentCreatePlanSHA256(intent)
 			if entry.Phase != "bootstrap" || entry.State != "pending" || len(entry.Receipt) != 0 || entry.IntentSHA256 != sha {
 				return environmentCreateBootstrapBlocker("original product finalization intent changed or has an unreconciled receipt")
+			}
+			if stagingRecovery {
+				if err := qualifyStagingSealedFinalization(ctx, cfg, p, runtime, s); err != nil {
+					return err
+				}
 			}
 		} else if err := runtime.Execution.BeginEntry(key, "bootstrap", intent, time.Now().UTC()); err != nil {
 			return err
@@ -132,7 +138,16 @@ func finalizeEnvironmentCreateServiceSession(ctx context.Context, client *enviro
 			break
 		}
 		var rejected *environmentCreatePKIHTTPFailure
-		if !errors.As(err, &rejected) || rejected.Status != http.StatusConflict {
+		if !errors.As(err, &rejected) {
+			return err
+		}
+		if rejected.Status == http.StatusForbidden && stagingRecovery && attempt == 0 {
+			if err := qualifyStagingSealedFinalization(ctx, cfg, p, runtime, s); err != nil {
+				return err
+			}
+			continue
+		}
+		if rejected.Status != http.StatusConflict {
 			return err
 		}
 		if attempt >= 1 {
@@ -336,4 +351,50 @@ func environmentCreatePolicyNames(runtime environmentCreateBootstrapRuntime, suf
 	}
 	slices.Sort(names)
 	return names
+}
+
+// A Staging finalizer response can reject an immediate CRL read after the
+// native session has already sealed and committed its own revocation. Only
+// that exact irreversible progress authorizes resuming the same finalizer.
+func qualifyStagingSealedFinalization(ctx context.Context, cfg deploymentConfig, p environmentCreateBootstrapPlan, runtime environmentCreateBootstrapRuntime, s environmentCreateServiceCeremony) error {
+	bad := environmentCreateBootstrapBlocker("staging pending finalizer lacks the original sealed session and exact published revocation")
+	if cfg.Environment != "staging" || runtime.Execution == nil || runtime.ServiceAuthorizationRecovery == nil ||
+		!environmentBootstrapOwnerUUID.MatchString(s.BootstrapSessionID) || !environmentBootstrapOwnerUUID.MatchString(s.Intermediate.ID) {
+		return bad
+	}
+	stage, err := freshCreateWorkloadStage(runtime.Execution.Store, runtime.Execution)
+	if err != nil {
+		return err
+	}
+	if _, _, err := acceptedCreateStage(runtime.Execution.Store, runtime.Execution, "kubernetes/"+stage); err != nil {
+		return err
+	}
+	consumers, err := managedTransportServiceConsumerIDs(findEnvironmentCreateDomainPolicy(p, "service").Consumers)
+	if err != nil {
+		return err
+	}
+	query := "SELECT json_build_object('sealed',s.status='sealed','complete',s.subjects <@ s.installed_subjects,'root',s.root_sha256,'digest',r.crl_digest,'expires_at',c.next_update) FROM pki_deployment_bootstrap_sessions s JOIN pki_service_client_revocations r ON r.fingerprint=s.bootstrap_fingerprint AND r.issuer_id=s.issuer_id AND r.reason='deployment bootstrap finalized' LEFT JOIN pki_crls c ON c.issuer_id=r.issuer_id AND c.digest=r.crl_digest WHERE s.environment='staging' AND s.session_id='" + s.BootstrapSessionID + "' AND s.issuer_id='" + s.Intermediate.ID + "'"
+	check, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+	for {
+		raw, err := readEnvironmentCreateRegistryJSON(check, cfg, runtime, query)
+		var state struct {
+			Sealed   bool      `json:"sealed"`
+			Complete bool      `json:"complete"`
+			Root     string    `json:"root"`
+			Digest   string    `json:"digest"`
+			Expiry   time.Time `json:"expires_at"`
+		}
+		if err != nil || decodeEnvironmentJSON(raw, &state) != nil || !state.Sealed || !state.Complete || state.Root != s.Root.RootFingerprint {
+			return bad
+		}
+		if environmentPreflightDigest.MatchString(state.Digest) && state.Expiry.After(time.Now().UTC()) {
+			return waitEnvironmentCreateCRLAcks(ctx, cfg, runtime, s.Intermediate.ID, state.Digest, consumers)
+		}
+		select {
+		case <-check.Done():
+			return bad
+		case <-time.After(2 * time.Second):
+		}
+	}
 }

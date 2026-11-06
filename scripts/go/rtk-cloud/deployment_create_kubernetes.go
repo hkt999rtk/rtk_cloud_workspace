@@ -13,10 +13,11 @@ import (
 
 type environmentCreateKubernetesBackend struct {
 	environmentKubernetesBackend
-	execution       *environmentCreateExecution
-	cfg             deploymentConfig
-	store           secretStore
-	stagePlanSHA256 string
+	execution            *environmentCreateExecution
+	cfg                  deploymentConfig
+	store                secretStore
+	stagePlanSHA256      string
+	initialBillingCreate bool
 }
 
 func (b environmentCreateKubernetesBackend) initialOpenBaoWaitResource(ctx context.Context, resource deploymentplan.Resource) (deploymentplan.Resource, error) {
@@ -207,10 +208,8 @@ func createEnvironmentRetainStorageClass(ctx context.Context, cfg deploymentConf
 	// An already supplied class is verified and retained, never relabeled or
 	// adopted. Its original native UID is evidence of the capability actually used.
 	receipt, _ := json.Marshal(deploymentplan.Object{"resource_id": id, "uid": deploymentplan.Map(current["metadata"])["uid"], "policy_sha256": deploymentplan.Digest(deploymentplan.Object{"provisioner": current["provisioner"], "reclaimPolicy": current["reclaimPolicy"], "volumeBindingMode": current["volumeBindingMode"], "allowVolumeExpansion": current["allowVolumeExpansion"]})})
-	if current != nil {
-		if err := execution.RecordReceipt(id, receipt); err != nil {
-			return err
-		}
+	if err := execution.RecordReceipt(id, receipt); err != nil {
+		return err
 	}
 	return execution.CompleteEntry(id, time.Now().UTC())
 }
@@ -239,7 +238,19 @@ func applyEnvironmentCreateStage(ctx context.Context, cfg deploymentConfig, stor
 			return unsealEnvironmentCreateOpenBaoRestart(ctx, cfg, store, runtime, pod)
 		}
 	}
-	backend := environmentCreateKubernetesBackend{environmentKubernetesBackend: native, execution: execution, cfg: cfg, store: store}
+	isWorkload := stage == "workload" || strings.HasPrefix(stage, stagingWorkloadAllocationPrefix) || strings.HasPrefix(stage, stagingWorkloadRuntimePrefix)
+	backend := environmentCreateKubernetesBackend{environmentKubernetesBackend: native, execution: execution, cfg: cfg, store: store, initialBillingCreate: isWorkload}
+	if stage == "transport-managed-hosts" {
+		id := "StatefulSet/" + parent.Stack + "-secrets/openbao"
+		current, err := native.Read(ctx, id)
+		_, owners, originalErr := acceptedCreateStage(store, execution, "kubernetes/foundation")
+		if err != nil || originalErr != nil || current == nil || !environmentBootstrapOwnerUUID.MatchString(owners.Owners[id]) || deploymentplan.Map(current["metadata"])["uid"] != owners.Owners[id] {
+			return environmentCreateBootstrapBlocker("managed OpenBao cutover requires its original accepted StatefulSet allocation")
+		}
+		if err := bindOpenBaoAllocations(definitions, []deploymentplan.Object{current}); err != nil {
+			return err
+		}
+	}
 	inputs := deploymentplan.Inputs{Environment: cfg.Environment, Stack: parent.Stack, Operation: "scoped", ConfigurationSHA256: parent.ConfigurationSHA256, ReleaseSHA256: deploymentplan.Digest(parent.Release), BindingsSHA256: environmentCreateStageBindingsSHA(stage, definitions)}
 	plan, err := readEnvironmentCreateStageInput(store, execution, stage)
 	if err != nil {
@@ -257,7 +268,14 @@ func applyEnvironmentCreateStage(ctx context.Context, cfg deploymentConfig, stor
 		if err != nil {
 			return err
 		}
-		plan, err = deploymentplan.Compile(inputs, definitions, live)
+		// The complete workload is recompiled from the verified target.
+		// Its retained owners may include native claim-template PVCs without
+		// stack labels. Carry their exact target UIDs into this child compile.
+		var adoptions map[string]string
+		if isWorkload {
+			adoptions = retainedCreateWorkloadAdoptions(definitions)
+		}
+		plan, err = deploymentplan.Compile(inputs, definitions, live, adoptions)
 		if err != nil {
 			return err
 		}
@@ -277,7 +295,6 @@ func applyEnvironmentCreateStage(ctx context.Context, cfg deploymentConfig, stor
 		}
 		return nil
 	}
-	qualify := func(ctx context.Context, p *deploymentplan.Plan) error { return fence(ctx, p) }
 	accept := func(ctx context.Context, p *deploymentplan.Plan) error {
 		if err := backend.CheckParentExecution(ctx, p, store.Root); err != nil {
 			return err
@@ -306,9 +323,30 @@ func applyEnvironmentCreateStage(ctx context.Context, cfg deploymentConfig, stor
 			return environmentRuntimeImageDigests(ctx, store, image)
 		}, ownerProof...)
 	}
-	return executeEnvironmentCreateStagePlan(ctx, store, execution, stage, plan, backend, qualify, fence, accept, func(ctx context.Context) error {
+	var phaseFences []deploymentplan.PhaseFence
+	if isWorkload {
+		phaseFences = append(phaseFences, func(ctx context.Context, p *deploymentplan.Plan) (map[string]deploymentplan.Object, error) {
+			if err := fence(ctx, p); err != nil {
+				return nil, err
+			}
+			objects, err := native.Inventory(ctx, parent.Stack)
+			if err != nil {
+				return nil, err
+			}
+			observed := make(map[string]deploymentplan.Object, len(objects))
+			for _, object := range objects {
+				id := deploymentplan.ID(object)
+				if observed[id] != nil {
+					return nil, environmentCreateBootstrapBlocker("native workload phase returned duplicate owner inventory")
+				}
+				observed[id] = object
+			}
+			return observed, nil
+		})
+	}
+	return executeEnvironmentCreateStagePlan(ctx, store, execution, stage, plan, backend, fence, fence, accept, func(ctx context.Context) error {
 		return captureEnvironmentCreateVolumeOwners(ctx, cfg, native, execution)
-	}, out)
+	}, out, phaseFences...)
 }
 
 func environmentRedisTargetPodOwners(store secretStore, plan *deploymentplan.Plan) (map[string]string, error) {
@@ -320,6 +358,19 @@ func environmentRedisTargetPodOwners(store secretStore, plan *deploymentplan.Pla
 		return nil, targetWorkloadBlocker(plan.Resources[0].ID, "standalone Redis helper original write owner is unavailable")
 	}
 	return journal.Owners, nil
+}
+
+func retainedCreateWorkloadAdoptions(definitions []deploymentplan.Definition) map[string]string {
+	owners := map[string]string{}
+	for _, definition := range definitions {
+		if definition.Retain {
+			uid := deploymentplan.String(deploymentplan.Map(definition.Object["metadata"])["uid"])
+			if environmentBootstrapOwnerUUID.MatchString(uid) {
+				owners[deploymentplan.ID(definition.Object)] = uid
+			}
+		}
+	}
+	return owners
 }
 
 func environmentCreateStageBindingsSHA(stage string, definitions []deploymentplan.Definition) string {

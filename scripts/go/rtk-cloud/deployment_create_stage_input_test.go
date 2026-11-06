@@ -160,3 +160,26 @@ func TestCreateOriginalRoutingContextRequiresTheSameHeldExecution(t *testing.T) 
 		})
 	}
 }
+
+func TestCreateWorkloadCarriesOnlyRetainedUnlabeledOwners(t *testing.T) {
+	_, e, initial, _ := freshStageFixture(t)
+	uid := "11111111-1111-4111-8111-111111111111"
+	claim := deploymentplan.Object{"apiVersion": "v1", "kind": "PersistentVolumeClaim", "metadata": deploymentplan.Object{
+		"namespace": e.Journal.Stack + "-platform", "name": "data-postgresql-0", "uid": uid,
+	}}
+	definitions := []deploymentplan.Definition{{Object: deploymentplan.Clone(claim), Phase: "storage", Retain: true}}
+	adoptions := retainedCreateWorkloadAdoptions(definitions)
+	plan, err := deploymentplan.Compile(initial.Inputs, definitions, []deploymentplan.Object{claim}, adoptions)
+	if err != nil || len(plan.Resources) != 1 || plan.Resources[0].UID != uid || plan.Resources[0].Action != "retain" {
+		t.Fatal("workload child lost the original unlabeled storage owner", err)
+	}
+	foreign := deploymentplan.Clone(claim)
+	deploymentplan.Map(foreign["metadata"])["uid"] = "22222222-2222-4222-8222-222222222222"
+	if _, err := deploymentplan.Compile(initial.Inputs, definitions, []deploymentplan.Object{foreign}, adoptions); err == nil {
+		t.Fatal("a replacement with the same claim name was accepted")
+	}
+	definitions[0].Retain = false
+	if len(retainedCreateWorkloadAdoptions(definitions)) != 0 {
+		t.Fatal("an update gained retained-owner adoption")
+	}
+}

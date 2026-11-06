@@ -139,6 +139,29 @@ func newFreshProductPreparationFixture(t *testing.T) (*productProtocolFixture, *
 
 func TestProductIdentityFreshPreparationsRetireBeforeTargetCompileAndRestore(t *testing.T) {
 	f, l, installed, bindings, apply := newFreshProductPreparationFixture(t)
+	catalog := bindings
+	catalog.Pods = []environmentPodBindings{{Kind: "Deployment", NamespaceSuffix: "video-cloud", Name: "unrelated", Component: "existing-workload"}}
+	preparations, err := productPreparationDefinitions(f.cfg, f.store, f.e, l, installed, false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range preparations {
+		name := deploymentplan.String(deploymentplan.Map(d.Object["metadata"])["name"])
+		catalog.Pods = append(catalog.Pods, environmentPodBindings{Kind: "Deployment", NamespaceSuffix: "video-cloud", Name: name, Component: "existing-workload"})
+	}
+	catalogCtx := withEnvironmentCreateBootstrapRuntime(t.Context(), f.runtime)
+	resolved, err := freshProductCatalogBindings(catalogCtx, f.cfg, f.store, catalog)
+	if err != nil || len(resolved.Pods) != 1 || resolved.Pods[0].Name != "unrelated" || len(catalog.Pods) != 7 {
+		t.Fatal("ordinary rendering must defer exactly the accepted preparation owners", err)
+	}
+	firstID := deploymentplan.ID(preparations[0].Object)
+	uid := catalog.Owners[firstID]
+	catalog.Owners[firstID] = "ffffffff-ffff-4fff-8fff-ffffffffffff"
+	if _, err = freshProductCatalogBindings(catalogCtx, f.cfg, f.store, catalog); err == nil {
+		t.Fatal("ordinary renderer deferred an unverified replacement")
+	}
+	catalog.Owners[firstID] = uid
+
 	_, _, release := completeEnvironmentRenderFixture("dev")
 	before, _ := readEnvironmentCreateStageInput(f.store, f.e, "workload")
 	writes := f.b.writes

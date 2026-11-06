@@ -484,7 +484,10 @@ func managedLateAdmittedStaleObservation(stale []createServiceSessionObserved, o
 
 func managedLateCompletedCredentialRetirement(ctx context.Context, cfg deploymentConfig, runtime environmentCreateBootstrapRuntime, s environmentCreateServiceCeremony, namespace string) (bool, error) {
 	if runtime.ServiceSessionRecovery == nil || runtime.ServiceSessionRecovery.ManagedLateSession == nil {
-		return false, nil
+		if cfg.Environment != "staging" || runtime.ServiceAuthorizationRecovery == nil || runtime.Execution == nil ||
+			createOpenBaoACKCompletionEntry(runtime.Execution.Journal, "service-session-finalize") == nil {
+			return false, nil
+		}
 	}
 	e := runtime.Execution
 	uid := s.CredentialUIDs[namespace]

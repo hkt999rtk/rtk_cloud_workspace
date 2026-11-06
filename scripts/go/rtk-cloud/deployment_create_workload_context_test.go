@@ -17,7 +17,8 @@ import (
 )
 
 // Isolate only native/bootstrap, compilation and later provider I/O. The real
-// create orchestration and its workload apply context execute unchanged.
+// create orchestration, its routing continuation and workload apply context
+// execute unchanged. Both function bodies participate in the native-I/O overlay.
 func TestCreateWorkloadCarriesOriginalUnsealRuntime(t *testing.T) {
 	workspace, err := workspaceRoot()
 	if err != nil {
@@ -35,8 +36,13 @@ func TestCreateWorkloadCarriesOriginalUnsealRuntime(t *testing.T) {
 	}
 	start, end := 0, 0
 	for _, decl := range parsed.Decls {
-		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "executeEnvironmentCreateWithRuntime" {
-			start, end = set.Position(fn.Body.Pos()).Offset, set.Position(fn.Body.End()).Offset
+		if fn, ok := decl.(*ast.FuncDecl); ok {
+			switch fn.Name.Name {
+			case "executeEnvironmentCreateWithRuntime":
+				start = set.Position(fn.Body.Pos()).Offset
+			case "finishEnvironmentCreateRouting":
+				end = set.Position(fn.Body.End()).Offset
+			}
 		}
 	}
 	if start == 0 || end <= start {

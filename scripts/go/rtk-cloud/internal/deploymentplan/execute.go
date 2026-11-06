@@ -848,7 +848,7 @@ func (p *Plan) execute(ctx context.Context, backend Backend, expectedDigest, pri
 	}
 	verify := func() error {
 		emitProgress("", "verification")
-		if err := p.Verify(ctx, backend); err != nil {
+		if err := p.verify(ctx, backend, journal.Owners); err != nil {
 			journal.Failed = "deployment.post-deploy"
 			var blocker *Blocker
 			if errors.As(err, &blocker) && blocker.Resource != "" {
@@ -898,16 +898,6 @@ func (p *Plan) execute(ctx context.Context, backend Backend, expectedDigest, pri
 		return err
 	}
 	emitProgress("", "ownership")
-	for _, resource := range p.Resources {
-		if resource.Action == "retire" {
-			continue
-		}
-		id, owner := resource.ID, journal.Owners[resource.ID]
-		actual, err := backend.Read(ctx, id)
-		if err != nil || owner == "" || String(Map(actual["metadata"])["uid"]) != owner {
-			return preserveReadBlocker(err, blocked("deployment.ownership", id, "recorded owner changed after rollout", "inspect the private journal; do not adopt a replacement implicitly"))
-		}
-	}
 	if err := lease.Check(ctx); err != nil {
 		return blocked("deployment.execution.lease", "", "cluster execution ownership changed before completion", "reconcile actual state and the execution journal before completing deployment")
 	}
@@ -1104,6 +1094,11 @@ func (p *Plan) ReconcileOutcome(ctx context.Context, backend Backend, journal Jo
 }
 
 func (p *Plan) Verify(ctx context.Context, backend Backend) error {
+	return p.verify(ctx, backend, nil)
+}
+
+// Verify the desired body and recorded write owner from the same live read.
+func (p *Plan) verify(ctx context.Context, backend Backend, owners map[string]string) error {
 	for _, resource := range p.Resources {
 		if resource.Action != "retire" && String(resource.Desired["kind"]) == "PersistentVolumeClaim" {
 			if err := backend.Wait(ctx, resource); err != nil {
@@ -1119,6 +1114,9 @@ func (p *Plan) Verify(ctx context.Context, backend Backend) error {
 		}
 		if err != nil || current == nil || !Matches(resource.Desired, current) {
 			return preserveReadBlocker(err, blocked("deployment.post-deploy", resource.ID, "actual resource does not match the qualified desired state", "inspect workload health and the private rollout journal before recovery"))
+		}
+		if owners != nil && (owners[resource.ID] == "" || String(Map(current["metadata"])["uid"]) != owners[resource.ID]) {
+			return blocked("deployment.ownership", resource.ID, "recorded owner changed after rollout", "inspect the private journal; do not adopt a replacement implicitly")
 		}
 		if resource.UID != "" && String(Map(current["metadata"])["uid"]) != resource.UID {
 			return blocked("deployment.ownership", resource.ID, "owner changed after rollout", "inspect ownership; do not adopt a replacement implicitly")

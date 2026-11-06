@@ -7149,6 +7149,14 @@ spec:
 }
 
 func lkeVideoCloudWorkersSecretManifest(env map[string]string) string {
+	return lkeVideoCloudWorkersRuntimeManifest(env, lkeAccountManagerHandoffWorkerEnabled(env))
+}
+
+func lkeVideoCloudWorkersRuntimeManifest(env map[string]string, brokerAPI bool) string {
+	var key, secret string
+	if brokerAPI {
+		key, secret = lkeRuntimeSecretValue("emqx-handoff-api-key"), lkeRuntimeSecretValue("emqx-handoff-api-secret")
+	}
 	return fmt.Sprintf(`apiVersion: v1
 kind: Secret
 metadata:
@@ -7171,7 +7179,7 @@ stringData:
   VIDEO_CLOUD_EMQX_API_SECRET: %q
   VIDEO_CLOUD_LOGGER_TOKEN: %q
   VIDEO_CLOUD_BILLING_USAGE_LOGGER_TOKEN: %q
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("postgres"), lkeRuntimeSecretValue("turn-registry-node-auth"), lkeRuntimeSecretValue("mqtt-usage-ingest"), lkeHandoffRuntimeValue(env, lkeMQTTUsageHandoffToken()), lkeHandoffRuntimeValue(env, lkeMQTTUsageSettlementToken()), lkeBillingInternalToken(), lkeHandoffRuntimeValue(env, lkeRuntimeSecretValue("emqx-handoff-api-key")), lkeHandoffRuntimeValue(env, lkeRuntimeSecretValue("emqx-handoff-api-secret")), lkeRuntimeSecretValue("cloud-logger-ingest-token"), lkeRuntimeSecretValue("cloud-logger-billing-usage-token"))
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("postgres"), lkeRuntimeSecretValue("turn-registry-node-auth"), lkeRuntimeSecretValue("mqtt-usage-ingest"), lkeHandoffRuntimeValue(env, lkeMQTTUsageHandoffToken()), lkeHandoffRuntimeValue(env, lkeMQTTUsageSettlementToken()), lkeBillingInternalToken(), key, secret, lkeRuntimeSecretValue("cloud-logger-ingest-token"), lkeRuntimeSecretValue("cloud-logger-billing-usage-token"))
 }
 
 func lkeCloudLoggerRuntimeSecretManifest(env map[string]string) string {

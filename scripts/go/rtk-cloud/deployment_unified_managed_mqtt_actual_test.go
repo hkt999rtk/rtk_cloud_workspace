@@ -40,6 +40,10 @@ func actualManagedMQTTConsumersEnrollmentFixture(t *testing.T, environment strin
 		t.Fatal(err)
 	}
 	api := createRecipeObject(t, final, "Deployment/"+p.Stack+"-video-cloud/video-cloud-api-pki")
+	// This fixture exercises an existing Device API that publishes to MQTT.
+	// Fresh bootstrap itself runs the Device API in callback-only mode.
+	app := mqttFoundationPrimary(api)
+	app["env"] = mergeEnvironmentNamedFields(app["env"], environmentCreateEnv(map[string]string{"VIDEO_CLOUD_MQTT_ENABLED": "true"}))
 	deploymentplan.Map(api["metadata"])["uid"] = "11111111-1111-4111-8111-111111111111"
 	observed, err := observeEnvironmentBindings(environment, release, []deploymentplan.Object{api})
 	if err != nil || len(observed.Pods) != 1 {

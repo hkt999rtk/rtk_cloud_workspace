@@ -1414,9 +1414,64 @@ fence to repeat allocation or use retired full provision as a fallback.
 See [`staging-from-scratch.md`](staging-from-scratch.md) for the older test/bootstrap
 history, not an alternate create path or current qualification evidence.
 
-### Recover a provider-only dev create failure
+### Resume staging after an interrupted Service intermediate authorization
 
-If the original dev create allocated all reviewed provider resources and published
+Use the original stopped create parent when the Service Root and its initial CRL
+are complete, the intermediate reservation is recorded, and the only pending
+entry is authorization. The script verifies the original provider allocations,
+release, storage, DNS, OpenBao, Kubernetes trust and live approved operation. It
+archives the stopped journal before recording the native issuer readback and
+resumes the original bootstrap. A transient issuer read failure is retried
+within the request deadline. Authorization and reservation are single writes.
+The Controller repair image must come from the exact CI release of an isolated
+transport fix. The script keeps the original Deployment owners and updates the
+two bootstrap listeners running the Controller executable through staged
+admission before reconciling the issuer.
+
+```sh
+scripts/deploy-environment.sh recover-create-service-authorization \
+  --environment staging --confirm video-cloud-staging \
+  --parent-plan-sha256 <stopped-create-parent-sha256> \
+  --controller-source <formal-video-cloud-repair-sha> --timeout <remaining-window>
+```
+
+If that continuation reaches Service enrollment and stops, use the same command
+with `--resume-enrollment` and a bounded continuation window. It verifies the
+original active session and its recorded Secret owners. For a terminal first
+enrollment Job blocked on a shared volume attachment, the script checks that
+the original Pod never ran and that the registry has no issuance for it. It
+preserves the original failed Job and runs a distinct forward stage with
+same-node scheduling for Jobs that share a `ReadWriteOnce` claim.
+
+When diagnosing a stopped MQTT Root trust stage, check both the CSI volume
+attachment and the Service identity owner. Two Pods can attach one
+`ReadWriteOnce` claim on the same node. A Service identity manager holds an
+exclusive lock on its state path for its lifetime, so each active replica needs
+its own identity state. Verify the original ready Root and recorded API and
+claim owners before preparing a topology correction for this checkpoint.
+
+At the verified staging checkpoint with both placement attempts recorded,
+`--resume-mqtt-root --single-api-owner` selects one replica per existing API
+identity for the rest of that create execution. If the temporary transport will
+expire during the bounded run, this command uses the original serving keys
+with freshly signed temporary transport certificates. It verifies the original
+OpenBao Pod and reloads its existing process before restarting the two provider
+consumers. The managed Roots and existing storage are carried forward.
+
+If both native server-enrollment Jobs have completed and managed-host
+server dry-run stopped before writing, use `--resume-managed-hosts
+--single-api-owner`. The recovery verifies the active issuer records and
+original OpenBao owner, then binds the original claim templates before
+admitting the managed host cutover. The rest of bootstrap uses the same
+single-replica selection. The same command can also continue the fully written
+staging application checkpoint when native logs and exact original resource
+owners confirm the missing Core media settings and blank MQTT sweep
+credentials. It binds the recorded bucket coordinates and the API credentials
+already installed in EMQX, then resumes the original bootstrap.
+
+### Recover a provider-only create failure
+
+If the original dev or staging create allocated all reviewed provider resources and published
 its canonical kubeconfig, but stopped at storage privacy validation before any
 storage canary or Kubernetes/PKI bootstrap write, qualify a separate recovery:
 
@@ -1428,7 +1483,10 @@ scripts/deploy-environment.sh recover-create-provider --environment dev \
 
 This narrow profile requires the original executor to be stopped, every allocation
 receipt complete, the original kubeconfig unchanged, no Kubernetes execution Lease
-or stack namespace, and no initialized runtime/PKI state. It reads every original
+or stack namespace, and no active PKI or OpenBao initialization. Dev uses the
+original empty runtime profile. Staging can retain an explicitly prepared local
+runtime catalog and must pass the fresh bootstrap validation of that catalog and
+the operator credentials. It reads every original
 provider ID, complete current inventory and remaining account capacity. Exact
 formal images, private storage ACL/policy and key grants, native bootstrap
 capabilities, DNS prerequisites and stable inputs must all qualify again. An
@@ -1479,7 +1537,7 @@ unchanged; no provider allocation is replayed. Uncertain provider outcomes, a
 storage canary, initialized namespace/PKI state, or an already recovered execution
 require a different separately qualified recovery and are rejected by this profile.
 
-One further narrow profile, `--after-storage-canary`, can qualify a stopped
+One further dev-only profile, `--after-storage-canary`, can qualify a stopped
 provider-only recovery whose storage activation is still pending and whose only
 additional writes are one or two completed storage canaries with original
 DELETE/404 receipts. Supply that stopped recovery's plan SHA as
@@ -3626,3 +3684,13 @@ versioned bootstrap-cleanup record. An older unversioned record may remain as
 history; its presence does not select the target's active cleanup binding. The
 normal reader verifies the original namespace, Controller, immutable record,
 recorded UIDs and mount before rendering, without reopening the old ceremony.
+
+### Staging application recovery evidence
+
+The original staging application startup continuation qualifies the frozen child
+plan, journaled write owners, current resource bodies, media allocation and broker
+credentials. Previous Pod log text is diagnostic only and is not a prerequisite
+for this continuation. Log rotation or a missing previous container must not
+block an otherwise verified original checkpoint. Unknown writes, replacement
+UIDs, changed bodies and changed inputs still block recovery. Final deployment
+acceptance remains mandatory.

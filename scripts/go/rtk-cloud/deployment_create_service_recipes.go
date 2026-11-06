@@ -593,16 +593,52 @@ func renderEnvironmentCreateServiceEnrollmentDefinitions(ctx context.Context, cf
 		if err != nil {
 			return nil, err
 		}
+		bindServiceEnrollmentToClaimOwner(job.Object, namespace, role)
 		out = append(out, job)
 		if role != "certissuer" {
 			job, err = environmentCreateServiceServerEnrollmentDefinition(cfg, p, runtime, s, namespace, role, claim, false)
 			if err != nil {
 				return nil, err
 			}
+			bindServiceEnrollmentToClaimOwner(job.Object, namespace, role)
 			out = append(out, job)
 		}
 	}
 	return out, nil
+}
+
+// These Deployments already mount the RWO claim when core enrollment starts.
+// Their Jobs must use the same node. Controller enrollment owns an unused claim.
+func bindServiceEnrollmentToClaimOwner(job deploymentplan.Object, namespace, role string) {
+	if role != "account-manager" && role != "certissuer" {
+		return
+	}
+	bindCreateSameNodePlacement(environmentPKIPod(job), namespace, role)
+}
+
+func bindCreateSameNodePlacement(pod deploymentplan.Object, namespace, owner string) {
+	term := deploymentplan.Object{
+		"topologyKey": "kubernetes.io/hostname", "namespaces": []any{namespace},
+		"labelSelector": deploymentplan.Object{"matchLabels": deploymentplan.Object{"app.kubernetes.io/name": owner}},
+	}
+	affinity := deploymentplan.Map(pod["affinity"])
+	if affinity == nil {
+		affinity = deploymentplan.Object{}
+		pod["affinity"] = affinity
+	}
+	podAffinity := deploymentplan.Map(affinity["podAffinity"])
+	if podAffinity == nil {
+		podAffinity = deploymentplan.Object{}
+		affinity["podAffinity"] = podAffinity
+	}
+	const key = "requiredDuringSchedulingIgnoredDuringExecution"
+	terms := certIssuerObjectList(podAffinity[key])
+	for _, existing := range terms {
+		if deploymentplan.Digest(existing) == deploymentplan.Digest(term) {
+			return
+		}
+	}
+	podAffinity[key] = append(terms, term)
 }
 
 func environmentCreateServiceCRLManifest(i environmentCreateRegisteredIssuer, path string, additional ...environmentCreateRegisteredIssuer) string {

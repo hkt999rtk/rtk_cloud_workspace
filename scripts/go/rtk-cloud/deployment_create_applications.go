@@ -210,7 +210,7 @@ func renderEnvironmentCreateApplicationOwners(ctx context.Context, cfg deploymen
 			}
 			out = append(out, deploymentplan.Definition{Phase: "workload", Object: object})
 		}
-		base, err := decodeEnvironmentCreateManifests(lkeVideoCloudRuntimeSecretManifest(values), lkeFactoryEnrollRuntimeSecretManifest(values), lkeVideoCloudWorkersSecretManifest(values))
+		base, err := decodeEnvironmentCreateManifests(lkeVideoCloudRuntimeSecretManifest(values), lkeFactoryEnrollRuntimeSecretManifest(values), lkeVideoCloudWorkersRuntimeManifest(values, true))
 		if err != nil {
 			return err
 		}
@@ -218,6 +218,39 @@ func renderEnvironmentCreateApplicationOwners(ctx context.Context, cfg deploymen
 		return nil
 	})
 	return out, err
+}
+
+// Co-location only addresses attachment of one ReadWriteOnce claim. It does
+// not allow more than one native process to own a shared Service identity.
+func bindCreateApplicationSharedClaimPlacement(object deploymentplan.Object, stack string) bool {
+	metadata := deploymentplan.Map(object["metadata"])
+	if object["kind"] != "Deployment" || metadata["namespace"] != stack+"-video-cloud" {
+		return false
+	}
+	spec := deploymentplan.Map(object["spec"])
+	if replicas, _ := spec["replicas"].(float64); replicas <= 1 {
+		return false
+	}
+	pod := environmentPKIPod(object)
+	for _, owner := range environmentCreateApplicationOwners() {
+		if metadata["name"] != owner.Name || deploymentplan.Map(deploymentplan.Map(spec["selector"])["matchLabels"])["app.kubernetes.io/name"] != owner.Name {
+			continue
+		}
+		for _, volume := range certIssuerObjectList(pod["volumes"]) {
+			if deploymentplan.Map(deploymentplan.Map(volume)["persistentVolumeClaim"])["claimName"] == owner.Claim {
+				bindCreateSameNodePlacement(pod, stack+"-video-cloud", owner.Name)
+				for _, value := range certIssuerObjectList(pod["topologySpreadConstraints"]) {
+					spread := deploymentplan.Map(value)
+					labels := deploymentplan.Map(deploymentplan.Map(spread["labelSelector"])["matchLabels"])
+					if spread["topologyKey"] == "kubernetes.io/hostname" && spread["whenUnsatisfiable"] == "DoNotSchedule" && labels["app.kubernetes.io/name"] == owner.Name {
+						spread["whenUnsatisfiable"] = "ScheduleAnyway"
+					}
+				}
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func configureEnvironmentCreateMQTTConsumers(p environmentCreateBootstrapPlan, service environmentCreateServiceCeremony, root environmentCreateRegisteredIssuer, additional []environmentCreateRegisteredIssuer, definitions []deploymentplan.Definition) ([]deploymentplan.Definition, error) {

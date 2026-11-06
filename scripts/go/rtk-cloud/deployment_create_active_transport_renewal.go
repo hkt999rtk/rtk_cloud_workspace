@@ -407,6 +407,9 @@ func activeTransportOriginalIdentity(ctx context.Context, cfg deploymentConfig, 
 	// The original foundation remains the workload authority before transport
 	// cutover; bind its exact StatefulSet body and immutable Pod container image.
 	foundationKey := ""
+	if cfg.Environment == "staging" {
+		foundationKey = "kubernetes/foundation"
+	}
 	for _, entry := range e.Journal.Entries {
 		if strings.HasPrefix(entry.Key, "kubernetes/foundation-recovery-") && entry.State == "completed" {
 			foundationKey = entry.Key

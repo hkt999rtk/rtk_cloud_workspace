@@ -73,6 +73,14 @@ the dependent write. The block cannot pass, cross a bootstrap or other phase
 boundary, or enter acceptance until every deferred wait succeeds. Configuration,
 bootstrap, migration Jobs and retirement retain their immediate waits.
 
+Final resource verification reads each object once per verification pass and
+checks both its desired body and its journaled write UID against that same live
+observation. The verification passes before and after acceptance remain separate;
+no observations are reused across acceptance. The final ownership phase retains
+its lease check without another per-resource GET loop. This applies to create,
+update and retained resources, including newly allocated UIDs absent from the
+original plan. Public read-only verification still checks the plan UID where set.
+
 On resume, a known incomplete workload block retains strict UID/body checks but
 defers its readiness until missing peers have been written. An already completed
 block is rechecked for readiness before later writes, including a crash between
@@ -336,7 +344,7 @@ Fresh dev/staging execution uses the same planner at each stage after the native
 LKE API exists. An exclusive canonical parent journal records requests before
 allocation and captures original provider/PVC IDs before subsequent work.
 
-Provider-only dev recovery is a separate qualification profile for a stopped
+Provider-only dev or staging recovery is a separate qualification profile for a stopped
 original create that completed all provider allocations and canonical Kubernetes
 access, then failed before any storage canary or Kubernetes/PKI bootstrap. It
 verifies each original native ID, complete inventory/capacity, unchanged kubeconfig,
@@ -365,7 +373,22 @@ journals, requalifies every gate and scopes new canaries to its new plan digest.
 All these paths use the selected canonical environment store, 0700 directories
 and 0600 files. The profile rejects uncertain requests, existing bootstrap state
 and repeated recovery; it never reallocates resources or rewrites the failed
-journal. See [recovery operations](deployment-operations.md#recover-a-provider-only-dev-create-failure).
+journal. See [recovery operations](deployment-operations.md#recover-a-provider-only-create-failure).
+
+The staging Service authorization recovery uses the existing create parent after
+the Service Root and its initial CRL are complete. It captures the stopped
+journal as `deployment/create/<parent-sha256>/service-authorization-recovery/source-journal.json`
+and binds the verified formal image in its sibling `controller-release.json`.
+The same script reads those snapshots when retrying the two original bootstrap
+listeners. It records the existing native authorization in the parent and
+continues the original intermediate ceremony.
+
+At the later staging MQTT Root checkpoint the same recovery can pin one active
+replica per existing API identity. If needed, it stores exact renewed temporary
+transport under `deployment/create/<parent-sha256>/service-authorization-recovery/temporary-transport/`.
+The existing Secret and ConfigMap owners consume the candidate bundle, the
+original OpenBao process reloads it, and the remaining bootstrap consumes its
+public OpenBao CA.
 
 The separate initial-foundation dev profile verifies the original 33 write owners,
 32 completed resources, released child Lease, original three retained volumes and
@@ -2648,7 +2671,7 @@ certificate registry. The maintained `allow-postgres-openbao` NetworkPolicy
 allows only Pods labelled `app.kubernetes.io/name=openbao` in the selected
 `secrets` namespace to reach PostgreSQL TCP 5432. The namespace and Pod selectors
 are in one peer, so both must match. The existing application policy remains
-unchanged; Logger's SQLite inbox does not require this database permission.
+unchanged. Cloud Logger's embedded Billing inbox uses its own persistent volume.
 
 Native connectivity is derived from the actual caller Pod labels, selected
 namespace and destination container port after resolving a Service's targetPort.
@@ -2664,6 +2687,40 @@ phase fences and final-target resolution verify those owners and exact rules.
 Known writes resume without another CREATE. Unknown responses retain the common
 engine's recovery rules. New generations receive the same policies from the
 ordinary catalog. There is no additional preflight or admission clock.
+
+The Staging workload runtime continuation reads the original scoped child and
+its execution journal from the selected private deployment store. It verifies
+the written Kubernetes owner UIDs, including the newly created Cloud Logger
+inbox PVC, before initializing that claim. The temporary Logger launcher
+creates a marker in the private inbox directory before first initialization.
+A later missing inbox with that marker stops startup. The steady workload
+restores the regular Logger entrypoint and keeps the same PVC and database.
+The shared API renderer sets `VIDEO_CLOUD_ENV` from selected environment
+intent so the application and its CRL consumer use the same scope.
+
+For the admitted Staging generation, native Fleet Valkey scheduling can
+qualify one additional worker when both original general workers have
+exhausted their CSI attachment slots. The capacity stage uses the original
+cluster receipt and the pool membership from
+`deployment/adapters/lke/worker-labels.json` in the selected environment
+store. It checks account quota and journals the exact pool and absolute
+target count before sending the update. Native readback verifies the pool
+and both original member IDs. The existing StatefulSet, claim, and readiness
+gate remain in the workload stage.
+
+A retained workload child may follow a recorded OpenBao StatefulSet update
+that completed its write before the deferred Pod rollout could start. The
+Staging continuation uses that original update recipe under the Kubernetes
+execution lease. It verifies custody against the original initialization
+receipt before conditional deletion, then verifies the replacement revision,
+unsealed status, and persistent volume bindings before retained readiness.
+
+Staging finalization can resume the existing pending request after the
+native session seals and commits its bootstrap-leaf revocation. The
+continuation reads the original session and published CRL from the live
+registry, verifies the exact consumer acknowledgments, and reconciles
+completed credential-copy deletions from the parent journal and Kubernetes.
+The original finalizer remains responsible for cleanup and its receipt.
 
 When the interrupted target also contains an incorrect future MQTT transport,
 `normal-tail-workload-forward.json` preserves the original target and failed

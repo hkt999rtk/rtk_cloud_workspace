@@ -27,10 +27,8 @@ func readFreshProductProgram(store secretStore, e *environmentCreateExecution) (
 		return nil, environmentCreateBootstrapBlocker("fresh product program has no original selected parent")
 	}
 	l := &saved.Lifecycle
-	var active environmentPreflightActive
-	var artifact environmentCreateArtifact
-	var original environmentCreatePlan
-	if readEnvironmentPreflightJSON(filepath.Join(store.Root, "deployment/create/preflight/active.json"), &active) != nil || active.PlanSHA256 != e.Journal.PlanSHA256 || !environmentPreflightArtifactName.MatchString(active.Artifact) || createOpenBaoACKCompletionRead(store, filepath.Join("deployment/create/preflight", active.Artifact, "artifact.json"), &artifact) != nil || artifact.PlanSHA256 != e.Journal.PlanSHA256 || deploymentplan.Digest(artifact) != e.Journal.ArtifactSHA256 || decodeEnvironmentJSON(artifact.Plan, &original) != nil || deploymentplan.Digest(l.Bootstrap) != deploymentplan.Digest(original.Bootstrap) || deploymentplan.Digest(l.Policy) != deploymentplan.Digest(findEnvironmentCreateDomainPolicy(original.Bootstrap, "service")) || len(l.Outputs) != len(original.Bootstrap.ProductIdentities) || len(l.Outputs) == 0 {
+	original, _, err := loadEnvironmentCreateAdmittedGeneration(store, e.Journal.PlanSHA256, e.Journal.ArtifactSHA256)
+	if err != nil || original.Environment != e.Journal.Environment || original.Stack != e.Journal.Stack || deploymentplan.Digest(l.Bootstrap) != deploymentplan.Digest(original.Bootstrap) || deploymentplan.Digest(l.Policy) != deploymentplan.Digest(findEnvironmentCreateDomainPolicy(original.Bootstrap, "service")) || len(l.Outputs) != len(original.Bootstrap.ProductIdentities) || len(l.Outputs) == 0 {
 		return nil, environmentCreateBootstrapBlocker("fresh products differ from the original fully qualified create plan")
 	}
 	for i, output := range l.Outputs {
@@ -158,6 +156,25 @@ func executeEnvironmentCreateFreshProductIdentities(ctx context.Context, cfg dep
 		return err
 	}
 	return apply(ctx, "fresh-product-enrollment-closed", closed)
+}
+
+// Account registration retains the CertIssuer dependency after the temporary
+// enrollment command closes. Use the accepted successor body and owner.
+func bindFreshProductClosedIssuer(definitions []deploymentplan.Definition, store secretStore, e *environmentCreateExecution, stack string) error {
+	bad := environmentCreateBootstrapBlocker("fresh registration requires its accepted closed issuer and original owner")
+	closed, journal, err := acceptedCreateStage(store, e, "kubernetes/fresh-product-enrollment-closed")
+	id := "Deployment/" + stack + "-video-cloud/certissuer"
+	if err != nil || len(closed.Resources) != 1 || closed.Resources[0].ID != id || !environmentBootstrapOwnerUUID.MatchString(journal.Owners[id]) {
+		return bad
+	}
+	for i := range definitions {
+		if deploymentplan.ID(definitions[i].Object) == id {
+			definitions[i].Object = deploymentplan.Clone(closed.Resources[0].Desired)
+			deploymentplan.Map(definitions[i].Object["metadata"])["uid"] = journal.Owners[id]
+			return nil
+		}
+	}
+	return bad
 }
 
 func freshProductEnrollmentClosedDefinitions(store secretStore, e *environmentCreateExecution, p environmentCreateBootstrapPlan, s environmentCreateServiceCeremony) ([]deploymentplan.Definition, error) {
@@ -326,6 +343,55 @@ func applyEnvironmentFreshProductBindings(ctx context.Context, cfg deploymentCon
 	return e.Check(ctx)
 }
 
+// The ordinary catalog renders long-lived workloads. Exact accepted temporary
+// producers are added by bindFreshProductTargetDefinitions after that render.
+func freshProductCatalogBindings(ctx context.Context, cfg deploymentConfig, store secretStore, b environmentIdentityBindings) (environmentIdentityBindings, error) {
+	if b.ProductIdentities == nil {
+		return b, nil
+	}
+	runtime, ok := ctx.Value(environmentCreateBootstrapRuntimeKey{}).(environmentCreateBootstrapRuntime)
+	if !ok || runtime.Execution == nil || runtime.Execution.Store != store {
+		return b, environmentCreateBootstrapBlocker("fresh product catalog lacks its original held execution")
+	}
+	e := runtime.Execution
+	if createOpenBaoACKCompletionEntry(e.Journal, "kubernetes/fresh-product-producer-retire") != nil {
+		return b, nil
+	}
+	program, err := readFreshProductProgram(store, e)
+	if err != nil {
+		return b, err
+	}
+	installed, err := readProductInstalled(store, &program.Lifecycle)
+	if err != nil {
+		return b, err
+	}
+	preparations, err := productPreparationDefinitions(cfg, store, e, &program.Lifecycle, installed, false, true)
+	if err != nil {
+		return b, err
+	}
+	accepted := map[string]string{}
+	for _, d := range preparations {
+		accepted[deploymentplan.ID(d.Object)] = deploymentplan.String(deploymentplan.Map(d.Object["metadata"])["uid"])
+	}
+	var pods []environmentPodBindings
+	for _, binding := range b.Pods {
+		id := binding.Kind + "/" + b.Stack + "-" + binding.NamespaceSuffix + "/" + binding.Name
+		if uid := accepted[id]; uid != "" {
+			if binding.Component != "existing-workload" || b.Owners[id] != uid {
+				return b, environmentCreateBootstrapBlocker("fresh temporary producer differs from its original accepted owner")
+			}
+			delete(accepted, id)
+			continue
+		}
+		pods = append(pods, binding)
+	}
+	if len(accepted) != 0 {
+		return b, environmentCreateBootstrapBlocker("fresh temporary producer is missing from the original environment inventory")
+	}
+	b.Pods = pods
+	return b, e.Check(ctx)
+}
+
 func bindFreshProductTargetDefinitions(ctx context.Context, cfg deploymentConfig, store secretStore, b environmentIdentityBindings, defs []deploymentplan.Definition) ([]deploymentplan.Definition, error) {
 	if b.ProductIdentities == nil {
 		return defs, nil
@@ -434,7 +500,9 @@ func finishEnvironmentCreateFreshProducts(ctx context.Context, cfg deploymentCon
 		return nil, err
 	}
 	client.Execution = e
-	runtime := environmentCreateBootstrapRuntime{Execution: e, ExecutionSHA256: e.Journal.PlanSHA256, Backend: c.Backend, PKIClient: client}
+	runtime, _ := ctx.Value(environmentCreateBootstrapRuntimeKey{}).(environmentCreateBootstrapRuntime)
+	runtime.Execution, runtime.ExecutionSHA256, runtime.Backend, runtime.PKIClient = e, e.Journal.PlanSHA256, c.Backend, client
+	runtime.StagingControllerHandoff = false
 	finalizedPath, err := store.safePath(filepath.Join(environmentCreateCeremonyDirectory(runtime, "service"), "finalized.json"))
 	if err != nil {
 		return nil, err
@@ -488,15 +556,19 @@ func finishEnvironmentCreateFreshProducts(ctx context.Context, cfg deploymentCon
 // Both fresh completion and early finalized-bootstrap restoration use this
 // same original pair of ordinary children, including partial delete outcomes.
 func completeFreshProductPreparations(ctx context.Context, cfg deploymentConfig, store secretStore, e *environmentCreateExecution, l *createNormalTailProductLifecycle, installed *environmentProductIdentitySession, backend deploymentplan.Backend, apply environmentCreateBootstrapApply) error {
-	initial, journal, err := acceptedCreateStage(store, e, "kubernetes/workload")
+	stage, err := freshCreateWorkloadStage(store, e)
 	if err != nil {
 		return err
 	}
-	input, err := readEnvironmentCreateStageInput(store, e, "workload")
+	initial, journal, err := acceptedCreateStage(store, e, "kubernetes/"+stage)
+	if err != nil {
+		return err
+	}
+	input, err := readEnvironmentCreateStageInput(store, e, stage)
 	if err != nil || input == nil || input.SHA256() != initial.SHA256() {
 		return environmentCreateBootstrapBlocker("fresh cleanup lost its original accepted workload input")
 	}
-	progress, exists, err := readEnvironmentCreateStageProgress(store, e, "workload", input)
+	progress, exists, err := readEnvironmentCreateStageProgress(store, e, stage, input)
 	if err != nil || !exists || !progress.Accepted || deploymentplan.Digest(progress) != deploymentplan.Digest(journal) {
 		return environmentCreateBootstrapBlocker("fresh cleanup lost its original accepted workload owners")
 	}

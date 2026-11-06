@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 )
@@ -79,6 +80,243 @@ func TestCreatePKICeremonyUsesAuthenticatedOperatorAndExactRegistryDigests(t *te
 				t.Fatal("unexpected mutation or reauthentication", calls)
 			}
 		})
+	}
+}
+
+func TestCreatePKIAuthorizationRetriesTransientReadWithoutRepeatingWrite(t *testing.T) {
+	const issuer = "33333333-3333-4333-8333-333333333333"
+	const operation = "22222222-2222-4222-8222-222222222222"
+	var writes, reads int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/platform/pki/operations/"+operation+"/authorize":
+			writes++
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/platform/pki/issuers/"+issuer:
+			reads++
+			if reads == 1 {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]string{"issuer_id": issuer, "environment": "staging", "status": "approved"})
+		default:
+			t.Error("unexpected registry request")
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+	client, err := newEnvironmentCreatePKIClient(server.URL, server.Client(), "staging", issuer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.token = "isolated-authenticated-operator"
+	op := environmentCreateIssuerOperation{ID: operation, IssuerID: issuer, Digest: strings.Repeat("a", 64)}
+	if err := client.AuthorizeIssuer(t.Context(), op); err != nil || writes != 1 || reads != 2 {
+		t.Fatalf("authorization should reconcile with one write and two reads: writes=%d reads=%d err=%v", writes, reads, err)
+	}
+}
+
+func TestStoppedServiceAuthorizationRequiresExactOriginalPendingIntent(t *testing.T) {
+	request := environmentCreateIssuerRequest{
+		Environment: "staging", Domain: "service", Kind: "intermediate",
+		ParentID: "11111111-1111-4111-8111-111111111111", ServiceClientIDs: []string{"service:deployment-bootstrap"},
+	}
+	operation := environmentCreateIssuerOperation{
+		ID: "22222222-2222-4222-8222-222222222222", IssuerID: "33333333-3333-4333-8333-333333333333",
+		Digest: deploymentplan.Digest(request), Status: "requested",
+	}
+	reserveSHA, err := environmentCreateIssuerIntentSHA(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authSHA, err := environmentCreatePlanSHA256(mustProviderRecoveryJSON(operation))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, mode := range []string{"valid", "wrong-intent", "unknown-write", "foreign", "additional-write", "earlier-incomplete"} {
+		t.Run(mode, func(t *testing.T) {
+			j := environmentCreateJournal{Environment: "staging", Stack: "video-cloud-staging", Entries: []environmentCreateJournalEntry{
+				{Key: "pki-initial-root-crl-service", State: "completed", CompletedAt: now},
+				{Key: "pki-reserve-service-intermediate", State: "completed", CompletedAt: now, IntentSHA256: reserveSHA, Receipt: mustProviderRecoveryJSON(operation)},
+				{Key: "pki-authorize-" + operation.ID, Phase: "bootstrap", State: "pending", IntentSHA256: authSHA, StartedAt: now},
+			}}
+			switch mode {
+			case "wrong-intent":
+				j.Entries[2].IntentSHA256 = strings.Repeat("f", 64)
+			case "unknown-write":
+				j.Entries[2].Receipt = json.RawMessage(`{"unknown":"write"}`)
+			case "foreign":
+				j.Environment = "dev"
+			case "additional-write":
+				j.Entries = append(j.Entries, environmentCreateJournalEntry{Key: "later-write", State: "completed", CompletedAt: now})
+			case "earlier-incomplete":
+				j.Entries[0].State = "pending"
+			}
+			got, err := stoppedServiceAuthorization(j, request)
+			if mode == "valid" {
+				if err != nil || got != operation {
+					t.Fatal("lost original authorization", err)
+				}
+			} else if err == nil {
+				t.Fatal("unverified original authorization admitted")
+			}
+		})
+	}
+}
+
+func TestServiceAuthorizationRecoveryOverridesOnlyControllerListeners(t *testing.T) {
+	stack := "video-cloud-staging"
+	makeDeployment := func(namespace, name, executable string) deploymentplan.Object {
+		return deploymentplan.Object{
+			"kind": "Deployment", "metadata": map[string]any{"namespace": namespace, "name": name},
+			"spec": map[string]any{"template": map[string]any{"spec": map[string]any{"containers": []any{
+				map[string]any{"name": name, "image": "original", "command": []any{executable}, "args": []any{"preserved"}},
+				map[string]any{"name": "sidecar", "image": "sidecar"},
+			}}}},
+		}
+	}
+	controller := makeDeployment(stack+"-video-cloud", "pki-controller", "/app/pkicontroller")
+	initialIssuer := makeDeployment(stack+"-video-cloud", "certissuer", "/app/pkicontroller")
+	issuer := makeDeployment(stack+"-video-cloud", "certissuer", "/app/certissuer")
+	foreign := makeDeployment("another-stack", "pki-controller", "/app/pkicontroller")
+	definitions := []deploymentplan.Definition{{Object: controller}, {Object: initialIssuer}, {Object: issuer}, {Object: foreign}}
+	bindCreateServiceAuthorizationController(definitions, stack, "formal-repair")
+	for i, original := range []deploymentplan.Object{controller, initialIssuer} {
+		containers := certIssuerObjectList(environmentPKIPod(definitions[i].Object)["containers"])
+		candidate := deploymentplan.Map(containers[0])
+		if candidate["image"] != "formal-repair" || deploymentplan.Digest(candidate["args"]) != deploymentplan.Digest([]any{"preserved"}) || deploymentplan.Map(containers[1])["image"] != "sidecar" {
+			t.Fatalf("repair did not isolate the Controller executable in %s", deploymentplan.ID(original))
+		}
+		if deploymentplan.Map(certIssuerObjectList(environmentPKIPod(original)["containers"])[0])["image"] != "original" {
+			t.Fatal("Controller repair rewrote the historical body")
+		}
+	}
+	if deploymentplan.Digest(definitions[2].Object) != deploymentplan.Digest(issuer) || deploymentplan.Digest(definitions[3].Object) != deploymentplan.Digest(foreign) {
+		t.Fatal("Controller repair rewrote another workload")
+	}
+}
+
+func TestServiceAuthorizationRecoveryDispatchesRestoredEnrollment(t *testing.T) {
+	const session = "11111111-1111-4111-8111-111111111111"
+	runtime := environmentCreateBootstrapRuntime{ServiceAuthorizationRecovery: &createServiceAuthorizationRecovery{
+		Enrollment: &environmentCreateServiceCeremony{BootstrapSessionID: session},
+	}}
+	// The isolated fixture has no native role adapter. A restored session must
+	// still reach the enrollment guard and return its original session identity.
+	got, err := executeEnvironmentCreateServiceBootstrap(context.Background(), deploymentConfig{}, environmentCreateBootstrapPlan{}, secretStore{}, nil, runtime, nil)
+	if err == nil || !strings.Contains(err.Error(), "exact native selected Kubernetes auth role") || got.BootstrapSessionID != session {
+		t.Fatalf("restored session did not enter enrollment: %v", err)
+	}
+}
+
+func TestServiceEnrollmentJobsFollowResidentRWOClaimOwner(t *testing.T) {
+	for _, role := range []string{"account-manager", "certissuer", "pki-controller"} {
+		t.Run(role, func(t *testing.T) {
+			ns := "video-cloud-staging-video-cloud"
+			job := deploymentplan.Object{"kind": "Job", "spec": deploymentplan.Object{"template": deploymentplan.Object{"spec": deploymentplan.Object{"restartPolicy": "Never"}}}}
+			bindServiceEnrollmentToClaimOwner(job, ns, role)
+			pod := environmentPKIPod(job)
+			affinity := deploymentplan.Map(deploymentplan.Map(pod["affinity"])["podAffinity"])
+			terms := certIssuerObjectList(affinity["requiredDuringSchedulingIgnoredDuringExecution"])
+			if role == "pki-controller" {
+				if len(terms) != 0 {
+					t.Fatal("unused Controller claim acquired an unnecessary placement constraint")
+				}
+				return
+			}
+			if len(terms) != 1 {
+				t.Fatal("Job can be scheduled away from its original RWO owner")
+			}
+			term := deploymentplan.Map(terms[0])
+			selector := deploymentplan.Map(deploymentplan.Map(term["labelSelector"])["matchLabels"])
+			if term["topologyKey"] != "kubernetes.io/hostname" || deploymentplan.Digest(term["namespaces"]) != deploymentplan.Digest([]string{ns}) || selector["app.kubernetes.io/name"] != role || pod["restartPolicy"] != "Never" {
+				t.Fatal("Job placement failed to preserve its exact claim owner and pod recipe")
+			}
+		})
+	}
+}
+
+func TestServiceEnrollmentApplicationReplicasShareClaimNode(t *testing.T) {
+	stack := "video-cloud-staging"
+	for _, owner := range environmentCreateApplicationOwners() {
+		t.Run(owner.Name, func(t *testing.T) {
+			labels := deploymentplan.Object{"app.kubernetes.io/name": owner.Name}
+			spread := deploymentplan.Object{"topologyKey": "kubernetes.io/hostname", "whenUnsatisfiable": "DoNotSchedule", "labelSelector": deploymentplan.Object{"matchLabels": labels}}
+			zoneSpread := deploymentplan.Object{"topologyKey": "topology.kubernetes.io/zone", "whenUnsatisfiable": "DoNotSchedule", "labelSelector": deploymentplan.Object{"matchLabels": labels}}
+			pod := deploymentplan.Object{"affinity": deploymentplan.Object{"nodeAffinity": deploymentplan.Object{"existing": true}}, "volumes": []any{environmentCreateServiceVolume("identity", "persistentVolumeClaim", owner.Claim)}, "topologySpreadConstraints": []any{spread, zoneSpread}}
+			object := deploymentplan.Object{"kind": "Deployment", "metadata": deploymentplan.Object{"name": owner.Name, "namespace": stack + "-video-cloud"}, "spec": deploymentplan.Object{"replicas": float64(1), "selector": deploymentplan.Object{"matchLabels": labels}, "template": deploymentplan.Object{"spec": pod}}}
+			if bindCreateApplicationSharedClaimPlacement(object, stack) {
+				t.Fatal("single replica acquired a shared-claim placement constraint")
+			}
+			deploymentplan.Map(object["spec"])["replicas"] = float64(2)
+			if !bindCreateApplicationSharedClaimPlacement(object, stack) || !bindCreateApplicationSharedClaimPlacement(object, stack) {
+				t.Fatal("shared claim owner was not bound to one node")
+			}
+			if spread["whenUnsatisfiable"] != "ScheduleAnyway" || zoneSpread["whenUnsatisfiable"] != "DoNotSchedule" {
+				t.Fatal("same-node placement conflicts with hard hostname spread or changes unrelated spread")
+			}
+			affinity := deploymentplan.Map(pod["affinity"])
+			terms := certIssuerObjectList(deploymentplan.Map(affinity["podAffinity"])["requiredDuringSchedulingIgnoredDuringExecution"])
+			if len(terms) != 1 || deploymentplan.Map(affinity["nodeAffinity"])["existing"] != true {
+				t.Fatal("applying placement did not preserve existing scheduler settings")
+			}
+			term := deploymentplan.Map(terms[0])
+			if term["topologyKey"] != "kubernetes.io/hostname" || deploymentplan.Map(deploymentplan.Map(term["labelSelector"])["matchLabels"])["app.kubernetes.io/name"] != owner.Name {
+				t.Fatal("shared replicas were not matched to their own workload")
+			}
+		})
+	}
+}
+
+func TestServiceEnrollmentForwardRejectsUnknownJobOutcomes(t *testing.T) {
+	for _, outcome := range []struct {
+		name, reason string
+		active       float64
+		succeeded    float64
+		allow        bool
+	}{
+		{name: "deadline", reason: "DeadlineExceeded", allow: true},
+		{name: "signing-failed", reason: "BackoffLimitExceeded"},
+		{name: "still-running", reason: "DeadlineExceeded", active: 1},
+		{name: "issued", reason: "DeadlineExceeded", succeeded: 1},
+	} {
+		t.Run(outcome.name, func(t *testing.T) {
+			job := deploymentplan.Object{"status": deploymentplan.Object{"active": outcome.active, "succeeded": outcome.succeeded, "failed": float64(1), "conditions": []any{deploymentplan.Object{"type": "Failed", "status": "True", "reason": outcome.reason}}}}
+			if got := stagingEnrollmentJobDeadlineExceeded(job); got != outcome.allow {
+				t.Fatalf("unexpected admission result %v", got)
+			}
+		})
+	}
+}
+
+func TestServiceEnrollmentForwardReadsNativeListEnvelopes(t *testing.T) {
+	const job = "pki-enroll-account-manager-client-test"
+	const jobUID = "11111111-1111-4111-8111-111111111111"
+	const podUID = "22222222-2222-4222-8222-222222222222"
+	const volume = "pvc-test"
+	const pod = job + "-abcde"
+	event := func(kind, name, uid, reason, message string) deploymentplan.Object {
+		return deploymentplan.Object{"involvedObject": deploymentplan.Object{"kind": kind, "name": name, "uid": uid}, "reason": reason, "message": message}
+	}
+	list := func(items []deploymentplan.Object) []byte {
+		return mustProviderRecoveryJSON(deploymentplan.Object{"apiVersion": "v1", "kind": "List", "metadata": deploymentplan.Object{"resourceVersion": ""}, "items": items})
+	}
+	pods := list([]deploymentplan.Object{})
+	events := []deploymentplan.Object{
+		event("Job", job, jobUID, "SuccessfulCreate", "Created pod: "+pod),
+		event("Job", job, jobUID, "SuccessfulDelete", "Deleted pod: "+pod),
+		event("Pod", pod, podUID, "FailedAttachVolume", `Waiting for detach for volume "pvc-test" Volume is already used by pod(s) account-manager-test`),
+	}
+	if !stagingEnrollmentAttachmentEvidence(pods, list(events), job, jobUID, volume, "account-manager") {
+		t.Fatal("native list metadata prevented validation of an exact unstarted Job")
+	}
+	if stagingEnrollmentAttachmentEvidence(pods, list(events), job, jobUID, "pvc-unrelated", "account-manager") || stagingEnrollmentAttachmentEvidence(list([]deploymentplan.Object{{"kind": "Pod"}}), list(events), job, jobUID, volume, "account-manager") {
+		t.Fatal("an unrelated volume or active Pod was admitted")
+	}
+	events = append(events, event("Pod", pod, podUID, "Started", "Started container enroll"))
+	if stagingEnrollmentAttachmentEvidence(pods, list(events), job, jobUID, volume, "account-manager") {
+		t.Fatal("an original Pod that ran was admitted")
 	}
 }
 
@@ -275,5 +513,40 @@ func TestCreateRootCeremonyUsesNativeEncryptedKeysAndKeepsOriginalCustody(t *tes
 	after, err := os.ReadFile(keyPath)
 	if err != nil || string(after) != string(key) {
 		t.Fatal("earlier encrypted key changed during retry", err)
+	}
+}
+
+func TestServiceEnrollmentSingleStagingAPIOwnerPreservesIdentity(t *testing.T) {
+	stack := "video-cloud-staging"
+	for _, owner := range environmentCreateApplicationOwners() {
+		t.Run(owner.Name, func(t *testing.T) {
+			pod := deploymentplan.Object{"volumes": []any{environmentCreateServiceVolume("identity", "persistentVolumeClaim", owner.Claim)}}
+			spec := deploymentplan.Object{"replicas": float64(2), "template": deploymentplan.Object{"spec": pod}}
+			object := deploymentplan.Object{"kind": "Deployment", "metadata": deploymentplan.Object{"name": owner.Name, "namespace": stack + "-video-cloud"}, "spec": spec}
+			original := deploymentplan.Digest(object)
+			got := bindStagingSingleAPIOwner(object, stack)
+			if got != (owner.Role == "video-cloud-api") {
+				t.Fatal("replica change escaped the selected API identity owners")
+			}
+			if got {
+				if spec["replicas"] != float64(1) {
+					t.Fatal("exclusive identity owner still has multiple replicas")
+				}
+				spec["replicas"] = float64(2)
+			}
+			if deploymentplan.Digest(object) != original {
+				t.Fatal("replica change modified the original identity recipe")
+			}
+		})
+	}
+}
+
+func TestServiceEnrollmentCoreMediaBindsOnlyMissingPublicAllocation(t *testing.T) {
+	settings := map[string]string{}
+	projectCoreMediaAllocation(settings, environmentOTAStorageObservation{Bucket: "original", Region: "region", Prefix: "prefix", Endpoint: "https://example.test"})
+	c := deploymentplan.Object{"name": "app", "env": environmentCreateEnv(map[string]string{"VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED": "true", "KEEP": "original"})}
+	o := deploymentplan.Object{"spec": deploymentplan.Object{"template": deploymentplan.Object{"spec": deploymentplan.Object{"containers": []any{c}}}}}
+	if !bindStagingMissingCoreMedia(o, settings) || mqttFoundationEnv(c, "KEEP") != "original" || mqttFoundationEnv(c, "VIDEO_CLOUD_BLOB_BUCKET") != "original" || bindStagingMissingCoreMedia(o, settings) {
+		t.Fatal("verified allocation did not fill only the missing Core media settings")
 	}
 }

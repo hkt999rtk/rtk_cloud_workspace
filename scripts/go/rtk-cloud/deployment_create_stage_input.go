@@ -116,7 +116,7 @@ func readEnvironmentCreateStageProgress(store secretStore, e *environmentCreateE
 
 // Shared fresh-create stages keep the original compiled input and child write
 // journal across admission, readiness, acceptance and parent receipt failures.
-func executeEnvironmentCreateStagePlan(ctx context.Context, store secretStore, e *environmentCreateExecution, stage string, p *deploymentplan.Plan, backend deploymentplan.Backend, qualify, fence, accept func(context.Context, *deploymentplan.Plan) error, capture func(context.Context) error, out io.Writer) error {
+func executeEnvironmentCreateStagePlan(ctx context.Context, store secretStore, e *environmentCreateExecution, stage string, p *deploymentplan.Plan, backend deploymentplan.Backend, qualify, fence, accept func(context.Context, *deploymentplan.Plan) error, capture func(context.Context) error, out io.Writer, phaseFences ...deploymentplan.PhaseFence) error {
 	if e == nil || p == nil || backend == nil || qualify == nil || fence == nil || accept == nil || capture == nil {
 		return environmentCreateBootstrapBlocker("original stage execution adapters unavailable")
 	}
@@ -137,7 +137,7 @@ func executeEnvironmentCreateStagePlan(ctx context.Context, store secretStore, e
 		}
 	}
 	if err := runEnvironmentProgress(ctx, out, "deployment.create.kubernetes."+stage, func(ctx context.Context) error {
-		return p.ExecuteResumable(ctx, backend, p.SHA256(), store.Root, qualify, fence, accept)
+		return p.ExecuteResumable(ctx, backend, p.SHA256(), store.Root, qualify, fence, accept, phaseFences...)
 	}); err != nil {
 		return err
 	}

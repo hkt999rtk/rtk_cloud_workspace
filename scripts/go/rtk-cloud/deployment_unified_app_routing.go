@@ -134,11 +134,22 @@ func publishEnvironmentCreateAppRouting(ctx context.Context, cfg deploymentConfi
 		return err
 	}
 	binding.DeclarationUID = deploymentplan.String(deploymentplan.Map(actual["metadata"])["uid"])
-	if _, err := writeEnvironmentCreateBootstrapJSON(runtime.Execution.Store, filepath.Join("pki", "app", "routing.json"), binding); err != nil {
-		return err
-	}
+	relative := filepath.Join("pki", "app", "routing.json")
 	key := "native-app-routing-profile-proof"
 	raw, _ := json.Marshal(binding)
+	done, err := createNormalTailRecordedStage(ctx, runtime.Execution, key, "bootstrap", raw, raw, func(context.Context) error {
+		var saved environmentAppRoutingBinding
+		if err := readExecutionJSON(filepath.Join(runtime.Execution.Store.Root, relative), &saved); err != nil || saved != binding {
+			return environmentCreateBootstrapBlocker("original native App routing proof changed")
+		}
+		return nil
+	})
+	if err != nil || done {
+		return err
+	}
+	if _, err := writeEnvironmentCreateBootstrapJSON(runtime.Execution.Store, relative, binding); err != nil {
+		return err
+	}
 	if err := runtime.Execution.BeginEntry(key, "bootstrap", raw, time.Now().UTC()); err != nil {
 		return err
 	}
