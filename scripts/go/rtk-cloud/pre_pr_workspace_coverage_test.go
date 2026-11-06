@@ -31,8 +31,8 @@ func TestPrePRCoalescesOnlyCompleteWorkspaceCoverage(t *testing.T) {
 	}
 }
 
-func TestPrePRCoveredMatrixPreservesFixtureOrderAndEveryLaterGate(t *testing.T) {
-	for _, mode := range []string{"complete", "coverage-failure", "matrix-tail-failure", "narrowed", "configuration-failure"} {
+func TestPrePRChecksPolicyBeforeFixturesAndPreservesEveryLaterGate(t *testing.T) {
+	for _, mode := range []string{"complete", "coverage-failure", "policy-failure", "narrowed", "configuration-failure"} {
 		t.Run(mode, func(t *testing.T) {
 			workspace := newPrePRTestWorkspaceWithScript(t, `#!/usr/bin/env bash
 cat <<'SELECTION'
@@ -46,11 +46,11 @@ SELECTION
 `)
 			t.Setenv("RTK_CLOUD_WORKSPACE", workspace)
 			t.Setenv("VIDEO_CLOUD_TEST_DSN", "")
-			oldCmd, oldMatrix, oldCombined := prePRRunCmd, prePRRunMatrix, prePRRunMatrixWithBaseline
+			oldCmd, oldMatrix := prePRRunCmd, prePRRunMatrix
 			oldCoverage, oldInventory, oldUI := prePRRunCoverage, prePRRunInventory, prePRRunUI
 			oldConfig, oldFixture := prePRLoadCoverageConfig, prePRStartVideoCloudPRFixtures
 			t.Cleanup(func() {
-				prePRRunCmd, prePRRunMatrix, prePRRunMatrixWithBaseline = oldCmd, oldMatrix, oldCombined
+				prePRRunCmd, prePRRunMatrix = oldCmd, oldMatrix
 				prePRRunCoverage, prePRRunInventory, prePRRunUI = oldCoverage, oldInventory, oldUI
 				prePRLoadCoverageConfig, prePRStartVideoCloudPRFixtures = oldConfig, oldFixture
 			})
@@ -73,23 +73,22 @@ SELECTION
 				calls = append(calls, "diff")
 				return nil
 			}
-			prePRRunMatrix = func([]string) error {
-				calls = append(calls, "standalone-matrix")
+			prePRRunMatrix = func(args []string) error {
+				if mode == "narrowed" {
+					if len(args) != 0 {
+						t.Fatal("narrowed coverage lost full baseline", args)
+					}
+					calls = append(calls, "standalone-matrix")
+				} else {
+					if !reflect.DeepEqual(args, []string{"--policy-only"}) {
+						t.Fatal("missing early policy", args)
+					}
+					calls = append(calls, "policy")
+				}
 				if os.Getenv("VIDEO_CLOUD_TEST_DSN") != "" {
-					t.Fatal("noncoalesced baseline moved after fixtures")
+					t.Fatal("policy must precede fixtures")
 				}
-				return nil
-			}
-			prePRRunMatrixWithBaseline = func(_ []string, baseline func(string) error) error {
-				calls = append(calls, "matrix-status")
-				if baseline == nil {
-					t.Fatal("missing complete baseline invocation")
-				}
-				if err := baseline(workspace); err != nil {
-					return err
-				}
-				calls = append(calls, "matrix-policy-tail")
-				if mode == "matrix-tail-failure" {
+				if mode == "policy-failure" {
 					return failed
 				}
 				return nil
@@ -145,22 +144,17 @@ SELECTION
 			err := runPrePR([]string{"--base", "HEAD", "--head", "HEAD", "--run-id", "single-run"})
 			var want []string
 			if mode != "configuration-failure" {
-				want = []string{"diff"}
+				want = []string{"diff", "policy"}
 				if mode == "narrowed" {
-					want = append(want, "standalone-matrix")
+					want[1] = "standalone-matrix"
 				}
-				want = append(want, "fixtures-start", "coverage:video-cloud")
-				if mode != "narrowed" {
-					want = append(want, "matrix-status")
+				if mode != "policy-failure" {
+					want = append(want, "fixtures-start", "coverage:video-cloud", "coverage:workspace-tooling,cloud-admin-backend")
+					if mode != "coverage-failure" {
+						want = append(want, "coverage:cloud-admin-web", "inventory", "ui")
+					}
+					want = append(want, "fixtures-stop")
 				}
-				want = append(want, "coverage:workspace-tooling,cloud-admin-backend")
-				if mode != "narrowed" && mode != "coverage-failure" {
-					want = append(want, "matrix-policy-tail")
-				}
-				if mode == "complete" || mode == "narrowed" {
-					want = append(want, "coverage:cloud-admin-web", "inventory", "ui")
-				}
-				want = append(want, "fixtures-stop")
 			}
 			if !reflect.DeepEqual(calls, want) {
 				t.Fatalf("calls = %q, want %q", calls, want)

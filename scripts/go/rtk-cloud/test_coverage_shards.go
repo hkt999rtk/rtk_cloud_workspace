@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -19,13 +20,7 @@ import (
 	"time"
 )
 
-var workspaceCoverageLongTests = []string{
-	"TestPRHistoricalLateRootCRLsCompleteDurableCheckpoints",
-	"TestPRProductPostCleanupCorrectionCompletesDurableCheckpoint",
-}
-
-// Custom module fixtures and narrower package selections retain the serial
-// runner. Only the maintained workspace module has these two lifecycle tests.
+// Custom module fixtures and narrower package selections retain the serial runner.
 func useWorkspaceCoverageShards(moduleDir string, module coverageModule) bool {
 	if os.Getenv("RTK_COVERAGE_SERIAL") == "1" || module.Name != "workspace-tooling" || filepath.ToSlash(filepath.Clean(module.Path)) != "scripts/go" || !slices.Equal(module.Packages, []string{"./..."}) {
 		return false
@@ -35,9 +30,12 @@ func useWorkspaceCoverageShards(moduleDir string, module coverageModule) bool {
 }
 
 // All children use one checkout and the original instrumentation/skip options.
-// The remainder keeps ./... so newly added tests and packages run automatically.
+// Discovery includes newly added tests/packages; hints never define membership.
 func runGoCoverageShards(ctx context.Context, moduleDir, logPath, eventsPath, profilePath string, env map[string]string, commonArgs []string) error {
-	for _, path := range []string{profilePath, eventsPath, logPath} {
+	discoveryLog := filepath.Join(filepath.Dir(profilePath), "discovery.log")
+	discoveryEvents := filepath.Join(filepath.Dir(profilePath), "discovery-events.json")
+	planPath := filepath.Join(filepath.Dir(profilePath), "shard-plan.json")
+	for _, path := range []string{profilePath, eventsPath, logPath, discoveryLog, discoveryEvents, planPath} {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
@@ -57,7 +55,7 @@ func runGoCoverageShards(ctx context.Context, moduleDir, logPath, eventsPath, pr
 		return err
 	}
 	defer os.RemoveAll(scratch) // Children are joined before this scope returns.
-	names := []string{"historical-late-root-crls", "postcleanup-correction", "remainder"}
+	names := []string{"group-1", "group-2", "group-3"}
 	logs, events, profiles := make([]string, 3), make([]string, 3), make([]string, 3)
 	childEnvs := make([]map[string]string, 3)
 	for i, name := range names {
@@ -78,6 +76,35 @@ func runGoCoverageShards(ctx context.Context, moduleDir, logPath, eventsPath, pr
 		}
 		childEnvs[i]["TMPDIR"], childEnvs[i]["XDG_CONFIG_HOME"] = filepath.Join(privateDir, "tmp"), filepath.Join(privateDir, "config")
 	}
+	// Listing uses its own scratch roots and the same build options as execution.
+	discoveryEnv := map[string]string{}
+	for key, value := range env {
+		discoveryEnv[key] = value
+	}
+	for _, key := range []string{"TMPDIR", "XDG_CONFIG_HOME"} {
+		dir := filepath.Join(scratch, "discovery", key)
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			return err
+		}
+		discoveryEnv[key] = dir
+	}
+	discoveryArgs := append(slices.Clone(commonArgs), "-list=.", "./...")
+	if err := runGoCoverageShardCommand(ctx, moduleDir, discoveryLog, discoveryEvents, discoveryEnv, discoveryArgs); err != nil {
+		_ = joinGoCoverageShardLogs([]string{discoveryLog}, logPath)
+		return fmt.Errorf("discover coverage tests: %w", err)
+	}
+	tests, err := discoverGoCoverageTests(discoveryEvents, commonArgs)
+	if err != nil {
+		return err
+	}
+	groups := balanceGoCoverageTests(tests, workspaceCoverageTimingHints)
+	plan, err := json.MarshalIndent(groups, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(planPath, append(plan, '\n'), 0600); err != nil {
+		return err
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	errs := make([]error, 3)
@@ -87,25 +114,13 @@ func runGoCoverageShards(ctx context.Context, moduleDir, logPath, eventsPath, pr
 		go func(i int) {
 			defer joined.Done()
 			args := slices.Clone(commonArgs)
-			if i < 2 {
-				args = append(args, "-run=^"+workspaceCoverageLongTests[i]+"$", "./rtk-cloud")
-			} else {
-				for j, arg := range args {
-					if strings.HasPrefix(arg, "-skip=") {
-						args[j] = arg + "|^(" + strings.Join(workspaceCoverageLongTests, "|") + ")$"
-					}
-				}
-				// Callers always supply the maintained skip expression. Keep the helper
-				// safe for direct invocation as well.
-				hasSkip := false
-				for _, arg := range args {
-					hasSkip = hasSkip || strings.HasPrefix(arg, "-skip=")
-				}
-				if !hasSkip {
-					args = append(args, "-skip=^("+strings.Join(workspaceCoverageLongTests, "|")+")$")
-				}
-				args = append(args, "./...")
+			var patterns []string
+			for _, test := range groups[i].Tests {
+				patterns = append(patterns, regexp.QuoteMeta(test.Name))
 			}
+			sort.Strings(patterns)
+			patterns = slices.Compact(patterns)
+			args = append(args, "-run=^("+strings.Join(patterns, "|")+")$", "./...")
 			args = append(args, "-coverprofile="+profiles[i])
 			errs[i] = runGoCoverageShardCommand(ctx, moduleDir, logs[i], events[i], childEnvs[i], args)
 			if errs[i] != nil {
@@ -127,7 +142,7 @@ func runGoCoverageShards(ctx context.Context, moduleDir, logPath, eventsPath, pr
 	if len(commandErrors) > 0 {
 		return errors.Join(commandErrors...)
 	}
-	if err := mergeGoCoverageShardEvents(events, eventsPath); err != nil {
+	if err := mergeGoCoverageShardEvents(events, eventsPath, groups); err != nil {
 		return err
 	}
 	if err := mergeGoCoverageShardProfiles(profiles, profilePath); err != nil {
@@ -324,8 +339,8 @@ func mergeGoCoverageShardProfiles(paths []string, output string) error {
 	return os.WriteFile(output, []byte(merged.String()), 0600)
 }
 
-func mergeGoCoverageShardEvents(paths []string, output string) error {
-	if len(paths) != 3 {
+func mergeGoCoverageShardEvents(paths []string, output string, groups []goCoverageShard) error {
+	if len(paths) != 3 || len(groups) != 3 {
 		return errors.New("workspace coverage requires all three shard event streams")
 	}
 	owner := map[string]int{}
@@ -339,8 +354,10 @@ func mergeGoCoverageShardEvents(paths []string, output string) error {
 		scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 		started, completed := map[string]bool{}, map[string]bool{}
 		packagePassed := map[string]bool{}
-		expectedPassed := false
-		expectedPackage := ""
+		expected := map[string]bool{}
+		for _, test := range groups[i].Tests {
+			expected[test.Package+"\x00"+test.Name] = true
+		}
 		for scanner.Scan() {
 			var event goTestEvent
 			if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
@@ -364,11 +381,8 @@ func mergeGoCoverageShardEvents(paths []string, output string) error {
 			}
 			owner[key] = i
 			top := strings.SplitN(event.Test, "/", 2)[0]
-			if i < 2 && (top != workspaceCoverageLongTests[i] || !strings.HasSuffix(event.Package, "/rtk-cloud")) {
-				return fmt.Errorf("unexpected test in lifecycle coverage shard: %s %s", event.Package, event.Test)
-			}
-			if i == 2 && slices.Contains(workspaceCoverageLongTests, top) {
-				return fmt.Errorf("lifecycle test also ran in remainder: %s", event.Test)
+			if !expected[event.Package+"\x00"+top] {
+				return fmt.Errorf("unexpected test in coverage shard %d: %s %s", i, event.Package, event.Test)
 			}
 			switch event.Action {
 			case "run":
@@ -381,10 +395,6 @@ func mergeGoCoverageShardEvents(paths []string, output string) error {
 					return fmt.Errorf("coverage test has no unique run/completion: %s", event.Test)
 				}
 				completed[key] = true
-				if i < 2 && event.Test == workspaceCoverageLongTests[i] && event.Action == "pass" {
-					expectedPassed = true
-					expectedPackage = event.Package
-				}
 			}
 		}
 		if err := scanner.Err(); err != nil {
@@ -399,8 +409,10 @@ func mergeGoCoverageShardEvents(paths []string, output string) error {
 				return fmt.Errorf("incomplete coverage shard test %s", key)
 			}
 		}
-		if i < 2 && (!expectedPassed || !packagePassed[expectedPackage]) {
-			return fmt.Errorf("coverage shard %d lacks expected lifecycle test pass", i)
+		for key := range expected {
+			if !completed[key] {
+				return fmt.Errorf("coverage shard %d lacks discovered test completion: %s", i, key)
+			}
 		}
 		if len(raw) == 0 {
 			return fmt.Errorf("coverage shard %d has no events", i)
@@ -411,4 +423,126 @@ func mergeGoCoverageShardEvents(paths []string, output string) error {
 		}
 	}
 	return os.WriteFile(output, []byte(merged.String()), 0600)
+}
+
+// Timings only influence scheduling. Inventory always comes from Go's compiled
+// test list, including examples and fuzz seeds run by a normal go test command.
+type goCoverageTest struct {
+	Package string `json:"package"`
+	Name    string `json:"name"`
+}
+
+type goCoverageShard struct {
+	EstimatedSeconds float64          `json:"estimated_seconds"`
+	Tests            []goCoverageTest `json:"tests"`
+}
+
+func discoverGoCoverageTests(path string, args []string) ([]goCoverageTest, error) {
+	var skip *regexp.Regexp
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "-skip=") {
+			var err error
+			skip, err = regexp.Compile(strings.TrimPrefix(arg, "-skip="))
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	scanner := bufio.NewScanner(strings.NewReader(string(raw)))
+	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
+	var tests []goCoverageTest
+	seen := map[goCoverageTest]bool{}
+	packages := map[string]bool{}
+	for scanner.Scan() {
+		var event struct {
+			goTestEvent
+			Output string `json:"Output"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			return nil, err
+		}
+		if event.Action == "fail" {
+			return nil, fmt.Errorf("coverage discovery failed: %s", event.Package)
+		}
+		if event.Test == "" && (event.Action == "pass" || event.Action == "skip") {
+			packages[event.Package] = true
+		}
+		name := strings.TrimSpace(event.Output)
+		if event.Action != "output" || event.Test != "" || len(strings.Fields(name)) != 1 || !(strings.HasPrefix(name, "Test") || strings.HasPrefix(name, "Example") || strings.HasPrefix(name, "Fuzz")) {
+			continue
+		}
+		if skip != nil && skip.MatchString(name) {
+			continue
+		}
+		test := goCoverageTest{event.Package, name}
+		if seen[test] {
+			return nil, fmt.Errorf("duplicate discovered Go test: %s %s", test.Package, test.Name)
+		}
+		seen[test] = true
+		tests = append(tests, test)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	if len(packages) == 0 {
+		return nil, errors.New("coverage discovery has no completed packages")
+	}
+	for _, test := range tests {
+		if !packages[test.Package] {
+			return nil, fmt.Errorf("incomplete coverage discovery for %s", test.Package)
+		}
+	}
+	return tests, nil
+}
+
+// Longest-first packing keeps three bounded workers. Identically named tests
+// in different packages travel together because -run applies to every package.
+// Unknown tests get one second, so cold CI distributes the ordinary remainder
+// without requiring a previous run or introducing an allowlist.
+func balanceGoCoverageTests(tests []goCoverageTest, hints map[string]float64) []goCoverageShard {
+	byName := map[string][]goCoverageTest{}
+	weights := map[string]float64{}
+	for _, test := range tests {
+		byName[test.Name] = append(byName[test.Name], test)
+		weight := hints[test.Name]
+		if weight <= 0 {
+			weight = 1
+		}
+		weights[test.Name] += weight
+	}
+	names := make([]string, 0, len(byName))
+	for name := range byName {
+		names = append(names, name)
+	}
+	sort.Slice(names, func(i, j int) bool {
+		if weights[names[i]] == weights[names[j]] {
+			return names[i] < names[j]
+		}
+		return weights[names[i]] > weights[names[j]]
+	})
+	groups := make([]goCoverageShard, 3)
+	for _, name := range names {
+		i := 0
+		for j := 1; j < len(groups); j++ {
+			if groups[j].EstimatedSeconds < groups[i].EstimatedSeconds {
+				i = j
+			}
+		}
+		groups[i].Tests = append(groups[i].Tests, byName[name]...)
+		groups[i].EstimatedSeconds += weights[name]
+	}
+	for i := range groups {
+		sort.Slice(groups[i].Tests, func(a, b int) bool {
+			x, y := groups[i].Tests[a], groups[i].Tests[b]
+			if x.Package == y.Package {
+				return x.Name < y.Name
+			}
+			return x.Package < y.Package
+		})
+	}
+	return groups
 }

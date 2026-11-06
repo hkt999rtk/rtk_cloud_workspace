@@ -514,7 +514,7 @@ jobs:
 
   aggregate:
     name: Coverage aggregate and redaction
-    if: always() && needs.changes.outputs.run_coverage == 'true'
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.run_coverage != 'false')
     needs: [changes, policy, unit, node, account-manager-postgres, billing-postgres, video-cloud-postgres-emqx]
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 20
@@ -523,6 +523,10 @@ jobs:
         with:
           fetch-depth: 0
           submodules: false
+      - name: Verify selected coverage jobs succeeded
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: scripts/ci/check-coverage-job-results.sh
       - name: Initialize workspace submodules
         env:
           CI_RUNNER_GITHUB_WORK_KEY: ${{ secrets.CI_RUNNER_GITHUB_WORK_KEY }}

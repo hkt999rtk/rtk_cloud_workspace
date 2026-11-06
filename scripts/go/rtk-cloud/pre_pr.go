@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -28,7 +29,6 @@ type prePRSelection struct {
 var (
 	prePRRunCmd                    = runCmd
 	prePRRunMatrix                 = runTestMatrix
-	prePRRunMatrixWithBaseline     = runTestMatrixWithBaseline
 	prePRLoadCoverageConfig        = loadCoverageConfig
 	prePRRunCoverage               = runTestCoverage
 	prePRRunInventory              = runTestInventory
@@ -48,11 +48,30 @@ func runPrePR(args []string) error {
 	runMatrix := fs.Bool("matrix", true, "run the workspace policy matrix when selected")
 	runUI := fs.Bool("ui", true, "run full desktop and mobile UI E2E when Cloud Admin web is selected")
 	dryRun := fs.Bool("dry-run", false, "print selected local and CI-only checks without running them")
+	mode := fs.String("mode", "full", "full local validation or quick focused publication checks (complete gates remain in CI)")
+	testRun := fs.String("test-run", "", "Go test expression required by quick mode; focused coverage is diagnostic only")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if strings.TrimSpace(*baseRef) == "" || strings.TrimSpace(*headRef) == "" {
 		return errors.New("pre-pr requires non-empty --base and --head refs")
+	}
+	if *mode != "full" && *mode != "quick" {
+		return errors.New("pre-pr --mode must be full or quick")
+	}
+	if *mode == "full" && *testRun != "" {
+		return errors.New("--test-run is only supported in quick mode")
+	}
+	if *mode == "quick" {
+		if !*runMatrix {
+			return errors.New("quick mode requires the policy matrix")
+		}
+		if strings.Contains(*testRun, "/") {
+			return errors.New("quick --test-run selects top-level tests only; choose the parent test instead of a subtest selector")
+		}
+		if _, err := regexp.Compile(*testRun); err != nil {
+			return fmt.Errorf("invalid --test-run: %w", err)
+		}
 	}
 	workspace, err := workspaceRoot()
 	if err != nil {
@@ -74,16 +93,36 @@ func runPrePR(args []string) error {
 	if err != nil {
 		return err
 	}
+	if *mode == "quick" {
+		if len(selection.NodeModules) > 0 {
+			return errors.New("quick mode supports Go changes only; use the focused HTML publication workflow or --mode full for JavaScript/UI checks")
+		}
+		if len(selection.GoModules) > 0 && strings.TrimSpace(*testRun) == "" {
+			return errors.New("quick Go checks require --test-run selecting the affected tests")
+		}
+		head, err := gitOutput(workspace, "rev-parse", *headRef+"^{commit}")
+		if err != nil {
+			return err
+		}
+		current, err := gitOutput(workspace, "rev-parse", "HEAD")
+		if err != nil {
+			return err
+		}
+		if head != current {
+			return errors.New("quick checks require --head to match the executing checkout HEAD")
+		}
+	}
 	if *runID == "" {
 		*runID = "local-pre-pr-" + time.Now().UTC().Format("20060102T150405Z")
 	}
 	printPrePRPlan(os.Stdout, strings.TrimSpace(*baseRef), strings.TrimSpace(*headRef), selection, *runMatrix, *runUI)
+	fmt.Fprintf(os.Stdout, "Mode: %s\n", *mode)
 	if *dryRun {
 		return nil
 	}
 
 	coalesceWorkspaceTests := false
-	if selection.Policy && *runMatrix && slices.Contains(selection.GoModules, "workspace-tooling") {
+	if *mode == "full" && selection.Policy && *runMatrix && slices.Contains(selection.GoModules, "workspace-tooling") {
 		cfg, err := prePRLoadCoverageConfig(workspace)
 		if err != nil {
 			return err
@@ -95,13 +134,19 @@ func runPrePR(args []string) error {
 	if err := prePRRunCmd(workspace, "git", "diff", "--check", strings.TrimSpace(*baseRef)+"..."+strings.TrimSpace(*headRef)); err != nil {
 		return err
 	}
-	if coalesceWorkspaceTests {
-		fmt.Fprintln(os.Stdout, "\nWorkspace matrix will run with complete governed Go coverage after selected service fixtures; workspace tests execute once.")
+	if coalesceWorkspaceTests || *mode == "quick" {
+		fmt.Fprintln(os.Stdout, "\n== early policy and generated inventory checks ==")
+		if err := prePRRunMatrix([]string{"--policy-only"}); err != nil {
+			return err
+		}
 	} else if selection.Policy && *runMatrix {
 		fmt.Fprintln(os.Stdout, "\n== workspace policy matrix ==")
 		if err := prePRRunMatrix(nil); err != nil {
 			return err
 		}
+	}
+	if *mode == "quick" {
+		return runPrePRQuick(workspace, strings.TrimSpace(*baseRef), strings.TrimSpace(*headRef), *runID, *testRun, selection)
 	}
 	goModules := append([]string(nil), selection.GoModules...)
 	if selection.VideoCloudPostgresEMQX {
@@ -150,15 +195,9 @@ func runPrePR(args []string) error {
 				"--run-id", *runID + "-go",
 			})
 		}
-		var err error
-		if coalesceWorkspaceTests {
-			// Keep the existing coverage fixture environment: native workspace
-			// bridge tests need the selected Video Cloud PostgreSQL fixture.
-			fmt.Fprintln(os.Stdout, "\n== workspace policy matrix with covered baseline ==")
-			err = prePRRunMatrixWithBaseline(nil, coverage)
-		} else {
-			err = coverage(workspace)
-		}
+		// Complete coverage supplies the baseline once; policy was checked before
+		// starting fixtures. Preserve fixture environment for native bridge tests.
+		err := coverage(workspace)
 		if err != nil {
 			return err
 		}

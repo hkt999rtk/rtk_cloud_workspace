@@ -16,6 +16,8 @@ qualification, and capacity/load testing. These levels do not replace one anothe
 
 | Purpose | Entry point | Primary prerequisites |
 | --- | --- | --- |
+| Focused Go PR checks | `pre-pr --mode quick --test-run REGEXP --base origin/main` | Clean committed checkout; equivalent required CI verified |
+| Full local PR checks | `pre-pr --mode full --base origin/main` | Clean committed checkout; selected local dependencies |
 | Fast workspace baseline | `test-matrix` | Complete recursive checkout |
 | Service tests | `test-services` | Per-repository runtime/dependencies |
 | Deterministic E2E | `test-e2e` | Local fixtures; no shared staging required |
@@ -63,13 +65,28 @@ Fast baseline:
 (cd scripts/go && go run ./rtk-cloud -- test-matrix)
 ```
 
+For PR preparation, follow [local publication checks](testing.md#local-checks-before-pr-publication).
+Quick mode runs policy-only checks before focused Go tests and writes diagnostic
+coverage; it does not satisfy the complete coverage gate. Publish after passing
+focused checks when fresh workflow, selector, and required-check evidence proves
+that equivalent full CI will gate merge, including for deployment/auth/PKI/build
+changes. Otherwise use full mode, which remains the default. When complete
+workspace-tooling coverage supplies the baseline, full mode runs policy-only
+checks before fixtures and coverage; other selected policy paths retain the
+full matrix. Node selections require the existing
+presentation-only focused workflow when eligible, or full mode.
+
 The pull-request catalog/policy job uses `test-matrix --policy-only`; the
 workspace coverage job is the authoritative owner of the deterministic Go
-suite. Its workspace-tooling runner uses three complementary processes: the two
-long pull-request checkpoints run separately, while the third process runs all
-remaining tests. Coverage counters and test events are combined before the
-existing gates run. Set `RTK_COVERAGE_SERIAL=1` on the same `test-coverage` command
-for a comparison with the original single-process execution and unchanged gates.
+suite. Its workspace-tooling runner discovers current tests and balances them
+across three workers by estimated duration, longest first. Expensive-test hints
+only influence placement; unknown tests receive a default weight, so new tests
+and packages remain included without updating a name list. Inspect
+`coverage/modules/workspace-tooling/shard-plan.json` for the allocation and
+estimates. Coverage counters and test events are combined and validated against
+the discovered suite before the unchanged inventory, coverage, and skip gates.
+Set `RTK_COVERAGE_SERIAL=1` on the same `test-coverage` command for a comparison
+with single-process execution and unchanged gates.
 The PostgreSQL Backup Runner retains its focused backup, recovery, monitor, and
 image qualification. Pull requests also run the exact root Docker integration
 `TestPostgresRestoreTunedSourceDocker`, without repeating the full `./rtk-cloud`
