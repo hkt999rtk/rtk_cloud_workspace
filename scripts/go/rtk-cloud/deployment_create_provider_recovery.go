@@ -46,9 +46,27 @@ func createProviderRecoveryBlock(cause string) error {
 	return environmentCreateStateBlocker("deployment.create.recovery", cause)
 }
 
+var environmentProviderRecoveryRequiredGates = []string{
+	"deployment.recovery.target", "deployment.recovery.release", "deployment.recovery.storage",
+	"deployment.recovery.bootstrap", "deployment.recovery.network", "deployment.recovery.inputs",
+}
+
+func environmentProviderRecoveryGatesValid(q deploymentplan.Qualification, sha string) bool {
+	if len(q.Gates) != len(environmentProviderRecoveryRequiredGates) {
+		return false
+	}
+	for i, id := range environmentProviderRecoveryRequiredGates {
+		g := q.Gates[i]
+		if g.ID != id || !g.Required || g.Status != "PASS" || g.EvidenceSHA256 != sha {
+			return false
+		}
+	}
+	return true
+}
+
 func validateProviderOnlyCreateJournal(j environmentCreateJournal, p environmentCreatePlan) (map[string]environmentCreateProviderReceipt, string, error) {
-	if j.Schema != environmentCreateJournalSchema || j.Environment != "dev" || j.Environment != p.Environment || j.Stack != p.Stack || !j.CompletedAt.IsZero() || len(j.KubernetesLeases) != 0 || j.OriginalJournal != "" || len(j.Entries) != len(p.Provider.Resources)+2 {
-		return nil, "", createProviderRecoveryBlock("only an unfinished original dev provider-only execution with no Kubernetes leases can use this recovery")
+	if j.Schema != environmentCreateJournalSchema || (j.Environment != "dev" && j.Environment != "staging") || j.Environment != p.Environment || j.Stack != p.Stack || j.Stack != "video-cloud-"+j.Environment || !j.CompletedAt.IsZero() || len(j.KubernetesLeases) != 0 || j.OriginalJournal != "" || len(j.Entries) != len(p.Provider.Resources)+2 {
+		return nil, "", createProviderRecoveryBlock("only an unfinished original dev or staging provider-only execution with no Kubernetes leases can use this recovery")
 	}
 	wanted := map[string]environmentCreateProviderResource{}
 	for _, r := range p.Provider.Resources {
@@ -113,8 +131,8 @@ func validateProviderOnlyCreateJournal(j environmentCreateJournal, p environment
 
 func loadStoppedProviderCreate(cfg deploymentConfig, store secretStore, originalSHA string, afterCanary bool) (*environmentCreateExecution, environmentCreatePlan, error) {
 	var plan environmentCreatePlan
-	if cfg.Environment != "dev" || cfg.Values["DEPLOYMENT_PROTECTION_PROFILE"] != "standard" || !environmentPreflightDigest.MatchString(originalSHA) {
-		return nil, plan, createProviderRecoveryBlock("this profile qualifies only the explicitly selected original dev create plan")
+	if (cfg.Environment != "dev" && (cfg.Environment != "staging" || afterCanary)) || cfg.Values["DEPLOYMENT_PROTECTION_PROFILE"] != "standard" || !environmentPreflightDigest.MatchString(originalSHA) {
+		return nil, plan, createProviderRecoveryBlock("this profile requires the explicitly selected original create plan and a supported environment")
 	}
 	fence := filepath.Join(store.Root, "deployment", ".execution-active")
 	if err := validateEnvironmentPreflightDirectories(store, fence); err != nil {
@@ -331,6 +349,12 @@ func qualifyProviderRecoveryStorage(ctx context.Context, cfg deploymentConfig, o
 }
 
 func qualifyProviderRecoveryBootstrap(ctx context.Context, cfg deploymentConfig, plan environmentCreateBootstrapPlan, store secretStore, operator map[string]string) error {
+	// Staging can seed its local runtime catalog before create preflight.
+	// The stopped journal and native namespace check fence runtime execution.
+	// Validate and preserve those inputs through the normal fresh bootstrap path.
+	if cfg.Environment == "staging" {
+		return qualifyEnvironmentCreateBootstrap(ctx, cfg, plan, store, operator)
+	}
 	for _, relative := range []string{"inventory.json", "runtime/platform-admin"} {
 		path, err := privateDeploymentStatePath(cfg.Environment, relative)
 		if err != nil {
@@ -365,8 +389,8 @@ func runEnvironmentCreateProviderRecovery(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if fs.NArg() != 0 || *env != "dev" || !environmentPreflightDigest.MatchString(*original) || *timeout <= 0 {
-		return createProviderRecoveryBlock("selected dev and original plan digest are required")
+	if fs.NArg() != 0 || (*env != "dev" && (*env != "staging" || *afterCanary)) || !environmentPreflightDigest.MatchString(*original) || *timeout <= 0 {
+		return createProviderRecoveryBlock("selected dev or staging and original plan digest are required; after-storage-canary is dev-only")
 	}
 	workspace, err := workspaceRoot()
 	if err != nil {
@@ -501,7 +525,7 @@ func runEnvironmentCreateProviderRecovery(args []string) error {
 				return err
 			}
 		}
-		fmt.Fprintf(os.Stdout, "%s environment=dev scope=provider-only-create-recovery review-sha256=%s\n", q.Decision, sha)
+		fmt.Fprintf(os.Stdout, "%s environment=%s scope=provider-only-create-recovery review-sha256=%s\n", q.Decision, cfg.Environment, sha)
 		if !pass {
 			return exitCode(1)
 		}
@@ -517,11 +541,8 @@ func runEnvironmentCreateProviderRecovery(args []string) error {
 	if artifact.Schema != "rtk-cloud.provider-create-recovery-artifact/v1" || deploymentplan.Digest(artifact.Plan) != sha || artifact.Qualification.PlanSHA256 != sha || artifact.Qualification.Decision != "GO" || len(artifact.Qualification.Gates) != 6 || !artifact.ValidUntil.Equal(artifact.QualifiedAt.Add(time.Hour)) || artifact.QualifiedAt.After(time.Now().UTC()) || !time.Now().Before(artifact.ValidUntil) {
 		return createProviderRecoveryBlock("fresh complete recovery qualification is required")
 	}
-	required := []string{"deployment.recovery.target", "deployment.recovery.release", "deployment.recovery.storage", "deployment.recovery.bootstrap", "deployment.recovery.network", "deployment.recovery.inputs"}
-	for index, g := range artifact.Qualification.Gates {
-		if !g.Required || g.Status != "PASS" || g.ID != required[index] || g.EvidenceSHA256 != sha {
-			return createProviderRecoveryBlock("recovery gate is not qualified")
-		}
+	if !environmentProviderRecoveryGatesValid(artifact.Qualification, sha) {
+		return createProviderRecoveryBlock("recovery gate is not qualified")
 	}
 	if err := verifyProviderRecoveryBaseline(ctx, cfg, store, p, operator); err != nil {
 		return err
@@ -563,7 +584,7 @@ func runEnvironmentCreateProviderRecovery(args []string) error {
 		decision = "GO"
 	}
 	if *reportPath != "" {
-		result := map[string]any{"schema": "rtk-cloud.provider-create-recovery-result/v1", "environment": "dev", "decision": decision, "review_sha256": sha, "original_plan_sha256": *original, "journal": e.JournalPath, "deployment_performed": true, "completed": err == nil}
+		result := map[string]any{"schema": "rtk-cloud.provider-create-recovery-result/v1", "environment": cfg.Environment, "decision": decision, "review_sha256": sha, "original_plan_sha256": *original, "journal": e.JournalPath, "deployment_performed": true, "completed": err == nil}
 		if err != nil {
 			result["cause"] = err.Error()
 		}
@@ -571,7 +592,7 @@ func runEnvironmentCreateProviderRecovery(args []string) error {
 			return writeErr
 		}
 	}
-	fmt.Fprintf(os.Stdout, "%s environment=dev scope=provider-only-create-recovery completed=%t\n", decision, err == nil)
+	fmt.Fprintf(os.Stdout, "%s environment=%s scope=provider-only-create-recovery completed=%t\n", decision, cfg.Environment, err == nil)
 	return err
 }
 
@@ -610,8 +631,8 @@ func forkProviderCreateRecovery(old *environmentCreateExecution, p environmentCr
 	token := fmt.Sprintf("%x", nonce[:])
 	e := &environmentCreateExecution{Store: old.Store, Directory: directory, JournalPath: filepath.Join(directory, "journal.json")}
 	relative, _ := filepath.Rel(e.Store.Root, e.JournalPath)
-	e.owner = environmentCreateOwner{Schema: environmentCreateOwnerSchema, Environment: "dev", Stack: old.owner.Stack, PlanSHA256: sha, OwnerToken: token, Journal: filepath.ToSlash(relative), StartedAt: now}
-	e.Journal = environmentCreateJournal{Schema: environmentCreateJournalSchema, Environment: "dev", Stack: old.owner.Stack, PlanSHA256: sha, ArtifactSHA256: artifactSHA, OwnerToken: token, AdmittedAt: now, Entries: entries, OriginalJournal: p.OriginalJournal, OriginalJournalSHA256: p.OriginalJournalSHA256, ProviderMaterialPlanSHA256: environmentCreateHostMaterialPlan(old)}
+	e.owner = environmentCreateOwner{Schema: environmentCreateOwnerSchema, Environment: old.owner.Environment, Stack: old.owner.Stack, PlanSHA256: sha, OwnerToken: token, Journal: filepath.ToSlash(relative), StartedAt: now}
+	e.Journal = environmentCreateJournal{Schema: environmentCreateJournalSchema, Environment: old.owner.Environment, Stack: old.owner.Stack, PlanSHA256: sha, ArtifactSHA256: artifactSHA, OwnerToken: token, AdmittedAt: now, Entries: entries, OriginalJournal: p.OriginalJournal, OriginalJournalSHA256: p.OriginalJournalSHA256, ProviderMaterialPlanSHA256: environmentCreateHostMaterialPlan(old)}
 	if err := e.save(); err != nil {
 		return nil, err
 	}

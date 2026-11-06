@@ -348,51 +348,9 @@ func unsealEnvironmentCreateOpenBaoRestart(ctx context.Context, cfg deploymentCo
 	if uid == "" || revision == "" || revision != deploymentplan.Map(controller["status"])["updateRevision"] {
 		return environmentCreateBootstrapBlocker("managed OpenBao replacement revision cannot be verified")
 	}
-	initPath, err := store.safePath("openbao/init.json")
+	share, initSHA, err := readOriginalCreateOpenBaoRestartCustody(store, runtime.Execution, deploymentplan.String(deploymentplan.Map(controller["metadata"])["uid"]))
 	if err != nil {
 		return err
-	}
-	raw, err := readBoundedEnvironmentFile(initPath, true)
-	if err != nil {
-		return environmentCreateBootstrapBlocker("original OpenBao initialization evidence is unavailable")
-	}
-	var initialized struct {
-		Keys  []string `json:"unseal_keys_b64"`
-		Token string   `json:"root_token"`
-	}
-	if json.Unmarshal(raw, &initialized) != nil || len(initialized.Keys) != 1 || initialized.Token == "" {
-		return environmentCreateBootstrapBlocker("original OpenBao initialization evidence is malformed")
-	}
-	var original deploymentplan.Object
-	for _, entry := range runtime.Execution.Journal.Entries {
-		if entry.Key == "openbao-initialize" && entry.State == "completed" {
-			if json.Unmarshal(entry.Receipt, &original) != nil {
-				return environmentCreateBootstrapBlocker("original OpenBao initialization receipt cannot be read")
-			}
-		}
-	}
-	if original == nil || original["init_sha256"] != environmentPreflightBytesSHA256(raw) || original["statefulset_uid"] != deploymentplan.Map(controller["metadata"])["uid"] || original["root_token_ref"] != "openbao/root-token" || original["unseal_ref"] != "openbao/unseal-key" {
-		return environmentCreateBootstrapBlocker("managed OpenBao replacement differs from the completed original initialization owner and evidence")
-	}
-	keyPath, err := store.safePath("openbao/unseal-key")
-	if err != nil {
-		return err
-	}
-	key, err := readBoundedEnvironmentFile(keyPath, true)
-	if err != nil || strings.TrimSpace(string(key)) != initialized.Keys[0] {
-		return environmentCreateBootstrapBlocker("retained original OpenBao share differs from initialization evidence")
-	}
-	decoded, err := base64.StdEncoding.DecodeString(initialized.Keys[0])
-	if err != nil || len(decoded) < 16 {
-		return environmentCreateBootstrapBlocker("retained original OpenBao share is invalid")
-	}
-	tokenPath, err := store.safePath("openbao/root-token")
-	if err != nil {
-		return err
-	}
-	token, err := readBoundedEnvironmentFile(tokenPath, true)
-	if err != nil || strings.TrimSpace(string(token)) != initialized.Token {
-		return environmentCreateBootstrapBlocker("retained original OpenBao root credential differs")
 	}
 	exec := func(input []byte, script string) ([]byte, error) {
 		current, e := runtime.Backend.Read(ctx, "Pod/"+ns+"/openbao-0")
@@ -423,11 +381,11 @@ func unsealEnvironmentCreateOpenBaoRestart(ctx context.Context, cfg deploymentCo
 		return nil
 	}
 	entryKey := "openbao-managed-unseal-" + uid
-	intent, _ := json.Marshal(deploymentplan.Object{"pod_uid": uid, "controller_uid": deploymentplan.Map(controller["metadata"])["uid"], "revision": revision, "original_init_sha256": environmentPreflightBytesSHA256(raw), "unseal_sha256": environmentPreflightBytesSHA256([]byte(initialized.Keys[0]))})
+	intent, _ := json.Marshal(deploymentplan.Object{"pod_uid": uid, "controller_uid": deploymentplan.Map(controller["metadata"])["uid"], "revision": revision, "original_init_sha256": initSHA, "unseal_sha256": environmentPreflightBytesSHA256([]byte(share))})
 	if err = runtime.Execution.BeginEntry(entryKey, "openbao-unseal", intent, time.Now().UTC()); err != nil {
 		return err
 	}
-	body, _ := json.Marshal(map[string]string{"key": initialized.Keys[0]})
+	body, _ := json.Marshal(map[string]string{"key": share})
 	if _, err = exec(body, "bao write -format=json sys/unseal -"); err != nil {
 		return environmentCreateBootstrapBlocker("managed OpenBao original-share unseal outcome is uncertain; retain journal and inspect exact Pod")
 	}
@@ -440,4 +398,54 @@ func unsealEnvironmentCreateOpenBaoRestart(ctx context.Context, cfg deploymentCo
 		return err
 	}
 	return runtime.Execution.CompleteEntry(entryKey, time.Now().UTC())
+}
+
+func readOriginalCreateOpenBaoRestartCustody(store secretStore, execution *environmentCreateExecution, controllerUID string) (share, initSHA string, err error) {
+	initPath, err := store.safePath("openbao/init.json")
+	if err != nil {
+		return "", "", err
+	}
+	raw, err := readBoundedEnvironmentFile(initPath, true)
+	if err != nil {
+		return "", "", environmentCreateBootstrapBlocker("original OpenBao initialization evidence is unavailable")
+	}
+	var initialized struct {
+		Keys  []string `json:"unseal_keys_b64"`
+		Token string   `json:"root_token"`
+	}
+	if json.Unmarshal(raw, &initialized) != nil || len(initialized.Keys) != 1 || initialized.Token == "" {
+		return "", "", environmentCreateBootstrapBlocker("original OpenBao initialization evidence is malformed")
+	}
+	var original deploymentplan.Object
+	for _, entry := range execution.Journal.Entries {
+		if entry.Key == "openbao-initialize" && entry.State == "completed" {
+			if json.Unmarshal(entry.Receipt, &original) != nil {
+				return "", "", environmentCreateBootstrapBlocker("original OpenBao initialization receipt cannot be read")
+			}
+		}
+	}
+	if original == nil || original["init_sha256"] != environmentPreflightBytesSHA256(raw) || original["statefulset_uid"] != controllerUID || original["root_token_ref"] != "openbao/root-token" || original["unseal_ref"] != "openbao/unseal-key" {
+		return "", "", environmentCreateBootstrapBlocker("managed OpenBao replacement differs from the completed original initialization owner and evidence")
+	}
+	keyPath, err := store.safePath("openbao/unseal-key")
+	if err != nil {
+		return "", "", err
+	}
+	key, err := readBoundedEnvironmentFile(keyPath, true)
+	if err != nil || strings.TrimSpace(string(key)) != initialized.Keys[0] {
+		return "", "", environmentCreateBootstrapBlocker("retained original OpenBao share differs from initialization evidence")
+	}
+	decoded, err := base64.StdEncoding.DecodeString(initialized.Keys[0])
+	if err != nil || len(decoded) < 16 {
+		return "", "", environmentCreateBootstrapBlocker("retained original OpenBao share is invalid")
+	}
+	tokenPath, err := store.safePath("openbao/root-token")
+	if err != nil {
+		return "", "", err
+	}
+	token, err := readBoundedEnvironmentFile(tokenPath, true)
+	if err != nil || strings.TrimSpace(string(token)) != initialized.Token {
+		return "", "", environmentCreateBootstrapBlocker("retained original OpenBao root credential differs")
+	}
+	return initialized.Keys[0], environmentPreflightBytesSHA256(raw), nil
 }

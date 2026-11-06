@@ -165,7 +165,7 @@ func qualifyEnvironmentCreateDependencyContract(ctx context.Context, cfg deploym
 		}
 		// These are the same canonical mirrors produced by foundation and
 		// application owners, not generated identity or fallback credentials.
-		foundation, err := decodeEnvironmentCreateManifests(lkePostgresSecretManifest(env), lkeAccountManagerSecretManifest(env), lkeVideoCloudRuntimeSecretManifest(env), lkeFactoryEnrollRuntimeSecretManifest(env), lkeVideoCloudWorkersSecretManifest(env))
+		foundation, err := decodeEnvironmentCreateManifests(lkePostgresSecretManifest(env), lkeAccountManagerSecretManifest(env), lkeVideoCloudRuntimeSecretManifest(env), lkeFactoryEnrollRuntimeSecretManifest(env), lkeVideoCloudWorkersRuntimeManifest(env, true))
 		if err != nil {
 			return err
 		}

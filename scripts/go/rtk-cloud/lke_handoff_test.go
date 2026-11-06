@@ -69,6 +69,29 @@ func TestLKEHandoffRuntimeIsExplicitlyOptIn(t *testing.T) {
 	}
 }
 
+func TestManagedBrokerRuntimeCredentialsDoNotDependOnHandoff(t *testing.T) {
+	t.Setenv("LKE_ACCOUNT_MANAGER_HANDOFF_WORKER_ENABLED", "")
+	t.Setenv("LKE_RUNTIME_SECRET_SEED", "managed-broker-handoff-fixture")
+	env := handoffLKETestEnv(false)
+	var runtime struct {
+		Data map[string]string `yaml:"stringData"`
+	}
+	if err := yaml.Unmarshal([]byte(lkeVideoCloudWorkersRuntimeManifest(env, true)), &runtime); err != nil {
+		t.Fatal(err)
+	}
+	for field, source := range map[string]string{
+		"VIDEO_CLOUD_EMQX_API_KEY":    "emqx-handoff-api-key",
+		"VIDEO_CLOUD_EMQX_API_SECRET": "emqx-handoff-api-secret",
+	} {
+		if want := lkeRuntimeSecretValue(source); want == "" || runtime.Data[field] != want {
+			t.Fatalf("managed PKI broker must receive its original %s", field)
+		}
+	}
+	if runtime.Data["VIDEO_CLOUD_MQTT_USAGE_HANDOFF_TOKEN"] != "" {
+		t.Fatal("managed PKI broker credentials must not enable ownership handoff")
+	}
+}
+
 func TestLKEHandoffRuntimeWiresDedicatedCredentialsAndEndpoints(t *testing.T) {
 	t.Setenv("LKE_ACCOUNT_MANAGER_HANDOFF_WORKER_ENABLED", "")
 	t.Setenv("LKE_RUNTIME_SECRET_SEED", "handoff-test")

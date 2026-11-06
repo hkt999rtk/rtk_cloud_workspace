@@ -167,6 +167,9 @@ func observeEnvironmentBindings(environment string, release environmentRelease, 
 			for _, value := range certIssuerObjectList(pod[group]) {
 				container := deploymentplan.Map(value)
 				bound := environmentContainerBindings{Name: deploymentplan.String(container["name"]), Fields: map[string]any{}}
+				if group == "containers" && environmentDeviceCallbackConsumer(object, container) && mqttFoundationEnv(container, "VIDEO_CLOUD_MQTT_ENABLED") == "false" && mqttFoundationEnv(container, "VIDEO_CLOUD_MQTT_AUTH_ADDR") == ":18447" {
+					binding.DeviceMQTTCallbackOnly = true
+				}
 				if name == "video-cloud-api" && group == "initContainers" && bound.Name == coreIdentityInitializerName {
 					image := deploymentplan.String(container["image"])
 					if environmentImageRepository(image) != environmentImageRepository(release.Images["LKE_ALPINE_IMAGE"].Reference) {

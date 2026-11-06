@@ -39,8 +39,8 @@ func assertSafeReadFailure(t *testing.T, err error, id string) {
 func TestReadAccessClassificationSurvivesAdmissionAndExecutionBoundaries(t *testing.T) {
 	for _, environment := range []string{"dev", "staging", "prod"} {
 		// Reads occur in admission, stage dependency, exact update, both
-		// post-deploy verifications, and the final ownership fence.
-		for failRead := 1; failRead <= 6; failRead++ {
+		// post-deploy verifications (each also verifies the recorded owner).
+		for failRead := 1; failRead <= 5; failRead++ {
 			t.Run(fmt.Sprintf("%s/read-%d", environment, failRead), func(t *testing.T) {
 				in, definition, live := fixture(t, environment, "Deployment")
 				Map(definition.Object["spec"])["replicas"] = float64(2)

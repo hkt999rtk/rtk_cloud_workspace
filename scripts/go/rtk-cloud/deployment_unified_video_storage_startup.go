@@ -109,6 +109,14 @@ func projectVideoStorageRenderInputs(cfg deploymentConfig, o environmentOTAStora
 	return nil
 }
 
+// Core direct upload uses the same admitted media allocation until cutover.
+func projectCoreMediaAllocation(values map[string]string, o environmentOTAStorageObservation) {
+	values["VIDEO_CLOUD_BLOB_BUCKET"] = o.Bucket
+	values["VIDEO_CLOUD_BLOB_REGION"] = o.Region
+	values["VIDEO_CLOUD_BLOB_PREFIX"] = o.Prefix
+	values["VIDEO_CLOUD_BLOB_ENDPOINT"] = o.Endpoint
+}
+
 func videoStorageStartupContainer(o deploymentplan.Object) deploymentplan.Object {
 	if o["kind"] != "Deployment" || deploymentplan.Map(o["metadata"])["name"] != "video-cloud-videostorage" {
 		return nil

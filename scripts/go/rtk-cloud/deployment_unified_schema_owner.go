@@ -292,9 +292,10 @@ func verifyEnvironmentSchemaDatabaseTarget(ctx context.Context, plan *deployment
 	return ctx.Err()
 }
 
-func verifyEnvironmentInitialBillingOwner(ctx context.Context, cfg deploymentConfig, store secretStore, release environmentRelease, plan *deploymentplan.Plan, read func(context.Context, string) (deploymentplan.Object, error), requireRecorded bool) error {
+func verifyEnvironmentInitialBillingOwner(ctx context.Context, cfg deploymentConfig, store secretStore, release environmentRelease, plan *deploymentplan.Plan, read func(context.Context, string) (deploymentplan.Object, error), requireRecorded bool, scopedCreate ...bool) error {
 	fail := func(cause string) error { return environmentSchemaBlocker("billing", cause) }
-	if plan == nil || plan.Operation != "create" || plan.Environment != store.Environment || plan.Stack != "video-cloud-"+store.Environment || read == nil {
+	allowScoped := len(scopedCreate) == 1 && scopedCreate[0]
+	if plan == nil || (plan.Operation != "create" && !(allowScoped && plan.Operation == "scoped")) || plan.Environment != store.Environment || plan.Stack != "video-cloud-"+store.Environment || read == nil {
 		return fail("Billing database is empty and has no applied history; this plan does not declare its initial owner migration")
 	}
 	want := environmentBillingSchemaJob(plan.Environment, plan.Stack, release.Images["LKE_BILLING_IMAGE"], cfg.Values["LKE_IMAGE_PULL_SECRET_NAME"])
@@ -458,7 +459,7 @@ func (b environmentCreateKubernetesBackend) beforeSchemaOwnerWrite(ctx context.C
 	if state.History || state.Objects != 0 {
 		return environmentSchemaBlocker("billing", "initial migration write no longer has a genuinely empty original database")
 	}
-	if err := verifyEnvironmentInitialBillingOwner(ctx, b.cfg, store, release, &plan, b.environmentKubernetesBackend.Read, false); err != nil {
+	if err := verifyEnvironmentInitialBillingOwner(ctx, b.cfg, store, release, &plan, b.environmentKubernetesBackend.Read, false, b.initialBillingCreate); err != nil {
 		return err
 	}
 	return b.execution.Check(ctx)

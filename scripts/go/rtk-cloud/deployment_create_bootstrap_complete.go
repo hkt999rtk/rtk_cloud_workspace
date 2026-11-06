@@ -227,10 +227,15 @@ func completeEnvironmentCreateBootstrap(ctx context.Context, cfg deploymentConfi
 	if err := executeEnvironmentCreateManagedTransports(ctx, cfg, p, release, runtime, service, roots, intermediates, apply); err != nil {
 		return empty, err
 	}
+	return finishEnvironmentCreateAfterManagedTransports(ctx, cfg, p, release, store, operator, runtime, service, roots, intermediates, applications, apply)
+}
+
+func finishEnvironmentCreateAfterManagedTransports(ctx context.Context, cfg deploymentConfig, p environmentCreateBootstrapPlan, release environmentRelease, store secretStore, operator map[string]string, runtime environmentCreateBootstrapRuntime, service environmentCreateServiceCeremony, roots, intermediates map[string]environmentCreateRegisteredIssuer, applications []deploymentplan.Definition, apply environmentCreateBootstrapApply) (environmentIdentityBindings, error) {
+	var empty environmentIdentityBindings
 	if err := publishEnvironmentCreateApplicationServers(ctx, cfg, p, runtime, service, apply); err != nil {
 		return empty, err
 	}
-	applications, err = finalizeEnvironmentCreateApplicationDefinitions(ctx, cfg, p, release, runtime, service, roots, intermediates, applications)
+	applications, err := finalizeEnvironmentCreateApplicationDefinitions(ctx, cfg, p, release, runtime, service, roots, intermediates, applications)
 	if err != nil {
 		return empty, err
 	}
@@ -242,6 +247,7 @@ func completeEnvironmentCreateBootstrap(ctx context.Context, cfg deploymentConfi
 
 func completeEnvironmentCreateAfterApplicationOwners(ctx context.Context, cfg deploymentConfig, p environmentCreateBootstrapPlan, release environmentRelease, store secretStore, operator map[string]string, runtime environmentCreateBootstrapRuntime, service environmentCreateServiceCeremony, roots, intermediates map[string]environmentCreateRegisteredIssuer, apply environmentCreateBootstrapApply, continuationContexts ...context.Context) (environmentIdentityBindings, error) {
 	var empty environmentIdentityBindings
+	freshProducts := len(p.ProductIdentities) > 0 && runtime.ServiceSessionRecovery == nil
 	if len(continuationContexts) > 1 || len(continuationContexts) == 1 && continuationContexts[0] == nil {
 		return empty, createOpenBaoACKBlock("bounded-finalization-continuation")
 	}
@@ -278,7 +284,15 @@ func completeEnvironmentCreateAfterApplicationOwners(ctx context.Context, cfg de
 			return empty, err
 		}
 		if r := runtime.ServiceSessionRecovery; r == nil || r.ManagedCorePartial == nil {
-			if err := apply(ctx, "managed-complete-issuer", core); err != nil {
+			var closed *environmentCreateJournalEntry
+			if freshProducts && runtime.Execution != nil {
+				closed = createOpenBaoACKCompletionEntry(runtime.Execution.Journal, "kubernetes/fresh-product-enrollment-closed")
+			}
+			if closed == nil {
+				if err := apply(ctx, "managed-complete-issuer", core); err != nil {
+					return empty, err
+				}
+			} else if _, _, err := acceptedCreateStage(store, runtime.Execution, "kubernetes/managed-complete-issuer"); err != nil {
 				return empty, err
 			}
 		}
@@ -294,9 +308,11 @@ func completeEnvironmentCreateAfterApplicationOwners(ctx context.Context, cfg de
 			}
 		}
 	}
-	freshProducts := len(p.ProductIdentities) > 0 && runtime.ServiceSessionRecovery == nil
 	if freshProducts {
 		if err := executeEnvironmentCreateFreshProductIdentities(ctx, cfg, p, release, store, runtime, service, apply); err != nil {
+			return empty, err
+		}
+		if err := bindFreshProductClosedIssuer(core, store, runtime.Execution, p.Stack); err != nil {
 			return empty, err
 		}
 	} else if r := runtime.ServiceSessionRecovery; r != nil && r.completedTail != nil {

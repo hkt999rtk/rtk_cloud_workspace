@@ -14,8 +14,12 @@ import (
 )
 
 func providerRecoveryJournalFixture() (environmentCreateJournal, environmentCreatePlan) {
+	return providerRecoveryJournalFixtureFor("dev")
+}
+
+func providerRecoveryJournalFixtureFor(environment string) (environmentCreateJournal, environmentCreatePlan) {
 	now := time.Now().UTC().Add(-time.Minute)
-	p := environmentCreatePlan{Schema: "rtk-cloud.create-plan/v1", Environment: "dev", Stack: "video-cloud-dev"}
+	p := environmentCreatePlan{Schema: "rtk-cloud.create-plan/v1", Environment: environment, Stack: "video-cloud-" + environment}
 	j := environmentCreateJournal{Schema: environmentCreateJournalSchema, Environment: p.Environment, Stack: p.Stack, PlanSHA256: strings.Repeat("a", 64), AdmittedAt: now, Entries: []environmentCreateJournalEntry{}}
 	for index, key := range []string{"lke", "edge", "turn-01", "bucket-runtime-media", "bucket-ota-firmware"} {
 		kind := "instance"
@@ -43,7 +47,7 @@ func providerRecoveryJournalFixture() (environmentCreateJournal, environmentCrea
 }
 
 func TestProviderOnlyRecoveryRejectsUncertainAndInitializedExecution(t *testing.T) {
-	for _, mode := range []string{"valid", "provider-pending", "provider-allocated", "storage-receipt", "storage-completed", "wrong-storage-phase", "extra-canary", "lease", "already-recovered", "foreign-cluster", "foreign-name", "duplicate-entry", "bad-intent", "complete", "staging"} {
+	for _, mode := range []string{"valid", "provider-pending", "provider-allocated", "storage-receipt", "storage-completed", "wrong-storage-phase", "extra-canary", "lease", "already-recovered", "foreign-cluster", "foreign-name", "duplicate-entry", "bad-intent", "complete", "staging", "foreign-environment", "production"} {
 		t.Run(mode, func(t *testing.T) {
 			j, p := providerRecoveryJournalFixture()
 			switch mode {
@@ -74,11 +78,14 @@ func TestProviderOnlyRecoveryRejectsUncertainAndInitializedExecution(t *testing.
 			case "complete":
 				j.CompletedAt = time.Now().UTC()
 			case "staging":
-				j.Environment = "staging"
+				j, p = providerRecoveryJournalFixtureFor("staging")
+			case "foreign-environment":
 				p.Environment = "staging"
+			case "production":
+				j, p = providerRecoveryJournalFixtureFor("prod")
 			}
 			receipts, kubeSHA, err := validateProviderOnlyCreateJournal(j, p)
-			if mode == "valid" {
+			if mode == "valid" || mode == "staging" {
 				if err != nil || len(receipts) != 5 || kubeSHA != strings.Repeat("c", 64) {
 					t.Fatal("verified provider-only baseline rejected", err)
 				}
@@ -90,13 +97,21 @@ func TestProviderOnlyRecoveryRejectsUncertainAndInitializedExecution(t *testing.
 }
 
 func TestProviderRecoveryPreservesOriginalJournalAndContinuousProcessLock(t *testing.T) {
-	cfg, store, operatorSHA, artifact := createStateFixture(t, "dev")
+	for _, environment := range []string{"dev", "staging"} {
+		t.Run(environment, func(t *testing.T) {
+			testProviderRecoveryPreservesOriginalJournalAndContinuousProcessLock(t, environment)
+		})
+	}
+}
+
+func testProviderRecoveryPreservesOriginalJournalAndContinuousProcessLock(t *testing.T, environment string) {
+	cfg, store, operatorSHA, artifact := createStateFixture(t, environment)
 	old, err := startEnvironmentCreateExecution(context.Background(), cfg, artifact, operatorSHA, time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer old.Close()
-	j, p := providerRecoveryJournalFixture()
+	j, p := providerRecoveryJournalFixtureFor(environment)
 	j.PlanSHA256, j.OwnerToken, j.ArtifactSHA256 = old.Journal.PlanSHA256, old.Journal.OwnerToken, old.Journal.ArtifactSHA256
 	old.Journal = j
 	if err := old.save(); err != nil {
@@ -110,7 +125,16 @@ func TestProviderRecoveryPreservesOriginalJournalAndContinuousProcessLock(t *tes
 	}
 	recovery := environmentCreateProviderRecoveryPlan{OriginalPlanSHA256: artifact.PlanSHA256, OriginalJournal: old.owner.Journal, OriginalJournalSHA256: deploymentplan.Digest(j), OriginalOwnerSHA256: deploymentplan.Digest(old.owner), KubeconfigSHA256: kubeSHA, Plan: p, Receipts: receipts}
 	sha := deploymentplan.Digest(recovery)
-	e, err := forkProviderCreateRecovery(old, recovery, sha, strings.Repeat("1", 64))
+	q := deploymentplan.Qualification{PlanSHA256: sha, Decision: "GO"}
+	for _, id := range environmentProviderRecoveryRequiredGates {
+		q.Gates = append(q.Gates, deploymentplan.GateResult{ID: id, Required: true, Status: "PASS", EvidenceSHA256: sha})
+	}
+	qualified := environmentCreateProviderRecoveryArtifact{Schema: "rtk-cloud.provider-create-recovery-artifact/v1", Plan: recovery, Qualification: q}
+	path := filepath.Join("deployment/create/recovery", sha, "qualification.json")
+	if err := store.write(path, mustProviderRecoveryJSON(qualified), false); err != nil {
+		t.Fatal(err)
+	}
+	e, err := forkProviderCreateRecovery(old, recovery, sha, deploymentplan.Digest(qualified))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,8 +145,14 @@ func TestProviderRecoveryPreservesOriginalJournalAndContinuousProcessLock(t *tes
 	if old.running != nil || e.running == nil || len(e.Journal.Entries) != 6 || e.Journal.OriginalJournalSHA256 != recovery.OriginalJournalSHA256 || environmentCreateHostMaterialPlan(e) != artifact.PlanSHA256 {
 		t.Fatal("recovery lost lock, lineage, or original host-key reference")
 	}
+	if e.owner.Environment != environment || e.Journal.Environment != environment {
+		t.Fatal("recovery changed the environment of the original owner")
+	}
 	if err := e.Check(context.Background()); err != nil {
 		t.Fatal("new owner is not verified", err)
+	}
+	if admitted, _, err := loadEnvironmentCreateAdmittedGeneration(store, e.Journal.PlanSHA256, e.Journal.ArtifactSHA256); err != nil || deploymentplan.Digest(admitted) != deploymentplan.Digest(p) {
+		t.Fatal("later stages cannot load the exact provider recovery admission", err)
 	}
 	if other, err := deploymentplan.LockExecutionOwner(filepath.Join(store.Root, "deployment/.execution-active"), false); err == nil {
 		other.Close()

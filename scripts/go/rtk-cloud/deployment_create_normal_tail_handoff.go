@@ -38,10 +38,17 @@ func createNormalTailHandoffFromContext(ctx context.Context) (*createNormalTailH
 // Acquire only the original process lock. No historical checkpoint selector or
 // expired ceremony deadline participates in loading an ordinary continuation.
 func loadCreateNormalTailExecution(ctx context.Context, cfg deploymentConfig, store secretStore, parent string) (*environmentCreateExecution, error) {
+	if cfg.Environment != "dev" {
+		return nil, createProviderRecoveryBlock("original completed-bootstrap execution owner is unavailable")
+	}
+	return lockStoppedCreateExecution(ctx, cfg, store, parent)
+}
+
+func lockStoppedCreateExecution(ctx context.Context, cfg deploymentConfig, store secretStore, parent string) (*environmentCreateExecution, error) {
 	bad := func() (*environmentCreateExecution, error) {
 		return nil, createProviderRecoveryBlock("original completed-bootstrap execution owner is unavailable")
 	}
-	if ctx.Err() != nil || cfg.Environment != store.Environment || cfg.Environment != "dev" || cfg.Values["DEPLOYMENT_PROTECTION_PROFILE"] != "standard" || !environmentPreflightDigest.MatchString(parent) {
+	if ctx.Err() != nil || cfg.Environment != store.Environment || cfg.Values["DEPLOYMENT_PROTECTION_PROFILE"] != "standard" || !environmentPreflightDigest.MatchString(parent) {
 		return bad()
 	}
 	fence := filepath.Join(store.Root, "deployment/.execution-active")

@@ -49,6 +49,9 @@ func executeEnvironmentCreateBootstrap(ctx context.Context, cfg deploymentConfig
 	if bindings, restored, err := restoreEnvironmentFreshProductBootstrap(ctx, cfg, plan, release, store, runtime, apply); err != nil || restored {
 		return bindings, err
 	}
+	if r := runtime.ServiceAuthorizationRecovery; r != nil && r.ManagedHosts != nil {
+		return executeStagingManagedHostsForward(ctx, cfg, plan, release, store, operator, runtime, r, apply)
+	}
 	service, err := executeEnvironmentCreateServiceBootstrap(ctx, cfg, plan, store, operator, runtime, apply)
 	if err != nil {
 		return empty, err
@@ -69,10 +72,39 @@ func executeEnvironmentCreateIssuerLineage(ctx context.Context, cfg deploymentCo
 	if err := refreshEnvironmentCreateAuthentication(ctx, client, operator); err != nil {
 		return root, intermediate, "", err
 	}
+	if recovery := runtime.ServiceAuthorizationRecovery; recovery != nil && policy.Domain == "service" {
+		root = recovery.Root
+		op, doc, err := executeEnvironmentCreateIntermediateCeremony(ctx, client, cfg, p, store, runtime, root.Document, policy)
+		if err != nil {
+			return root, intermediate, "", err
+		}
+		intermediate, err = environmentCreateRegisteredIssuerFromMap(doc, root.RootFingerprint)
+		if err != nil {
+			return root, intermediate, "", err
+		}
+		if err := distribute(root, intermediate); err != nil {
+			return root, intermediate, "", err
+		}
+		if err := refreshEnvironmentCreateAuthentication(ctx, client, operator); err != nil {
+			return root, intermediate, "", err
+		}
+		doc, err = activateEnvironmentCreateIssuer(ctx, client, cfg, store, runtime, op, doc, policy)
+		if err != nil {
+			return root, intermediate, "", err
+		}
+		intermediate, err = environmentCreateRegisteredIssuerFromMap(doc, root.RootFingerprint)
+		return root, intermediate, recovery.CRLFile, err
+	}
 	var rootOperation environmentCreateIssuerOperation
 	var rootDocument map[string]any
 	var err error
-	if r := runtime.ServiceSessionRecovery; r != nil && r.AppTrustRecovery != nil && policy.Domain == "app" {
+	if r := runtime.ServiceAuthorizationRecovery; r != nil && r.MQTTForward != nil && policy.Domain == "mqtt" {
+		rootOperation = r.MQTTForward.Operation
+		rootDocument, err = client.ReadIssuer(ctx, rootOperation.IssuerID)
+		if err == nil && deploymentplan.Digest(rootDocument) != deploymentplan.Digest(r.MQTTForward.Root.Document) {
+			err = environmentCreateBootstrapBlocker("original ready MQTT Root changed before placement continuation")
+		}
+	} else if r := runtime.ServiceSessionRecovery; r != nil && r.AppTrustRecovery != nil && policy.Domain == "app" {
 		rootOperation = r.AppTrustRecovery.Operation
 		rootDocument, err = client.ReadIssuer(ctx, rootOperation.IssuerID)
 		if err == nil && deploymentplan.Digest(rootDocument) != deploymentplan.Digest(r.AppTrustRecovery.Root.Document) {
@@ -208,6 +240,9 @@ func executeEnvironmentCreateIssuerLineage(ctx context.Context, cfg deploymentCo
 func executeEnvironmentCreateServiceBootstrap(ctx context.Context, cfg deploymentConfig, p environmentCreateBootstrapPlan, store secretStore, operator map[string]string, runtime environmentCreateBootstrapRuntime, apply environmentCreateBootstrapApply) (environmentCreateServiceCeremony, error) {
 	var s environmentCreateServiceCeremony
 	var err error
+	if recovery := runtime.ServiceAuthorizationRecovery; recovery != nil && recovery.Enrollment != nil {
+		return finishEnvironmentCreateServiceEnrollment(ctx, cfg, p, runtime, *recovery.Enrollment, apply)
+	}
 	if r := runtime.ServiceSessionRecovery; r != nil && r.ManagedLateSession != nil {
 		return executeManagedLateBootstrapSeed(ctx, cfg, p, store, runtime, apply)
 	}
@@ -372,6 +407,10 @@ func executeEnvironmentCreateServiceBootstrap(ctx context.Context, cfg deploymen
 	if err != nil {
 		return s, err
 	}
+	return finishEnvironmentCreateServiceEnrollment(ctx, cfg, p, runtime, s, apply)
+}
+
+func finishEnvironmentCreateServiceEnrollment(ctx context.Context, cfg deploymentConfig, p environmentCreateBootstrapPlan, runtime environmentCreateBootstrapRuntime, s environmentCreateServiceCeremony, apply environmentCreateBootstrapApply) (environmentCreateServiceCeremony, error) {
 	policies := []string{"create-" + s.Intermediate.ID + "-signer", "create-" + s.Intermediate.ID + "-service-client"}
 	if runtime.ServiceSessionRecovery == nil || !runtime.ServiceSessionRecovery.Renewal {
 		if err := configureEnvironmentCreateOpenBaoRole(ctx, cfg, runtime, "certissuer-"+cfg.Environment, []string{"certissuer"}, policies); err != nil {
@@ -390,6 +429,9 @@ func executeEnvironmentCreateServiceBootstrap(ctx context.Context, cfg deploymen
 	} {
 		if err := runtime.Execution.Check(ctx); err != nil {
 			return s, err
+		}
+		if r := runtime.ServiceAuthorizationRecovery; r != nil && r.Enrollment != nil && r.CompletedEnrollmentStages[stage.name] {
+			continue
 		}
 		definitions, err := stage.render(ctx, cfg, p, runtime, s)
 		if err != nil {

@@ -38,6 +38,9 @@ func publishEnvironmentCreateApplicationServers(ctx context.Context, cfg deploym
 		container := deploymentplan.Map(certIssuerObjectList(pod["containers"])[0])
 		container["volumeMounts"] = environmentCreateRemoveNamed(container["volumeMounts"], "bootstrap")
 		pod["volumes"] = environmentCreateRemoveNamed(pod["volumes"], "bootstrap")
+		if cfg.Environment == "staging" {
+			bindCreateSameNodePlacement(pod, namespace, owner.Name)
+		}
 		stage := "server-enrollment-" + owner.Name
 		retained, err := verifyManagedTransportAcceptedExportStage(ctx, runtime, stage, job)
 		if err != nil {
@@ -70,6 +73,9 @@ func readEnvironmentCreateOwnedServer(ctx context.Context, cfg deploymentConfig,
 	if r := runtime.ServiceSessionRecovery; r != nil && r.completedTail != nil && owner == "account-manager" {
 		return readManagedLateCompletedAccountServer(ctx, cfg, p, runtime, service, namespace, role, claim, stateRoot, clientState, serverState, serverName)
 	}
+	if r := runtime.ServiceAuthorizationRecovery; r != nil && r.ManagedHosts != nil && r.ManagedHosts.ApplicationsAccepted && owner == "account-manager" && createOpenBaoACKCompletionEntry(runtime.Execution.Journal, "server-export-"+owner) != nil {
+		return readStagingCompletedAccountServer(ctx, cfg, p, runtime, service, namespace, role, claim, stateRoot, clientState, serverState, serverName)
+	}
 	claimID := "PersistentVolumeClaim/" + namespace + "/" + claim
 	originalClaim, err := runtime.Backend.Read(ctx, claimID)
 	if err != nil || originalClaim == nil || deploymentplan.String(deploymentplan.Map(originalClaim["metadata"])["uid"]) == "" || deploymentplan.Map(originalClaim["metadata"])["deletionTimestamp"] != nil || deploymentplan.Map(deploymentplan.Map(originalClaim["metadata"])["labels"])["rtk.realtek.com/stack"] != p.Stack {
@@ -83,6 +89,9 @@ func readEnvironmentCreateOwnedServer(ctx context.Context, cfg deploymentConfig,
 	settings := map[string]string{"PKI_ENVIRONMENT": p.Environment, "PKI_SERVER_NAME": serverName, "PKI_SERVER_BOOTSTRAP_OWNER_CLIENT_STATE": clientState, "PKI_SERVER_BOOTSTRAP_OWNER_CLIENT_SUBJECT": "service:" + role, "PKI_SERVER_BOOTSTRAP_OWNER_CLIENT_ROOT_SHA256": service.Root.RootFingerprint}
 	container := deploymentplan.Object{"name": "custody", "image": p.Image, "command": []any{"/bin/sh", "-ec", "exec sleep 3600"}, "env": append(environmentCreateEnv(settings), environmentCreateServiceDatabaseEnv("pki-verifier-database")), "securityContext": environmentCreateServiceContainerSecurity(), "volumeMounts": []any{environmentCreateServiceMount("owner-state", stateRoot, false)}}
 	reader := deploymentplan.Definition{Phase: "bootstrap", Object: deploymentplan.Object{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": deploymentplan.Object{"name": readerName, "namespace": namespace, "labels": readerLabels}, "spec": deploymentplan.Object{"replicas": float64(1), "strategy": deploymentplan.Object{"type": "Recreate"}, "selector": deploymentplan.Object{"matchLabels": deploymentplan.Object{"app.kubernetes.io/name": readerName}}, "template": deploymentplan.Object{"metadata": deploymentplan.Object{"labels": labels}, "spec": deploymentplan.Object{"automountServiceAccountToken": false, "imagePullSecrets": []any{deploymentplan.Object{"name": "ghcr-pull"}}, "securityContext": environmentCreateServicePodSecurity(), "containers": []any{container}, "volumes": []any{environmentCreateServiceVolume("owner-state", "persistentVolumeClaim", claim)}}}}}}
+	if cfg.Environment == "staging" {
+		bindCreateSameNodePlacement(environmentPKIPod(reader.Object), namespace, owner)
+	}
 	stage := "server-custody-" + owner
 	retained, err := verifyManagedTransportAcceptedExportStage(ctx, runtime, stage, reader)
 	if err != nil {

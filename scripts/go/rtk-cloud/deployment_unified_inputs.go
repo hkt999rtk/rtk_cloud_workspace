@@ -106,6 +106,7 @@ type environmentPodBindings struct {
 	IssuerRuntimeSecret       string                           `json:"issuer_runtime_secret,omitempty"`
 	DeviceTrustStateFile      string                           `json:"device_trust_state_file,omitempty"`
 	NativeTrustInitialization bool                             `json:"native_trust_initialization,omitempty"`
+	DeviceMQTTCallbackOnly    bool                             `json:"device_mqtt_callback_only,omitempty"`
 	Kind                      string                           `json:"kind"`
 	NamespaceSuffix           string                           `json:"namespace_suffix"`
 	Name                      string                           `json:"name"`
@@ -174,6 +175,9 @@ func validateEnvironmentIdentityBindings(b environmentIdentityBindings, environm
 		}
 		if pod.DeviceTrustStateFile != "" && (pod.Component != "managed-api" || !deviceTrustStatePath.MatchString(pod.DeviceTrustStateFile)) {
 			return deviceInitializerBlocker(id, "invalid Device API trust-state lifecycle reference")
+		}
+		if pod.DeviceMQTTCallbackOnly && (pod.Component != "managed-api" || pod.Name != "video-cloud-api-pki" || pod.NamespaceSuffix != "video-cloud") {
+			return errors.New("deployment.bindings: only the native Device API may preserve its callback-only MQTT role")
 		}
 		if pod.NativeTrustInitialization && pod.Component != "managed-api" && pod.Component != "managed-app-api" {
 			return errors.New("deployment.bindings: native trust initialization requires its managed Device or App API owner")

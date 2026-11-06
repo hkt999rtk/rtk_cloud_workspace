@@ -223,7 +223,7 @@ func foundationRecoveryMaterialsForExecution(store secretStore, parentSHA string
 		}
 		cert, err := parseFirstCertificatePEM([]byte(transport.CACert))
 		ca, readErr := store.read(filepath.Join(base, "ca.crt"))
-		if err != nil || cert == nil || readErr != nil || strings.TrimSpace(transport.CACert) != ca || !cert.IsCA || cert.Subject.CommonName != "rtk-create-dev-"+role || !historicalTransport && cert.NotAfter.Before(time.Now().Add(minimumLife)) {
+		if err != nil || cert == nil || readErr != nil || strings.TrimSpace(transport.CACert) != ca || !cert.IsCA || cert.Subject.CommonName != "rtk-create-"+store.Environment+"-"+role || !historicalTransport && cert.NotAfter.Before(time.Now().Add(minimumLife)) {
 			return nil, management, createProviderRecoveryBlock("original transport authority differs or cannot cover qualification and execution")
 		}
 		if role == "management" {

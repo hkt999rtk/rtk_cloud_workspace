@@ -300,18 +300,24 @@ func approveProductWorkload(ctx context.Context, cfg deploymentConfig, runtime e
 	return runtime.PKIClient.completeMutation(key, intent)
 }
 
+type productCurrentCRL struct {
+	Issuer string    `json:"issuer_id"`
+	SHA    string    `json:"crl_sha256"`
+	Number string    `json:"crl_number"`
+	PEM    string    `json:"crl_pem"`
+	This   time.Time `json:"this_update"`
+	Next   time.Time `json:"next_update"`
+}
+
 func readProductCurrentCRL(ctx context.Context, client *environmentCreatePKIClient, issuer environmentCreateRegisteredIssuer) (string, error) {
-	var record struct {
-		Issuer string    `json:"issuer_id"`
-		SHA    string    `json:"crl_sha256"`
-		Number string    `json:"crl_number"`
-		PEM    string    `json:"crl_pem"`
-		This   time.Time `json:"this_update"`
-		Next   time.Time `json:"next_update"`
-	}
+	var record productCurrentCRL
 	if err := client.call(ctx, http.MethodGet, "/v1/platform/pki/issuers/"+issuer.ID+"/crl", "", nil, &record); err != nil {
 		return "", err
 	}
+	return validateProductCurrentCRL(record, issuer)
+}
+
+func validateProductCurrentCRL(record productCurrentCRL, issuer environmentCreateRegisteredIssuer) (string, error) {
 	block, rest := pem.Decode([]byte(record.PEM))
 	if block == nil || block.Type != "X509 CRL" || len(bytes.TrimSpace(rest)) != 0 {
 		return "", environmentCreateBootstrapBlocker("native current Service CRL is malformed")
@@ -319,7 +325,7 @@ func readProductCurrentCRL(ctx context.Context, client *environmentCreatePKIClie
 	crl, err := x509.ParseRevocationList(block.Bytes)
 	cert, certErr := parseFirstCertificatePEM([]byte(issuer.Certificate))
 	now := time.Now().UTC()
-	if err != nil || certErr != nil || crl.CheckSignatureFrom(cert) != nil || record.Issuer != issuer.ID || record.SHA != environmentPreflightBytesSHA256(crl.Raw) || !record.This.Equal(crl.ThisUpdate) || !record.Next.Equal(crl.NextUpdate) || record.Number != crl.Number.String() || crl.ThisUpdate.After(now) || !crl.NextUpdate.After(now) {
+	if err != nil || certErr != nil || crl.Number == nil || crl.CheckSignatureFrom(cert) != nil || record.Issuer != issuer.ID || record.SHA != environmentPreflightBytesSHA256(crl.Raw) || !record.This.Equal(crl.ThisUpdate) || !record.Next.Equal(crl.NextUpdate) || record.Number != crl.Number.String() || crl.ThisUpdate.After(now) || !crl.NextUpdate.After(now) {
 		return "", environmentCreateBootstrapBlocker("native current Service CRL signature, lineage or validity differs")
 	}
 	return record.PEM, nil
@@ -330,7 +336,14 @@ func verifyProductLeafCRL(ctx context.Context, client *environmentCreatePKIClien
 	if err != nil {
 		return err
 	}
+	return verifyProductLeafWithCRL(raw, certificate)
+}
+
+func verifyProductLeafWithCRL(raw, certificate string) error {
 	block, _ := pem.Decode([]byte(raw))
+	if block == nil {
+		return environmentCreateBootstrapBlocker("native product CRL is malformed")
+	}
 	crl, err := x509.ParseRevocationList(block.Bytes)
 	leaf, leafErr := parseFirstCertificatePEM([]byte(certificate))
 	if err != nil || leafErr != nil {
@@ -394,7 +407,12 @@ func verifyProductIdentityOutputs(ctx context.Context, cfg deploymentConfig, run
 		if err = validateProductMirror(material, output, installed.Ceremony, rows[0], time.Now().UTC()); err != nil {
 			return err
 		}
-		if err = verifyProductLeafCRL(ctx, runtime.PKIClient, installed.Ceremony.Intermediate, material["client.crt"]); err != nil {
+		if runtime.StagingControllerHandoff {
+			err = verifyStagingProductLeafCRL(ctx, cfg, runtime, installed.Ceremony.Intermediate, material["client.crt"])
+		} else {
+			err = verifyProductLeafCRL(ctx, runtime.PKIClient, installed.Ceremony.Intermediate, material["client.crt"])
+		}
+		if err != nil {
 			return err
 		}
 		claim, err := runtime.Backend.Read(ctx, "PersistentVolumeClaim/"+cfg.Values["CLOUD_STACK_NAME"]+"-video-cloud/"+output.Claim)

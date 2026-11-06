@@ -322,6 +322,7 @@ func renderEnvironmentResourceCatalog(env map[string]string, bindings environmen
 		if err := applyEnvironmentRegistryIssuerService(definition.Object, bindings); err != nil {
 			return nil, err
 		}
+		bindPrimaryAPIEnvironment(definition.Object, env["CLOUD_STACK_NAME"], env["CLOUD_ENV_NAME"])
 		canonicalEnvironmentEmptyEnvLiterals(definition.Object)
 	}
 	if intent == nil {

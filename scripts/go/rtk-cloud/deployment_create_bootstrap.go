@@ -65,6 +65,8 @@ type environmentCreateBootstrapRuntime struct {
 	InitialAuthSeparated                bool
 	ServiceRootReady                    *environmentCreateRegisteredIssuer
 	ServiceRootOperation                *environmentCreateIssuerOperation
+	ServiceAuthorizationRecovery        *createServiceAuthorizationRecovery
+	StagingControllerHandoff            bool
 	ServiceRootTrustStage               string
 	ServiceRootTrustAdditionalParentKey string
 	TransportTrustConfigMap             string
@@ -712,8 +714,22 @@ func (c *environmentCreatePKIClient) ReadIssuer(ctx context.Context, id string) 
 	if !environmentBootstrapOwnerUUID.MatchString(id) {
 		return nil, environmentCreateBootstrapBlocker("exact registered issuer UUID required")
 	}
-	if err := c.call(ctx, http.MethodGet, "/v1/platform/pki/issuers/"+id, "", nil, &issuer); err != nil {
-		return nil, err
+	for attempt := 0; ; attempt++ {
+		err := c.call(ctx, http.MethodGet, "/v1/platform/pki/issuers/"+id, "", nil, &issuer)
+		if err == nil {
+			break
+		}
+		var failure *environmentCreatePKIHTTPFailure
+		if attempt == 2 || !errors.As(err, &failure) || (failure.Status != http.StatusBadGateway && failure.Status != http.StatusServiceUnavailable && failure.Status != http.StatusGatewayTimeout) {
+			return nil, err
+		}
+		timer := time.NewTimer(time.Duration(attempt+1) * 250 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
 	}
 	if issuer["issuer_id"] != id || issuer["environment"] != c.Environment {
 		return nil, environmentCreateBootstrapBlocker("registry issuer metadata belongs to another identity or environment")
@@ -1229,12 +1245,20 @@ func executeEnvironmentCreateIntermediateCeremony(ctx context.Context, client *e
 		}
 		reservationKey += "-products-" + runtime.ProductIdentityScope
 	}
-	operation, err := client.ReserveIssuer(ctx, reservationKey, request)
-	if err != nil {
-		return operation, nil, err
-	}
-	if err := client.AuthorizeIssuer(ctx, operation); err != nil {
-		return operation, nil, err
+	var err error
+	if recovery := runtime.ServiceAuthorizationRecovery; recovery != nil && policy.Domain == "service" {
+		operation = recovery.Operation
+		if operation.Digest != deploymentplan.Digest(request) {
+			return operation, nil, environmentCreateBootstrapBlocker("recovered intermediate differs from the original qualified request")
+		}
+	} else {
+		operation, err = client.ReserveIssuer(ctx, reservationKey, request)
+		if err != nil {
+			return operation, nil, err
+		}
+		if err := client.AuthorizeIssuer(ctx, operation); err != nil {
+			return operation, nil, err
+		}
 	}
 	issuer, err := client.ReadIssuer(ctx, operation.IssuerID)
 	if err != nil {

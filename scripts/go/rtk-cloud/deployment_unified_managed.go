@@ -116,6 +116,9 @@ func renderManagedEnvironmentAPI(env map[string]string, binding environmentPodBi
 		deploymentplan.Map(value)["labelSelector"] = map[string]any{"matchLabels": map[string]any{"app.kubernetes.io/name": binding.Name}}
 	}
 	if binding.Component == "managed-api" {
+		if binding.DeviceMQTTCallbackOnly {
+			container["env"] = mergeEnvironmentNamedFields(container["env"], environmentCreateEnv(map[string]string{"VIDEO_CLOUD_MQTT_ENABLED": "false"}))
+		}
 		// The formal API image owns UID 10001. Supplementary group 0 reads
 		// the original root:root 0440 TLS Secret without fsGroup changing any
 		// private identity PVC metadata or copying the mounted key material.
@@ -246,7 +249,7 @@ func environmentManagedControllerDependencies(env map[string]string) []deploymen
 	selector := map[string]any{"app.kubernetes.io/name": "pki-controller"}
 	return []deploymentplan.Definition{
 		{Object: deploymentplan.Object{"apiVersion": "v1", "kind": "ServiceAccount", "metadata": meta("pki-controller"), "automountServiceAccountToken": false}, Phase: "configuration"},
-		{Object: deploymentplan.Object{"apiVersion": "v1", "kind": "Service", "metadata": meta("pki-controller"), "spec": map[string]any{"type": "ClusterIP", "selector": selector, "ports": []any{map[string]any{"name": "https", "port": float64(18446), "targetPort": "https"}}}}, Phase: "configuration"},
+		{Object: deploymentplan.Object{"apiVersion": "v1", "kind": "Service", "metadata": meta("pki-controller"), "spec": map[string]any{"type": "ClusterIP", "selector": selector, "ports": []any{map[string]any{"name": "https", "port": float64(18446), "targetPort": float64(18446)}}}}, Phase: "configuration"},
 		{Object: deploymentplan.Object{"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": meta("allow-pki-controller"), "spec": map[string]any{"podSelector": map[string]any{"matchLabels": selector}, "policyTypes": []any{"Ingress"}, "ingress": []any{map[string]any{"from": []any{map[string]any{"namespaceSelector": map[string]any{"matchLabels": map[string]any{"kubernetes.io/metadata.name": lkeNamespaceName(env, "account-manager")}}, "podSelector": map[string]any{"matchLabels": map[string]any{"app.kubernetes.io/name": "account-manager"}}}, map[string]any{"namespaceSelector": map[string]any{"matchLabels": map[string]any{"rtk.realtek.com/stack": env["CLOUD_STACK_NAME"]}}, "podSelector": map[string]any{"matchLabels": map[string]any{"rtk.cloud/pki-consumer": "true"}}}}, "ports": []any{map[string]any{"protocol": "TCP", "port": float64(18446)}}}}}}, Phase: "configuration"},
 	}
 }

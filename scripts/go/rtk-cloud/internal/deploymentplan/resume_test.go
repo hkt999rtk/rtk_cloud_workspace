@@ -164,3 +164,42 @@ func TestResumableAdmissionVerifiesWritesWithoutRecreatingThem(t *testing.T) {
 		t.Fatal("replacement was treated as a recorded write")
 	}
 }
+
+func TestRecoverUnwrittenCreatePreservesProofAndRejectsPresentOwner(t *testing.T) {
+	p, backend, root := resumableFixture(t)
+	first, second := p.Resources[0], p.Resources[1]
+	dir := filepath.Join(root, "deployment", "rollback", p.SHA256())
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeExclusiveJSON(filepath.Join(dir, "plan.json"), p); err != nil {
+		t.Fatal(err)
+	}
+	journal := Journal{PlanSHA256: p.SHA256(), InFlight: second.ID, Failed: second.ID, Completed: []string{first.ID}, Owners: map[string]string{first.ID: "first-owner"}}
+	if err := saveJournal(dir, journal); err != nil {
+		t.Fatal(err)
+	}
+	proof := func(_ context.Context, resource Resource) error {
+		if resource.ID != second.ID {
+			return errors.New("wrong recovery resource")
+		}
+		return nil
+	}
+	backend.objects[second.ID] = Clone(second.Desired)
+	if err := p.RecoverUnwrittenCreate(t.Context(), backend, root, second.ID, proof); err == nil {
+		t.Fatal("present native owner was treated as an unwritten create")
+	}
+	delete(backend.objects, second.ID)
+	if err := p.RecoverUnwrittenCreate(t.Context(), backend, root, second.ID, proof); err != nil {
+		t.Fatal(err)
+	}
+	got, exists, err := p.ReadExecution(root)
+	if err != nil || !exists || got.InFlight != "" || got.Failed != second.ID || len(got.Completed) != 1 || got.Owners[first.ID] != "first-owner" || len(backend.written) != 0 {
+		t.Fatal("unexpected recovered checkpoint", got, err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "unwritten-create-"+Digest(journal)+".json"))
+	original, _ := json.Marshal(journal)
+	if err != nil || string(raw) != string(original) {
+		t.Fatal("original interrupted evidence was not preserved", err)
+	}
+}

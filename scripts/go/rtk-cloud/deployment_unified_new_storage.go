@@ -1,6 +1,8 @@
 package main
 
-import "rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
+import (
+	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
+)
 
 // Select the maintained class before allocating a new claim. Existing owners
 // retain their original immutable claim/template, including the original class.
@@ -39,14 +41,18 @@ func bindEnvironmentNewStorageClasses(definitions []deploymentplan.Definition, c
 // template envelope and storage class, and compile mutable workload settings
 // from the maintained recipe.
 func bindFleetValkeyAllocations(definitions []deploymentplan.Definition, live []deploymentplan.Object, bindings environmentIdentityBindings) error {
-	id := "StatefulSet/" + bindings.Stack + "-platform/fleet-valkey"
+	return bindPlatformDataAllocation(definitions, live, bindings, "fleet-valkey", "Fleet Valkey")
+}
+
+func bindPlatformDataAllocation(definitions []deploymentplan.Definition, live []deploymentplan.Object, bindings environmentIdentityBindings, name, component string) error {
+	id := "StatefulSet/" + bindings.Stack + "-platform/" + name
 	for _, definition := range definitions {
 		if deploymentplan.ID(definition.Object) != id || definition.Retain || definition.Retire {
 			continue
 		}
 		block := func(cause string) error {
-			return &deploymentplan.Blocker{ID: "deployment.compatibility.fleet-valkey", Resource: id, Cause: cause,
-				Next: "verify the original Fleet Valkey owner and claim; qualify any storage layout change separately"}
+			return &deploymentplan.Blocker{ID: "deployment.compatibility." + name, Resource: id, Cause: cause,
+				Next: "verify the original " + component + " owner and claim; qualify any storage layout change separately"}
 		}
 		var current deploymentplan.Object
 		uid := bindings.Owners[id]
@@ -56,13 +62,13 @@ func bindFleetValkeyAllocations(definitions []deploymentplan.Definition, live []
 			}
 			meta := deploymentplan.Map(object["metadata"])
 			if current != nil || uid == "" || meta["uid"] != uid || meta["deletionTimestamp"] != nil {
-				return block("Fleet Valkey allocation does not belong to the observed owner")
+				return block(component + " allocation does not belong to the observed owner")
 			}
 			current = object
 		}
 		if current == nil {
 			if uid != "" {
-				return block("original Fleet Valkey owner is absent")
+				return block("original " + component + " owner is absent")
 			}
 			continue // Fresh allocation uses the maintained storage class.
 		}
@@ -72,7 +78,7 @@ func bindFleetValkeyAllocations(definitions []deploymentplan.Definition, live []
 		original := certIssuerObjectList(old["volumeClaimTemplates"])
 		target := certIssuerObjectList(deploymentplan.Clone(want)["volumeClaimTemplates"])
 		if len(original) != 1 || len(target) != 1 {
-			return block("Fleet Valkey requires exactly one original data claim template")
+			return block(component + " requires exactly one original data claim template")
 		}
 		originalClaim := deploymentplan.Map(original[0])
 		targetClaim := deploymentplan.Map(target[0])
@@ -80,7 +86,7 @@ func bindFleetValkeyAllocations(definitions []deploymentplan.Definition, live []
 		targetSpec := deploymentplan.Map(targetClaim["spec"])
 		if deploymentplan.Map(originalClaim["metadata"])["name"] != "data" || originalSpec == nil || targetSpec == nil ||
 			originalSpec["volumeMode"] != nil && originalSpec["volumeMode"] != "Filesystem" {
-			return block("original Fleet Valkey data claim template is incompatible")
+			return block("original " + component + " data claim template is incompatible")
 		}
 		for _, field := range []string{"storageClassName", "volumeMode"} {
 			if _, declared := targetSpec[field]; !declared {
@@ -90,7 +96,7 @@ func bindFleetValkeyAllocations(definitions []deploymentplan.Definition, live []
 			}
 		}
 		if !managedLateVolumeClaimTemplatesEqual(original, target) {
-			return block("maintained Fleet Valkey claim layout or size differs from the original allocation")
+			return block("maintained " + component + " claim layout or size differs from the original allocation")
 		}
 
 		want["volumeClaimTemplates"] = deploymentplan.Clone(old)["volumeClaimTemplates"]

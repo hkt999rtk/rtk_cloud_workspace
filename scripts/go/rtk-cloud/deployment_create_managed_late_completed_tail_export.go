@@ -6,6 +6,15 @@ import (
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 )
 
+type completedAccountServerExport struct {
+	Certificate string `json:"certificate_sha256"`
+	Claim       string `json:"claim_uid"`
+	Pod         string `json:"pod_uid"`
+	Reader      string `json:"reader_uid"`
+	ReplicaSet  string `json:"replicaset_uid"`
+	Server      string `json:"server_name"`
+}
+
 // Re-export only the already registered serving identity from its original
 // permanent owner. The completed, retired exporter and its receipt stay intact.
 func readManagedLateCompletedAccountServer(ctx context.Context, cfg deploymentConfig, p environmentCreateBootstrapPlan, runtime environmentCreateBootstrapRuntime, service environmentCreateServiceCeremony, namespace, role, claim, stateRoot, clientState, serverState, serverName string) (environmentCreateOwnedServerMaterial, error) {
@@ -17,14 +26,7 @@ func readManagedLateCompletedAccountServer(ctx context.Context, cfg deploymentCo
 	if r == nil || r.completedTail == nil || verifyManagedLateCompletedTailSource(ctx, cfg, e.Store, e, r) != nil || !environmentCreateExportOwnerMatches(p, namespace, "account-manager", role, claim, stateRoot, clientState, serverState, serverName) {
 		return bad()
 	}
-	var receipt struct {
-		Certificate string `json:"certificate_sha256"`
-		Claim       string `json:"claim_uid"`
-		Pod         string `json:"pod_uid"`
-		Reader      string `json:"reader_uid"`
-		ReplicaSet  string `json:"replicaset_uid"`
-		Server      string `json:"server_name"`
-	}
+	var receipt completedAccountServerExport
 	if decodeEnvironmentJSON(e.Journal.Entries[425].Receipt, &receipt) != nil {
 		return bad()
 	}
@@ -51,12 +53,22 @@ func readManagedLateCompletedAccountServer(ctx context.Context, cfg deploymentCo
 	if err != nil || len(reader.Resources) != 1 || cj.Owners[reader.Resources[0].ID] != receipt.Reader || !managedLateCompletedExportReaderMatches(reader.Resources[0].Desired, p, service, namespace, claim, stateRoot, clientState, serverName) {
 		return bad()
 	}
+	return readCompletedAccountServerFromOwner(ctx, cfg, p, runtime, service, namespace, role, claim, clientState, serverState, serverName, desired, owner.UID, receipt)
+}
+
+func readCompletedAccountServerFromOwner(ctx context.Context, cfg deploymentConfig, p environmentCreateBootstrapPlan, runtime environmentCreateBootstrapRuntime, service environmentCreateServiceCeremony, namespace, role, claim, clientState, serverState, serverName string, desired deploymentplan.Object, ownerUID string, receipt completedAccountServerExport) (environmentCreateOwnedServerMaterial, error) {
+	var empty environmentCreateOwnedServerMaterial
+	bad := func() (environmentCreateOwnedServerMaterial, error) {
+		return empty, environmentCreateBootstrapBlocker("completed account export requires its original registered owner and certificate")
+	}
+	e := runtime.Execution
+	id := deploymentplan.ID(desired)
 	claimID := "PersistentVolumeClaim/" + namespace + "/" + claim
 	current, err := runtime.Backend.Read(ctx, id)
-	if err != nil || current == nil || deploymentplan.Map(current["metadata"])["uid"] != owner.UID || deploymentplan.Map(current["metadata"])["deletionTimestamp"] != nil || !deploymentplan.Matches(deploymentplan.Projection(desired), deploymentplan.Projection(current)) {
+	if err != nil || current == nil || deploymentplan.Map(current["metadata"])["uid"] != ownerUID || deploymentplan.Map(current["metadata"])["deletionTimestamp"] != nil || !deploymentplan.Matches(deploymentplan.Projection(desired), deploymentplan.Projection(current)) {
 		return bad()
 	}
-	pod, err := selectEnvironmentCreateExportPod(ctx, runtime.Backend, desired, owner.UID)
+	pod, err := selectEnvironmentCreateExportPod(ctx, runtime.Backend, desired, ownerUID)
 	if err != nil {
 		return empty, err
 	}
@@ -66,10 +78,10 @@ func readManagedLateCompletedAccountServer(ctx context.Context, cfg deploymentCo
 		}
 		o, oe := runtime.Backend.Read(ctx, id)
 		v, ve := runtime.Backend.Read(ctx, claimID)
-		if oe != nil || ve != nil || o == nil || v == nil || deploymentplan.Map(o["metadata"])["uid"] != owner.UID || deploymentplan.Map(o["metadata"])["deletionTimestamp"] != nil || !deploymentplan.Matches(deploymentplan.Projection(desired), deploymentplan.Projection(o)) || deploymentplan.Map(v["metadata"])["uid"] != receipt.Claim || deploymentplan.Map(v["metadata"])["deletionTimestamp"] != nil || deploymentplan.Map(deploymentplan.Map(v["metadata"])["labels"])["rtk.realtek.com/stack"] != p.Stack {
+		if oe != nil || ve != nil || o == nil || v == nil || deploymentplan.Map(o["metadata"])["uid"] != ownerUID || deploymentplan.Map(o["metadata"])["deletionTimestamp"] != nil || !deploymentplan.Matches(deploymentplan.Projection(desired), deploymentplan.Projection(o)) || deploymentplan.Map(v["metadata"])["uid"] != receipt.Claim || deploymentplan.Map(v["metadata"])["deletionTimestamp"] != nil || deploymentplan.Map(deploymentplan.Map(v["metadata"])["labels"])["rtk.realtek.com/stack"] != p.Stack {
 			return environmentCreateBootstrapBlocker("completed account original owner or claim changed")
 		}
-		return pod.Verify(ctx, runtime.Backend, desired, owner.UID)
+		return pod.Verify(ctx, runtime.Backend, desired, ownerUID)
 	}
 	if err := verify(); err != nil {
 		return empty, err

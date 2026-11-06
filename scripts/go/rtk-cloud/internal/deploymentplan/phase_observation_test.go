@@ -170,7 +170,7 @@ func TestPhaseObservationReusesOnlyEachStagesDependencySnapshot(t *testing.T) {
 				}
 				reads[index] = len(f.backend.reads)
 			}
-			if reads[0]-reads[1] != 6 || reads[1] != 17 {
+			if reads[0]-reads[1] != 6 || reads[1] != 14 {
 				t.Fatal("snapshot reuse changed individual write/readback checks instead of preserving readiness readbacks and removing six duplicate stage reads", reads)
 			}
 		})

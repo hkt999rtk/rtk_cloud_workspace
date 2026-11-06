@@ -36,7 +36,7 @@ func (p *Plan) AdmitResumable(ctx context.Context, backend Backend, privateRoot 
 	return p.recordedTarget(prior.journal).Admit(ctx, backend)
 }
 
-func (p *Plan) resumableEvidence(privateRoot string) (*retainedExecutionEvidence, error) {
+func (p *Plan) resumableEvidence(privateRoot string, unwritten ...string) (*retainedExecutionEvidence, error) {
 	if p == nil || p.Version != Version || len(p.Resources) == 0 || !filepath.IsAbs(privateRoot) {
 		return nil, existingExecutionEvidenceBlocker()
 	}
@@ -66,7 +66,8 @@ func (p *Plan) resumableEvidence(privateRoot string) (*retainedExecutionEvidence
 		return nil, existingExecutionEvidenceBlocker()
 	}
 	canonical, err := json.Marshal(j)
-	if err != nil || !bytes.Equal(journalRaw, canonical) || j.PlanSHA256 != p.SHA256() || j.InFlight != "" || j.Owners == nil || len(j.Completed) > len(p.Resources) || len(j.Owners) < len(j.Completed) || len(j.Owners) > min(len(p.Resources), len(j.Completed)+1) || j.AcceptanceStarted && len(j.Completed) != len(p.Resources) || j.Accepted && (!j.AcceptanceStarted || j.Failed != "") {
+	unresolved := j.InFlight != "" && (len(unwritten) != 1 || unwritten[0] != j.InFlight)
+	if err != nil || !bytes.Equal(journalRaw, canonical) || j.PlanSHA256 != p.SHA256() || unresolved || j.Owners == nil || len(j.Completed) > len(p.Resources) || len(j.Owners) < len(j.Completed) || len(j.Owners) > min(len(p.Resources), len(j.Completed)+1) || j.AcceptanceStarted && len(j.Completed) != len(p.Resources) || j.Accepted && (!j.AcceptanceStarted || j.Failed != "") {
 		return nil, existingExecutionEvidenceBlocker()
 	}
 	for index, resource := range p.Resources {
@@ -86,6 +87,43 @@ func (p *Plan) resumableEvidence(privateRoot string) (*retainedExecutionEvidence
 		return nil, existingExecutionEvidenceBlocker()
 	}
 	return &retainedExecutionEvidence{planRaw: planRaw, journalRaw: journalRaw, journal: j}, nil
+}
+
+// RecoverUnwrittenCreate only clears a known pre-request rejection after the
+// selected caller proves the original create is still absent and safe to send.
+func (p *Plan) RecoverUnwrittenCreate(ctx context.Context, backend Backend, root, id string, prove func(context.Context, Resource) error) error {
+	e, err := p.resumableEvidence(root, id)
+	if err != nil || e == nil || prove == nil {
+		return existingExecutionEvidenceBlocker()
+	}
+	j := e.journal
+	next := len(j.Completed)
+	if j.InFlight != id || j.Failed != id || j.Accepted || j.AcceptanceStarted || next >= len(p.Resources) || len(j.Owners) != next {
+		return existingExecutionEvidenceBlocker()
+	}
+	resource := p.Resources[next]
+	if resource.ID != id || resource.Action != "create" || resource.UID != "" {
+		return existingExecutionEvidenceBlocker()
+	}
+	dir := filepath.Join(root, "deployment", "rollback", p.SHA256())
+	lock := filepath.Join(dir, ".active")
+	if err := os.Mkdir(lock, 0700); err != nil {
+		return existingExecutionEvidenceBlocker()
+	}
+	defer os.Remove(lock)
+	if err := prove(ctx, resource); err != nil {
+		return err
+	}
+	actual, err := backend.Read(ctx, id)
+	fresh, readErr := p.resumableEvidence(root, id)
+	if err != nil || actual != nil || readErr != nil || fresh == nil || !bytes.Equal(e.journalRaw, fresh.journalRaw) || ctx.Err() != nil {
+		return existingExecutionEvidenceBlocker()
+	}
+	if err := writeExclusiveJSON(filepath.Join(dir, "unwritten-create-"+Digest(j)+".json"), j); err != nil {
+		return err
+	}
+	j.InFlight = ""
+	return saveJournal(dir, j)
 }
 
 func (p *Plan) recordedTarget(j Journal) *Plan {
