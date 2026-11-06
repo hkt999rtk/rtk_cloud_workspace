@@ -113,8 +113,8 @@ func qualifyStagingServiceCoreForward(ctx context.Context, cfg deploymentConfig,
 	}
 	query := "SELECT json_build_object('clients',(SELECT count(*) FROM pki_service_client_issuances WHERE environment='staging' AND issuer_id='" + service.Intermediate.ID + "' AND subject='service:account-manager'),'servers',(SELECT count(*) FROM pki_server_issuances WHERE environment='staging' AND request_id='" + session + ":account-manager:server'))"
 	raw, err := readEnvironmentCreateRegistryJSON(ctx, cfg, runtime, query)
-	var counts map[string]int
-	if err != nil || decodeEnvironmentJSON(raw, &counts) != nil || len(counts) != 2 || counts["clients"] != 0 || counts["servers"] != 0 {
+	var counts map[string]*int
+	if err != nil || decodeEnvironmentJSON(raw, &counts) != nil || len(counts) != 2 || counts["clients"] == nil || counts["servers"] == nil || *counts["clients"] != 0 || *counts["servers"] != 0 {
 		return bad("the blocked Job has an unknown or existing native issuance outcome")
 	}
 	return &stagingServiceCoreForward{OriginalSHA: original.SHA256(), JournalSHA: deploymentplan.Digest(journal), FailedJob: failedID, FailedUID: failedUID, Definitions: definitions}, nil

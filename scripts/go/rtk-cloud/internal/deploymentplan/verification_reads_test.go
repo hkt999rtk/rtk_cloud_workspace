@@ -2,6 +2,7 @@ package deploymentplan
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -80,5 +81,32 @@ func BenchmarkFinalVerification287Resources(b *testing.B) {
 			}
 			b.ReportMetric(float64(backend.reads)/float64(b.N), "reads/op")
 		})
+	}
+}
+
+func TestFinalVerificationRejectsNewOwnerReplacedDuringAcceptance(t *testing.T) {
+	in, d, _ := fixture(t, "staging", "Deployment")
+	p, err := Compile(in, []Definition{d}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := &phaseReadBackend{memoryBackend: memoryBackend{objects: map[string]Object{}}}
+	root := t.TempDir()
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	check := func(context.Context, *Plan) error { return nil }
+	accept := func(context.Context, *Plan) error {
+		Map(b.objects[p.Resources[0].ID]["metadata"])["uid"] = "replacement-after-acceptance"
+		return nil
+	}
+	err = p.Execute(t.Context(), b, p.SHA256(), root, check, check, accept)
+	var blocked *Blocker
+	if !errors.As(err, &blocked) || blocked.ID != "deployment.ownership" {
+		t.Fatal("newly created owner replacement was accepted", err)
+	}
+	journal, exists, err := p.ReadExecution(root)
+	if err != nil || !exists || journal.Accepted || !journal.AcceptanceStarted || journal.Failed != p.Resources[0].ID {
+		t.Fatal("lost unaccepted original write evidence", journal, err)
 	}
 }

@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -55,6 +57,7 @@ func TestStagingApplicationRecoveryDoesNotRequirePreviousLogs(t *testing.T) {
 				uid := fmt.Sprintf("%08d-1111-4111-8111-111111111111", i+1)
 				o := deploymentplan.Clone(r.Desired)
 				deploymentplan.Map(o["metadata"])["uid"] = uid
+				deploymentplan.Map(o["metadata"])["resourceVersion"] = "1"
 				objects[r.ID] = o
 				j.Completed = append(j.Completed, r.ID)
 				j.Owners[r.ID] = uid
@@ -152,6 +155,45 @@ print(json.dumps(obj))
 			if changed != 5 {
 				t.Fatalf("changed %d resources, want original five", changed)
 			}
+			originalJournalPath := filepath.Join(store.Root, "deployment/rollback", p.SHA256(), "journal.json")
+			before, err := os.ReadFile(originalJournalPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			memory := freshStageBackend{&normalTailE2EBackend{e: e, objects: objects, writes: map[string]int{}}}
+			apply := func(ctx context.Context, stage string, defs []deploymentplan.Definition) error {
+				live := make([]deploymentplan.Object, 0, len(memory.objects))
+				for _, object := range memory.objects {
+					live = append(live, object)
+				}
+				child, err := deploymentplan.Compile(deploymentplan.Inputs{Environment: cfg.Environment, Stack: parent.Stack, Operation: "scoped", ConfigurationSHA256: parent.ConfigurationSHA256, ReleaseSHA256: deploymentplan.Digest(parent.Release), BindingsSHA256: environmentCreateStageBindingsSHA(stage, defs)}, defs, live, retainedCreateWorkloadAdoptions(defs))
+				if err != nil {
+					return err
+				}
+				check := func(ctx context.Context, _ *deploymentplan.Plan) error { return e.Check(ctx) }
+				return executeEnvironmentCreateStagePlan(ctx, store, e, stage, child, memory, check, check, check, func(context.Context) error { return nil }, io.Discard)
+			}
+			if err := executeStagingApplicationsForward(t.Context(), environmentCreateBootstrapRuntime{Execution: e}, f, apply); err != nil {
+				t.Fatal(err)
+			}
+			if len(memory.writes) != 5 {
+				t.Fatalf("wrote %d owners, want the five qualified repairs", len(memory.writes))
+			}
+			if err := verifyStagingAcceptedApplications(store, e); err != nil {
+				t.Fatal("accepted forward history rejected", err)
+			}
+			after, err := os.ReadFile(originalJournalPath)
+			if err != nil || string(before) != string(after) {
+				t.Fatal("original failed journal changed", err)
+			}
+			// A parent receipt pointing elsewhere cannot stand in for the
+			// actual accepted child, even after all original writes succeeded.
+			entry := createOpenBaoACKCompletionEntry(e.Journal, "kubernetes/"+stagingApplicationsStage)
+			entry.Receipt = []byte(`{"actual_qualified_forward_stage":"kubernetes/foreign","original_failed_plan_sha256":"foreign"}`)
+			if err := verifyStagingAcceptedApplications(store, e); err == nil {
+				t.Fatal("foreign completion receipt accepted")
+			}
+
 		})
 	}
 }
