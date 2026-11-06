@@ -47,6 +47,7 @@
 - [x] Exercise new tests/packages, absent hints, same-name tests, exact selection, merge integrity, and cancellation with real isolated Go modules.
 - [x] Replace the two-fixed-tests-plus-remainder grouping with duration-balanced discovery; preserve full serial comparison mode.
 - [x] Run shard tests and compare serial/sharded coverage and inventory in the fixture.
+- [x] Warm the instrumented build during discovery with bounded compiler parallelism, avoiding three simultaneous cold coverage compilations observed in the first CI attempt.
 
 ### 3. Isolate report plumbing verification
 

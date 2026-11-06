@@ -26,6 +26,7 @@ func TestWorkspaceCoverageShardsRunRealGoAndMergeEvidence(t *testing.T) {
 	t.Setenv("RTK_COVERAGE_SERIAL", "")
 	barrier := t.TempDir()
 	t.Setenv("COVERAGE_FIXTURE_BARRIER", barrier)
+	t.Setenv("COVERAGE_FIXTURE_REQUIRE_COVERAGE", "1")
 	for _, profile := range []string{"unit", "pr"} {
 		t.Run(profile, func(t *testing.T) {
 			outDir := t.TempDir()
@@ -131,6 +132,9 @@ func writeCoverageShardFixture(t *testing.T, root string) {
 		"rtk-cloud/fixture.go": "package fixture\nfunc first() int { return 1 }; func second() int { return 2 }; func third() int { return 3 }\n",
 		"rtk-cloud/fixture_test.go": `package fixture
 import ("testing"; "os"; "time"; "path/filepath"; "fmt"; "os/exec"; "syscall")
+func TestMain(m *testing.M) {
+ if os.Getenv("COVERAGE_FIXTURE_REQUIRE_COVERAGE")=="1" && testing.CoverMode()=="" { fmt.Fprintln(os.Stderr,"discovery must warm the instrumented build"); os.Exit(1) }; os.Exit(m.Run())
+}
 func roots(t *testing.T) {
  t.Log(os.Getenv("TMPDIR"), os.Getenv("XDG_CONFIG_HOME"))
  if path:=os.Getenv("COVERAGE_FIXTURE_BLOCK"); path!="" && t.Name()=="TestPRHistoricalLateRootCRLsCompleteDurableCheckpoints" {

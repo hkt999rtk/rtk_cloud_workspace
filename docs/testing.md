@@ -113,7 +113,9 @@ assigns them to three workers by estimated duration, longest first. Duration
 hints for expensive tests are advisory; unknown tests receive a default weight,
 and new tests and packages are included automatically. Hints do not define suite
 membership or require historical test names to remain present. The generated
-`shard-plan.json` records the discovered allocation and estimates.
+`shard-plan.json` records the discovered allocation and estimates. Discovery
+first warms the coverage-instrumented build with one package compiler at a time,
+so the three workers do not concurrently rebuild the same cold coverage binary.
 
 The partition preserves the tests, signed lifetimes, skip rules, and coverage
 thresholds. The runner checks completion against discovery, rejects missing or

@@ -76,7 +76,9 @@ func runGoCoverageShards(ctx context.Context, moduleDir, logPath, eventsPath, pr
 		}
 		childEnvs[i]["TMPDIR"], childEnvs[i]["XDG_CONFIG_HOME"] = filepath.Join(privateDir, "tmp"), filepath.Join(privateDir, "config")
 	}
-	// Listing uses its own scratch roots and the same build options as execution.
+	// Listing warms the instrumented build before parallel execution. Without
+	// -cover, unit discovery builds a different binary and all three workers
+	// compile the large covered package at once. Bound cold-build parallelism.
 	discoveryEnv := map[string]string{}
 	for key, value := range env {
 		discoveryEnv[key] = value
@@ -88,7 +90,7 @@ func runGoCoverageShards(ctx context.Context, moduleDir, logPath, eventsPath, pr
 		}
 		discoveryEnv[key] = dir
 	}
-	discoveryArgs := append(slices.Clone(commonArgs), "-list=.", "./...")
+	discoveryArgs := append(slices.Clone(commonArgs), "-cover", "-p=1", "-list=.", "./...")
 	if err := runGoCoverageShardCommand(ctx, moduleDir, discoveryLog, discoveryEvents, discoveryEnv, discoveryArgs); err != nil {
 		_ = joinGoCoverageShardLogs([]string{discoveryLog}, logPath)
 		return fmt.Errorf("discover coverage tests: %w", err)
