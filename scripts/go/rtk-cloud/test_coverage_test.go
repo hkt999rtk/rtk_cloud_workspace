@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestParseGoCoverageProfileCalculatesStatementAndDifferentialCoverage(t *testing.T) {
@@ -193,19 +195,7 @@ func TestRunCoverageModuleExecutesGoCoverageAndWritesEvidence(t *testing.T) {
 	workspace := t.TempDir()
 	moduleDir := filepath.Join(workspace, "module")
 	outDir := filepath.Join(workspace, "artifacts")
-	if err := os.MkdirAll(moduleDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	files := map[string]string{
-		"go.mod":          "module example/covered\n\ngo 1.25\n",
-		"covered.go":      "package covered\n\nfunc Add(a, b int) int { return a + b }\n",
-		"covered_test.go": "package covered\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) { if Add(2, 3) != 5 { t.Fatal(\"bad sum\") } }\n",
-	}
-	for name, body := range files {
-		if err := os.WriteFile(filepath.Join(moduleDir, name), []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
+	writeMinimalGoCoverageModule(t, moduleDir)
 	cfg := coverageConfig{}
 	cfg.Differential.MinimumStatementPercent = 80
 	module := coverageModule{
@@ -432,14 +422,106 @@ func TestValidateRequiredGoCoverageModulesRejectsMissingModule(t *testing.T) {
 	}
 }
 
+// writeMinimalGoCoverageModule creates a real Go package without service dependencies.
+func writeMinimalGoCoverageModule(t *testing.T, moduleDir string) {
+	t.Helper()
+	if err := os.MkdirAll(moduleDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"go.mod":          "module example/covered\n\ngo 1.25\n",
+		"covered.go":      "package covered\n\nfunc Add(a, b int) int { return a + b }\n",
+		"covered_test.go": "package covered\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) { if Add(2, 3) != 5 { t.Fatal(\"bad sum\") } }\n",
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(moduleDir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestRunTestCoverageWritesPassingReportForSelectedModule(t *testing.T) {
-	workspace, err := workspaceRoot()
+	sourceWorkspace, err := workspaceRoot()
 	if err != nil {
 		t.Fatal(err)
 	}
+	workspace := t.TempDir()
+	t.Setenv("RTK_CLOUD_WORKSPACE", workspace)
+	// Retain the required module identities and paths without running their suites.
+	// Only home-load-runner contains executable code in this isolated workspace.
+	rawConfig, err := os.ReadFile(filepath.Join(sourceWorkspace, "tests", "coverage.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg coverageConfig
+	if err := yaml.Unmarshal(rawConfig, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Modules = slices.DeleteFunc(cfg.Modules, func(module coverageModule) bool { return module.Kind != "go" })
+	for i, module := range cfg.Modules {
+		moduleDir := filepath.Join(workspace, module.Path)
+		if err := os.MkdirAll(moduleDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(moduleDir, "go.mod"), []byte("module example/unused\n\ngo 1.25\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cfg.Modules[i] = coverageModule{
+			TestID: "SVC-TEST-SUITE-001", Name: module.Name, Kind: "go", Path: module.Path,
+			Packages: []string{"./..."}, MinimumStatementPercent: 70, TargetStatementPercent: 80,
+			Owner: "cloud_platform", DefaultRisk: "high",
+			Purpose: "Verify the coverage report pipeline", Method: "Run real Go coverage on an isolated module",
+		}
+	}
+	writeMinimalGoCoverageModule(t, filepath.Join(workspace, "loadtests", "home-100k"))
+	coverageYAML, err := yaml.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"coverage.yaml": string(coverageYAML),
+		"catalog.yaml": `schema_version: 4
+cases:
+  - id: SVC-TEST-SUITE-001
+    title: Coverage report fixture
+    layer: service
+    owner: cloud_platform
+    source: loadtests/home-100k/covered_test.go
+    selector: TestAdd
+    method: Run real Go coverage
+    runner: test-coverage
+    environments: [ci]
+    evidence: [json, junit]
+    status: active
+`,
+		"spec-sources.yaml": `schema_version: 1
+sources:
+  - id: SPEC-TEST
+    path: tests/spec.md
+    parser: markdown
+    authority: canonical
+    owner: cloud_platform
+`,
+		"spec.md": strings.NewReplacer(
+			"scripts/go/rtk-cloud/**", "loadtests/home-100k/**",
+			"scripts/go/rtk-cloud/main.go", "loadtests/home-100k/covered.go",
+			"test-spec-inventory", "func Add",
+		).Replace(string(specFixture("The fixture adds two integers."))),
+	}
+	if err := os.MkdirAll(filepath.Join(workspace, "tests"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(workspace, "tests", name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runTestCommand(t, workspace, "git", "init", "-q")
+	runTestCommand(t, workspace, "git", "add", ".")
+	runTestCommand(t, workspace, "git", "-c", "user.name=Coverage Fixture", "-c", "user.email=coverage@example.invalid",
+		"-c", "commit.gpgsign=false", "-c", "core.hooksPath="+t.TempDir(), "commit", "-q", "-m", "Coverage fixture")
 	runID := "unit-passing-coverage-report"
 	runDir := filepath.Join(workspace, ".artifacts", "test-runs", runID)
-	defer os.RemoveAll(runDir)
 
 	if err := runTestCoverage([]string{"--run-id", runID, "--module", "home-load-runner"}); err != nil {
 		logPath := filepath.Join(runDir, "coverage", "logs", "home-load-runner.log")
@@ -461,11 +543,51 @@ func TestRunTestCoverageWritesPassingReportForSelectedModule(t *testing.T) {
 	if err := json.Unmarshal(raw, &report); err != nil {
 		t.Fatal(err)
 	}
-	if report.Status != "PASS" || report.RedactionStatus != "PASS" || len(report.Cases) != 1 {
+	if report.Status != "PASS" || report.RedactionStatus != "PASS" || report.WorkspaceCommit == "" || len(report.Cases) != 1 {
 		t.Fatalf("coverage report = %#v", report)
 	}
-	if report.Cases[0].Name != "home-load-runner" || report.Cases[0].Status != "PASS" {
+	if report.Cases[0].Name != "home-load-runner" || report.Cases[0].Status != "PASS" ||
+		report.Cases[0].SubmoduleCommit != report.WorkspaceCommit {
 		t.Fatalf("selected coverage case = %#v", report.Cases[0])
+	}
+	selected := report.Cases[0]
+	if selected.Metrics.StatementPercent == nil || *selected.Metrics.StatementPercent != 100 ||
+		selected.Metrics.StatementMinimumPercent == nil || *selected.Metrics.StatementMinimumPercent != 70 {
+		t.Fatalf("fixture coverage metrics = %#v", selected.Metrics)
+	}
+	outDir := filepath.Join(runDir, "coverage")
+	for _, relative := range []string{selected.ProfilePath, selected.UnitManifestPath, selected.JUnitPath, selected.TestEventsPath, selected.PackageCoveragePath, selected.LogPath} {
+		if relative == "" {
+			t.Fatalf("missing coverage evidence path: %#v", selected)
+		}
+		if stat, err := os.Stat(filepath.Join(outDir, filepath.FromSlash(relative))); err != nil || stat.Size() == 0 {
+			t.Fatalf("coverage evidence %s: stat=%v err=%v", relative, stat, err)
+		}
+	}
+	if selected.ProfileSHA == "" || len(selected.Evidence) == 0 {
+		t.Fatalf("missing coverage checksums: %#v", selected)
+	}
+	for _, evidence := range selected.Evidence {
+		sha, err := fileSHA256(filepath.Join(outDir, filepath.FromSlash(evidence.Path)))
+		if err != nil || sha != evidence.SHA256 {
+			t.Fatalf("coverage evidence checksum %s: SHA=%q, want %q, err=%v", evidence.Path, sha, evidence.SHA256, err)
+		}
+	}
+	inventoryRaw, err := os.ReadFile(filepath.Join(outDir, "unit-inventory.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var inventory struct {
+		Tests []nodeUnitResult `json:"tests"`
+	}
+	if err := json.Unmarshal(inventoryRaw, &inventory); err != nil {
+		t.Fatal(err)
+	}
+	if len(inventory.Tests) != 1 || inventory.Tests[0].Module != "home-load-runner" ||
+		inventory.Tests[0].Language != "go" || inventory.Tests[0].Title != "TestAdd" ||
+		inventory.Tests[0].Source != "covered_test.go" || inventory.Tests[0].Status != "PASS" ||
+		inventory.Tests[0].CanonicalKey != "go://home-load-runner/example/covered#TestAdd" {
+		t.Fatalf("coverage unit inventory = %#v", inventory)
 	}
 	markdown, err := os.ReadFile(filepath.Join(runDir, "coverage", "test_report.md"))
 	if err != nil {

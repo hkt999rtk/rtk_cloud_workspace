@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -23,6 +26,7 @@ func TestWorkspaceCoverageShardsRunRealGoAndMergeEvidence(t *testing.T) {
 	t.Setenv("RTK_COVERAGE_SERIAL", "")
 	barrier := t.TempDir()
 	t.Setenv("COVERAGE_FIXTURE_BARRIER", barrier)
+	t.Setenv("COVERAGE_FIXTURE_REQUIRE_COVERAGE", "1")
 	for _, profile := range []string{"unit", "pr"} {
 		t.Run(profile, func(t *testing.T) {
 			outDir := t.TempDir()
@@ -128,6 +132,9 @@ func writeCoverageShardFixture(t *testing.T, root string) {
 		"rtk-cloud/fixture.go": "package fixture\nfunc first() int { return 1 }; func second() int { return 2 }; func third() int { return 3 }\n",
 		"rtk-cloud/fixture_test.go": `package fixture
 import ("testing"; "os"; "time"; "path/filepath"; "fmt"; "os/exec"; "syscall")
+func TestMain(m *testing.M) {
+ if os.Getenv("COVERAGE_FIXTURE_REQUIRE_COVERAGE")=="1" && testing.CoverMode()=="" { fmt.Fprintln(os.Stderr,"discovery must warm the instrumented build"); os.Exit(1) }; os.Exit(m.Run())
+}
 func roots(t *testing.T) {
  t.Log(os.Getenv("TMPDIR"), os.Getenv("XDG_CONFIG_HOME"))
  if path:=os.Getenv("COVERAGE_FIXTURE_BLOCK"); path!="" && t.Name()=="TestPRHistoricalLateRootCRLsCompleteDurableCheckpoints" {
@@ -228,14 +235,15 @@ func TestGoCoverageShardsCancellationDoesNotPublishStaleEvidence(t *testing.T) {
 	}
 }
 
-func TestMergeGoCoverageShardEventsRejectsMissingAndDuplicateLongTests(t *testing.T) {
+func TestMergeGoCoverageShardEventsRejectsMissingAndDuplicateDiscoveredTests(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		tests []string
 		bad   bool
 	}{
 		{"complete", []string{"TestPRHistoricalLateRootCRLsCompleteDurableCheckpoints", "TestPRProductPostCleanupCorrectionCompletesDurableCheckpoint", "TestNew"}, false},
-		{"missing long pass", []string{"TestWrong", "TestPRProductPostCleanupCorrectionCompletesDurableCheckpoint", "TestNew"}, true},
+		{"missing discovered completion", []string{"TestWrong", "TestPRProductPostCleanupCorrectionCompletesDurableCheckpoint", "TestNew"}, true},
+		{"missing discovered test", []string{"TestPRHistoricalLateRootCRLsCompleteDurableCheckpoints", "TestPRProductPostCleanupCorrectionCompletesDurableCheckpoint", "TestNew"}, true},
 		{"missing stream", []string{"TestPRHistoricalLateRootCRLsCompleteDurableCheckpoints", "TestPRProductPostCleanupCorrectionCompletesDurableCheckpoint"}, true},
 		{"malformed events", []string{"TestPRHistoricalLateRootCRLsCompleteDurableCheckpoints", "TestPRProductPostCleanupCorrectionCompletesDurableCheckpoint", "TestNew"}, true},
 		{"incomplete test", []string{"TestPRHistoricalLateRootCRLsCompleteDurableCheckpoints", "TestPRProductPostCleanupCorrectionCompletesDurableCheckpoint", "TestNew"}, true},
@@ -255,11 +263,15 @@ func TestMergeGoCoverageShardEventsRejectsMissingAndDuplicateLongTests(t *testin
 				}
 			}
 			if tc.name == "incomplete test" {
-				if err := os.WriteFile(paths[2], []byte("{\"Action\":\"run\",\"Package\":\"x/extra\",\"Test\":\"TestNew\"}\n{\"Action\":\"pass\",\"Package\":\"x/extra\"}\n"), 0600); err != nil {
+				if err := os.WriteFile(paths[2], []byte("{\"Action\":\"run\",\"Package\":\"x/rtk-cloud\",\"Test\":\"TestNew\"}\n{\"Action\":\"pass\",\"Package\":\"x/rtk-cloud\"}\n"), 0600); err != nil {
 					t.Fatal(err)
 				}
 			}
-			err := mergeGoCoverageShardEvents(paths, filepath.Join(root, "merged"))
+			groups := []goCoverageShard{{Tests: []goCoverageTest{{"x/rtk-cloud", "TestPRHistoricalLateRootCRLsCompleteDurableCheckpoints"}}}, {Tests: []goCoverageTest{{"x/rtk-cloud", "TestPRProductPostCleanupCorrectionCompletesDurableCheckpoint"}}}, {Tests: []goCoverageTest{{"x/rtk-cloud", "TestNew"}}}}
+			if tc.name == "missing discovered test" {
+				groups[2].Tests = append(groups[2].Tests, goCoverageTest{"x/rtk-cloud", "TestMissing"})
+			}
+			err := mergeGoCoverageShardEvents(paths, filepath.Join(root, "merged"), groups)
 			if (err != nil) != tc.bad {
 				t.Fatalf("event merge error=%v want bad=%v", err, tc.bad)
 			}
@@ -399,4 +411,85 @@ func TestGoCoverageShardCancellationDiscoveryFailuresStillKillOwnedProcesses(t *
 			t.Fatalf("outer runner masked prerequisite error: %v", err)
 		}
 	})
+}
+
+// Removed lifecycle names must never become mandatory; newly discovered names
+// must be split across workers even when no timing hint exists.
+func TestWorkspaceCoverageShardsDiscoverAndBalanceUnknownTests(t *testing.T) {
+	root := t.TempDir()
+	moduleDir := filepath.Join(root, "module")
+	writeCoverageShardFixture(t, moduleDir)
+	source := "package fixture\nimport (\"testing\";\"fmt\")\n"
+	for i := 0; i < 12; i++ {
+		source += fmt.Sprintf("func TestFresh%02d(t *testing.T) { if first()!=1 { t.Fatal(\"first\") } }\n", i)
+	}
+	source += "func Example_first() { fmt.Println(first())\n// Output: 1\n}\nfunc FuzzFresh(f *testing.F) { f.Add(1); f.Fuzz(func(t *testing.T,n int) { first() }) }\n"
+	if err := os.WriteFile(filepath.Join(moduleDir, "rtk-cloud", "fixture_test.go"), []byte(source), 0600); err != nil {
+		t.Fatal(err)
+	}
+	events := filepath.Join(root, "events.json")
+	err := runGoCoverageShards(context.Background(), moduleDir, filepath.Join(root, "coverage.log"), events, filepath.Join(root, "coverage.out"), map[string]string{"GOWORK": "off"}, []string{"test", "-json", "-count=1", "-timeout=1m", "-skip=^TestFresh11$"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths, err := filepath.Glob(filepath.Join(root, "shards", "*", "test-events.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, path := range paths {
+		runs := 0
+		for _, line := range strings.Split(readTestFile(t, path), "\n") {
+			var event goTestEvent
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			if err := json.Unmarshal([]byte(line), &event); err != nil {
+				t.Fatal(err)
+			}
+			if event.Action != "run" || strings.Contains(event.Test, "/") {
+				continue
+			}
+			if seen[event.Test] {
+				t.Fatalf("duplicate %s", event.Test)
+			}
+			seen[event.Test] = true
+			runs++
+		}
+		if runs < 3 || runs > 5 {
+			t.Fatalf("unbalanced unknown test group: %d tests", runs)
+		}
+	}
+	if len(seen) != 14 || seen["TestFresh11"] {
+		t.Fatalf("discovery/skip inventory=%v", seen)
+	}
+}
+
+func TestBalanceGoCoverageTestsUsesTimingsWithoutRequiringHintNames(t *testing.T) {
+	tests := []goCoverageTest{{"p", "TestA"}, {"p", "TestB"}, {"p", "TestC"}, {"p", "TestD"}, {"p", "TestE"}, {"p", "TestF"}}
+	hints := map[string]float64{"TestA": 9, "TestB": 8, "TestC": 7, "TestD": 6, "TestE": 5, "TestF": 4, "TestRemoved": 1000}
+	groups := balanceGoCoverageTests(tests, hints)
+	seen := map[goCoverageTest]bool{}
+	for _, group := range groups {
+		if group.EstimatedSeconds != 13 {
+			t.Fatalf("poor time balance: %#v", groups)
+		}
+		for _, test := range group.Tests {
+			if seen[test] || test.Name == "TestRemoved" {
+				t.Fatalf("duplicate/stale test: %#v", test)
+			}
+			seen[test] = true
+		}
+	}
+	if len(seen) != 6 {
+		t.Fatalf("lost tests: %#v", seen)
+	}
+	slices.Reverse(tests)
+	if !reflect.DeepEqual(groups, balanceGoCoverageTests(tests, hints)) {
+		t.Fatal("input order changed the plan")
+	}
+	groups = balanceGoCoverageTests([]goCoverageTest{{"a", "TestSame"}, {"b", "TestSame"}, {"a", "TestNew"}}, nil)
+	if len(groups[0].Tests) != 2 || groups[0].Tests[0].Name != "TestSame" || groups[0].Tests[1].Name != "TestSame" {
+		t.Fatalf("same names split across package-wide selectors: %#v", groups)
+	}
 }

@@ -94,7 +94,11 @@ workspace-owned Go tooling, catalog validity and generated-document drift, and
 repository/submodule status. It does not run every service or product E2E test.
 In pull-request CI, the catalog/policy job uses `test-matrix --policy-only`
 because governed workspace coverage is the authoritative pull-request owner of
-the deterministic workspace Go suite. The PostgreSQL Backup Runner workflow
+the deterministic workspace Go suite. Before consuming artifacts, the required
+coverage aggregate checks that the selector and every selected policy, unit,
+JavaScript, and service-integration job succeeded. A missing, failed, canceled,
+or unexpectedly skipped selected job cannot be replaced by another report.
+The PostgreSQL Backup Runner workflow
 retains backup, recovery, and Cloud Monitor package qualification with both
 PostgreSQL integration modes enabled, plus its image build. Pull requests also
 run the exact root-package Docker integration test
@@ -104,14 +108,22 @@ the original complete workspace command, integration flags, and historical
 expiry policy before the image build. Backup workflow and image-source changes
 also select workspace coverage and policy checks for pull requests.
 
-Workspace tooling coverage executes three complementary Go test processes:
-one for each of the two long pull-request checkpoints and one for all remaining
-tests. Their selectors partition the suite without changing its tests, signed
-lifetimes, skip rules, or coverage thresholds. The runner merges their statement
-coverage blocks into one module profile and combines their test events before
-applying the existing inventory and coverage gates. For a reproducible comparison,
-set `RTK_COVERAGE_SERIAL=1` on the same `test-coverage` command to use the original
-single-process execution with the same assertions and gates.
+Workspace tooling coverage discovers the current Go tests before every run and
+assigns them to three workers by estimated duration, longest first. Duration
+hints for expensive tests are advisory; unknown tests receive a default weight,
+and new tests and packages are included automatically. Hints do not define suite
+membership or require historical test names to remain present. The generated
+`shard-plan.json` records the discovered allocation and estimates. Discovery
+first warms the coverage-instrumented build with one package compiler at a time,
+so the three workers do not concurrently rebuild the same cold coverage binary.
+
+The partition preserves the tests, signed lifetimes, skip rules, and coverage
+thresholds. The runner checks completion against discovery, rejects missing or
+duplicate test execution, merges statement coverage blocks into one module
+profile, and combines events before applying the existing inventory and coverage
+gates. For a reproducible comparison, set `RTK_COVERAGE_SERIAL=1` on the same
+`test-coverage` command to use single-process execution with the same assertions
+and gates.
 
 The sharded runner requires `pgrep` (procps on Linux, built in on macOS) to
 clean up its owned descendant processes when canceled. It verifies availability
@@ -333,6 +345,59 @@ produced at least one complete `PASS`, enable required mode and make
 `docs-check` is read-only and validates documentation governance assumptions:
 workspace repository entries, key docs entry points, and contracts submodule
 commit alignment.
+
+## Local Checks Before PR Publication
+
+Use focused local checks during development and publish once the applicable
+local checks pass; full required CI may still be pending. Before choosing this
+path, inspect the current workflows, changed-path selectors, and required checks
+to establish that CI will run the equivalent full checks for this diff and gate
+merge. This applies to deployment, authentication, PKI, build, and coverage-policy
+changes as well as service changes. If equivalent required CI is missing or
+uncertain, run the full local gate. Do not bypass branch protections.
+
+For Go changes, the quick command runs policy-only checks first, then focused
+tests across `./...` in each selected Go module, with coverage evidence:
+
+```sh
+go run ./scripts/go/rtk-cloud -- pre-pr --mode quick \
+  --test-run 'TestRelevantBehavior' --base origin/main
+```
+
+Choose a top-level Go test regexp that exercises the changed behavior in every
+selected module. Slash-separated subtest selectors are rejected; select their
+parent test. When Go modules are selected, quick mode requires a nonempty
+`--test-run` and rejects selections with no passing leaf tests, including parents
+whose subtests all skip. Both modes require a clean committed worktree and use
+the affected-path selector; fetch and integrate the latest base before
+running them. Quick mode currently supports Go modules only. If Node modules
+are selected, use the existing presentation-only focused lint/build and rendered
+page workflow when the entire diff qualifies, or use full mode.
+
+Quick coverage is **DIAGNOSTIC**, separate from the complete coverage gate. Each
+selected module writes
+`.artifacts/test-runs/<run-id>/quick/<module>/diagnostic.json` with
+`status: FOCUSED_PASS` and `full_coverage: NOT_RUN` after focused checks pass. A
+diagnostic percentage below 70% is not a formal coverage-gate result. Quick
+evidence must not be reported as complete coverage or a complete GO. Required CI
+owns full differential, module, package, critical-ID, integration, and UI gates; all
+applicable required checks and reviews must pass on the current PR head before
+merge. Record the local commands and pending CI scope in the PR.
+
+The default remains the full local gate, available explicitly with
+`--mode full`. When complete workspace-tooling coverage supplies the baseline,
+it runs policy-only checks before service fixtures and heavy coverage. Other
+selected policy paths retain the existing full matrix. Full mode preserves
+the selected local coverage and UI validation:
+
+```sh
+go run ./scripts/go/rtk-cloud -- pre-pr --mode full --base origin/main
+```
+
+Small isolated Go service changes may continue to use affected package tests;
+presentation-only HTML changes may continue to use the owning project's
+lint/build and a focused rendered-page check. Reassess the full diff and fresh CI
+selection after edits or base changes. `--dry-run` only previews checks.
 
 ## Pull Request Coverage Gate
 
