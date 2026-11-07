@@ -3626,3 +3626,115 @@ versioned bootstrap-cleanup record. An older unversioned record may remain as
 history; its presence does not select the target's active cleanup binding. The
 normal reader verifies the original namespace, Controller, immutable record,
 recorded UIDs and mount before rendering, without reopening the old ceremony.
+
+## Environment CRL maintenance
+
+`scripts/renew-environment-crls.sh --environment dev|staging|prod` is the
+maintained inspection entry for existing environments. Execution adds
+`--execute --recover --confirm <CLOUD_STACK_NAME> --image <CI_IMAGE@sha256:DIGEST>
+--helper-revision <FULL_SOURCE_COMMIT>`.
+Use the canonical CI helper image for the selected release; a mutable tag does
+not establish the protected native execution provenance. The environment and
+stack are explicit, including for production. This maintenance does not replay
+initial bootstrap, regenerate identity, or depend on an old dev checkpoint.
+
+Offline Root CRLs use a six-day validity and become due 48 hours before expiry,
+within the existing seven-day verifier ceiling. The original encrypted Root
+keys stay in the selected canonical environment custody. Renewal preserves
+revocations and uses a strictly newer CRL number; interrupted runs resume their
+recorded signed successor. Expired mTLS trust is recovered through the qualified
+native Kubernetes channel and CI helper with original environment, cluster,
+issuer and predecessor pins. Publication is incomplete until the actual
+consumers install, reload and acknowledge the successor. Expired leaf or issuer
+certificates remain separate failures. Online issuers retain their original
+signing provider. Within the native worker's one-hour lead, or after expiry,
+maintenance uses `pkicontroller recovery-renew-online-crl` against the original
+OpenBao mount. It independently verifies the original TLS Root, provider issuer,
+predecessor and signed successor, adopts an already-produced provider CRL after
+an interrupted rotation, and never repeats a successful rotation just because
+its publication response was lost. The temporary online helper receives only
+the original database reference, public CA projection and audience-restricted
+Kubernetes authentication token; offline Root keys remain on the operator host.
+
+If an interrupted successor expires before convergence, maintenance preserves
+the exact incomplete journal in immutable history, validates its authority and
+signature, and prepares a fresh successor from the current registry predecessor.
+An already-published CRL advances the next number; an unpublished candidate does
+not invent a registry publication. Neither case marks the old attempt complete
+or fabricates consumer acknowledgements. Interrupted signing outputs are retained
+in separate attempt directories and do not impose a lifetime retry-count limit.
+Before retrying an unpublished successor, maintenance refreshes the native
+revocation inventory. If revocations have grown while the issuer and predecessor
+remain unchanged, it preserves the old candidate and signs a complete replacement
+at the same next CRL number. Already-published exact successors remain idempotent;
+changed authority or disappearing revocations do not authorize replacement.
+
+Mounted CRL manifests and public PEM projections are discovered from current
+Pods. Only the original public CRL fields are updated, using resource UID and
+version preconditions. Native reloads have a 75-second grace period. If an
+expired-trust recovery still has pending Deployment consumers, the script may
+restart those exact workloads and rediscover their replacement Pods; it does
+not restart StatefulSets such as OpenBao or discard their state. Missing
+consumer reload/ACK remains an explicit failure. Normal pre-expiry renewal
+uses native reloads without a blanket rollout.
+Public PEM files produced by a native sidecar are observed through their original
+shared volume and durable CRL state; the sidecar remains their sole writer.
+Older images need not contain `pkitrust`: maintenance extracts the static tool
+from the verified helper image and checks its digest before temporary execution
+beside the consumer's original CRL state. This also supports containers with a
+read-only root filesystem and no writable `/tmp`.
+Recovery also handles the legacy core API writer-group omission. It first
+restores the writable consumers and upstream trust, then qualifies the original
+single-writer Deployment and PVC permissions before adding the missing native
+container group. The guarded update preserves its UID, image, identity, PVC and
+rollout strategy. It does not recursively change file ownership. Replacement
+Pods must still reload the CRL and produce their real acknowledgements.
+
+Install an hourly host schedule explicitly for each desired environment. From
+the stable checkout, for example:
+
+```bash
+go run ./scripts/go/rtk-cloud -- deployment crl-schedule install \
+  --environment staging --workspace "$PWD" \
+  --confirm video-cloud-staging --image "$CI_NATIVE_HELPER_IMAGE"
+go run ./scripts/go/rtk-cloud -- deployment crl-schedule status --environment staging
+go run ./scripts/go/rtk-cloud -- deployment crl-schedule remove --environment staging
+```
+
+Installation requires an absolute durable checkout containing the maintained
+facade and `go`, `kubectl`, `docker`, `git`, `gh`, plus `launchctl` on Darwin or `systemctl` on
+Linux. It records the executable search path and invokes the same facade with
+explicit environment, stack and image arguments. Installation enables execution;
+production is opt-in through a separate `--environment prod` installation with
+its own exact stack confirmation. `--helper-revision <40-character commit>`
+pins the image source independently of later checkout updates; when omitted,
+installation records `git -C <workspace>/repos/rtk_video_cloud rev-parse HEAD`.
+The selected image must have verified canonical CI provenance for that revision.
+The first use retains its verified publication manifest, run and source binding
+in the canonical environment store. Later use revalidates that retained immutable
+proof, so GitHub artifact-retention expiry does not itself block renewal; a
+changed image or source requires its own verified publication.
+Remove the existing schedule before changing
+its checkout or image. Removal retains custody and maintenance evidence.
+
+Darwin uses a per-user LaunchAgent with `StartInterval=3600` and `RunAtLoad`.
+Linux uses a `systemd --user` hourly timer with `Persistent=true`, so a missed
+calendar activation can run when the user manager resumes. Neither makes an
+operator workstation continuously available. The user session/manager, awake
+host, mounted checkout and custody volume, running Docker, registry access and
+cluster credentials must remain usable. On Linux the operator must separately
+arrange user-manager availability when logged out if that is required. The
+maintenance engine's per-environment lock also excludes simultaneous manual
+runs. A stopped host cannot renew anything; schedule activation is not a
+successful renewal receipt.
+
+`crl-schedule status` shows native scheduler state, last exit code, last success,
+next CRL expiry and the engine's failure, with `stale=true` when no completed run
+exists or the latest completion is over two hours old. Inspect private
+`deployment/crl/schedule/{stdout.log,stderr.log,last-started.txt,last-result.json,last-success.json}`
+under `~/.config/rtk_cloud/<environment>/`; engine evidence is at
+`deployment/crl-maintenance/`. Logs persist across runs and should be reviewed
+and rotated by the operator. A failure must be investigated before the renewal
+lead is exhausted. After recovery, repeat the maintenance command to establish
+idempotence and run `scripts/check-deployment-health.sh --environment <name>`;
+CRL maintenance alone does not establish whole-environment health.

@@ -166,6 +166,10 @@ func keySet(keys ...string) map[string]bool {
 func runDeployment(args []string) error {
 	if len(args) > 0 {
 		switch args[0] {
+		case "renew-crls":
+			return runCRLMaintenance(args[1:])
+		case "crl-schedule":
+			return runEnvironmentCRLSchedule(args[1:])
 		case "capture-runtime-configuration-source":
 			return runCreateNormalTailRuntimeSourceCapture(args[1:])
 		case "recover-create-provider":
@@ -1047,6 +1051,7 @@ func printDeploymentUsage() {
   rtk-cloud deployment check --environment NAME --phase pre-deploy [--timeout 45m] [--report PATH]
   rtk-cloud deployment check --environment NAME [--phase post-deploy] [--fast] [--timeout 10m] [--report PATH]
   rtk-cloud deployment credentials-check --environment NAME
+  rtk-cloud deployment renew-crls --environment dev|staging|prod [--execute --confirm STACK] [--recover] [--image CI_DIGEST]
   rtk-cloud deployment credentials-check --environment NAME --read-only [--checks ghcr,tls,mounts] [--image GHCR_DIGEST] [--manifest WORKLOAD_JSON]
   rtk-cloud deployment credentials-check --environment NAME --create-missing-object-storage-bucket
   rtk-cloud deployment credentials-check --environment NAME --grant-object-storage-bucket-access

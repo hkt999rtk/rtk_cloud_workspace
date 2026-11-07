@@ -92,3 +92,108 @@ func TestCoreIdentityPermissionRejectsUnsafeTargets(t *testing.T) {
 		})
 	}
 }
+
+func TestCoreIdentityPermissionBindsWriterGroupWithoutChangingIdentity(t *testing.T) {
+	for _, group := range []string{"implicit-image-default", "legacy-999", "maintained-10001"} {
+		t.Run(group, func(t *testing.T) {
+			defs, _ := coreMQTTFixture(t, "staging")
+			if err := deriveEnvironmentCoreMQTTTransport(nil, defs); err != nil {
+				t.Fatal(err)
+			}
+			object := defs[0].Object
+			pod := environmentPKIPod(object)
+			app := deploymentplan.Map(certIssuerObjectList(pod["containers"])[0])
+			security := deploymentplan.Map(app["securityContext"])
+			if security == nil {
+				security = deploymentplan.Object{}
+				app["securityContext"] = security
+			}
+			switch group {
+			case "legacy-999":
+				security["runAsGroup"] = float64(999)
+			case "maintained-10001":
+				security["runAsGroup"] = float64(10001)
+			default:
+				delete(security, "runAsGroup")
+			}
+			beforeApp := deploymentplan.Clone(app)
+			beforeVolumes := deploymentplan.Digest(pod["volumes"])
+			beforePodSecurity := deploymentplan.Digest(pod["securityContext"])
+			if err := applyCoreIdentityPreparation(defs, identityPermissionAlpine); err != nil {
+				t.Fatal(err)
+			}
+			security = deploymentplan.Map(app["securityContext"])
+			if security["runAsUser"] != float64(10001) || security["runAsGroup"] != float64(10001) {
+				t.Fatalf("API cannot write original group-owned CRL directory: %v", security)
+			}
+			if deploymentplan.Digest(pod["volumes"]) != beforeVolumes || deploymentplan.Digest(pod["securityContext"]) != beforePodSecurity {
+				t.Fatal("writer correction changed original PVC or added recursive fsGroup mutation")
+			}
+			// Every application field other than the explicit runtime identity remains
+			// exact, including image, identity-state paths, trust inputs and PVC mounts.
+			afterApp := deploymentplan.Clone(app)
+			delete(beforeApp, "securityContext")
+			delete(afterApp, "securityContext")
+			if !reflect.DeepEqual(beforeApp, afterApp) {
+				t.Fatal("writer correction changed original application identity, image or mounts")
+			}
+			if err := validateCoreIdentityInitializer(object, identityPermissionAlpine); err != nil {
+				t.Fatal(err)
+			}
+			first := deploymentplan.Digest(object)
+			if err := applyCoreIdentityPreparation(defs, identityPermissionAlpine); err != nil {
+				t.Fatal(err)
+			}
+			if deploymentplan.Digest(object) != first {
+				t.Fatal("writer correction is not idempotent")
+			}
+		})
+	}
+}
+
+func TestCoreIdentityPermissionRejectsForeignWriterGroup(t *testing.T) {
+	for _, target := range []string{"pod", "container"} {
+		t.Run(target, func(t *testing.T) {
+			defs, _ := coreMQTTFixture(t, "staging")
+			pod := environmentPKIPod(defs[0].Object)
+			owner := pod
+			if target == "container" {
+				owner = deploymentplan.Map(certIssuerObjectList(pod["containers"])[0])
+			}
+			security := deploymentplan.Map(owner["securityContext"])
+			if security == nil {
+				security = deploymentplan.Object{}
+				owner["securityContext"] = security
+			}
+			security["runAsGroup"] = float64(0)
+			before := deploymentplan.Digest(defs[0].Object)
+			if err := applyCoreIdentityPreparation(defs, identityPermissionAlpine); err == nil {
+				t.Fatal("foreign explicit runtime group silently replaced")
+			}
+			if deploymentplan.Digest(defs[0].Object) != before {
+				t.Fatal("rejected group changed original target")
+			}
+		})
+	}
+}
+
+func TestCoreIdentityPermissionValidatorRequiresExplicitWriterGroup(t *testing.T) {
+	for _, group := range []string{"missing", "image-default-999"} {
+		t.Run(group, func(t *testing.T) {
+			defs, _ := coreMQTTFixture(t, "staging")
+			if err := applyCoreIdentityPreparation(defs, identityPermissionAlpine); err != nil {
+				t.Fatal(err)
+			}
+			app := deploymentplan.Map(certIssuerObjectList(environmentPKIPod(defs[0].Object)["containers"])[0])
+			security := deploymentplan.Map(app["securityContext"])
+			if group == "missing" {
+				delete(security, "runAsGroup")
+			} else {
+				security["runAsGroup"] = float64(999)
+			}
+			if err := validateCoreIdentityInitializer(defs[0].Object, identityPermissionAlpine); err == nil {
+				t.Fatal("candidate with unwritable original MQTT directory passed validation")
+			}
+		})
+	}
+}
