@@ -1746,6 +1746,11 @@ projected token restricted to the OpenBao audience. Its native command verifies
 the independently pinned original TLS Root and exact provider issuer before
 rotating. These temporary Pods mount neither offline custody nor consumer PVCs. Existing issuer pins,
 revocations, predecessor evidence and genuine consumer ACKs remain required.
+Custody `operator_user_id` records the authenticated native creator and is checked
+against the original issuer's `created_by`. The configured `PKI_OPERATOR_USER_ID`
+is pre-bootstrap intent and may differ after initial Account Manager binding;
+maintenance does not rewrite either identity to make them equal. The configured
+signer reference and original custody certificate/file hashes must still match.
 
 All relative paths below are under
 `~/.config/rtk_cloud/<environment>/`, with directories 0700 and files 0600:

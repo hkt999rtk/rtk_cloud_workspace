@@ -40,7 +40,13 @@ func verifyMaintenanceCustody(store secretStore, root environmentCreateRegistere
 	if m.Schema != "rtk-root-custody/v1" || m.Environment != store.Environment || m.Issuer != root.ID || m.Domain != root.Domain || m.Fingerprint != root.RootFingerprint || m.KeyFormat != "encrypted-pkcs8-pem" || len(m.Paths) != 4 || len(m.Hashes) != 4 {
 		return fail()
 	}
-	for name, want := range map[string]string{"PKI_OPERATOR_USER_ID": m.Operator, "PKI_OPERATOR_SIGNER_REF": m.Reference} {
+	// The manifest records the authenticated creator of this original issuer.
+	// PKI_OPERATOR_USER_ID is pre-bootstrap intent; native creation binds that
+	// intent to the Account Manager principal without rewriting the input file.
+	if !environmentBootstrapOwnerUUID.MatchString(m.Operator) || m.Operator != deploymentplan.String(root.Document["created_by"]) {
+		return m, errors.New("original Root custody creator differs from the registered issuer")
+	}
+	for name, want := range map[string]string{"PKI_OPERATOR_SIGNER_REF": m.Reference} {
 		path, e := maintenancePath(store, "operator/env/"+name)
 		if e != nil {
 			return fail()

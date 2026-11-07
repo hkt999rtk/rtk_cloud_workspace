@@ -26,6 +26,7 @@ func maintenanceCustodyFixture(t *testing.T) (secretStore, crlMaintenanceIssuer,
 	}
 	store, _ := newSecretStore(root, "staging")
 	item.Issuer.Reference = "operator:synthetic-original"
+	item.Issuer.Document["created_by"] = "22222222-2222-4222-8222-222222222222"
 	paths := map[string]string{"key": "pki/custody/roots/" + item.Issuer.ID + "/ca-key.encrypted.pem", "certificate": "pki/custody/roots/" + item.Issuer.ID + "/certificate.pem", "csr": "pki/custody/roots/" + item.Issuer.ID + "/csr.pem", "passphrase": "pki/custody/service-root-v1-key-passphrase"}
 	der, err := x509.MarshalPKCS8PrivateKey(key)
 	if err != nil {
@@ -54,7 +55,7 @@ func maintenanceCustodyFixture(t *testing.T) (secretStore, crlMaintenanceIssuer,
 	if err != nil {
 		t.Fatal(err)
 	}
-	for path, raw := range map[string][]byte{paths["certificate"]: []byte(item.Issuer.Certificate), paths["csr"]: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csr}), "operator/env/PKI_OPERATOR_USER_ID": []byte("synthetic-user"), "operator/env/PKI_OPERATOR_SIGNER_REF": []byte(item.Issuer.Reference)} {
+	for path, raw := range map[string][]byte{paths["certificate"]: []byte(item.Issuer.Certificate), paths["csr"]: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csr}), "operator/env/PKI_OPERATOR_USER_ID": []byte("22222222-2222-4222-8222-222222222222"), "operator/env/PKI_OPERATOR_SIGNER_REF": []byte(item.Issuer.Reference)} {
 		if err := store.write(path, raw, false); err != nil {
 			t.Fatal(err)
 		}
@@ -67,7 +68,7 @@ func maintenanceCustodyFixture(t *testing.T) (secretStore, crlMaintenanceIssuer,
 		}
 		hashes[name] = environmentPreflightBytesSHA256(raw)
 	}
-	manifest := maintenanceCustody{Schema: "rtk-root-custody/v1", Environment: "staging", Domain: "service", Issuer: item.Issuer.ID, Fingerprint: item.Issuer.RootFingerprint, Operator: "synthetic-user", Reference: item.Issuer.Reference, KeyFormat: "encrypted-pkcs8-pem", Paths: paths, Hashes: hashes}
+	manifest := maintenanceCustody{Schema: "rtk-root-custody/v1", Environment: "staging", Domain: "service", Issuer: item.Issuer.ID, Fingerprint: item.Issuer.RootFingerprint, Operator: "22222222-2222-4222-8222-222222222222", Reference: item.Issuer.Reference, KeyFormat: "encrypted-pkcs8-pem", Paths: paths, Hashes: hashes}
 	manifestPath := "pki/custody/roots/" + item.Issuer.ID + "/manifest.json"
 	if err := maintenanceWrite(store, manifestPath, manifest); err != nil {
 		t.Fatal(err)
@@ -213,5 +214,58 @@ with open(os.environ['CRL_TEST_CALLS'],'a') as f: f.write('signed\n')
 				t.Fatal("original encrypted key changed")
 			}
 		})
+	}
+}
+
+func TestCRLMaintenanceCustodyUsesOriginalRegistryCreator(t *testing.T) {
+	store, item, _, manifest := maintenanceCustodyFixture(t)
+	original := "22222222-2222-4222-8222-222222222222"
+	configured := "33333333-3333-4333-8333-333333333333"
+	manifest.Operator = original
+	item.Issuer.Document["created_by"] = original
+	item.Issuer.Reference = "" // Offline issuer records deliberately have no provider mount.
+	manifestPath := "pki/custody/roots/" + item.Issuer.ID + "/manifest.json"
+	if err := maintenanceWrite(store, manifestPath, manifest); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.write("operator/env/PKI_OPERATOR_USER_ID", []byte(configured), true); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(filepath.Join(store.Root, manifestPath))
+	if _, err := verifyMaintenanceCustody(store, item.Issuer); err != nil {
+		t.Fatalf("original native creator rejected because bootstrap intent differs: %v", err)
+	}
+	after, _ := os.ReadFile(filepath.Join(store.Root, manifestPath))
+	if !bytes.Equal(before, after) {
+		t.Fatal("original custody manifest rewritten")
+	}
+	configuredAfter, _ := store.read("operator/env/PKI_OPERATOR_USER_ID")
+	if configuredAfter != configured {
+		t.Fatal("configured bootstrap identity rewritten")
+	}
+	for _, creator := range []string{"", configured, "malformed-principal"} {
+		item.Issuer.Document["created_by"] = creator
+		if _, err := verifyMaintenanceCustody(store, item.Issuer); err == nil {
+			t.Fatalf("foreign or missing original creator accepted: %q", creator)
+		}
+	}
+	manifest.Operator = "malformed-principal"
+	item.Issuer.Document["created_by"] = manifest.Operator
+	if err := maintenanceWrite(store, manifestPath, manifest); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verifyMaintenanceCustody(store, item.Issuer); err == nil {
+		t.Fatal("malformed matching creator accepted")
+	}
+	manifest.Operator = original
+	if err := maintenanceWrite(store, manifestPath, manifest); err != nil {
+		t.Fatal(err)
+	}
+	item.Issuer.Document["created_by"] = original
+	if err := store.write("operator/env/PKI_OPERATOR_SIGNER_REF", []byte("offline:other-custody"), true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verifyMaintenanceCustody(store, item.Issuer); err == nil {
+		t.Fatal("foreign selected custody signer accepted")
 	}
 }
