@@ -101,20 +101,75 @@ func signMaintenanceCRL(ctx context.Context, store secretStore, image string, it
 			return record, errors.New("original signing input differs; preserve candidate")
 		}
 	}
-	signedPath, err := maintenancePath(store, candidate+"/signed/revocations.pem")
+	// Preserve legacy and interrupted native output. A complete signed response
+	// is reusable even if the process died before saving its journal. The native
+	// ceremony owns exclusive creation, so every new attempt gets a fresh path.
+	attemptsPath, err := maintenancePath(store, candidate+"/attempts/.probe")
 	if err != nil {
 		return record, err
 	}
-	_, statErr := os.Lstat(signedPath)
+	attemptsPath = filepath.Dir(attemptsPath)
+	paths := []string{candidate + "/signed/revocations.pem"}
+	attempts, err := os.ReadDir(attemptsPath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return record, err
+	}
+	for _, attempt := range attempts {
+		if !attempt.IsDir() || !strings.HasPrefix(attempt.Name(), "attempt-") {
+			return record, errors.New("unexpected signing attempt evidence")
+		}
+		paths = append(paths, candidate+"/attempts/"+attempt.Name()+"/signed/revocations.pem")
+	}
 	var raw []byte
-	if errors.Is(statErr, os.ErrNotExist) {
-		if err := runEnvironmentCreatePKICeremony(ctx, store, image, "crl", "--issuer", "/store/"+candidate+"/issuer.json", "--crl-request", "/store/"+candidate+"/request.json", "--key", "/store/"+custody.Paths["key"], "--passphrase-file", "/store/"+custody.Paths["passphrase"], "--expected-request-sha256", deploymentplan.Digest(request), "--out", "/store/"+candidate+"/signed"); err != nil {
+	for _, relative := range paths {
+		path, err := maintenancePath(store, relative)
+		if err != nil {
 			return record, err
 		}
+		if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+			continue
+		} else if err != nil {
+			return record, err
+		}
+		data, err := readBoundedEnvironmentInput(path, true, true)
+		if err != nil {
+			return record, err
+		}
+		if block, _ := pem.Decode(data); block == nil {
+			continue
+		} // interrupted exclusive write
+		previous, err := deviceRootCRLProviderRecord(item.Issuer, data)
+		if err != nil {
+			return record, errors.New("preserved signing response is invalid; inspect original evidence")
+		}
+		if err := validateMaintenanceSuccessor(store.Environment, item, request, previous, time.Now()); err != nil {
+			return record, err
+		}
+		if len(raw) != 0 && record.Digest != previous.Digest {
+			return record, errors.New("multiple different signed candidates; preserve original evidence")
+		}
+		raw, record = data, previous
 	}
-	raw, err = readBoundedEnvironmentFile(signedPath, true)
-	if err != nil {
-		return record, errors.New("original signed CRL cannot be read")
+	if len(raw) == 0 {
+		if err := os.MkdirAll(attemptsPath, 0700); err != nil {
+			return record, err
+		}
+		attempt, err := os.MkdirTemp(attemptsPath, "attempt-")
+		if err != nil {
+			return record, err
+		}
+		relative := candidate + "/attempts/" + filepath.Base(attempt) + "/signed"
+		if err := runEnvironmentCreatePKICeremony(ctx, store, image, "crl", "--issuer", "/store/"+candidate+"/issuer.json", "--crl-request", "/store/"+candidate+"/request.json", "--key", "/store/"+custody.Paths["key"], "--passphrase-file", "/store/"+custody.Paths["passphrase"], "--expected-request-sha256", deploymentplan.Digest(request), "--out", "/store/"+relative); err != nil {
+			return record, err
+		}
+		signedPath, err := maintenancePath(store, relative+"/revocations.pem")
+		if err != nil {
+			return record, err
+		}
+		raw, err = readBoundedEnvironmentFile(signedPath, true)
+		if err != nil {
+			return record, errors.New("original signed CRL cannot be read")
+		}
 	}
 	after, err := verifyMaintenanceCustody(store, item.Issuer)
 	if err != nil || deploymentplan.Digest(custody) != deploymentplan.Digest(after) {

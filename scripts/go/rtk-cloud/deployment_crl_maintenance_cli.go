@@ -245,6 +245,9 @@ func runCRLMaintenanceCLI(parent context.Context, args []string, out, diagnostic
 			}
 			r.image = image
 		}
+		if _, err := r.nativeTrustBinary(ctx); err != nil {
+			return createRootCRLRecord{}, err
+		}
 		return signMaintenanceCRL(ctx, store, r.image, item, request, candidate)
 	}, Import: r.publish, Converge: r.converge}
 	status, err := executeCRLMaintenance(ctx, store, options, deps)

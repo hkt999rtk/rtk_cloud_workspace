@@ -3108,6 +3108,13 @@ The maintenance engine produces and consumes
 `~/.config/rtk_cloud/<environment>/deployment/crl-maintenance/` for status,
 locks, signed-successor journals, online provider reconciliation results, and
 verified immutable helper publication manifests. Subsequent pinned maintenance
+also retains an image-bound static `pkitrust` installer under
+`helpers/<image-sha256>/pkitrust` with its `pkitrust.json` digest evidence. Older
+consumers execute verified bytes in a private transient directory alongside
+their original CRL state, using their existing UID and PVC permissions; cleanup
+removes the transient executable and public inputs. Expired incomplete journals
+are preserved under `issuers/<issuer>/history/<journal-digest>.json` before fresh
+preparation against the current registry predecessor. Pinned maintenance
 revalidates retained CI/source/image evidence rather than requiring an unexpired
 remote CI artifact. The online recovery helper uses the original controller's
 OpenBao-audience token and pinned public TLS Root; offline signing keys never

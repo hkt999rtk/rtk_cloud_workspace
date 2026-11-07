@@ -107,6 +107,12 @@ func maintainedCoreIdentityInitializer(object deploymentplan.Object, image strin
 		if uid, set := security["runAsUser"]; set && uid != float64(10001) {
 			return nil, coreIdentityPermissionBlocker(object, "core API runtime UID differs from the maintained formal image contract")
 		}
+		// The image's legacy GID 999 cannot replace files in the original
+		// root:10001 MQTT trust directory. Only that known default may be
+		// normalized to its maintained writer group; reject unrelated groups.
+		if gid, set := security["runAsGroup"]; set && gid != float64(999) && gid != float64(10001) {
+			return nil, coreIdentityPermissionBlocker(object, "core API runtime group differs from the original PVC writer contract")
+		}
 	}
 	mounts, _ := environmentPKINamedFields(app["volumeMounts"])
 	base := deploymentplan.String(mounts["service-identity"]["mountPath"])
@@ -155,7 +161,7 @@ func applyCoreIdentityPreparation(definitions []deploymentplan.Definition, image
 				security = deploymentplan.Object{}
 				c["securityContext"] = security
 			}
-			security["runAsUser"], security["runAsNonRoot"] = float64(10001), true
+			security["runAsUser"], security["runAsGroup"], security["runAsNonRoot"] = float64(10001), float64(10001), true
 			deploymentplan.Map(d.Object["spec"])["strategy"] = deploymentplan.Object{"type": "Recreate"}
 		}
 	}
@@ -169,8 +175,11 @@ func validateCoreIdentityInitializer(object deploymentplan.Object, image string)
 	}
 	for _, raw := range certIssuerObjectList(environmentPKIPod(object)["containers"]) {
 		c := deploymentplan.Map(raw)
-		if environmentCoreMQTTConsumer(object, c) && deploymentplan.Map(c["securityContext"])["runAsUser"] != float64(10001) {
-			return coreIdentityPermissionBlocker(object, "candidate core API must explicitly retain runtime UID 10001")
+		if environmentCoreMQTTConsumer(object, c) {
+			security := deploymentplan.Map(c["securityContext"])
+			if security["runAsUser"] != float64(10001) || security["runAsGroup"] != float64(10001) {
+				return coreIdentityPermissionBlocker(object, "candidate core API must explicitly retain runtime UID and writer GID 10001")
+			}
 		}
 	}
 	if deploymentplan.Map(deploymentplan.Map(object["spec"])["strategy"])["type"] != "Recreate" {

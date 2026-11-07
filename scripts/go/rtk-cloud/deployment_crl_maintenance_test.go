@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -11,6 +12,8 @@ import (
 	"errors"
 	"math/big"
 	"os"
+	"path/filepath"
+	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 	"testing"
 	"time"
 )
@@ -155,6 +158,167 @@ func TestCRLMaintenanceReadOnlyAndExpiredRequireRecovery(t *testing.T) {
 				if err == nil {
 					t.Fatal("expired run requires --recover")
 				}
+			}
+		})
+	}
+}
+
+func TestCRLMaintenanceExpiredInterruptedJournalSupersession(t *testing.T) {
+	for _, mode := range []string{"published", "unpublished", "request-only"} {
+		t.Run(mode, func(t *testing.T) {
+			item, key, first := maintenanceFixture(t, "staging", time.Now().UTC().Truncate(time.Second).Add(time.Hour))
+			root := t.TempDir()
+			if err := os.Chmod(root, 0700); err != nil {
+				t.Fatal(err)
+			}
+			store, _ := newSecretStore(root, "staging")
+			request, err := buildMaintenanceCRLRequest("staging", item, first)
+			if err != nil {
+				t.Fatal(err)
+			}
+			old := crlMaintenanceJournal{Schema: "rtk-crl-maintenance/v1", Environment: "staging", ClusterSHA: "original-cluster", Original: item, Request: request}
+			if mode != "request-only" {
+				old.Signed = maintenanceSign(t, item.Issuer, key, request)
+			}
+			current := item
+			if mode == "published" {
+				current.Snapshot.Prior = old.Signed
+			}
+			relative := crlMaintenanceBase + "/issuers/" + item.Issuer.ID + "/current.json"
+			if err := maintenanceWrite(store, relative, old); err != nil {
+				t.Fatal(err)
+			}
+			originalBytes, _ := os.ReadFile(filepath.Join(store.Root, relative))
+			now := first.Add(7 * 24 * time.Hour)
+			signs, imports, prepares := 0, 0, 0
+			failConverge := true
+			deps := crlMaintenanceDependencies{
+				Observe: func(context.Context) (crlMaintenanceInventory, error) {
+					return crlMaintenanceInventory{Issuers: []crlMaintenanceIssuer{current}}, nil
+				},
+				Prepare: func(_ context.Context, actual crlMaintenanceIssuer) (crlMaintenanceIssuer, error) {
+					prepares++
+					if prepares == 1 {
+						return actual, errors.New("native snapshot unavailable")
+					}
+					return actual, nil
+				},
+				Sign: func(_ context.Context, original crlMaintenanceIssuer, fresh createRootCRLRequest, candidate string) (createRootCRLRecord, error) {
+					signs++
+					want := "5"
+					if mode == "published" {
+						want = "6"
+					}
+					if fresh.Number != want || !fresh.ThisUpdate.Equal(now) || original.Issuer.RootFingerprint != item.Issuer.RootFingerprint || original.Issuer.Certificate != item.Issuer.Certificate || candidate == crlMaintenanceBase+"/issuers/"+item.Issuer.ID+"/"+deploymentplan.Digest(request) {
+						t.Fatal("supersession changed authority or reused expired request")
+					}
+					return maintenanceSign(t, original.Issuer, key, fresh), nil
+				},
+				Import: func(_ context.Context, original crlMaintenanceIssuer, _ createRootCRLRequest, signed createRootCRLRecord) error {
+					imports++
+					if original.Snapshot.Prior.Digest != current.Snapshot.Prior.Digest {
+						t.Fatal("not based on current native predecessor")
+					}
+					current.Snapshot.Prior = signed
+					return nil
+				},
+				Converge: func(_ context.Context, inventory crlMaintenanceInventory, _ map[string]createRootCRLRecord) error {
+					if !inventory.Restart {
+						t.Fatal("expired recovery lost reload requirement")
+					}
+					if failConverge {
+						return errors.New("real ACK still absent")
+					}
+					return nil
+				},
+			}
+			opts := crlMaintenanceOptions{Environment: "staging", ClusterSHA: "original-cluster", Execute: true, Recover: true, Now: func() time.Time { return now }}
+			status, err := executeCRLMaintenance(context.Background(), store, opts, deps)
+			if err == nil || err.Error() != "native snapshot unavailable" {
+				t.Fatalf("failed native prepare did not retain pending renewal: %v", err)
+			}
+			stillCurrent, _ := os.ReadFile(filepath.Join(store.Root, relative))
+			if !bytes.Equal(stillCurrent, originalBytes) {
+				t.Fatal("old current journal changed before fresh native prepare")
+			}
+			status, err = executeCRLMaintenance(context.Background(), store, opts, deps)
+			if err == nil || err.Error() != "real ACK still absent" || status.Completed || !status.LastSuccess.IsZero() {
+				t.Fatalf("supersession failure/ACK status: %+v %v", status, err)
+			}
+			history := crlMaintenanceBase + "/issuers/" + item.Issuer.ID + "/history/" + deploymentplan.Digest(old) + ".json"
+			archived, err := os.ReadFile(filepath.Join(store.Root, history))
+			if err != nil || !bytes.Equal(archived, originalBytes) {
+				t.Fatalf("original incomplete journal not preserved: %v", err)
+			}
+			var pending crlMaintenanceJournal
+			if err := maintenanceRead(store, relative, &pending); err != nil || pending.Completed || pending.Request.Number == "" || pending.Request.ThisUpdate.Equal(old.Request.ThisUpdate) {
+				t.Fatal("fresh incomplete journal missing")
+			}
+			failConverge = false
+			status, err = executeCRLMaintenance(context.Background(), store, opts, deps)
+			if err != nil || !status.Completed || signs != 1 || imports != 1 || prepares != 2 {
+				t.Fatalf("renewal did not resume once: %+v %v signs=%d imports=%d prepare=%d", status, err, signs, imports, prepares)
+			}
+			archivedAgain, _ := os.ReadFile(filepath.Join(store.Root, history))
+			if !bytes.Equal(archivedAgain, originalBytes) {
+				t.Fatal("archive overwritten")
+			}
+		})
+	}
+}
+
+func TestCRLMaintenanceExpiredJournalMismatchCannotSupersede(t *testing.T) {
+	for _, mode := range []string{"environment", "cluster", "root", "registry", "request", "signed", "partial-signed"} {
+		t.Run(mode, func(t *testing.T) {
+			item, key, first := maintenanceFixture(t, "staging", time.Now().UTC().Truncate(time.Second).Add(time.Hour))
+			request, err := buildMaintenanceCRLRequest("staging", item, first)
+			if err != nil {
+				t.Fatal(err)
+			}
+			journal := crlMaintenanceJournal{Schema: "rtk-crl-maintenance/v1", Environment: "staging", ClusterSHA: "original-cluster", Original: item, Request: request}
+			current := item
+			switch mode {
+			case "environment":
+				journal.Environment = "prod"
+			case "cluster":
+				journal.ClusterSHA = "other-cluster"
+			case "root":
+				journal.Original.Issuer.RootFingerprint = "other-root"
+			case "registry":
+				current.Snapshot.Prior = maintenanceSign(t, item.Issuer, key, request)
+			case "request":
+				journal.Request.Entries = journal.Request.Entries[:1]
+			case "signed":
+				journal.Signed = item.Snapshot.Prior
+			case "partial-signed":
+				journal.Signed.PEM = item.Snapshot.Prior.PEM
+			}
+			root := t.TempDir()
+			if err := os.Chmod(root, 0700); err != nil {
+				t.Fatal(err)
+			}
+			store, _ := newSecretStore(root, "staging")
+			relative := crlMaintenanceBase + "/issuers/" + item.Issuer.ID + "/current.json"
+			if err := maintenanceWrite(store, relative, journal); err != nil {
+				t.Fatal(err)
+			}
+			before, _ := os.ReadFile(filepath.Join(store.Root, relative))
+			deps := crlMaintenanceDependencies{Observe: func(context.Context) (crlMaintenanceInventory, error) {
+				return crlMaintenanceInventory{Issuers: []crlMaintenanceIssuer{current}}, nil
+			}, Prepare: func(context.Context, crlMaintenanceIssuer) (crlMaintenanceIssuer, error) {
+				t.Fatal("mismatched journal reached native prepare")
+				return item, nil
+			}}
+			opts := crlMaintenanceOptions{Environment: "staging", ClusterSHA: "original-cluster", Execute: true, Recover: true, Now: func() time.Time { return first.Add(7 * 24 * time.Hour) }}
+			if _, err := executeCRLMaintenance(context.Background(), store, opts, deps); err == nil {
+				t.Fatal("expired mismatched journal superseded")
+			}
+			after, _ := os.ReadFile(filepath.Join(store.Root, relative))
+			if !bytes.Equal(before, after) {
+				t.Fatal("mismatched original journal overwritten")
+			}
+			if _, err := os.Stat(filepath.Join(store.Root, filepath.Dir(relative), "history")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("mismatched original was archived as superseded")
 			}
 		})
 	}

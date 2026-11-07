@@ -64,7 +64,7 @@ func newOnlineRuntimeTestFixture(t *testing.T) *onlineRuntimeTestFixture {
 	f := &onlineRuntimeTestFixture{t: t, dir: dir, item: item, successor: successor, lease: &onlineRuntimeTestLease{}, records: map[string]createRootCRLRecord{item.Issuer.ID: item.Snapshot.Prior}}
 	consumer := crlMaintenanceConsumer{Namespace: "video-cloud-staging-video-cloud", Pod: "original-consumer", PodUID: "original-consumer-uid", Container: "api", StatePath: "/original/state/service-crl.json", IssuerID: item.Issuer.ID, ConsumerID: "api"}
 	f.inventory = crlMaintenanceInventory{Issuers: []crlMaintenanceIssuer{item}, Consumers: []crlMaintenanceConsumer{consumer}}
-	f.runtime = maintenanceRuntime{cfg: deploymentConfig{Environment: "staging", Values: map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}}, store: store, kubeconfig: filepath.Join(dir, "frozen-kubeconfig"), image: "ghcr.io/test/api@sha256:" + strings.Repeat("a", 64), lease: f.lease}
+	f.runtime = maintenanceRuntime{cfg: deploymentConfig{Environment: "staging", Values: map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}}, store: store, kubeconfig: filepath.Join(dir, "frozen-kubeconfig"), image: "ghcr.io/test/api@sha256:" + strings.Repeat("a", 64), lease: f.lease, trustBinary: []byte("synthetic pinned installer")}
 	f.writeJSON("result.json", map[string]any{"status": "imported", "environment": "staging", "crl": successor})
 	// Only original public CA and audience-scoped token references enter the
 	// helper manifest. No real credentials or environment files are used.
@@ -128,21 +128,31 @@ esac
 			}
 			return json.Marshal(createRootCRLNativeSnapshot{Prior: record})
 		}
-		if len(args) > 1 && args[len(args)-2] == "crl-maintenance" {
+		if len(args) > 1 && args[len(args)-2] == "crl-writer-access" && args[len(args)-1] == consumer.StatePath {
+			return []byte("10001 10001 700 10001 10001 yes 10001\n"), nil
+		}
+		if len(args) > 1 && args[len(args)-2] == "cat" && args[len(args)-1] == consumer.StatePath {
+			return nil, errors.New("isolated current state absent")
+		}
+		if len(args) > 2 && args[len(args)-3] == "crl-maintenance" {
 			prefix := []string{"--namespace", consumer.Namespace, "exec", "-i", "pod/" + consumer.Pod, "--container", consumer.Container, "--", "/bin/sh", "-ec"}
-			if len(args) != 13 || !reflect.DeepEqual(args[:10], prefix) || !strings.Contains(args[10], "/app/pkitrust apply-crl") {
+			if len(args) != 14 || !reflect.DeepEqual(args[:10], prefix) || !strings.Contains(args[10], `"$directory/pkitrust" apply-crl`) {
 				t.Fatalf("installation changed original native consumer: %v", args)
 			}
 			f.event("install")
 			f.installCalls++
-			if args[len(args)-1] != consumer.StatePath {
+			if args[len(args)-2] != consumer.StatePath {
 				t.Fatal("installation changed original durable path")
 			}
 			lines := strings.Split(strings.TrimSpace(string(input)), "\n")
-			if len(lines) != 2 {
+			if len(lines) != 3 {
 				t.Fatal("native install input framing changed")
 			}
-			issuerRaw, err := base64.StdEncoding.DecodeString(lines[0])
+			binary, err := base64.StdEncoding.DecodeString(lines[0])
+			if err != nil || string(binary) != "synthetic pinned installer" || args[len(args)-1] != environmentPreflightBytesSHA256(binary) {
+				t.Fatal("installer bytes lost their pinned digest")
+			}
+			issuerRaw, err := base64.StdEncoding.DecodeString(lines[1])
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -153,7 +163,7 @@ esac
 			if issuerDoc["environment"] != "staging" || issuerDoc["id"] != item.Issuer.ID {
 				t.Fatal("installation lost issuer/environment pin")
 			}
-			recordRaw, err := base64.StdEncoding.DecodeString(lines[1])
+			recordRaw, err := base64.StdEncoding.DecodeString(lines[2])
 			if err != nil {
 				t.Fatal(err)
 			}

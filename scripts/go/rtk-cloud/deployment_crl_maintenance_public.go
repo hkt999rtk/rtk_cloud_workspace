@@ -18,6 +18,8 @@ import (
 type maintenancePublicCRL struct {
 	Namespace, Pod, PodUID, Container, Path, Resource, UID, Version, Key, Original string
 	Issuers                                                                        []string
+	Producer                                                                       string
+	Claims                                                                         map[string]string
 }
 
 func maintenanceBundleIssuers(raw []byte, known map[string]environmentCreateRegisteredIssuer) ([]string, error) {
@@ -84,7 +86,7 @@ func (r *maintenanceRuntime) publicProjection(ctx context.Context, pod, c deploy
 				name = deploymentplan.String(source["name"])
 			}
 			if name == "" {
-				return out, errors.New("public CRL projection lacks a supported Secret or ConfigMap source")
+				return r.runtimePublicProjection(ctx, pod, out, m, v, known)
 			}
 			key := strings.TrimPrefix(path, mount+"/")
 			if items := certIssuerObjectList(source["items"]); len(items) > 0 {
@@ -150,6 +152,11 @@ func maintenancePublicBundle(p maintenancePublicCRL, records map[string]createRo
 func (r *maintenanceRuntime) publishPublicCRLs(ctx context.Context, projections []maintenancePublicCRL, records map[string]createRootCRLRecord) error {
 	seen := map[string]bool{}
 	for _, p := range projections {
+		// Native public exports are owned by the running producer. Installing
+		// its signed durable state lets its normal refresh publish the bundle.
+		if p.Producer != "" {
+			continue
+		}
 		key := p.Resource + "/" + p.Key
 		if seen[key] {
 			continue
@@ -192,15 +199,24 @@ func (r *maintenanceRuntime) verifyPublicCRLs(ctx context.Context, projections [
 		if err != nil || deploymentplan.String(deploymentplan.Map(pod["metadata"])["uid"]) != p.PodUID {
 			return errors.New("public CRL consumer owner changed")
 		}
-		ready := false
+		for claim, uid := range p.Claims {
+			actual, err := r.read(ctx, claim)
+			if err != nil || deploymentplan.String(deploymentplan.Map(actual["metadata"])["uid"]) != uid {
+				return errors.New("public CRL producer durable volume changed")
+			}
+		}
+		ready, producerReady := false, p.Producer == ""
 		for _, cv := range certIssuerObjectList(deploymentplan.Map(pod["status"])["containerStatuses"]) {
 			c := deploymentplan.Map(cv)
 			if c["name"] == p.Container {
 				ready = c["ready"] == true
 			}
+			if c["name"] == p.Producer {
+				producerReady = c["ready"] == true
+			}
 		}
-		if !ready {
-			return errors.New("public CRL consumer is not ready")
+		if !ready || !producerReady {
+			return errors.New("public CRL consumer or producer is not ready")
 		}
 	}
 	return nil

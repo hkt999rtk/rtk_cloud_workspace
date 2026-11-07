@@ -3656,6 +3656,14 @@ its publication response was lost. The temporary online helper receives only
 the original database reference, public CA projection and audience-restricted
 Kubernetes authentication token; offline Root keys remain on the operator host.
 
+If an interrupted successor expires before convergence, maintenance preserves
+the exact incomplete journal in immutable history, validates its authority and
+signature, and prepares a fresh successor from the current registry predecessor.
+An already-published CRL advances the next number; an unpublished candidate does
+not invent a registry publication. Neither case marks the old attempt complete
+or fabricates consumer acknowledgements. Interrupted signing outputs are retained
+in separate attempt directories and do not impose a lifetime retry-count limit.
+
 Mounted CRL manifests and public PEM projections are discovered from current
 Pods. Only the original public CRL fields are updated, using resource UID and
 version preconditions. Native reloads have a 75-second grace period. If an
@@ -3664,6 +3672,18 @@ restart those exact workloads and rediscover their replacement Pods; it does
 not restart StatefulSets such as OpenBao or discard their state. Missing
 consumer reload/ACK remains an explicit failure. Normal pre-expiry renewal
 uses native reloads without a blanket rollout.
+Public PEM files produced by a native sidecar are observed through their original
+shared volume and durable CRL state; the sidecar remains their sole writer.
+Older images need not contain `pkitrust`: maintenance extracts the static tool
+from the verified helper image and checks its digest before temporary execution
+beside the consumer's original CRL state. This also supports containers with a
+read-only root filesystem and no writable `/tmp`.
+Recovery also handles the legacy core API writer-group omission. It first
+restores the writable consumers and upstream trust, then qualifies the original
+single-writer Deployment and PVC permissions before adding the missing native
+container group. The guarded update preserves its UID, image, identity, PVC and
+rollout strategy. It does not recursively change file ownership. Replacement
+Pods must still reload the CRL and produce their real acknowledgements.
 
 Install an hourly host schedule explicitly for each desired environment. From
 the stable checkout, for example:

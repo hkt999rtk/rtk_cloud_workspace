@@ -68,6 +68,9 @@ func (r *maintenanceRuntime) recoverOnline(ctx context.Context, inventory crlMai
 		if err := r.lease.Check(ctx); err != nil {
 			return err
 		}
+		if _, err := r.nativeTrustBinary(ctx); err != nil {
+			return err
+		}
 		if helper == nil {
 			if r.image == "" {
 				if r.ensureImage == nil {

@@ -23,6 +23,8 @@ type maintenanceRuntime struct {
 	commandOverride func(context.Context, []byte, ...string) ([]byte, error)
 	readOverride    func(context.Context, string) (deploymentplan.Object, error)
 	ensureImage     func(context.Context) (string, error)
+	trustBinary     []byte
+	deferredWriters map[string]maintenanceWriterRepair
 }
 
 func (r *maintenanceRuntime) query(ctx context.Context, query string) ([]byte, error) {
@@ -103,7 +105,7 @@ func (r *maintenanceRuntime) observe(ctx context.Context) (crlMaintenanceInvento
 					if value := deploymentplan.String(e["value"]); strings.HasPrefix(value, "/") && (strings.HasSuffix(setting, "_CRL") || strings.HasSuffix(setting, "_CRL_BUNDLE")) {
 						projection, err := r.publicProjection(ctx, pod, c, value, known)
 						if err != nil {
-							return out, err
+							return out, fmt.Errorf("public CRL %s/%s/%s %s: %w", ns, name, container, value, err)
 						}
 						out.Public = append(out.Public, projection)
 					}
@@ -184,6 +186,9 @@ func (r *maintenanceRuntime) snapshot(ctx context.Context, issuer environmentCre
 }
 
 func (r *maintenanceRuntime) publish(ctx context.Context, item crlMaintenanceIssuer, request createRootCRLRequest, signed createRootCRLRecord) error {
+	if _, err := r.nativeTrustBinary(ctx); err != nil {
+		return err
+	}
 	if r.lease == nil {
 		return errors.New("CRL mutation requires environment execution lease")
 	}
@@ -235,18 +240,42 @@ func (r *maintenanceRuntime) install(ctx context.Context, c crlMaintenanceConsum
 	if err != nil || deploymentplan.String(deploymentplan.Map(pod["metadata"])["uid"]) != c.PodUID {
 		return errors.New("original CRL consumer Pod changed; rediscover before retry")
 	}
+	// Identical valid native state needs no binary transfer or image lookup.
+	state, readErr := r.command(ctx, nil, "--namespace", c.Namespace, "exec", "pod/"+c.Pod, "--container", c.Container, "--", "cat", c.StatePath)
+	if readErr == nil && maintenanceInstalledMatches(r.cfg.Environment, state, issuer, record) {
+		return nil
+	}
+	access, err := r.writerAccess(ctx, c)
+	if err != nil {
+		return err
+	}
+	if !access.Writable {
+		repair, err := r.qualifyWriterRepair(ctx, c, access)
+		if err != nil {
+			return err
+		}
+		if r.deferredWriters == nil {
+			r.deferredWriters = map[string]maintenanceWriterRepair{}
+		}
+		r.deferredWriters[c.Namespace+"/"+c.PodUID+"/"+c.Container] = repair
+		return nil // completion still requires installation and real convergence below
+	}
+	tool, err := r.nativeTrustBinary(ctx)
+	if err != nil {
+		return err
+	}
+	// Image qualification may take time; recheck the original live owner and lease.
+	if err := r.lease.Check(ctx); err != nil {
+		return err
+	}
+	pod, err = r.read(ctx, "Pod/"+c.Namespace+"/"+c.Pod)
+	if err != nil || deploymentplan.String(deploymentplan.Map(pod["metadata"])["uid"]) != c.PodUID {
+		return errors.New("original CRL consumer changed during installer qualification")
+	}
 	issuerRaw, _ := json.Marshal(issuer.Document)
 	recordRaw, _ := json.Marshal(record)
-	input := []byte(base64.StdEncoding.EncodeToString(issuerRaw) + "\n" + base64.StdEncoding.EncodeToString(recordRaw) + "\n")
-	script := `umask 077
-directory=$(mktemp -d /tmp/rtk-crl-maintenance.XXXXXXXX)
-trap 'rm -rf "$directory"' EXIT
-IFS= read -r issuer
-IFS= read -r record
-printf '%s' "$issuer" | base64 -d > "$directory/issuer.json"
-printf '%s' "$record" | base64 -d > "$directory/crl.json"
-/app/pkitrust apply-crl "$directory/issuer.json" "$directory/crl.json" "$1"`
-	_, err = r.command(ctx, input, "--namespace", c.Namespace, "exec", "-i", "pod/"+c.Pod, "--container", c.Container, "--", "/bin/sh", "-ec", script, "crl-maintenance", c.StatePath)
+	input := []byte(base64.StdEncoding.EncodeToString(tool) + "\n" + base64.StdEncoding.EncodeToString(issuerRaw) + "\n" + base64.StdEncoding.EncodeToString(recordRaw) + "\n")
+	_, err = r.command(ctx, input, "--namespace", c.Namespace, "exec", "-i", "pod/"+c.Pod, "--container", c.Container, "--", "/bin/sh", "-ec", maintenanceInstallScript, "crl-maintenance", c.StatePath, environmentPreflightBytesSHA256(tool))
 	if err != nil {
 		return fmt.Errorf("native CRL installation failed for %s/%s/%s", c.Namespace, c.Pod, c.Container)
 	}
@@ -275,6 +304,11 @@ func (r *maintenanceRuntime) converge(ctx context.Context, inventory crlMaintena
 		return err
 	}
 	if err := r.publishPublicCRLs(ctx, inventory.Public, records); err != nil {
+		return err
+	}
+	var err error
+	inventory, err = r.repairDeferredWriters(ctx, inventory, records)
+	if err != nil {
 		return err
 	}
 	reloadStarted := time.Now()
@@ -474,4 +508,17 @@ func maintenanceRequiredConsumers(controller deploymentplan.Object, issuers []cr
 		}
 	}
 	return result, nil
+}
+
+func maintenanceInstalledMatches(environment string, raw []byte, issuer environmentCreateRegisteredIssuer, record createRootCRLRecord) bool {
+	var installed struct {
+		Fingerprint string              `json:"issuer_fingerprint"`
+		Terminal    string              `json:"terminal_issuer_id"`
+		CRL         createRootCRLRecord `json:"crl"`
+	}
+	if json.Unmarshal(raw, &installed) != nil || installed.Terminal != "" || installed.Fingerprint != deploymentplan.String(issuer.Document["certificate_fingerprint_sha256"]) || installed.CRL.Digest != record.Digest {
+		return false
+	}
+	_, err := validateMaintenanceCRL(environment, issuer, installed.CRL, true, time.Now())
+	return err == nil
 }

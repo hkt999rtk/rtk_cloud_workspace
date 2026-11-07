@@ -2,18 +2,23 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
 
-func TestCRLMaintenanceCustodyOriginalEncryptedKeyAndMissingState(t *testing.T) {
+func maintenanceCustodyFixture(t *testing.T) (secretStore, crlMaintenanceIssuer, *ecdsa.PrivateKey, maintenanceCustody) {
+	t.Helper()
 	item, key, _ := maintenanceFixture(t, "staging", time.Now().UTC().Truncate(time.Second).Add(time.Hour))
 	root := t.TempDir()
 	if err := os.Chmod(root, 0700); err != nil {
@@ -67,6 +72,14 @@ func TestCRLMaintenanceCustodyOriginalEncryptedKeyAndMissingState(t *testing.T) 
 	if err := maintenanceWrite(store, manifestPath, manifest); err != nil {
 		t.Fatal(err)
 	}
+	return store, item, key, manifest
+}
+
+func TestCRLMaintenanceCustodyOriginalEncryptedKeyAndMissingState(t *testing.T) {
+	store, item, _, manifest := maintenanceCustodyFixture(t)
+	paths := manifest.Paths
+	manifestPath := "pki/custody/roots/" + item.Issuer.ID + "/manifest.json"
+	keyPath := filepath.Join(store.Root, paths["key"])
 	before, _ := os.ReadFile(keyPath)
 	if _, err := verifyMaintenanceCustody(store, item.Issuer); err != nil {
 		t.Fatal(err)
@@ -102,5 +115,103 @@ func TestCRLMaintenanceCustodyOriginalEncryptedKeyAndMissingState(t *testing.T) 
 	certificate, err := os.ReadFile(filepath.Join(store.Root, paths["certificate"]))
 	if err != nil || string(certificate) != item.Issuer.Certificate {
 		t.Fatal("original root certificate changed")
+	}
+}
+
+func TestCRLMaintenanceSigningResumesPreservedAttempts(t *testing.T) {
+	for _, mode := range []string{"empty", "empty-file", "partial", "complete", "wrong-request", "prolonged-outage"} {
+		t.Run(mode, func(t *testing.T) {
+			store, item, key, custody := maintenanceCustodyFixture(t)
+			request, err := buildMaintenanceCRLRequest(store.Environment, item, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			signed := maintenanceSign(t, item.Issuer, key, request)
+			candidate := "deployment/crl-maintenance/test-candidate"
+			legacy := filepath.Join(store.Root, candidate, "signed")
+			if err := os.MkdirAll(legacy, 0700); err != nil {
+				t.Fatal(err)
+			}
+			original := []byte("-----BEGIN X509 CRL-----\ninterrupted")
+			if mode == "complete" {
+				original = []byte(signed.PEM)
+			}
+			if mode == "empty-file" {
+				original = nil
+			}
+			if mode == "wrong-request" {
+				original = []byte(item.Snapshot.Prior.PEM)
+			}
+			if mode != "empty" {
+				if err := os.WriteFile(filepath.Join(legacy, "revocations.pem"), original, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if mode == "prolonged-outage" {
+				for i := 0; i < 129; i++ {
+					if err := os.MkdirAll(filepath.Join(store.Root, candidate, "attempts", fmt.Sprintf("attempt-%03d", i), "signed"), 0700); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			bin := t.TempDir()
+			response := filepath.Join(bin, "response.pem")
+			if err := os.WriteFile(response, []byte(signed.PEM), 0600); err != nil {
+				t.Fatal(err)
+			}
+			calls := filepath.Join(bin, "calls")
+			t.Setenv("CRL_TEST_ROOT", store.Root)
+			t.Setenv("CRL_TEST_RESPONSE", response)
+			t.Setenv("CRL_TEST_CALLS", calls)
+			// Match the native ceremony's exclusive output directory and file creation.
+			docker := `#!/usr/bin/env python3
+import os,sys
+args=sys.argv[1:]
+out=args[args.index('--out')+1]
+key=args[args.index('--key')+1]
+assert key.startswith('/store/pki/custody/roots/')
+assert '--expected-request-sha256' in args
+out=os.environ['CRL_TEST_ROOT']+out[len('/store'):]
+os.mkdir(out,0o700)
+fd=os.open(out+'/revocations.pem', os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+with os.fdopen(fd,'wb') as f: f.write(open(os.environ['CRL_TEST_RESPONSE'],'rb').read())
+with open(os.environ['CRL_TEST_CALLS'],'a') as f: f.write('signed\n')
+`
+			if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(docker), 0700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+			image := "ghcr.io/example/api@sha256:" + strings.Repeat("a", 64)
+			for retry := 0; retry < 2; retry++ {
+				got, err := signMaintenanceCRL(context.Background(), store, image, item, request, candidate)
+				if mode == "wrong-request" {
+					if err == nil {
+						t.Fatal("unrelated complete signed response accepted")
+					}
+					continue
+				}
+				if err != nil || got.Digest != signed.Digest {
+					t.Fatalf("resume %d: digest=%s err=%v", retry, got.Digest, err)
+				}
+			}
+			raw, _ := os.ReadFile(calls)
+			wantCalls := 1
+			if mode == "complete" || mode == "wrong-request" {
+				wantCalls = 0
+			}
+			if strings.Count(string(raw), "signed") != wantCalls {
+				t.Fatalf("native signing calls %q", raw)
+			}
+			if mode != "empty" {
+				unchanged, err := os.ReadFile(filepath.Join(legacy, "revocations.pem"))
+				if err != nil || !bytes.Equal(unchanged, original) {
+					t.Fatal("original interrupted output overwritten")
+				}
+			}
+			after, err := verifyMaintenanceCustody(store, item.Issuer)
+			if err != nil || after.Hashes["key"] != custody.Hashes["key"] {
+				t.Fatal("original encrypted key changed")
+			}
+		})
 	}
 }

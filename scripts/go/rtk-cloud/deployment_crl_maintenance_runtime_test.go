@@ -55,7 +55,7 @@ func maintenanceRuntimeTestFixture(t *testing.T) *maintenanceRuntimeFixture {
 	manifest, _ := json.Marshal([]any{map[string]any{"issuer": item.Issuer.Document, "state_path": "/state/root-crl.json"}})
 	f.cm = deploymentplan.Object{"data": deploymentplan.Object{"crls.json": string(manifest)}}
 	f.secret = deploymentplan.Object{"metadata": deploymentplan.Object{"uid": "secret-original", "resourceVersion": "7"}, "data": deploymentplan.Object{"client.crl": base64.StdEncoding.EncodeToString([]byte(f.public)), "tls.key": "never-touch"}}
-	f.r = &maintenanceRuntime{cfg: deploymentConfig{Environment: "staging", Values: map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}}, lease: maintenanceTestLease{}}
+	f.r = &maintenanceRuntime{cfg: deploymentConfig{Environment: "staging", Values: map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}}, lease: maintenanceTestLease{}, trustBinary: []byte("synthetic pinned installer")}
 	f.r.readOverride = func(_ context.Context, id string) (deploymentplan.Object, error) {
 		switch {
 		case strings.HasPrefix(id, "Pod/"):
@@ -72,6 +72,8 @@ func maintenanceRuntimeTestFixture(t *testing.T) *maintenanceRuntimeFixture {
 	f.r.commandOverride = func(_ context.Context, input []byte, args ...string) ([]byte, error) {
 		joined := strings.Join(args, " ")
 		switch {
+		case strings.Contains(joined, "crl-writer-access"):
+			return []byte("10001 10001 700 10001 10001 yes 10001\n"), nil
 		case strings.Contains(joined, "get pods"):
 			return json.Marshal(map[string]any{"items": []any{f.pod}})
 		case strings.Contains(joined, "json_agg(document"):
@@ -92,12 +94,12 @@ func maintenanceRuntimeTestFixture(t *testing.T) *maintenanceRuntimeFixture {
 			return json.Marshal(map[string]any{"issuer_fingerprint": item.Issuer.RootFingerprint, "crl": f.installed})
 		case strings.HasSuffix(joined, "cat /public/client.crl"):
 			return []byte(f.public), nil
-		case strings.Contains(joined, "/app/pkitrust apply-crl"):
+		case strings.Contains(joined, `"$directory/pkitrust" apply-crl`):
 			lines := strings.Split(string(input), "\n")
-			if len(lines) != 3 {
-				t.Fatal("native input not exactly issuer+record")
+			if len(lines) != 4 {
+				t.Fatal("native input not exactly binary+issuer+record")
 			}
-			raw, e := base64.StdEncoding.DecodeString(lines[1])
+			raw, e := base64.StdEncoding.DecodeString(lines[2])
 			if e != nil || json.Unmarshal(raw, &f.installed) != nil {
 				t.Fatal("invalid signed input")
 			}
@@ -134,7 +136,7 @@ func TestCRLMaintenanceNativeDiscoveryInstallationAndRealACK(t *testing.T) {
 	if err := f.r.converge(context.Background(), inventory, records); err != nil {
 		t.Fatal(err)
 	}
-	if f.installs != 1 || f.patches != 0 {
+	if f.installs != 0 || f.patches != 0 {
 		t.Fatalf("healthy native convergence: installs=%d patches=%d", f.installs, f.patches)
 	}
 	f.ack = false
@@ -347,5 +349,110 @@ func TestCRLMaintenancePendingDeploymentRestartPreservesConfigurationAndRetries(
 	}
 	if patches != 1 || waits != 2 || deploymentplan.Digest(originalSpec) != originalDigest {
 		t.Fatalf("restart replay mutated configuration: patches=%d waits=%d", patches, waits)
+	}
+}
+
+func TestCRLMaintenanceNativePublicExportUsesOriginalWriterAndPVC(t *testing.T) {
+	f := maintenanceRuntimeTestFixture(t)
+	podSpec := deploymentplan.Map(f.pod["spec"])
+	for _, raw := range certIssuerObjectList(podSpec["volumes"]) {
+		v := deploymentplan.Map(raw)
+		if v["name"] == "public" {
+			delete(v, "secret")
+			v["emptyDir"] = deploymentplan.Object{}
+		}
+	}
+	writer := deploymentplan.Object{"name": "pkimanagement", "env": []any{deploymentplan.Object{"name": "TEST_SERVICE_CLIENT_PUBLIC_CRL_BUNDLE", "value": "/export/client.crl"}, deploymentplan.Object{"name": "TEST_SERVICE_CLIENT_SERVER_CRL_MANIFEST", "value": "/trust/crls.json"}}, "volumeMounts": []any{deploymentplan.Object{"name": "public", "mountPath": "/export"}, deploymentplan.Object{"name": "trust", "mountPath": "/trust", "readOnly": true}, deploymentplan.Object{"name": "state", "mountPath": "/state"}}}
+	podSpec["containers"] = append(certIssuerObjectList(podSpec["containers"]), writer)
+	deploymentplan.Map(f.pod["status"])["containerStatuses"] = append(certIssuerObjectList(deploymentplan.Map(f.pod["status"])["containerStatuses"]), deploymentplan.Object{"name": "pkimanagement", "ready": true})
+	originalRead := f.r.readOverride
+	claim := deploymentplan.Object{"metadata": deploymentplan.Object{"uid": "original-state-claim"}}
+	f.r.readOverride = func(ctx context.Context, id string) (deploymentplan.Object, error) {
+		if strings.HasPrefix(id, "PersistentVolumeClaim/") {
+			return claim, nil
+		}
+		return originalRead(ctx, id)
+	}
+	app := deploymentplan.Map(certIssuerObjectList(podSpec["containers"])[0])
+	projection, err := f.r.publicProjection(context.Background(), f.pod, app, "/public/client.crl", map[string]environmentCreateRegisteredIssuer{f.item.Issuer.ID: f.item.Issuer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	records := map[string]createRootCRLRecord{f.item.Issuer.ID: f.latest}
+	if err := f.r.publishPublicCRLs(context.Background(), []maintenancePublicCRL{projection}, records); err != nil {
+		t.Fatal(err)
+	}
+	if f.patches != 0 {
+		t.Fatal("manually patched native producer output")
+	}
+	if err := f.r.verifyPublicCRLs(context.Background(), []maintenancePublicCRL{projection}, records); err != nil {
+		t.Fatal(err)
+	}
+	statuses := certIssuerObjectList(deploymentplan.Map(f.pod["status"])["containerStatuses"])
+	deploymentplan.Map(statuses[1])["ready"] = false
+	if err := f.r.verifyPublicCRLs(context.Background(), []maintenancePublicCRL{projection}, records); err == nil {
+		t.Fatal("unready native writer accepted")
+	}
+	deploymentplan.Map(statuses[1])["ready"] = true
+	// A durable exported-file volume is also supported and pinned separately.
+	for _, raw := range certIssuerObjectList(podSpec["volumes"]) {
+		v := deploymentplan.Map(raw)
+		if v["name"] == "public" {
+			delete(v, "emptyDir")
+			v["persistentVolumeClaim"] = deploymentplan.Object{"claimName": "original-export"}
+		}
+	}
+	projection, err = f.r.publicProjection(context.Background(), f.pod, app, "/public/client.crl", map[string]environmentCreateRegisteredIssuer{f.item.Issuer.ID: f.item.Issuer})
+	if err != nil || len(projection.Claims) != 2 {
+		t.Fatalf("runtime output PVC not pinned: %v", err)
+	}
+	f.public = "stale runtime export"
+	if err := f.r.verifyPublicCRLs(context.Background(), []maintenancePublicCRL{projection}, records); err == nil {
+		t.Fatal("stale native export accepted")
+	}
+	f.public = f.latest.PEM
+	deploymentplan.Map(claim["metadata"])["uid"] = "replacement-claim"
+	if err := f.r.verifyPublicCRLs(context.Background(), []maintenancePublicCRL{projection}, records); err == nil {
+		t.Fatal("replacement producer PVC accepted")
+	}
+	writer["env"] = []any{}
+	if _, err := f.r.publicProjection(context.Background(), f.pod, app, "/public/client.crl", map[string]environmentCreateRegisteredIssuer{f.item.Issuer.ID: f.item.Issuer}); err == nil {
+		t.Fatal("unowned runtime output accepted")
+	}
+}
+
+func TestCRLMaintenanceInstallerQualifiedBytesOriginalPodAndNoop(t *testing.T) {
+	f := maintenanceRuntimeTestFixture(t)
+	inventory, err := f.r.observe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumer := inventory.Consumers[0]
+	// The exact valid native state needs no installer/image, even if unavailable.
+	f.r.trustBinary = nil
+	if err := f.r.install(context.Background(), consumer, f.item.Issuer, f.latest); err != nil || f.installs != 0 {
+		t.Fatalf("healthy install was not a no-op: %v", err)
+	}
+	// Absent old state must use the transferred image-bound binary, never /app.
+	f.installed = createRootCRLRecord{}
+	f.r.trustBinary = []byte("synthetic pinned installer")
+	if err := f.r.install(context.Background(), consumer, f.item.Issuer, f.latest); err != nil || f.installs != 1 || f.installed.Digest != f.latest.Digest {
+		t.Fatalf("transferred installer: %v", err)
+	}
+	f.installed = createRootCRLRecord{}
+	originalRead := f.r.readOverride
+	reads := 0
+	f.r.readOverride = func(ctx context.Context, id string) (deploymentplan.Object, error) {
+		obj, err := originalRead(ctx, id)
+		if strings.HasPrefix(id, "Pod/") {
+			reads++
+			if reads == 2 {
+				deploymentplan.Map(f.pod["metadata"])["uid"] = "replacement"
+			}
+		}
+		return obj, err
+	}
+	if err := f.r.install(context.Background(), consumer, f.item.Issuer, f.latest); err == nil || f.installs != 1 {
+		t.Fatal("installer ran after original Pod changed")
 	}
 }

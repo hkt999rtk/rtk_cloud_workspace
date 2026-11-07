@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -194,18 +195,42 @@ func executeCRLMaintenance(ctx context.Context, store secretStore, o crlMaintena
 			continue
 		}
 		if resume {
-			if j.Schema != "rtk-crl-maintenance/v1" || j.Environment != o.Environment || j.ClusterSHA != o.ClusterSHA || j.Original.Issuer.ID != issuer.ID || j.Original.Issuer.RootFingerprint != issuer.RootFingerprint {
+			if j.Schema != "rtk-crl-maintenance/v1" || j.Environment != o.Environment || j.ClusterSHA != o.ClusterSHA || j.Original.Issuer.ID != issuer.ID || j.Original.Issuer.RootFingerprint != issuer.RootFingerprint || j.Original.Issuer.Environment != issuer.Environment || j.Original.Issuer.Certificate != issuer.Certificate || j.Original.Issuer.Domain != issuer.Domain || j.Original.Issuer.Kind != issuer.Kind || j.Original.Issuer.Reference != issuer.Reference {
 				return status, errors.New("CRL renewal journal belongs to another authority or cluster")
 			}
 			if prior.Digest != j.Original.Snapshot.Prior.Digest && prior.Digest != j.Signed.Digest {
 				return status, errors.New("registry advanced beyond interrupted CRL renewal; preserve evidence")
 			}
-		} else {
+			if !j.Request.NextUpdate.After(now.Add(45 * time.Minute)) {
+				// An offline operator may return after this candidate's lifetime.
+				// Validate its original meaning before retaining exact immutable
+				// evidence and requesting a successor from the current registry.
+				expected, err := buildMaintenanceCRLRequest(o.Environment, j.Original, j.Request.ThisUpdate)
+				if err != nil || j.Request.ThisUpdate.After(now) || deploymentplan.Digest(expected) != deploymentplan.Digest(j.Request) {
+					return status, errors.New("expired journal request differs from original authority or revocations")
+				}
+				if j.Signed.Digest != "" {
+					if err := validateMaintenanceSuccessor(o.Environment, j.Original, j.Request, j.Signed, j.Request.ThisUpdate); err != nil {
+						return status, err
+					}
+				} else if deploymentplan.Digest(j.Signed) != deploymentplan.Digest(createRootCRLRecord{}) {
+					return status, errors.New("expired journal contains incomplete signed metadata")
+				}
+				if err := archiveMaintenanceJournal(store, relative, j); err != nil {
+					return status, err
+				}
+				resume = false
+			}
+		}
+		if !resume {
 			if d.Prepare != nil {
 				item, err = d.Prepare(ctx, item)
 				if err != nil {
 					return status, err
 				}
+			}
+			if item.Issuer.ID != issuer.ID || item.Issuer.RootFingerprint != issuer.RootFingerprint || item.Snapshot.Prior.Digest != prior.Digest {
+				return status, errors.New("native preparation changed original authority or predecessor")
 			}
 			request, err := buildMaintenanceCRLRequest(o.Environment, item, now)
 			if err != nil {
@@ -279,4 +304,33 @@ func executeCRLMaintenance(ctx context.Context, store secretStore, o crlMaintena
 	status.Completed = true
 	status.LastSuccess = o.Now().UTC()
 	return status, nil
+}
+
+// Hard-link the original bytes before replacing current.json. Exclusive link
+// creation and atomic current-file replacement keep historical evidence intact,
+// including a retry after interruption between these two operations.
+func archiveMaintenanceJournal(store secretStore, current string, journal crlMaintenanceJournal) error {
+	source, err := maintenancePath(store, current)
+	if err != nil {
+		return err
+	}
+	history := filepath.ToSlash(filepath.Dir(current)) + "/history/" + deploymentplan.Digest(journal) + ".json"
+	target, err := maintenancePath(store, history)
+	if err != nil {
+		return err
+	}
+	if err := ensurePrivateDirectory(filepath.Dir(target)); err != nil {
+		return err
+	}
+	if err := os.Link(source, target); err != nil {
+		if !errors.Is(err, os.ErrExist) {
+			return err
+		}
+		original, readErr := readBoundedEnvironmentFile(source, true)
+		retained, retainedErr := readBoundedEnvironmentFile(target, true)
+		if readErr != nil || retainedErr != nil || !bytes.Equal(original, retained) {
+			return errors.New("expired journal history differs; preserve original evidence")
+		}
+	}
+	return nil
 }
