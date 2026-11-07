@@ -3090,3 +3090,43 @@ current CRL, and a distinct process reading the accepted history after natural
 expiry. The test retains the ordinary target, five product ACKs, cleanup fault
 recovery, final compiler and original closure. Synthetic native boundaries and
 actual deployment evidence are recorded separately.
+
+### Environment CRL maintenance scheduler
+
+The existing-environment CRL maintenance entry is
+`scripts/renew-environment-crls.sh` (`deployment renew-crls`). Manual execution
+and the optional per-environment host scheduler share the same guarded engine,
+canonical custody, per-environment exclusion and resumable successor evidence.
+The scheduler introduces no Kubernetes signer or copied Root key. It targets
+explicit `dev`, `staging` or `prod`, requires an absolute stable checkout and a
+CI helper image pinned by digest and source revision, and calls the facade hourly with the selected
+stack confirmation. Native recovery crosses expired mTLS through the qualified
+Kubernetes channel; it preserves issuer/cluster/predecessor pins and genuine
+consumer installation/ACK semantics instead of reopening bootstrap.
+
+The maintenance engine produces and consumes
+`~/.config/rtk_cloud/<environment>/deployment/crl-maintenance/` for status,
+locks, signed-successor journals, online provider reconciliation results, and
+verified immutable helper publication manifests. Subsequent pinned maintenance
+revalidates retained CI/source/image evidence rather than requiring an unexpired
+remote CI artifact. The online recovery helper uses the original controller's
+OpenBao-audience token and pinned public TLS Root; offline signing keys never
+enter a Pod. The scheduler installer produces
+`deployment/crl/schedule/installation.json` and `run.sh`; its runner produces
+`last-started.txt`, `last-result.json`, `last-success.json`, `stdout.log` and
+`stderr.log`. `crl-schedule status` consumes the installation, native scheduler
+state, runner results and maintenance expiry/failure status. These are private
+operational data: directories 0700 and files 0600, resolved by common environment
+path helpers, never under `cloud_env/` or a checkout.
+
+The only files outside that store are secret-free native scheduler definitions:
+`~/Library/LaunchAgents/com.rtk-cloud.crl.<environment>.plist` on Darwin and
+`~/.config/systemd/user/rtk-cloud-crl-<environment>.{service,timer}` on Linux.
+The OS scheduler consumes these 0600 definitions, which reference the private
+runner and contain no key, passphrase or token. Launchd uses hourly intervals
+and runs at load; systemd uses an hourly persistent calendar timer. Host/session,
+Docker, registry, cluster and checkout availability remain operational
+prerequisites. The six-day validity/48-hour lead leaves recovery time but does
+not make the operator host highly available. See
+[Environment CRL maintenance](deployment-operations.md#environment-crl-maintenance)
+for activation, status, removal and failure handling.

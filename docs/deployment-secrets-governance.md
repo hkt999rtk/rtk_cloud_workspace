@@ -1729,3 +1729,44 @@ the common continuation launcher consumes their exact hashes. Preparation alone
 is not successful qualification or native deployment completion. Directories
 remain `0700`, files `0600`, and synthetic test credentials remain in isolated
 fixture stores.
+
+### Environment CRL maintenance and host scheduling
+
+Existing-environment CRL renewal consumes the original selected environment's
+Root custody and signing provider. Missing material is a failure, never
+permission to regenerate identity, replay initial bootstrap, or search another
+environment/worktree. Offline private Root keys remain encrypted in the
+canonical operator store; no CronJob, scheduler definition or native recovery
+Job receives those keys. Only public signing requests and signed CRL successors cross to the qualified
+native publication/consumer installation channel. The offline helper has only
+the original controller database Secret reference and no service-account token.
+The separate online recovery helper additionally uses the original controller
+service account, public CA ConfigMap projection, original OpenBao role, and a
+projected token restricted to the OpenBao audience. Its native command verifies
+the independently pinned original TLS Root and exact provider issuer before
+rotating. These temporary Pods mount neither offline custody nor consumer PVCs. Existing issuer pins,
+revocations, predecessor evidence and genuine consumer ACKs remain required.
+
+All relative paths below are under
+`~/.config/rtk_cloud/<environment>/`, with directories 0700 and files 0600:
+
+| Path | Producer and consumer |
+| --- | --- |
+| `deployment/crl-maintenance/` | Shared maintenance engine writes and resumes issuer successor journals, exclusion and status evidence; manual/scheduled maintenance and status inspection consume them. |
+| `deployment/crl-maintenance/helpers/<image-sha256>/publication.json`, `deployment/crl-maintenance/helpers/sources/<commit>.json` | Initial helper qualification retains verified CI publication/source/image evidence; later pinned executions revalidate it without depending on GitHub artifact retention or the current checkout revision. |
+| `deployment/crl-maintenance/online/<issuer>/<prior-digest>.json` | Online maintenance records original authority/predecessor and native signed publication result; retries reconcile against the original provider and registry before installing consumers. |
+| `deployment/crl/schedule/installation.json`, `run.sh` | Explicit environment scheduler installation records the absolute stable checkout, environment, stack, CI image digest and source revision; the host scheduler consumes the runner and operators inspect the binding. No secret values are embedded. |
+| `deployment/crl/schedule/last-started.txt`, `last-result.json`, `last-success.json` | Scheduled runner records attempt start/completion/exit status and advances success only after exit 0; status inspection consumes these to expose missed and failed runs. |
+| `deployment/crl/schedule/stdout.log`, `stderr.log` | Scheduled facade and native scheduler append diagnostics; operator/status troubleshooting consumes them. Retain privately and rotate as needed. |
+
+The secret-free OS-required definitions at
+`~/Library/LaunchAgents/com.rtk-cloud.crl.<environment>.plist` or
+`~/.config/systemd/user/rtk-cloud-crl-<environment>.{service,timer}` are a narrow
+scheduler-configuration exception, not an alternative deployment data store.
+Installation creates them as 0600 and the OS scheduler reads them. They contain
+only labels, timing and paths to the canonical runner/logs. Removal unregisters
+and deletes these definitions while retaining canonical evidence and custody.
+Each environment, especially production, requires explicit installation and
+stack confirmation. No schedule is enabled by preflight or by a read-only CRL
+inspection. See [the runbook](deployment-operations.md#environment-crl-maintenance)
+for host availability and recovery requirements.
