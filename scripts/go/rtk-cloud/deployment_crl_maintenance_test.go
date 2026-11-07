@@ -323,3 +323,127 @@ func TestCRLMaintenanceExpiredJournalMismatchCannotSupersede(t *testing.T) {
 		})
 	}
 }
+
+func TestCRLMaintenanceUnpublishedResumeRefreshesRevocations(t *testing.T) {
+	for _, stage := range []string{"sign", "import"} {
+		for _, change := range []string{"additive", "unchanged", "dropped", "authority", "document-authority", "predecessor"} {
+			t.Run(stage+"-"+change, func(t *testing.T) {
+				original, key, now := maintenanceFixture(t, "staging", time.Now().UTC().Truncate(time.Second).Add(24*time.Hour))
+				root := t.TempDir()
+				if err := os.Chmod(root, 0700); err != nil {
+					t.Fatal(err)
+				}
+				store, _ := newSecretStore(root, "staging")
+				current := original
+				retry := false
+				prepares, signs, imports := 0, 0, 0
+				candidates := map[string]createRootCRLRecord{}
+				var firstSigned createRootCRLRecord
+				deps := crlMaintenanceDependencies{
+					Observe: func(context.Context) (crlMaintenanceInventory, error) {
+						return crlMaintenanceInventory{Issuers: []crlMaintenanceIssuer{current}}, nil
+					},
+					Prepare: func(_ context.Context, item crlMaintenanceIssuer) (crlMaintenanceIssuer, error) {
+						prepares++
+						if retry {
+							switch change {
+							case "additive":
+								item.Snapshot.Bindings = append(append([]createRootCRLRevocation{}, item.Snapshot.Bindings...), createRootCRLRevocation{Serial: "ef", RevokedAt: now.Add(-30 * time.Minute), Reason: 1})
+							case "dropped":
+								item.Snapshot.Bindings = nil
+							case "authority":
+								item.Issuer.Certificate = "substituted authority"
+							case "document-authority":
+								item.Issuer.Document["environment"] = "foreign"
+							case "predecessor":
+								item.Snapshot.Prior = firstSigned
+							}
+						}
+						return item, nil
+					},
+					Sign: func(_ context.Context, item crlMaintenanceIssuer, request createRootCRLRequest, candidate string) (createRootCRLRecord, error) {
+						if cached, ok := candidates[candidate]; ok {
+							return cached, nil
+						}
+						signs++
+						signed := maintenanceSign(t, item.Issuer, key, request)
+						candidates[candidate] = signed
+						if err := store.write(candidate+"/isolated-native-signed.pem", []byte(signed.PEM), false); err != nil {
+							t.Fatal(err)
+						}
+						if !retry {
+							firstSigned = signed
+							if stage == "sign" {
+								return signed, errors.New("interrupted after native signature")
+							}
+						}
+						return signed, nil
+					},
+					Import: func(_ context.Context, item crlMaintenanceIssuer, request createRootCRLRequest, signed createRootCRLRecord) error {
+						imports++
+						if !retry {
+							return errors.New("native importer rejected stale export")
+						}
+						if signed.Number != "5" || item.Snapshot.Prior.Digest != original.Snapshot.Prior.Digest {
+							t.Fatal("unpublished successor advanced predecessor/number")
+						}
+						if change == "additive" && len(request.Entries) != 3 {
+							t.Fatal("new native revocation omitted")
+						}
+						if change == "unchanged" && signed.Digest != firstSigned.Digest {
+							t.Fatal("unchanged evidence resigned")
+						}
+						current.Snapshot.Prior = signed
+						return nil
+					},
+					Converge: func(context.Context, crlMaintenanceInventory, map[string]createRootCRLRecord) error { return nil },
+				}
+				opts := crlMaintenanceOptions{Environment: "staging", ClusterSHA: "original-cluster", Execute: true, Recover: true, Now: func() time.Time { return now }}
+				if _, err := executeCRLMaintenance(context.Background(), store, opts, deps); err == nil {
+					t.Fatal("initial interruption disappeared")
+				}
+				relative := crlMaintenanceBase + "/issuers/" + original.Issuer.ID + "/current.json"
+				before, _ := os.ReadFile(filepath.Join(store.Root, relative))
+				var old crlMaintenanceJournal
+				if err := maintenanceRead(store, relative, &old); err != nil {
+					t.Fatal(err)
+				}
+				retry = true
+				now = now.Add(time.Hour)
+				result, err := executeCRLMaintenance(context.Background(), store, opts, deps)
+				if change == "dropped" || change == "authority" || change == "document-authority" || change == "predecessor" {
+					after, _ := os.ReadFile(filepath.Join(store.Root, relative))
+					if err == nil || !bytes.Equal(before, after) || signs != 1 {
+						t.Fatalf("unsafe refreshed evidence accepted: %v", err)
+					}
+					return
+				}
+				if err != nil || !result.Completed || prepares != 2 {
+					t.Fatalf("fresh native resume failed: %v prepares=%d", err, prepares)
+				}
+				if change == "additive" {
+					if signs != 2 {
+						t.Fatal("new complete request was not signed")
+					}
+					history := filepath.Join(store.Root, crlMaintenanceBase, "issuers", original.Issuer.ID, "history", deploymentplan.Digest(old)+".json")
+					retained, err := os.ReadFile(history)
+					if err != nil || !bytes.Equal(retained, before) {
+						t.Fatal("old unpublished journal not retained")
+					}
+				} else if signs != 1 {
+					t.Fatal("unchanged request signed twice")
+				}
+				for path, signed := range candidates {
+					retained, err := os.ReadFile(filepath.Join(store.Root, path, "isolated-native-signed.pem"))
+					if err != nil || string(retained) != signed.PEM {
+						t.Fatal("original native signed candidate overwritten")
+					}
+				}
+				// Exact publication resumes/no-ops without exporting or signing again.
+				if _, err := executeCRLMaintenance(context.Background(), store, opts, deps); err != nil || prepares != 2 || (change == "additive" && signs != 2) || (change == "unchanged" && signs != 1) {
+					t.Fatalf("already-published resume changed evidence: %v", err)
+				}
+			})
+		}
+	}
+}

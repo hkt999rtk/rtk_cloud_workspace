@@ -159,6 +159,7 @@ func executeCRLMaintenance(ctx context.Context, store secretStore, o crlMaintena
 			return status, err
 		}
 		issuer := item.Issuer
+		issuerSHA := deploymentplan.Digest(issuer)
 		prior := item.Snapshot.Prior
 		if _, exists := records[issuer.ID]; exists {
 			return status, errors.New("duplicate registry issuer")
@@ -191,6 +192,7 @@ func executeCRLMaintenance(ctx context.Context, store secretStore, o crlMaintena
 			return status, fmt.Errorf("original CRL renewal journal cannot be read: %w", err)
 		}
 		resume := err == nil && !j.Completed
+		prepared := false
 		if !due && !resume {
 			continue
 		}
@@ -201,21 +203,51 @@ func executeCRLMaintenance(ctx context.Context, store secretStore, o crlMaintena
 			if prior.Digest != j.Original.Snapshot.Prior.Digest && prior.Digest != j.Signed.Digest {
 				return status, errors.New("registry advanced beyond interrupted CRL renewal; preserve evidence")
 			}
-			if !j.Request.NextUpdate.After(now.Add(45 * time.Minute)) {
-				// An offline operator may return after this candidate's lifetime.
-				// Validate its original meaning before retaining exact immutable
-				// evidence and requesting a successor from the current registry.
-				expected, err := buildMaintenanceCRLRequest(o.Environment, j.Original, j.Request.ThisUpdate)
-				if err != nil || j.Request.ThisUpdate.After(now) || deploymentplan.Digest(expected) != deploymentplan.Digest(j.Request) {
-					return status, errors.New("expired journal request differs from original authority or revocations")
+			// Validate retained evidence before either reusing or superseding it.
+			expected, err := buildMaintenanceCRLRequest(o.Environment, j.Original, j.Request.ThisUpdate)
+			if err != nil || j.Request.ThisUpdate.After(now) || deploymentplan.Digest(expected) != deploymentplan.Digest(j.Request) {
+				return status, errors.New("journal request differs from original authority or revocations")
+			}
+			if j.Signed.Digest != "" {
+				if err := validateMaintenanceSuccessor(o.Environment, j.Original, j.Request, j.Signed, j.Request.ThisUpdate); err != nil {
+					return status, err
 				}
-				if j.Signed.Digest != "" {
-					if err := validateMaintenanceSuccessor(o.Environment, j.Original, j.Request, j.Signed, j.Request.ThisUpdate); err != nil {
-						return status, err
+			} else if deploymentplan.Digest(j.Signed) != deploymentplan.Digest(createRootCRLRecord{}) {
+				return status, errors.New("journal contains incomplete signed metadata")
+			}
+			replace := !j.Request.NextUpdate.After(now.Add(45 * time.Minute))
+			if prior.Digest == j.Original.Snapshot.Prior.Digest {
+				// A revocation may commit after signing but before guarded import.
+				// Refresh unpublished candidates on every retry rather than freezing
+				// an incomplete revocation set until their six-day validity expires.
+				if d.Prepare == nil {
+					return status, errors.New("native revocation export required to resume unpublished CRL")
+				}
+				fresh, err := d.Prepare(ctx, item)
+				if err != nil {
+					return status, err
+				}
+				if deploymentplan.Digest(fresh.Issuer) != issuerSHA || fresh.Snapshot.Prior.Digest != prior.Digest {
+					return status, errors.New("native preparation changed original authority or predecessor")
+				}
+				request, err := buildMaintenanceCRLRequest(o.Environment, fresh, now)
+				if err != nil {
+					return status, err
+				}
+				currentEntries := map[string]createRootCRLRevocation{}
+				for _, entry := range request.Entries {
+					currentEntries[entry.Serial] = entry
+				}
+				for _, original := range j.Request.Entries {
+					current, exists := currentEntries[original.Serial]
+					if !exists || !current.RevokedAt.Equal(original.RevokedAt) || current.Reason != original.Reason {
+						return status, errors.New("native revocation export dropped or changed original candidate evidence")
 					}
-				} else if deploymentplan.Digest(j.Signed) != deploymentplan.Digest(createRootCRLRecord{}) {
-					return status, errors.New("expired journal contains incomplete signed metadata")
 				}
+				replace = replace || len(request.Entries) != len(j.Request.Entries)
+				item, prepared = fresh, true
+			}
+			if replace {
 				if err := archiveMaintenanceJournal(store, relative, j); err != nil {
 					return status, err
 				}
@@ -223,13 +255,13 @@ func executeCRLMaintenance(ctx context.Context, store secretStore, o crlMaintena
 			}
 		}
 		if !resume {
-			if d.Prepare != nil {
+			if !prepared && d.Prepare != nil {
 				item, err = d.Prepare(ctx, item)
 				if err != nil {
 					return status, err
 				}
 			}
-			if item.Issuer.ID != issuer.ID || item.Issuer.RootFingerprint != issuer.RootFingerprint || item.Snapshot.Prior.Digest != prior.Digest {
+			if deploymentplan.Digest(item.Issuer) != issuerSHA || item.Snapshot.Prior.Digest != prior.Digest {
 				return status, errors.New("native preparation changed original authority or predecessor")
 			}
 			request, err := buildMaintenanceCRLRequest(o.Environment, item, now)

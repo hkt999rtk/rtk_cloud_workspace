@@ -3663,6 +3663,11 @@ An already-published CRL advances the next number; an unpublished candidate does
 not invent a registry publication. Neither case marks the old attempt complete
 or fabricates consumer acknowledgements. Interrupted signing outputs are retained
 in separate attempt directories and do not impose a lifetime retry-count limit.
+Before retrying an unpublished successor, maintenance refreshes the native
+revocation inventory. If revocations have grown while the issuer and predecessor
+remain unchanged, it preserves the old candidate and signs a complete replacement
+at the same next CRL number. Already-published exact successors remain idempotent;
+changed authority or disappearing revocations do not authorize replacement.
 
 Mounted CRL manifests and public PEM projections are discovered from current
 Pods. Only the original public CRL fields are updated, using resource UID and
