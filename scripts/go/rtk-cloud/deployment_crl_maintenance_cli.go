@@ -155,6 +155,14 @@ func runCRLMaintenanceCLI(parent context.Context, args []string, out, diagnostic
 	ctx, cancel := context.WithTimeout(signals, *timeout)
 	defer cancel()
 	r := &maintenanceRuntime{cfg: cfg, store: store, backend: backend, kubeconfig: path}
+	// Register host-lock release first so it remains held through cleanup and
+	// the final persisted/emitted status, including every early-return path.
+	var hostLock *os.File
+	defer func() {
+		if hostLock != nil {
+			_ = hostLock.Close()
+		}
+	}()
 	var finalStatus *crlMaintenanceStatus
 	var previousStatus crlMaintenanceStatus
 	_ = maintenanceRead(store, crlMaintenanceBase+"/status.json", &previousStatus)
@@ -192,7 +200,7 @@ func runCRLMaintenanceCLI(parent context.Context, args []string, out, diagnostic
 		if err != nil {
 			return err
 		}
-		defer lock.Close()
+		hostLock = lock
 		plan := rootCRLLeasePlan(cfg, environmentPreflightBytesSHA256(backend.KubeconfigContent))
 		if err := checkEnvironmentExecutionOccupancy(ctx, backend, plan, store.Root); err != nil {
 			return err

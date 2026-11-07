@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -84,6 +86,22 @@ if args[0]=='exec':
 sys.exit(83)
 `
 
+type maintenanceLockedStatusWriter struct {
+	io.Writer
+	directory string
+	observed  bool
+}
+
+func (w *maintenanceLockedStatusWriter) Write(raw []byte) (int, error) {
+	lock, err := deploymentplan.LockExecutionOwner(w.directory, false)
+	if err == nil {
+		_ = lock.Close()
+		return 0, fmt.Errorf("maintenance host lock was released before final status emission")
+	}
+	w.observed = true
+	return w.Writer.Write(raw)
+}
+
 func TestCRLMaintenanceCLIOrchestratesLeaseStatusAndCleanup(t *testing.T) {
 	for _, mode := range []string{"read-only", "healthy", "query-failure", "missing-ack", "cleanup-failure"} {
 		t.Run(mode, func(t *testing.T) {
@@ -130,6 +148,12 @@ func TestCRLMaintenanceCLIOrchestratesLeaseStatusAndCleanup(t *testing.T) {
 				}
 			}
 			var out, diagnostics bytes.Buffer
+			var output io.Writer = &out
+			var lockedOutput *maintenanceLockedStatusWriter
+			if mode == "healthy" {
+				lockedOutput = &maintenanceLockedStatusWriter{Writer: &out, directory: filepath.Join(store.Root, crlMaintenanceBase)}
+				output = lockedOutput
+			}
 			args := []string{"--workspace", workspace, "--environment", "staging", "--timeout", "20s"}
 			if mode != "read-only" {
 				args = append(args, "--execute", "--confirm", "video-cloud-staging")
@@ -137,10 +161,13 @@ func TestCRLMaintenanceCLIOrchestratesLeaseStatusAndCleanup(t *testing.T) {
 			if mode == "missing-ack" {
 				args = append(args, "--timeout", "3s")
 			}
-			err := runCRLMaintenanceCLI(context.Background(), args, &out, &diagnostics)
+			err := runCRLMaintenanceCLI(context.Background(), args, output, &diagnostics)
 			wantSuccess := mode == "read-only" || mode == "healthy"
 			if (err == nil) != wantSuccess {
 				t.Fatalf("result %v status=%s diagnostics=%s", err, out.String(), diagnostics.String())
+			}
+			if lockedOutput != nil && !lockedOutput.observed {
+				t.Fatal("final status was not emitted while the host lock remained owned")
 			}
 			var status crlMaintenanceStatus
 			if e := json.Unmarshal(out.Bytes(), &status); e != nil {
