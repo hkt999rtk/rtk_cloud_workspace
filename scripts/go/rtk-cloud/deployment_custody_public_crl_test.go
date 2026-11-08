@@ -121,7 +121,7 @@ func TestCustodyMaintenanceInstallUsesCommittedKVWithoutReadingFaultedApplicatio
 	managed := next.Root
 	managed.Domain = "openbao_tls"
 	managed.Status = "active"
-	binding := &environmentCustodyBinding{Generation: generation, ServiceRootSHA256: original.Root.RootFingerprint, OpenBaoRootSHA256: managed.RootFingerprint, Owners: []environmentCustodyOwnerBinding{{ID: "api", Namespace: ns, ServiceAccount: "api", StorageAliases: []string{"api-state"}}}}
+	binding := &environmentCustodyBinding{Generation: generation, ServiceRootSHA256: original.Root.RootFingerprint, OpenBaoRootSHA256: managed.RootFingerprint, Owners: []environmentCustodyOwnerBinding{{ID: "api", Namespace: ns, ServiceAccount: "api", StorageAliases: []string{"api-state"}, Clients: []environmentCustodyClientBinding{{Subject: "service:video-cloud-api", StatePath: "/identity/private/client.json"}}}}}
 	trust, err := renderEnvironmentCustodyTrust(cfg, generation, original.Root.Certificate, &managed, true)
 	if err != nil {
 		t.Fatal(err)
@@ -167,6 +167,41 @@ func TestCustodyMaintenanceInstallUsesCommittedKVWithoutReadingFaultedApplicatio
 		t.Fatal("maintenance must not read a private projection or stat the faulted application")
 		return nil, nil
 	}
+	// Discovery must work before KV transport or the failed application can boot.
+	source := managedNamedField(deploymentplan.Map(pod["spec"])["containers"], "app")
+	identity, err := r.consumerID(t.Context(), ns, "faulted-api", "app", source)
+	if err != nil || identity != "video-cloud-api" {
+		t.Fatalf("original enrollment subject unavailable without app startup: %q %v", identity, err)
+	}
+	originalPod := pod
+	for _, change := range []struct {
+		name   string
+		mutate func(deploymentplan.Object)
+	}{
+		{"unregistered-client-path", func(p deploymentplan.Object) {
+			setEnvironmentContainerEnv(managedNamedField(deploymentplan.Map(p["spec"])["containers"], "app"), "TEST_CLIENT_IDENTITY_STATE", "/identity/private/foreign.json")
+		}},
+		{"foreign-service-account", func(p deploymentplan.Object) { deploymentplan.Map(p["spec"])["serviceAccountName"] = "foreign" }},
+		{"foreign-kv-mount", func(p deploymentplan.Object) {
+			setEnvironmentContainerEnv(managedNamedField(deploymentplan.Map(p["spec"])["containers"], "app"), "PKI_STATE_KV_MOUNT", "foreign")
+		}},
+		{"foreign-auth-role", func(p deploymentplan.Object) {
+			setEnvironmentContainerEnv(managedNamedField(deploymentplan.Map(p["spec"])["containers"], "app"), "PKI_STATE_OPENBAO_ROLE", "foreign")
+		}},
+		{"replaced-owner", func(p deploymentplan.Object) {
+			deploymentplan.Map(certIssuerObjectList(deploymentplan.Map(p["metadata"])["ownerReferences"])[0])["uid"] = "replaced"
+		}},
+	} {
+		t.Run(change.name, func(t *testing.T) {
+			pod = deploymentplan.Clone(originalPod)
+			defer func() { pod = originalPod }()
+			change.mutate(pod)
+			candidate := managedNamedField(deploymentplan.Map(pod["spec"])["containers"], "app")
+			if _, err := r.consumerID(t.Context(), ns, "faulted-api", "app", candidate); err == nil {
+				t.Fatal("accepted foreign original consumer purpose")
+			}
+		})
+	}
 	consumer := crlMaintenanceConsumer{Namespace: ns, Pod: "faulted-api", PodUID: "original-pod", Container: "app", StatePath: "/identity/crl/root.json", IssuerID: item.Issuer.ID}
 	if err := r.install(t.Context(), consumer, item.Issuer, item.Snapshot.Prior); err != nil {
 		t.Fatal("actual remote maintenance path", err)
@@ -180,6 +215,9 @@ func TestCustodyMaintenanceInstallUsesCommittedKVWithoutReadingFaultedApplicatio
 	}
 	if err := os.Remove(filepath.Join(store.Root, "deployment", "create", generation, "bootstrap", "bindings.json")); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := r.consumerID(t.Context(), ns, "faulted-api", "app", source); err == nil {
+		t.Fatal("discovery fabricated missing original enrollment evidence")
 	}
 	observed.Custody = nil
 	if err := restoreEnvironmentCustodyBindings(t.Context(), cfg, store, "upgrade", &observed); err == nil {

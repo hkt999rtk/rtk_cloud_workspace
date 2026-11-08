@@ -1874,6 +1874,14 @@ The completed PKI bootstrap producer writes original custody references in
 `~/.config/rtk_cloud/<environment>/deployment/create/<generation>/bootstrap/bindings.json`.
 Ordinary observation and CRL maintenance consume only that exact generation file
 and the transport snapshot above; they do not treat it as a current preflight GO.
+The scope includes non-secret client subjects/state paths produced from the same
+native enrollment recipes, frozen in the original owner inventory and completed
+bindings. Maintenance discovery uses these original purposes, current Kubernetes
+controller ownership and the bound service account; no application private state,
+provider TLS connection or SQL query is needed to identify the expected consumer.
+Missing enrollment metadata fails discovery rather than guessing a Pod-name
+subject. The expected subject does not prove key possession or replace a signed
+ACK. No new local operational path is introduced.
 Qualified in-progress creation supplies its scope through its admitted runtime
 context before the completion file exists. No other environment/worktree is a
 fallback, and neither reader initializes missing records.

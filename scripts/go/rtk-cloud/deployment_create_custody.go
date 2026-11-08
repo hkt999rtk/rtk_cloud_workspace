@@ -65,6 +65,14 @@ func environmentCustodyOwners(cfg deploymentConfig, p environmentCreateBootstrap
 		owners[id] = owner
 		return nil
 	}
+	addClient := func(id, subject, path string) {
+		owner := owners[id]
+		client := environmentCustodyClientBinding{Subject: subject, StatePath: path}
+		if !slices.Contains(owner.Clients, client) {
+			owner.Clients = append(owner.Clients, client)
+		}
+		owners[id] = owner
+	}
 	for _, role := range []string{"pki-controller", "certissuer", "account-manager"} {
 		namespace := p.Stack + "-video-cloud"
 		if role == "account-manager" {
@@ -73,11 +81,13 @@ func environmentCustodyOwners(cfg deploymentConfig, p environmentCreateBootstrap
 		if err = add(role, namespace, role, environmentCreateServiceOwnerClaim(role)); err != nil {
 			return nil, err
 		}
+		addClient(role, "service:"+role, environmentCreateServiceOwnerIdentityPath(role, "client.json"))
 	}
 	for _, owner := range environmentCreateApplicationOwners() {
 		if err = add(owner.Name, p.Stack+"-video-cloud", owner.Name, owner.Claim); err != nil {
 			return nil, err
 		}
+		addClient(owner.Name, "service:"+owner.Role, owner.ClientState)
 	}
 	for _, purpose := range []struct{ owner, claim string }{{"video-cloud-api-pki", "video-cloud-api-pki-trust"}, {"video-cloud-api-app-pki", "video-cloud-api-app-pki-trust"}} {
 		if err = add(purpose.owner, p.Stack+"-video-cloud", purpose.owner, purpose.claim); err != nil {
@@ -87,6 +97,11 @@ func environmentCustodyOwners(cfg deploymentConfig, p environmentCreateBootstrap
 	if err = add("mqtt-pki", p.Stack+"-video-cloud", "mqtt-pki", "mqtt-pki-host-identity"); err != nil {
 		return nil, err
 	}
+	for _, owner := range environmentCreateTransportClientOwners(p.Stack) {
+		if owner.role != "openbao" {
+			addClient("mqtt-pki", "service:"+owner.role, owner.state)
+		}
+	}
 	for _, product := range p.ProductIdentities {
 		workload := environmentCustodyProductWorkload(strings.TrimPrefix(product.Subject, "service:"))
 		if workload == "" {
@@ -95,10 +110,12 @@ func environmentCustodyOwners(cfg deploymentConfig, p environmentCreateBootstrap
 		if err = add(workload, p.Stack+"-video-cloud", workload, product.Claim); err != nil {
 			return nil, err
 		}
+		addClient(workload, product.Subject, environmentCreateServiceOwnerIdentityPath(strings.TrimPrefix(product.Subject, "service:"), "client.json"))
 	}
 	var result []environmentCustodyOwnerBinding
 	for _, owner := range owners {
 		slices.Sort(owner.StorageAliases)
+		slices.SortFunc(owner.Clients, func(a, b environmentCustodyClientBinding) int { return strings.Compare(a.StatePath, b.StatePath) })
 		result = append(result, owner)
 	}
 	slices.SortFunc(result, func(a, b environmentCustodyOwnerBinding) int { return strings.Compare(a.ID, b.ID) })

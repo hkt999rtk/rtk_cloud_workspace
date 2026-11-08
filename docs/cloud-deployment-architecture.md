@@ -3195,6 +3195,12 @@ Maintained storage aliases group multiple credential purposes within one
 workload: MQTT host/broker state share its workload scope; Log Ingester's internal
 and registration credentials also share a scope while retaining independent
 state-path hashes. A legacy PVC name is not itself a new cloud identity.
+The original admitted owner scope also records each client subject and state path
+from the maintained native enrollment recipes. CRL discovery uses these facts,
+current Pod/Deployment ownership and the selected service account to identify the
+expected ACK consumer without reading a failed container's private projection or
+contacting managed OpenBao TLS. This identifies an expected subject only: actual
+runtime readiness and the native registry ACK must still converge after recovery.
 Shared rendering derives the same KV record prefix and per-state Lease for
 enrollment Jobs and runtime containers. Only explicitly bound PKI storage
 becomes a memory-backed `emptyDir`; business claims and OpenBao's independent

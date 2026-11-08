@@ -14,11 +14,17 @@ import (
 
 // IDs bind workload custody; aliases name maintained file-storage purposes that
 // become temporary projections. Neither field is a Pod UID or mutable KV version.
+type environmentCustodyClientBinding struct {
+	Subject   string `json:"subject"`
+	StatePath string `json:"state_path"`
+}
+
 type environmentCustodyOwnerBinding struct {
-	ID             string   `json:"id"`
-	Namespace      string   `json:"namespace"`
-	ServiceAccount string   `json:"service_account"`
-	StorageAliases []string `json:"storage_aliases,omitempty"`
+	ID             string                            `json:"id"`
+	Namespace      string                            `json:"namespace"`
+	ServiceAccount string                            `json:"service_account"`
+	StorageAliases []string                          `json:"storage_aliases,omitempty"`
+	Clients        []environmentCustodyClientBinding `json:"clients,omitempty"`
 }
 
 type environmentCustodyBinding struct {
@@ -341,5 +347,5 @@ func environmentCustodyPolicy(values map[string]string, environment string, bind
 }
 
 func sameEnvironmentCustodyOwner(a, b environmentCustodyOwnerBinding) bool {
-	return a.ID == b.ID && a.Namespace == b.Namespace && a.ServiceAccount == b.ServiceAccount && slices.Equal(a.StorageAliases, b.StorageAliases)
+	return a.ID == b.ID && a.Namespace == b.Namespace && a.ServiceAccount == b.ServiceAccount && slices.Equal(a.StorageAliases, b.StorageAliases) && slices.Equal(a.Clients, b.Clients)
 }

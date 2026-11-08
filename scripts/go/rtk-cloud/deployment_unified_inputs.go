@@ -141,6 +141,13 @@ func validateEnvironmentIdentityBindings(b environmentIdentityBindings, environm
 				return errors.New("deployment.bindings: invalid original workload custody owner")
 			}
 			owners[owner.ID] = true
+			clientPaths := map[string]bool{}
+			for _, client := range owner.Clients {
+				if !strings.HasPrefix(client.Subject, "service:") || !environmentCreateConsumerID.MatchString(strings.TrimPrefix(client.Subject, "service:")) || !path.IsAbs(client.StatePath) || path.Clean(client.StatePath) != client.StatePath || client.StatePath == "/" || strings.ContainsAny(client.StatePath, "\x00\r\n") || clientPaths[client.StatePath] {
+					return errors.New("deployment.bindings: invalid or ambiguous original client enrollment purpose")
+				}
+				clientPaths[client.StatePath] = true
+			}
 			for _, alias := range owner.StorageAliases {
 				key := owner.Namespace + "/" + alias
 				if !secretEnvironmentPattern.MatchString(alias) || alias == "openbao-pki-identity" || aliases[key] != "" && aliases[key] != owner.ID {

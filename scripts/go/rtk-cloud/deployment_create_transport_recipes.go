@@ -57,6 +57,19 @@ func environmentCreateTransportTrust(namespace, name string, r, i environmentCre
 
 // Client Jobs install private state under its final owner UID and PVC. They
 // run before server enrollment and do not emit installation acknowledgements.
+type environmentCreateTransportClientOwner struct {
+	role, namespace, claim, root, state string
+	uid                                 int
+}
+
+func environmentCreateTransportClientOwners(stack string) []environmentCreateTransportClientOwner {
+	return []environmentCreateTransportClientOwner{
+		{"openbao", stack + "-secrets", "openbao-pki-identity", "/var/lib/openbao-pki", environmentCreateOpenBaoIdentity + "/service-client.json", 100},
+		{"emqx-pki", stack + "-video-cloud", "mqtt-pki-host-identity", "/var/lib/emqx-pki", environmentCreateMQTTIdentity + "/service-client.json", 1000},
+		{"pkibroker", stack + "-video-cloud", "mqtt-pki-trust", "/run/pki-state", environmentCreateBrokerIdentity, 10001},
+	}
+}
+
 func renderEnvironmentCreateTransportClientDefinitions(ctx context.Context, cfg deploymentConfig, p environmentCreateBootstrapPlan, runtime environmentCreateBootstrapRuntime, s environmentCreateServiceCeremony, roots, intermediates map[string]environmentCreateRegisteredIssuer) ([]deploymentplan.Definition, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -65,14 +78,7 @@ func renderEnvironmentCreateTransportClientDefinitions(ctx context.Context, cfg 
 		return nil, err
 	}
 	var out []deploymentplan.Definition
-	for _, owner := range []struct {
-		role, namespace, claim, root, state string
-		uid                                 int
-	}{
-		{"openbao", p.Stack + "-secrets", "openbao-pki-identity", "/var/lib/openbao-pki", environmentCreateOpenBaoIdentity + "/service-client.json", 100},
-		{"emqx-pki", p.Stack + "-video-cloud", "mqtt-pki-host-identity", "/var/lib/emqx-pki", environmentCreateMQTTIdentity + "/service-client.json", 1000},
-		{"pkibroker", p.Stack + "-video-cloud", "mqtt-pki-trust", "/run/pki-state", environmentCreateBrokerIdentity, 10001},
-	} {
+	for _, owner := range environmentCreateTransportClientOwners(p.Stack) {
 		job, err := environmentCreateClientEnrollmentDefinition(cfg, p, runtime, s, owner.namespace, owner.role, owner.claim)
 		if err != nil {
 			return nil, err

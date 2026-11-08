@@ -222,9 +222,12 @@ func (r *maintenanceRuntime) verifyPublicCRLs(ctx context.Context, projections [
 	return nil
 }
 
-// ACK identities come from the workload's current authenticated Service state,
-// never from a Kubernetes display name. Private fields stay in process memory.
+// Local ACK identities use authenticated Service state. Remote discovery uses
+// original enrollment intent; neither branch guesses from a Pod display name.
 func (r *maintenanceRuntime) consumerID(ctx context.Context, ns, pod, container string, c deploymentplan.Object) (string, error) {
+	if mqttFoundationEnv(c, "PKI_STATE_BACKEND") == "openbao" {
+		return r.custodyConsumerID(ctx, ns, pod, container, c)
+	}
 	subject := ""
 	for _, ev := range certIssuerObjectList(c["env"]) {
 		e := deploymentplan.Map(ev)

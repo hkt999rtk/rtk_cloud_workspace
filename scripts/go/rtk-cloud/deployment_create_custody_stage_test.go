@@ -57,7 +57,11 @@ func TestCreateCustodyStageUsesOriginalScopeBeforePlanCompilation(t *testing.T) 
 			if _, err := projectEnvironmentCreateCustodyStage(ctx, cfg, store, parent, e, definitions, nil); err == nil {
 				t.Fatal("pending custody config started its owner")
 			}
-			receipt, _ := json.Marshal(map[string]string{"scope_sha256": environmentPreflightBytesSHA256(body)})
+			scopeSHA, err := environmentCreatePlanSHA256(body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			receipt, _ := json.Marshal(map[string]string{"scope_sha256": scopeSHA})
 			if err := e.RecordReceipt("workload-custody-initialize", receipt); err != nil {
 				t.Fatal(err)
 			}

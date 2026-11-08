@@ -997,3 +997,40 @@ health reader. Actual fresh creation/renewal/interruption/cold restart/matched
 backup test still required, then final one whole-branch review, dependent native/
 contracts/root CI/Release, approved formal dev remove/archive/create GO/deploy/health,
 then staging. Cloud resources and live backend settings remain unchanged.
+
+
+2026-11-09 continuation: expected CRL consumer discovery now uses original
+admitted client purposes (subject + state path) in the owner scope and completed
+bootstrap bindings, not a failed application's private identity projection or a
+healthy managed OpenBao TLS connection. The maintained transport recipe table
+is shared with the inventory; exact native core/application/transport enrollment
+Jobs are compared in the test, including exclusion of OpenBao cold-start state.
+Subjects are expected consumers only, never proof of key possession or an ACK.
+Actual Kubernetes owner chain, current container, namespace, service account,
+selected mount and original auth role remain checked. Missing original metadata
+fails rather than guessing or using another source.
+
+RED observed: inventory omitted service:pki-controller's real purpose; the actual
+remote maintenance adapter attempted to exec private state in the faulted app;
+binding validation accepted a relative identity path. Focused GREEN 2.235s after
+repair. Added cases for unregistered paths, foreign SA/mount/role, replaced owner,
+and missing original generation evidence. A broader regression exposed an old
+test fixture hashing raw JSON rather than the journal's canonical JSON; fixed
+that fixture with the production canonical hash helper, without weakening checks.
+
+Ruling: freeze expected client purposes when a new generation is admitted — these
+are the same native enrollment recipes, not new environment settings or observed
+key-possession claims — allowing an inferred or current private-file fallback
+would recreate the transport/app-startup recovery cycle.
+
+Remaining: public export discovery/committed readback, offline/online/remote CRL
+recovery order, core preflight/health reader wiring and the isolated whole fresh
+lifecycle/failure matrix. No cloud deletion/rebuild, environment backend activation,
+CI publication, complete preflight GO or live deployment is claimed here. Fresh
+dev acceptance still precedes the already approved fresh staging generation.
+
+Final selected root regression for this checkpoint PASS38.809s, including the
+isolated Kubernetes fixture, original-generation scope/stage checks, custody
+inspection/install/discovery and ordinary core/controller/log/MQTT maintenance
+compatibility. Log: /Volumes/RTKGoBuild/tmp/custody-consumer-discovery-regression.log.
+This verifies components/adapters, not the pending whole fresh lifecycle.
