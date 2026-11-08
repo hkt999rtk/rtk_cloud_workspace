@@ -789,3 +789,44 @@ must never contain real environment data or be assumed present after restart.
 GOCACHE remains /Volumes/RTKGoBuild/cache. Future isolated tests may use this verified
 RAM root for GOTMPDIR/TMPDIR while retaining result logs on the external build disk.
 Original live configuration and canonical ~/.config/rtk_cloud stores were not moved.
+
+### Independent current identity admission checkpoint
+
+Native commit 6c7431a adds inspect-admitted: exact committed KV current identity,
+original SQL issuance/issuer/root, current CRLs and distrust; permits a pending
+renewal that retains the same admitted current certificate. It neither projects
+private files nor obtains a writer Lease. Actual PostgreSQL race tests passed
+3.273s; full native CLI race package passed5.813s. An initial full run correctly
+rejected a wheel-group synthetic temporary parent; corrected only the owned RAM
+scratch directory group to staff, with no production permission relaxation.
+
+Root adapters now run this observer through a bounded temporary Job, reusing the
+original owner's scoped service account and public trust. It fences the original
+Job and Pod UIDs, validates bounded public output and deletes only the original
+Job with UID preconditions. Lost create responses reconcile the exact name without
+replaying allocation. Product output verification uses current admitted KV state
+rather than decoding stale enrollment mirror keys or comparing renewed certificates
+to the first bootstrap fingerprint. It retains original mirror UID checks while
+that delivery resource remains referenced. Accepted original enrollment plans and
+journals supply the original profile even after enrollment workload retirement.
+
+Required committed-identity-inspection-v1 capability is added to the existing
+bootstrap capability probe only for selected openbao backend; PVC capability rules
+and the number of Docker probes are unchanged. Fixed create/write commands to use
+the same RTK_CLOUD_KUBECTL selector already used for reads, discovered by the actual
+execution contract. Canonical public transport snapshot validation is shared with
+the creation-stage restorer; no new local operational path was introduced.
+
+Observed RED: missing native admission helpers, old product mirror/PVC gate,
+conditional capability support, inconsistent kubectl tool selector, and a lost
+successful delete response being treated as failed cleanup. Cleanup now reconciles
+exact absence without replaying deletion against a replacement. Combined relevant
+root regression before that last cleanup case PASS45.346s, with isolated Kubernetes
+fixture selected. Focused final cleanup verification is recorded in its retained
+log. Native/root tests do not establish whole environment readiness.
+
+NEXT: actual memory-backed observed-binding renderer/permission/CRL roundtrip,
+prepared/final transport publication and mounted-snapshot barrier, full isolated
+create/renewal/cold-recovery/matched-backup flow, final review and CI/Release. Only
+then approved dev removal/archive/create/deploy/health, then staging. Neither cloud
+environment has been removed, nor have backend settings been activated.

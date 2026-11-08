@@ -12,10 +12,13 @@ import (
 )
 
 func TestBootstrapCapabilityExecutionContractChecksImmutableImagesBeforeAllocation(t *testing.T) {
-	for _, mode := range []string{"original", "wrong-environment", "mutable-image", "missing-operator", "changed-operator", "changed-template", "existing-authority", "missing-binary", "wrong-service", "missing-feature", "malformed", "oversized", "command-failed"} {
+	for _, mode := range []string{"original", "kv-supported", "kv-missing-inspection", "wrong-environment", "mutable-image", "missing-operator", "changed-operator", "changed-template", "existing-authority", "missing-binary", "wrong-service", "missing-feature", "malformed", "oversized", "command-failed"} {
 		t.Run(mode, func(t *testing.T) {
 			cfg, store, _, operator, plan := createDependencyContractFixture(t)
 			cfg.Values["PKI_REQUIRE_USER_MFA"] = "false"
+			if strings.HasPrefix(mode, "kv-") {
+				cfg.Values["PKI_STATE_BACKEND"] = "openbao"
+			}
 			for key, value := range map[string]string{"ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL": "operator@isolated.test", "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD": "isolated-original-password", "PKI_OPERATOR_SIGNER_REF": "isolated-original-offline-signer"} {
 				operator[key] = value
 				if err := store.write(filepath.Join("operator/env", key), []byte(value), false); err != nil {
@@ -25,6 +28,9 @@ func TestBootstrapCapabilityExecutionContractChecksImmutableImagesBeforeAllocati
 			bin := t.TempDir()
 			log := filepath.Join(bin, "calls")
 			features := []string{"deployment-bootstrap-finalize-v1", "first-trust-v1", "create-service-enrollment-v1", "registry-only-issuance-v1", "fresh-bootstrap-trust-v1", "mqtt-bundle-bootstrap-v1", "owned-server-export-v1", "managed-callback-export-v1", "managed-test-lab-callback-v1", "service-registration-bootstrap-ack-v1"}
+			if mode == "kv-supported" {
+				features = append(features, "committed-identity-inspection-v1")
+			}
 			for _, service := range []string{"rtk-account-manager", "pkimanagement", "certissuer", "api", "logingester", "pkibroker", "serviceidentity-bootstrap", "emqxpkihost", "mqttfoundation", "shadowworker", "otaservice", "videostorage", "webrtcservice", "cloudlogger"} {
 				name := service
 				if service == "rtk-account-manager" {
@@ -92,14 +98,14 @@ cat "$RTK_BOOTSTRAP_CAPABILITY_DIRECTORY/${entrypoint##*/}.json"
 			}
 			before := createBootstrapStateSnapshot(t, store.Root)
 			err := qualifyEnvironmentCreateBootstrapCapabilities(context.Background(), cfg, plan, store, operator)
-			if (err == nil) != (mode == "original") {
+			if (err == nil) != (mode == "original" || mode == "kv-supported") {
 				t.Fatal("unexpected immutable bootstrap capability qualification", err)
 			}
 			if !reflect.DeepEqual(before, createBootstrapStateSnapshot(t, store.Root)) {
 				t.Fatal("capability qualification generated identity, allocation or admission evidence")
 			}
 			calls, readErr := os.ReadFile(log)
-			if mode == "original" {
+			if mode == "original" || mode == "kv-supported" {
 				if readErr != nil || len(strings.Split(strings.TrimSpace(string(calls)), "\n")) != 14 {
 					t.Fatal("capability qualification omitted an enabled service", readErr, string(calls))
 				}

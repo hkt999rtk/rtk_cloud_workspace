@@ -381,6 +381,12 @@ func verifyProductIdentityOutputs(ctx context.Context, cfg deploymentConfig, run
 		if err != nil || actual == nil || deploymentplan.Map(actual["metadata"])["uid"] != receipt.SecretUID || actual["immutable"] != true || deploymentplan.Map(actual["metadata"])["deletionTimestamp"] != nil {
 			return environmentCreateBootstrapBlocker("original product identity mirror UID or immutability changed")
 		}
+		if cfg.Values["PKI_STATE_BACKEND"] == "openbao" {
+			if _, err := inspectEnvironmentProductCustody(ctx, cfg, runtime, l, output, receipt); err != nil {
+				return err
+			}
+			continue
+		}
 		data := deploymentplan.Map(actual["data"])
 		if len(data) != 3 {
 			return environmentCreateBootstrapBlocker("product mirror does not contain its exact native identity fields")

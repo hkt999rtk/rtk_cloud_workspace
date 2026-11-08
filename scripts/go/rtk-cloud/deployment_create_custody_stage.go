@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"encoding/pem"
 	"path/filepath"
 
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
@@ -76,45 +75,13 @@ func projectEnvironmentCreateCustodyStage(ctx context.Context, cfg deploymentCon
 	if err != nil || runtime.OpenBao.CACertPath != caPath {
 		return nil, environmentCreateBootstrapBlocker("custody stage requires its original OpenBao foundation authority")
 	}
-	ca, err := readBoundedEnvironmentFile(caPath, true)
+	snapshot, originalBootstrapRoot, err := readEnvironmentCustodyTransportState(cfg, store, generation)
 	if err != nil {
 		return nil, err
-	}
-	path, err = store.safePath(filepath.Join("deployment", "create", generation, "custody", "transport.json"))
-	if err != nil {
-		return nil, err
-	}
-	raw, err = readBoundedEnvironmentInputLimit(path, true, false, 256<<10)
-	if err != nil {
-		return nil, environmentCreateBootstrapBlocker("custody stage lacks its original public transport snapshot")
-	}
-	var snapshot environmentCustodyTransportTrust
-	if json.Unmarshal(raw, &snapshot) != nil {
-		return nil, environmentCreateBootstrapBlocker("original custody transport snapshot is invalid")
-	}
-	var managed *environmentCreateRegisteredIssuer
-	if snapshot.ManagedPEM != "" {
-		status := "ready"
-		if snapshot.ManagedOnly {
-			status = "active"
-		}
-		managed = &environmentCreateRegisteredIssuer{ID: snapshot.ManagedRootID, Environment: cfg.Environment, Domain: "openbao_tls", Kind: "root", Status: status, Certificate: snapshot.ManagedPEM, ChainPEM: snapshot.ManagedPEM, RootFingerprint: snapshot.ManagedRootSHA256, BundleVersion: environmentPreflightBytesSHA256([]byte(snapshot.ManagedPEM))}
-	}
-	trust, err := renderEnvironmentCustodyTrust(cfg, generation, string(ca), managed, snapshot.ManagedOnly)
-	if err != nil {
-		return nil, err
-	}
-	canonical := []byte(deploymentplan.String(deploymentplan.Map(trust[0].Object["data"])["transport.json"]))
-	if deploymentplan.Digest(jsonRawObject(raw)) != deploymentplan.Digest(jsonRawObject(canonical)) {
-		return nil, environmentCreateBootstrapBlocker("custody stage transport snapshot differs from its original environment or authority")
 	}
 	bootstrapRoot := ""
 	if !snapshot.ManagedOnly {
-		block, _ := pem.Decode(ca) // renderEnvironmentCustodyTrust already verified this exact CA.
-		if block == nil {
-			return nil, environmentCreateBootstrapBlocker("original custody foundation CA is invalid")
-		}
-		bootstrapRoot = environmentPreflightBytesSHA256(block.Bytes)
+		bootstrapRoot = originalBootstrapRoot
 	}
 	expected.OpenBaoRootSHA256 = snapshot.ManagedRootSHA256
 	if runtime.ServiceCeremony != nil {
@@ -140,8 +107,7 @@ func projectEnvironmentCreateCustodyStage(ctx context.Context, cfg deploymentCon
 					}
 					b, r := mqttFoundationEnv(container, "PKI_STATE_BOOTSTRAP_ROOT_SHA256"), mqttFoundationEnv(container, "PKI_STATE_OPENBAO_SERVER_PKI_ROOT_SHA256")
 					if b != "" {
-						block, _ := pem.Decode(ca)
-						if block == nil || b != environmentPreflightBytesSHA256(block.Bytes) {
+						if b != originalBootstrapRoot {
 							return nil, environmentCreateBootstrapBlocker("frozen custody stage replaced its original foundation authority")
 						}
 					} else if !snapshot.ManagedOnly {

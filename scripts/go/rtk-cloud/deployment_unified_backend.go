@@ -399,7 +399,7 @@ func (b environmentKubernetesBackend) command(ctx context.Context, input []byte,
 			return nil, err
 		}
 		commandContext, cancel := context.WithTimeout(ctx, processTimeout)
-		cmd := exec.CommandContext(commandContext, "kubectl", argv...)
+		cmd := exec.CommandContext(commandContext, lkeKubectl(), argv...)
 		cmd.WaitDelay = time.Second
 		cmd.Stdin = bytes.NewReader(input)
 		var stdout environmentAPIOutput

@@ -1846,6 +1846,23 @@ and role scope. OpenBao configuration batches consume the existing selected
 operator token through stdin; they never put it in command arguments, settings,
 scope metadata or public evidence. Preflight does not execute this initializer.
 
+Independent product custody inspection consumes the original enrollment child
+`deployment/rollback/<sha>/plan.json` and `journal.json` from this same canonical
+environment store, plus the original-generation transport snapshot and CA paths
+above. Those existing private records supply the execution/auth scope without
+requiring the retired enrollment container or an active bootstrap session. No
+alternative checkout/environment is a fallback and no identity is generated.
+
+The temporary Kubernetes inspection Job contains Secret references for the
+selected verifier database and projected short-lived workload auth, never literal
+database credentials, root tokens or private keys. Its native command reads the
+existing KV identity in process memory, validates current registry/CRL/Root policy,
+and exports only public identity metadata. It does not create a private file
+projection, acquire a writer Lease, modify KV/SQL records or publish an ACK.
+Job and Pod ownership are fenced; cleanup deletes only the original Job UID and
+verifies foreground removal. A changed owner or uncertain cleanup fails the
+observation. No new local operation-data path is introduced by this reader.
+
 All local operation directories are 0700, files 0600. The common environment
 path helpers own these locations. Matching OpenBao/registry backup and restore
 remain part of validating the newly created generation, without adding an old

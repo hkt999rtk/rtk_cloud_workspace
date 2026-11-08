@@ -161,3 +161,56 @@ func renderEnvironmentCustodyTrust(cfg deploymentConfig, generation, bootstrapPE
 	}
 	return definitions, nil
 }
+
+// Both execution and independent inspection consume the same original public
+// handoff. Reading it cannot renew trust, create an identity or revive an anchor.
+func readEnvironmentCustodyTransportState(cfg deploymentConfig, store secretStore, generation string) (environmentCustodyTransportTrust, string, error) {
+	var empty environmentCustodyTransportTrust
+	bad := func() (environmentCustodyTransportTrust, string, error) {
+		return empty, "", environmentCreateBootstrapBlocker("custody transport snapshot differs from its original environment or authority")
+	}
+	if store.Environment != cfg.Environment || !environmentPreflightDigest.MatchString(generation) {
+		return bad()
+	}
+	caPath, err := store.safePath(filepath.Join("deployment", "create", "material", generation, "openbao-transport", "ca.crt"))
+	if err != nil {
+		return empty, "", err
+	}
+	ca, err := readBoundedEnvironmentFile(caPath, true)
+	if err != nil {
+		return bad()
+	}
+	path, err := store.safePath(filepath.Join("deployment", "create", generation, "custody", "transport.json"))
+	if err != nil {
+		return empty, "", err
+	}
+	raw, err := readBoundedEnvironmentInputLimit(path, true, false, 256<<10)
+	if err != nil {
+		return bad()
+	}
+	var snapshot environmentCustodyTransportTrust
+	if json.Unmarshal(raw, &snapshot) != nil {
+		return bad()
+	}
+	var managed *environmentCreateRegisteredIssuer
+	if snapshot.ManagedPEM != "" {
+		status := "ready"
+		if snapshot.ManagedOnly {
+			status = "active"
+		}
+		managed = &environmentCreateRegisteredIssuer{ID: snapshot.ManagedRootID, Environment: cfg.Environment, Domain: "openbao_tls", Kind: "root", Status: status, Certificate: snapshot.ManagedPEM, ChainPEM: snapshot.ManagedPEM, RootFingerprint: snapshot.ManagedRootSHA256, BundleVersion: environmentPreflightBytesSHA256([]byte(snapshot.ManagedPEM))}
+	}
+	trust, err := renderEnvironmentCustodyTrust(cfg, generation, string(ca), managed, snapshot.ManagedOnly)
+	if err != nil {
+		return empty, "", err
+	}
+	canonical := []byte(deploymentplan.String(deploymentplan.Map(trust[0].Object["data"])["transport.json"]))
+	if deploymentplan.Digest(jsonRawObject(raw)) != deploymentplan.Digest(jsonRawObject(canonical)) {
+		return bad()
+	}
+	block, _ := pem.Decode(ca)
+	if block == nil {
+		return bad()
+	}
+	return snapshot, environmentPreflightBytesSHA256(block.Bytes), nil
+}

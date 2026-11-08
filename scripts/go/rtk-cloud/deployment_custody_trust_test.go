@@ -87,6 +87,15 @@ func TestCustodyTrustPublicationResumesWithoutReintroducingBootstrap(t *testing.
 			if err = publishEnvironmentCreateCustodyTrust(t.Context(), cfg, runtime, nil, false, apply); err != nil || !applied.ManagedOnly || applied.BootstrapPEM != "" {
 				t.Fatal("resumed foundation reintroduced bootstrap admission", err)
 			}
+			observed, bootstrapPin, err := readEnvironmentCustodyTransportState(cfg, store, e.Journal.PlanSHA256)
+			if err != nil || !observed.ManagedOnly || observed.ManagedRootSHA256 != managed.RootFingerprint || bootstrapPin != original.Root.RootFingerprint {
+				t.Fatal("independent inspection lost original trust handoff", err)
+			}
+			foreignConfig := cfg
+			foreignConfig.Environment = "prod"
+			if _, _, err := readEnvironmentCustodyTransportState(foreignConfig, store, e.Journal.PlanSHA256); err == nil {
+				t.Fatal("independent inspection read another environment's trust snapshot")
+			}
 			path := filepath.Join(store.Root, "deployment", "create", e.Journal.PlanSHA256, "custody", "transport.json")
 			info, err := os.Stat(path)
 			if err != nil || info.Mode().Perm() != 0600 {

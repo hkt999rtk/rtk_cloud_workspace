@@ -3263,6 +3263,35 @@ republishes the latest recorded handoff and never restores withdrawn bootstrap
 admission. Managed anchors must reach the actual consumers before listener TLS
 changes; final runtime uses managed admission without bootstrap authorization.
 
+Creation and continuation verify product KV identities through the native
+`serviceidentity-bootstrap inspect-admitted` command. A logical `openbao-kv-v2`
+reference binds the original generation, owner, namespace/service account,
+mount, state-path key and credential Root. The original enrollment child plan
+and journal in the canonical environment's `deployment/rollback/<sha>/` supply
+the execution profile even after that enrollment Deployment retires. Inspection
+does not need its container, Controller HTTP, or the finalized bootstrap session.
+It accepts genuine current renewal rather than comparing the current leaf with
+an old bootstrap delivery mirror; mirror ownership remains checked while the
+declared consumer still mounts that resource.
+
+The inspection command reads committed KV state and native SQL issuance,
+current signed CRLs and Root distrust policy, and emits only public metadata.
+It neither acquires a writer Lease nor projects a private identity. The helper
+inherits the original execution profile, existing workload auth role and public
+trust; it creates no PVC, policy, Role or signing request. Inspection is read-only
+for PKI/registry state, with a bounded temporary Kubernetes Job as its execution
+side effect. Job/Pod UIDs and the original requested body are verified around
+log collection. A lost create response is reconciled by the unique exact name;
+cleanup uses UID-preconditioned foreground deletion and verifies absence. The
+environment's rollout timeout bounds the read, without resetting its parent
+deadline. The same canonical public transport reader serves stage compilation
+and inspection; it cannot restore a withdrawn bootstrap anchor.
+
+For the selected OpenBao backend, existing immutable-image capability probes
+also require `committed-identity-inspection-v1` before allocation. This adds no
+container probe and does not compare the assigned image with another release.
+PVC configurations retain their existing capability requirements.
+
 Targets are not deployed facts; each environment needs its own completion and
 health evidence. See the accepted OpenBao custody design and canonical
 Platform PKI contract.

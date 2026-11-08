@@ -125,8 +125,13 @@ func TestProductIdentityCapabilitiesRequireEveryActualBinaryAndSuppressPrivateEr
 		t.Fatal(err)
 	}
 	l := &createNormalTailProductLifecycle{Outputs: outputs}
-	for _, mode := range []string{"pass", "missing-ack", "wrong-service", "malformed", "external-error"} {
+	for _, mode := range []string{"pass", "kv-supported", "kv-missing-inspection", "missing-ack", "wrong-service", "malformed", "external-error"} {
 		t.Run(mode, func(t *testing.T) {
+			selected := config
+			selected.Values = appendMap(config.Values, nil)
+			if strings.HasPrefix(mode, "kv-") {
+				selected.Values["PKI_STATE_BACKEND"] = "openbao"
+			}
 			seen := map[string]bool{}
 			run := func(_ context.Context, args ...string) ([]byte, error) {
 				entry := ""
@@ -144,6 +149,9 @@ func TestProductIdentityCapabilitiesRequireEveryActualBinaryAndSuppressPrivateEr
 					service = "account-manager"
 				}
 				features := []string{"deployment-bootstrap-finalize-v1", "first-trust-v1", "create-service-enrollment-v1", "registry-only-issuance-v1", "owned-server-export-v1", "service-registration-bootstrap-ack-v1"}
+				if mode == "kv-supported" {
+					features = append(features, "committed-identity-inspection-v1")
+				}
 				if entry == "/app/webrtcservice" {
 					switch mode {
 					case "missing-ack":
@@ -158,8 +166,8 @@ func TestProductIdentityCapabilitiesRequireEveryActualBinaryAndSuppressPrivateEr
 				}
 				return json.Marshal(deploymentplan.Object{"schema": "rtk-cloud.deployment-capabilities/v1", "service": service, "features": features})
 			}
-			err := verifyProductCapabilities(t.Context(), release, l, run)
-			if (err == nil) != (mode == "pass") {
+			err := verifyProductCapabilities(t.Context(), selected, release, l, run)
+			if (err == nil) != (mode == "pass" || mode == "kv-supported") {
 				t.Fatal("incorrect real binary capability decision", err)
 			}
 			if err != nil && strings.Contains(err.Error(), "canary") {

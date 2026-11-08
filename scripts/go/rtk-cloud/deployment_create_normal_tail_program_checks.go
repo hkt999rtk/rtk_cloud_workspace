@@ -41,7 +41,7 @@ func createNormalTailProgramChecks(ctx context.Context, cfg deploymentConfig, h 
 			if err := verifyEnvironmentRelease(ctx, cfg, p.Release); err != nil {
 				return err
 			}
-			return verifyCreateNormalTailProductCapabilities(ctx, p.Release, p.Products, cfg.Values["TEST_LAB_ENABLED"] == "true")
+			return verifyCreateNormalTailProductCapabilities(ctx, cfg, p.Release, p.Products, cfg.Values["TEST_LAB_ENABLED"] == "true")
 		},
 		"deployment.execution": func(ctx context.Context) error {
 			for _, check := range []func(context.Context, *deploymentplan.Plan) error{c.CheckProviderQuota, c.CheckNodeCapacity, c.CheckSurgeCapacity, c.Backend.CheckStorageBindings, c.Backend.CheckPlanAccess} {
