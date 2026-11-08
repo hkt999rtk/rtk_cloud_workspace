@@ -117,6 +117,11 @@ func projectEnvironmentCreateCustodyStage(ctx context.Context, cfg deploymentCon
 		bootstrapRoot = environmentPreflightBytesSHA256(block.Bytes)
 	}
 	expected.OpenBaoRootSHA256 = snapshot.ManagedRootSHA256
+	if runtime.ServiceCeremony != nil {
+		expected.ServiceRootSHA256 = runtime.ServiceCeremony.Root.RootFingerprint
+	} else if runtime.Custody != nil {
+		expected.ServiceRootSHA256 = runtime.Custody.ServiceRootSHA256
+	}
 	// A completed early stage retains its originally compiled TLS mode even
 	// after global transport handoff. The public snapshot may advance, but that
 	// must not change a replayed child plan's reviewed resource bodies.
@@ -169,6 +174,11 @@ func environmentCustodyStageOwnsStorage(binding *environmentCustodyBinding, defi
 		pod := environmentPKIPod(d.Object)
 		if pod == nil {
 			continue
+		}
+		for _, owner := range binding.Owners {
+			if owner.Namespace == namespace && owner.ID == deploymentplan.String(metadata["name"]) {
+				return true
+			}
 		}
 		for _, raw := range certIssuerObjectList(pod["volumes"]) {
 			if claims[namespace+"/"+deploymentplan.String(deploymentplan.Map(deploymentplan.Map(raw)["persistentVolumeClaim"])["claimName"])] {

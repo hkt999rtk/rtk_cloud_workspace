@@ -3190,7 +3190,7 @@ architecture overrides select a fresh generation's backend, mount and duration;
 the resolver validates and preserves those values rather than rewriting intent.
 
 The original `workload_custody` binding records the generation, managed OpenBao
-Root fingerprint and each logical storage owner's namespace/service account.
+Root fingerprint, the original Service Root fingerprint and each logical storage owner's namespace/service account.
 Maintained storage aliases group multiple credential purposes within one
 workload: MQTT host/broker state share its workload scope; Log Ingester's internal
 and registration credentials also share a scope while retaining independent
@@ -3201,6 +3201,18 @@ becomes a memory-backed `emptyDir`; business claims and OpenBao's independent
 storage remain. Credentials use separate projected OpenBao/API tokens and the
 Kubernetes CA; Pod namespace/UID come from the downward API. Existing workload
 UID/GID settings are not replaced by custody rendering.
+
+Product registration uses the same projection: its original declared state purpose
+is mounted temporarily and managed Controller/CertIssuer references come from the
+registered Service lineage. Public Service trust uses a read-only ConfigMap;
+loading the installed key does not ACK a ready service. Final native completion
+attaches both Root references before ordinary rendering; Pod shape observation
+cannot supply those facts. Device/App accepted-cache storage aliases belong to
+their respective API owners. New OpenBao bootstrap plans exclude these workload
+identity/cache claims from provider demand; independent OpenBao/bootstrap state
+and business storage remain. Logical owner inventory requires no generated
+identity, fake generation or certificate during preflight. Named environment
+facts have fixed rendering order so equal inputs produce equal child plan hashes.
 
 Each identity path has an additive named Role/RoleBinding (`get`, `update`)
 and a pre-created Lease. A different lifecycle stage cannot narrow another

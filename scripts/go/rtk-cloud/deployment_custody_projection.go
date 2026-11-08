@@ -22,6 +22,7 @@ type environmentCustodyOwnerBinding struct {
 }
 
 type environmentCustodyBinding struct {
+	ServiceRootSHA256 string                           `json:"service_root_sha256,omitempty"`
 	Generation        string                           `json:"generation"`
 	OpenBaoRootSHA256 string                           `json:"openbao_root_sha256"`
 	Owners            []environmentCustodyOwnerBinding `json:"owners"`
@@ -81,6 +82,10 @@ func projectEnvironmentCustodyResources(values map[string]string, environment st
 			}
 			byClaim[key] = owner
 		}
+	}
+	definitions, err := projectEnvironmentCustodyRegistrations(values, environment, binding, definitions)
+	if err != nil {
+		return nil, err
 	}
 	var result []deploymentplan.Definition
 	dependencies := map[string]deploymentplan.Object{}
@@ -201,8 +206,8 @@ func projectEnvironmentCustodyResources(values map[string]string, environment st
 					settings["PKI_STATE_TRANSPORT_TRUST"] = environmentCustodyTrustPath + "/transport.json"
 				}
 				fields := environmentCreateEnv(settings)
-				for key, source := range map[string]string{"PKI_STATE_NAMESPACE": "metadata.namespace", "PKI_STATE_POD_UID": "metadata.uid"} {
-					fields = append(fields, deploymentplan.Object{"name": key, "valueFrom": deploymentplan.Object{"fieldRef": deploymentplan.Object{"fieldPath": source}}})
+				for _, field := range []struct{ key, source string }{{"PKI_STATE_NAMESPACE", "metadata.namespace"}, {"PKI_STATE_POD_UID", "metadata.uid"}} {
+					fields = append(fields, deploymentplan.Object{"name": field.key, "valueFrom": deploymentplan.Object{"fieldRef": deploymentplan.Object{"fieldPath": field.source}}})
 				}
 				container["env"] = mergeEnvironmentNamedFields(container["env"], fields)
 				container["volumeMounts"] = mergeEnvironmentNamedFields(container["volumeMounts"], []any{environmentCreateServiceMount("pki-custody-auth", "/run/pki-custody-auth", true), environmentCreateServiceMount("pki-custody-trust", environmentCustodyTrustPath, true)})

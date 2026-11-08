@@ -204,6 +204,10 @@ func buildEnvironmentCreateBootstrapPlan(ctx context.Context, cfg deploymentConf
 		p.ProductIdentities[i].PolicySHA256 = deploymentplan.Digest(findEnvironmentCreateDomainPolicy(p, "service"))
 		p.Claims = append(p.Claims, p.ProductIdentities[i].Claim)
 	}
+	p.Claims, err = environmentCreateCustodyClaims(cfg, p, p.Claims)
+	if err != nil {
+		return p, err
+	}
 	return p, nil
 }
 

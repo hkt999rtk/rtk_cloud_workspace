@@ -135,3 +135,40 @@ func TestCreateCustodyBindingUsesCompleteMaintainedWorkloadInventory(t *testing.
 		})
 	}
 }
+
+func TestCreateCustodyInventoryAcceptsQualifiedFactsAndRemovesOnlyWorkloadClaims(t *testing.T) {
+	cfg := deploymentConfig{Environment: "dev", Values: map[string]string{"CLOUD_STACK_NAME": "video-cloud-dev", "PKI_STATE_BACKEND": "openbao", "PKI_STATE_KV_MOUNT": "identities", "PKI_STATE_LEASE_DURATION": "30s", "MQTT_FOUNDATION_REGISTRATION_ENABLED": "true"}}
+	products, err := environmentCreateProductIdentityIntent(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	products[0].RootID = "00000000-0000-4000-8000-000000000001"
+	products[0].IssuerID = "00000000-0000-4000-8000-000000000002"
+	products[0].RootSHA256, products[0].PolicySHA256 = strings.Repeat("b", 64), strings.Repeat("c", 64)
+	p := environmentCreateBootstrapPlan{Environment: "dev", Stack: "video-cloud-dev", ProductIdentities: products}
+	binding, err := createEnvironmentCustodyBinding(cfg, p, strings.Repeat("a", 64), "")
+	if err != nil {
+		t.Fatal("qualified public issuance facts changed logical storage inventory", err)
+	}
+	selected := map[string]bool{}
+	for _, owner := range binding.Owners {
+		for _, alias := range owner.StorageAliases {
+			selected[alias] = true
+		}
+	}
+	for _, alias := range []string{"video-cloud-api-pki-trust", "video-cloud-api-app-pki-trust"} {
+		if !selected[alias] {
+			t.Fatal("accepted trust cache left on dedicated PVC", alias)
+		}
+	}
+	claims := []string{"pki-service-bootstrap-state", "openbao-pki-identity", "mqtt-pki-data", "video-cloud-api-pki-trust", "video-cloud-api-pki-controller-identity", "pki-product-mqtt-identity"}
+	retained, err := environmentCreateCustodyClaims(cfg, p, claims)
+	if err != nil || deploymentplan.Digest(retained) != deploymentplan.Digest([]string{"pki-service-bootstrap-state", "openbao-pki-identity", "mqtt-pki-data"}) {
+		t.Fatal("fresh capacity inventory still counted workload identity PVCs or dropped independent/business storage", err)
+	}
+	cfg.Values["PKI_STATE_BACKEND"] = "pvc"
+	retained, err = environmentCreateCustodyClaims(cfg, p, claims)
+	if err != nil || deploymentplan.Digest(retained) != deploymentplan.Digest(claims) {
+		t.Fatal("legacy backend storage inventory changed", err)
+	}
+}

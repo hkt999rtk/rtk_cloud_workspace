@@ -258,11 +258,13 @@ func finalizeEnvironmentCreateApplicationDefinitions(ctx context.Context, cfg de
 				container["volumeMounts"] = mergeEnvironmentNamedFields(container["volumeMounts"], []any{environmentCreateServiceMount("pki-management", "/run/pki-management", true)})
 			}
 			out = append(out, environmentCreateServiceClaimDefinition(cfg, p.Stack+"-video-cloud", claim))
-			preparation, err := environmentCreateApplicationTrustPreparation(p, claim)
-			if err != nil {
-				return nil, err
+			if cfg.Values["PKI_STATE_BACKEND"] != "openbao" {
+				preparation, err := environmentCreateApplicationTrustPreparation(p, claim)
+				if err != nil {
+					return nil, err
+				}
+				out = append(out, preparation)
 			}
-			out = append(out, preparation)
 		}
 		// Shared public Service CRL manifests use this alias of the same enrolled
 		// claim. The alias never changes, exports or regenerates private material.

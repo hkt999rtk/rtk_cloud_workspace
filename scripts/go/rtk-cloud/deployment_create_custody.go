@@ -26,11 +26,27 @@ func createEnvironmentCustodyBinding(cfg deploymentConfig, p environmentCreateBo
 	if p.Environment != cfg.Environment || p.Stack != cfg.Values["CLOUD_STACK_NAME"] || p.Stack != "video-cloud-"+cfg.Environment || !environmentPreflightDigest.MatchString(generation) || managedRoot != "" && !environmentPreflightDigest.MatchString(managedRoot) {
 		return nil, environmentCreateBootstrapBlocker("custody inventory requires its original qualified environment and create generation")
 	}
+	owners, err := environmentCustodyOwners(cfg, p)
+	if err != nil {
+		return nil, err
+	}
+	return &environmentCustodyBinding{Generation: generation, OpenBaoRootSHA256: managedRoot, Owners: owners}, nil
+}
+
+// Logical owner inventory has no allocated generation/identity dependency, so
+// preflight can qualify actual storage demand without fabricating a generation.
+func environmentCustodyOwners(cfg deploymentConfig, p environmentCreateBootstrapPlan) ([]environmentCustodyOwnerBinding, error) {
+	if p.Environment != cfg.Environment || p.Stack != cfg.Values["CLOUD_STACK_NAME"] || p.Stack != "video-cloud-"+cfg.Environment {
+		return nil, environmentCreateBootstrapBlocker("workload storage inventory requires its selected environment intent")
+	}
 	expected, err := environmentCreateProductIdentityIntent(cfg)
 	if err != nil || len(expected) != len(p.ProductIdentities) {
 		return nil, environmentCreateBootstrapBlocker("custody product owners differ from maintained environment intent")
 	}
 	for i, product := range p.ProductIdentities {
+		// Storage purpose comes from intent; issuer allocation/policy facts are
+		// independently bound by the qualified ceremony, not another claim.
+		product.RootID, product.RootSHA256, product.IssuerID, product.PolicySHA256 = "", "", "", ""
 		if product != expected[i] {
 			return nil, environmentCreateBootstrapBlocker("custody product owner differs from its exact maintained identity recipe")
 		}
@@ -63,12 +79,16 @@ func createEnvironmentCustodyBinding(cfg deploymentConfig, p environmentCreateBo
 			return nil, err
 		}
 	}
+	for _, purpose := range []struct{ owner, claim string }{{"video-cloud-api-pki", "video-cloud-api-pki-trust"}, {"video-cloud-api-app-pki", "video-cloud-api-app-pki-trust"}} {
+		if err = add(purpose.owner, p.Stack+"-video-cloud", purpose.owner, purpose.claim); err != nil {
+			return nil, err
+		}
+	}
 	if err = add("mqtt-pki", p.Stack+"-video-cloud", "mqtt-pki", "mqtt-pki-host-identity"); err != nil {
 		return nil, err
 	}
-	productWorkloads := map[string]string{"mqtt": "video-cloud-mqttfoundation", "shadow": "video-cloud-shadowworker", "ota": "video-cloud-otaservice", "video-storage": "video-cloud-videostorage", "webrtc": "video-cloud-webrtcservice", "logger": "video-cloud-logingester"}
 	for _, product := range p.ProductIdentities {
-		workload := productWorkloads[strings.TrimPrefix(product.Subject, "service:")]
+		workload := environmentCustodyProductWorkload(strings.TrimPrefix(product.Subject, "service:"))
 		if workload == "" {
 			return nil, environmentCreateBootstrapBlocker("maintained product identity has no native workload custody owner")
 		}
@@ -76,13 +96,36 @@ func createEnvironmentCustodyBinding(cfg deploymentConfig, p environmentCreateBo
 			return nil, err
 		}
 	}
-	binding := &environmentCustodyBinding{Generation: generation, OpenBaoRootSHA256: managedRoot}
+	var result []environmentCustodyOwnerBinding
 	for _, owner := range owners {
 		slices.Sort(owner.StorageAliases)
-		binding.Owners = append(binding.Owners, owner)
+		result = append(result, owner)
 	}
-	slices.SortFunc(binding.Owners, func(a, b environmentCustodyOwnerBinding) int { return strings.Compare(a.ID, b.ID) })
-	return binding, nil
+	slices.SortFunc(result, func(a, b environmentCustodyOwnerBinding) int { return strings.Compare(a.ID, b.ID) })
+	return result, nil
+}
+
+func environmentCreateCustodyClaims(cfg deploymentConfig, p environmentCreateBootstrapPlan, claims []string) ([]string, error) {
+	if cfg.Values["PKI_STATE_BACKEND"] != "openbao" {
+		return claims, nil
+	}
+	owners, err := environmentCustodyOwners(cfg, p)
+	if err != nil {
+		return nil, err
+	}
+	remote := map[string]bool{}
+	for _, owner := range owners {
+		for _, alias := range owner.StorageAliases {
+			remote[alias] = true
+		}
+	}
+	var retained []string
+	for _, claim := range claims {
+		if !remote[claim] {
+			retained = append(retained, claim)
+		}
+	}
+	return retained, nil
 }
 
 // This is configuration reconciliation under admitted creation ownership, not
@@ -244,5 +287,32 @@ func verifyEnvironmentCustodyConfiguration(raw []byte, cfg deploymentConfig, bin
 	if decoder.Decode(&extra) != io.EOF {
 		return fmt.Errorf("unexpected custody configuration output")
 	}
+	return nil
+}
+
+// Completion records public custody references from the actual activated native
+// lineage. Observation of Pod/PVC shapes cannot invent these authority facts.
+func applyEnvironmentCreateCustodyBindings(cfg deploymentConfig, p environmentCreateBootstrapPlan, runtime environmentCreateBootstrapRuntime, serviceRoot, openBaoRoot environmentCreateRegisteredIssuer, bindings *environmentIdentityBindings) error {
+	if cfg.Values["PKI_STATE_BACKEND"] != "openbao" {
+		return nil
+	}
+	if bindings == nil || bindings.Environment != cfg.Environment || bindings.Stack != p.Stack || runtime.Custody == nil || runtime.Custody.Generation != runtime.ExecutionSHA256 {
+		return environmentCreateBootstrapBlocker("completed custody requires its original initialized generation and bindings")
+	}
+	for domain, root := range map[string]environmentCreateRegisteredIssuer{"service": serviceRoot, "openbao_tls": openBaoRoot} {
+		cert, err := parseFirstCertificatePEM([]byte(root.Certificate))
+		if err != nil || root.Environment != cfg.Environment || root.Domain != domain || root.Kind != "root" || root.Status != "active" || !environmentBootstrapOwnerUUID.MatchString(root.ID) || cert.CheckSignatureFrom(cert) != nil || !cert.IsCA || environmentPreflightBytesSHA256(cert.Raw) != root.RootFingerprint {
+			return environmentCreateBootstrapBlocker("completed custody authority differs from its actual activated original lineage")
+		}
+	}
+	binding, err := createEnvironmentCustodyBinding(cfg, p, runtime.ExecutionSHA256, openBaoRoot.RootFingerprint)
+	if err != nil {
+		return err
+	}
+	if deploymentplan.Digest(binding.Owners) != deploymentplan.Digest(runtime.Custody.Owners) || runtime.Custody.OpenBaoRootSHA256 != "" && runtime.Custody.OpenBaoRootSHA256 != openBaoRoot.RootFingerprint || runtime.Custody.ServiceRootSHA256 != "" && runtime.Custody.ServiceRootSHA256 != serviceRoot.RootFingerprint {
+		return environmentCreateBootstrapBlocker("completed custody cannot substitute its initialized owner or authority scope")
+	}
+	binding.ServiceRootSHA256 = serviceRoot.RootFingerprint
+	bindings.Custody = binding
 	return nil
 }

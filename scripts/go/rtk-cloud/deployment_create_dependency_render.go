@@ -59,8 +59,12 @@ func environmentCreateDependencyOutputs(cfg deploymentConfig, p environmentCreat
 	for i, output := range p.ProductIdentities {
 		base := output
 		base.RootID, base.RootSHA256, base.IssuerID, base.PolicySHA256 = "", "", "", ""
-		if deploymentplan.Digest(base) != deploymentplan.Digest(products[i]) || output.RootID != "" || output.RootSHA256 != "" || output.IssuerID != "" || output.PolicySHA256 != deploymentplan.Digest(findEnvironmentCreateDomainPolicy(p, "service")) || !slices.Contains(p.Claims, output.Claim) {
-			return nil, environmentCreateBootstrapBlocker("fresh product output must bind its exact subject, claim and qualified Service policy without a fabricated issuer")
+		claimDeclared := slices.Contains(p.Claims, output.Claim)
+		if cfg.Values["PKI_STATE_BACKEND"] == "openbao" {
+			claimDeclared = !claimDeclared
+		}
+		if deploymentplan.Digest(base) != deploymentplan.Digest(products[i]) || output.RootID != "" || output.RootSHA256 != "" || output.IssuerID != "" || output.PolicySHA256 != deploymentplan.Digest(findEnvironmentCreateDomainPolicy(p, "service")) || !claimDeclared {
+			return nil, environmentCreateBootstrapBlocker("fresh product output must bind its exact subject, selected storage backend and qualified Service policy without a fabricated issuer")
 		}
 		intent.outputs[output.ID] = deploymentplan.Digest(output)
 	}

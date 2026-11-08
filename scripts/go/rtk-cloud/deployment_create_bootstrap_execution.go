@@ -54,6 +54,10 @@ func executeEnvironmentCreateBootstrap(ctx context.Context, cfg deploymentConfig
 		return empty, err
 	}
 	runtime.ServiceCeremony = &service
+	if runtime.Custody != nil {
+		runtime.Custody.ServiceRootSHA256 = service.Root.RootFingerprint
+	}
+	ctx = withEnvironmentCreateBootstrapRuntime(ctx, runtime)
 	return completeEnvironmentCreateBootstrap(ctx, cfg, plan, release, store, operator, runtime, service, apply)
 }
 

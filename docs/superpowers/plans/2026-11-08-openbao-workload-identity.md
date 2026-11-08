@@ -642,3 +642,64 @@ No real environment config/identity/data changed, no cloud resources removed,
 no current-feature PR/CI/release/preflight GO/deployment yet. Do not delete cloud
 until complete isolated acceptance. Existing root/native feature worktree only;
 primary checkout remains untouched.
+
+
+Root registration/rendering checkpoint: workload_custody now includes optional
+service_root_sha256. Original Service ceremony populates that fact/context after
+core enrollment; shared registration projection adds each maintained product's
+original /var/lib/pki-service/private/client.json purpose, same bound workload
+scope and public Service trust ConfigMap mount before normal custody projection.
+Product workload names use a shared mapping with owner inventory. Existing env,
+UID/GID and unrelated state are preserved; rerender is idempotent. Actual final
+native completion attaches original Service/OpenBao Root references to bindings
+before normal renderer use (including re-observation branch). Completion cannot
+substitute the initialized generation/owners or a foreign/unactivated authority.
+
+Found and fixed a deterministic-plan defect: custody downward env fields were
+appended by map iteration, yielding different equal-input resource hashes and
+sporadic frozen-stage mismatch. Existing frozen handoff test observed RED for
+staging; use fixed field order. Added 32 fresh-from-source renders per environment,
+not merely reapplying an already ordered result. New public fields keep legacy
+JSON unchanged when absent.
+
+Inventory/preflight correction: logical owner inventory is now independent of
+allocated generation. It ignores separately qualified issuer/policy allocation
+metadata when comparing storage intent (the old compare would reject actual
+qualified product records), while retaining exact subject/claim/service/instance
+checks. Device/App trust-cache PVC aliases now join their native API scope. Fresh
+openbao recipe removes workload identity/cache names from Bootstrap.Claims;
+independent bootstrap state, OpenBao cold-start identity and MQTT business data
+remain (3 entries in that PKI recipe, NOT 3 total environment PVCs). Skip the
+separate cross-Pod cache-chown Job for temporary cache volumes; per-Pod native
+initializers remain. Dependency qualification recognizes the chosen KV producer
+without demanding the excluded physical claim. No preflight generation/key/state
+allocation was added.
+
+RED observed for registration Root binding/workload mapper, completion adapter,
+claim selector and full remote dependency contract. GREEN full relevant root
+custody/inventory/steady renderer/dependency tests31.994s in
+custody-registration-preflight-final.log. That includes actual full dependency
+catalog with all five fixture product producers and remote bootstrap plan; no
+kubeconfig/custody/material allocation is produced. Earlier renderer31? final
+inventory suite19.291s; registration/steady bindings suite10.078s. These are isolated
+component/contract tests, not complete cloud bootstrap or real whole environment.
+
+Native registration validators now match selected backend: remote profiles do
+not demand unused PEM files and still validate complete custody; legacy profiles
+keep file requirements. New profile table observed RED for mqtt/shadow/optional/
+OTA registrar, then full -race config1.524s/runtime1.541s/serviceregistration1.935s/
+optional1.647s/shadow1.512s/logingester1.556s PASS (foundation/registrar compile only).
+Native managed registration uses the declared public Service trust projection,
+not stale private-delivery mirror CA. Added config-map documentation and safe
+pvc-default example fields; no real environment override changed.
+
+NEXT highest priority: typed KV proof/receipts/inspection in actual creation and
+normal health/preflight; current product receipt still asserts physical ClaimUID
+and reads raw file/mirror. Do not fake a UID. Runtime no longer reads the PEM key
+mirror, but existing bootstrap mirror publication remains compatible until the
+new typed adapter resolves that lifecycle. Root stage context now covers products
+with declared workload name even before adding their identity mount. TLS prepared/
+managed-only publication and installed-snapshot barrier still missing; complete
+isolated full create/renewal/recovery/backup acceptance and final review/CI/release
+remain mandatory before real dev then staging removal/create/health. No real
+cloud writes, no feature GO/PR/CI/release/deployment and no backend activation yet.

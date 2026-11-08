@@ -131,7 +131,7 @@ func validateEnvironmentIdentityBindings(b environmentIdentityBindings, environm
 		return errors.New("deployment.bindings: fresh product lifecycle reference is invalid")
 	}
 	if b.Custody != nil {
-		if !environmentPreflightDigest.MatchString(b.Custody.Generation) || !environmentPreflightDigest.MatchString(b.Custody.OpenBaoRootSHA256) || len(b.Custody.Owners) == 0 {
+		if b.Custody.ServiceRootSHA256 != "" && !environmentPreflightDigest.MatchString(b.Custody.ServiceRootSHA256) || !environmentPreflightDigest.MatchString(b.Custody.Generation) || !environmentPreflightDigest.MatchString(b.Custody.OpenBaoRootSHA256) || len(b.Custody.Owners) == 0 {
 			return errors.New("deployment.bindings: original workload custody generation and OpenBao authority are required")
 		}
 		owners := map[string]bool{}
