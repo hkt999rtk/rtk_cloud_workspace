@@ -1824,6 +1824,15 @@ Pod UIDs or mutable KV versions. Runtime containers consume projected tokens fro
 `/run/pki-custody-auth/` and public TLS evidence from `/run/pki-custody-openbao/`;
 only the original bound PKI file projections use memory-backed temporary volumes.
 
+During admitted creation, the custody initializer produces immutable non-secret
+scope metadata at
+`~/.config/rtk_cloud/<environment>/deployment/create/<generation>/custody/owners.json`
+(0700 directory, 0600 file). The initializer and original-generation recovery
+consume it and the execution journal to preserve exact mount, workload aliases
+and role scope. OpenBao configuration batches consume the existing selected
+operator token through stdin; they never put it in command arguments, settings,
+scope metadata or public evidence. Preflight does not execute this initializer.
+
 All local operation directories are 0700, files 0600. The common environment
 path helpers own these locations. Matching OpenBao/registry backup and restore
 remain part of validating the newly created generation, without adding an old

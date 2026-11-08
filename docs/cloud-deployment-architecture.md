@@ -3191,6 +3191,10 @@ the resolver validates and preserves those values rather than rewriting intent.
 
 The original `workload_custody` binding records the generation, managed OpenBao
 Root fingerprint and each logical storage owner's namespace/service account.
+Maintained storage aliases group multiple credential purposes within one
+workload: MQTT host/broker state share its workload scope; Log Ingester's internal
+and registration credentials also share a scope while retaining independent
+state-path hashes. A legacy PVC name is not itself a new cloud identity.
 Shared rendering derives the same KV record prefix and per-state Lease for
 enrollment Jobs and runtime containers. Only explicitly bound PKI storage
 becomes a memory-backed `emptyDir`; business claims and OpenBao's independent
@@ -3204,6 +3208,14 @@ state path's rights. Lease declarations contain no `spec`, so replay cannot
 clear a native writer's holder. Cross-namespace OpenBao access adds only the
 selected custody Pod ingress; it does not introduce an Egress policy that would
 isolate existing database, DNS or Kubernetes API connections.
+
+Admitted creation establishes a CAS-required KV v2 mount and generation/workload
+policies before SQL migration and native enrollment. Provider configuration is
+batched inside the checked OpenBao Pod, with actual mount/ACL/role readback before
+completion is recorded. A lost configuration response is reconciled by readback;
+completed scopes are reused read-only. This initializes configuration, not leaf
+keys or certificates. The original scope metadata is recorded at
+`~/.config/rtk_cloud/<environment>/deployment/create/<generation>/custody/owners.json`.
 
 Native identity stores synchronously persist pending CSR state and verified
 credential changes through versioned compare-and-set, with fenced single-writer

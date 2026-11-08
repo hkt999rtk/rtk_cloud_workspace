@@ -316,3 +316,68 @@ Complete prepared + managed-only snapshot publication/distribution/readback at
 OpenBao listener TLS handoff. Only then enable dev/staging OpenBao overrides,
 prove full isolated creation/recovery/renewal/restart, review/CI/release and perform
 formal dev remove/archive/create preflight GO/deploy/health, then staging.
+
+2026-11-09 custody initializer checkpoint: implemented createEnvironmentCustodyBinding
+and configureEnvironmentCreateCustody in deployment_create_custody.go; connected
+at continueEnvironmentCreateAfterOpenBao AFTER public trust publication and BEFORE
+SQL migration/native managed enrollment. Runtime.Custody carries the original
+binding. All enabled maintained products + core/application/MQTT inventory produces
+14 logical workload owners when all six product flags are enabled. OpenBao own
+cold-start identity/business storage are excluded. Environment settings and
+qualified product recipes are not mutated; altered product claim mappings reject.
+
+Ruling: group durable scope by WORKLOAD, not one prefix per legacy claim. StorageAliases
+now map maintained storage purposes into the same owner: MQTT host/broker and
+Log Ingester internal/registration credentials have separate path hashes under
+one workload prefix. This supports multiple identity purposes inside the same
+native process, which has one IdentityCustody configuration. Source recipes and
+physical identity paths stay unchanged. Existing projection fixtures without
+explicit aliases retain their single logical-storage mapping. Binding validation
+rejects conflicting/foreign aliases; no OpenBao root claim may enter KV custody.
+
+Initializer uses original operator token through stdin, not command arguments.
+It establishes selected KV v2 + cas_required, exact generation/workload ACLs and
+namespace-bound Kube roles in one checked OpenBao-Pod CLI batch, retaining the
+existing native bounded auth profile. It never writes KV identity data/generates
+keys. Original scope metadata is immutable canonical
+ deployment/create/<generation>/custody/owners.json; one durable journal intent
+and verified receipt. Pending same-scope config can reconcile idempotently; lost
+response resolves by exact readback; completed scope reuses read-only. Wrong mount
+type, widened/missing readback, duplicate/drifted original intent block completion.
+No unseal/identity reset or unrelated mount replacement.
+
+Verification: inventory/grouping/projection and scope pending/lost-response/read-only/
+wrong-type/drift tests GREEN. REAL pinned OpenBao CLI fixture (network=none, synthetic
+HTTP dev server) passes all production CLI commands, actual CAS rejection including
+root caller, scoped token own-prefix write and foreign-environment HTTP403 denial.
+It enters actual continueEnvironmentCreateAfterOpenBao, publishes original public
+trust, initializes custody, then intentionally stops at missing migration recipe;
+returned runtime has original Custody binding. This proves dependency boundary,
+not a full environment create. Native prior fixture separately proves real TLS,
+durable provider restart, Kubernetes TokenReview and renewal. Final all TestCustody,
+TestCreateCustody, TestCreateOpenBaoCompletedRole, TestCommonEnvironmentRenderer
+(including actual kind SSA/RBAC) GREEN 90.665s: custody-initialization-final.log.
+Fixture setup initially missed PATH override and then required a valid CA file
+for the CLI even with synthetic HTTP; corrected only test fixture, production TLS
+remains strict. All test provider containers cleaned; base kind/Postgres retained.
+
+NEXT: connect shared projection into formal create/recovery STAGE definitions
+(applyEnvironmentCreateStage in deployment_create_kubernetes.go), reading original
+scope/public transport evidence and preserving original generation; publish final
+workload_custody binding only after genuine completed native state. Adapt native
+inspection/receipts to KV references (NEVER invent PVC ClaimUIDs). Finish independent
+CRL/trust anti-rollback KV stores and OpenBao prepared/managed-only snapshot handoff
+with real installed projection barrier. Native server export/public-profile file-only
+paths need adaptation. Product registration callers currently use static PEM transport
+(serviceregistration/transport.go and optionalserviceapp, mqttfoundationapp,
+shadowworkerapp, logingesterapp, otaregistrarapp); validate/adapt their cold restore
+and renewal to authoritative KV rather than assume core-client wiring covers them.
+Product enrollment currently exports client material into runtime Secrets and retires
+the enrollment owner; preserve only permitted non-authoritative short-lived mirrors,
+not init-only custody. Full matched-state backup/restore with newer committed renewal
+and whole new-backend creation/recovery remain unproved. Do NOT claim full lifecycle
+from these component tests or remove cloud yet. Dev/staging OpenBao overrides remain
+unactivated, no current-feature CI/PR/preflight GO/live teardown/deployment. Finish
+all required flow tests, review/CI/release, then scripted dev removal/archive/new
+create preflight GO/deploy/health, then staging. Do not rerun unchanged verified
+initializer components merely to produce more green output.

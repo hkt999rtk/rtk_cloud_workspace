@@ -5,18 +5,20 @@ import (
 	"encoding/hex"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 )
 
-// Storage IDs retain the logical identity name; they no longer allocate a PVC.
-// These are original generation facts, not operator credentials or KV versions.
+// IDs bind workload custody; aliases name maintained file-storage purposes that
+// become temporary projections. Neither field is a Pod UID or mutable KV version.
 type environmentCustodyOwnerBinding struct {
-	ID             string `json:"id"`
-	Namespace      string `json:"namespace"`
-	ServiceAccount string `json:"service_account"`
+	ID             string   `json:"id"`
+	Namespace      string   `json:"namespace"`
+	ServiceAccount string   `json:"service_account"`
+	StorageAliases []string `json:"storage_aliases,omitempty"`
 }
 
 type environmentCustodyBinding struct {
@@ -64,7 +66,21 @@ func projectEnvironmentCustodyResources(values map[string]string, environment st
 		if _, exists := byPrefix[prefix]; exists {
 			return nil, environmentCreateBootstrapBlocker("duplicate durable custody owner is ambiguous")
 		}
-		byPrefix[prefix], byClaim[owner.Namespace+"/"+owner.ID] = owner, owner
+		byPrefix[prefix] = owner
+		aliases := owner.StorageAliases
+		if len(aliases) == 0 {
+			aliases = []string{owner.ID}
+		}
+		for _, alias := range aliases {
+			if !secretEnvironmentPattern.MatchString(alias) || alias == "openbao-pki-identity" {
+				return nil, environmentCreateBootstrapBlocker("custody storage alias must name its original workload state")
+			}
+			key := owner.Namespace + "/" + alias
+			if previous, exists := byClaim[key]; exists && previous.ID != owner.ID {
+				return nil, environmentCreateBootstrapBlocker("custody storage alias selects multiple workload owners")
+			}
+			byClaim[key] = owner
+		}
 	}
 	var result []deploymentplan.Definition
 	dependencies := map[string]deploymentplan.Object{}
@@ -156,7 +172,7 @@ func projectEnvironmentCustodyResources(values map[string]string, environment st
 					if !filepath.IsAbs(path) || filepath.Clean(path) != path {
 						return nil, environmentCreateBootstrapBlocker("native custody identity path must remain its original absolute logical path")
 					}
-					if owner != nil && *owner != selected {
+					if owner != nil && !sameEnvironmentCustodyOwner(*owner, selected) {
 						return nil, environmentCreateBootstrapBlocker("one native identity configuration cannot select two durable workload owners")
 					}
 					copy := selected
@@ -252,7 +268,7 @@ func environmentCustodyPolicy(values map[string]string, environment string, bind
 	}
 	bound := false
 	for _, original := range binding.Owners {
-		if original == owner {
+		if sameEnvironmentCustodyOwner(original, owner) {
 			bound = true
 		}
 	}
@@ -260,4 +276,8 @@ func environmentCustodyPolicy(values map[string]string, environment string, bind
 		return "", environmentCreateBootstrapBlocker("native custody policy cannot authorize an owner outside its selected original generation")
 	}
 	return fmt.Sprintf("path %q { capabilities = [\"create\", \"read\", \"update\"] }\n", values["PKI_STATE_KV_MOUNT"]+"/data/"+environment+"/"+binding.Generation+"/"+owner.ID+"/*"), nil
+}
+
+func sameEnvironmentCustodyOwner(a, b environmentCustodyOwnerBinding) bool {
+	return a.ID == b.ID && a.Namespace == b.Namespace && a.ServiceAccount == b.ServiceAccount && slices.Equal(a.StorageAliases, b.StorageAliases)
 }

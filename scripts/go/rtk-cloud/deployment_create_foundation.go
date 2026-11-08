@@ -321,6 +321,14 @@ func continueEnvironmentCreateAfterOpenBao(ctx context.Context, cfg deploymentCo
 	if err := publishEnvironmentCreateCustodyTrust(ctx, cfg, runtime, nil, false, apply); err != nil {
 		return runtime, stop, err
 	}
+	custody, err := createEnvironmentCustodyBinding(cfg, plan.Bootstrap, runtime.ExecutionSHA256, "")
+	if err != nil {
+		return runtime, stop, err
+	}
+	if err := configureEnvironmentCreateCustody(ctx, cfg, runtime, custody); err != nil {
+		return runtime, stop, err
+	}
+	runtime.Custody = custody
 	migrations, err := renderEnvironmentCreatePKIPhase(ctx, cfg, plan.Bootstrap, "migrate")
 	if err != nil {
 		return runtime, stop, err

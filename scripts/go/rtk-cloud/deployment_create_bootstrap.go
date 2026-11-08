@@ -72,6 +72,7 @@ type environmentCreateBootstrapRuntime struct {
 	TransportRootSHA256                 string
 	TransportCAPEM                      string
 	OpenBao                             environmentCreateOpenBaoBootstrap
+	Custody                             *environmentCustodyBinding
 	Execution                           *environmentCreateExecution
 	PKIClient                           *environmentCreatePKIClient
 	ServiceCeremony                     *environmentCreateServiceCeremony

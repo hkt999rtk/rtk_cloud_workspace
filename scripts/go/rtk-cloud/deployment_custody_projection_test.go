@@ -212,3 +212,34 @@ func TestCustodyProjectionNativeLeaseWireName(t *testing.T) {
 		t.Fatal("deployment Lease name differs from the native IdentityCustody wire contract")
 	}
 }
+
+func TestCustodyProjectionKeepsMultipleIdentityPurposesWithinOneWorkload(t *testing.T) {
+	values := map[string]string{"CLOUD_STACK_NAME": "video-cloud-dev", "PKI_STATE_BACKEND": "openbao", "PKI_STATE_KV_MOUNT": "identities", "PKI_STATE_LEASE_DURATION": "30s"}
+	binding := &environmentCustodyBinding{Generation: strings.Repeat("a", 64), OpenBaoRootSHA256: strings.Repeat("b", 64), Owners: []environmentCustodyOwnerBinding{{ID: "logingester", Namespace: "video-cloud-dev-video-cloud", ServiceAccount: "video-cloud-logingester", StorageAliases: []string{"video-cloud-logingester-service-state", "pki-product-logger-identity"}}}}
+	container := deploymentplan.Object{"name": "app", "env": environmentCreateEnv(map[string]string{"LOG_IDENTITY_STATE": "/log/private/client.json", "REGISTRATION_IDENTITY_STATE": "/registration/private/client.json"}), "volumeMounts": []any{environmentCreateServiceMount("log", "/log", false), environmentCreateServiceMount("registration", "/registration", false)}}
+	object := deploymentplan.Object{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": deploymentplan.Object{"name": "logingester", "namespace": "video-cloud-dev-video-cloud"}, "spec": deploymentplan.Object{"template": deploymentplan.Object{"spec": deploymentplan.Object{"containers": []any{container}, "volumes": []any{environmentCreateServiceVolume("log", "persistentVolumeClaim", "video-cloud-logingester-service-state"), environmentCreateServiceVolume("registration", "persistentVolumeClaim", "pki-product-logger-identity")}}}}}
+	definitions, err := projectEnvironmentCustodyResources(values, "dev", binding, "", []deploymentplan.Definition{{Object: object}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	leases := map[string]bool{}
+	for _, d := range definitions {
+		if d.Object["kind"] == "Lease" {
+			leases[deploymentplan.ID(d.Object)] = true
+		}
+		if d.Object["kind"] == "Deployment" {
+			c := deploymentplan.Map(certIssuerObjectList(environmentPKIPod(d.Object)["containers"])[0])
+			if mqttFoundationEnv(c, "PKI_STATE_RECORD_PREFIX") != "dev/"+binding.Generation+"/logingester" {
+				t.Fatal("separate credential purposes selected another workload")
+			}
+			for _, volume := range certIssuerObjectList(environmentPKIPod(d.Object)["volumes"]) {
+				if deploymentplan.Map(volume)["persistentVolumeClaim"] != nil {
+					t.Fatal("private purpose still requires a separate persistent claim")
+				}
+			}
+		}
+	}
+	if len(leases) != 2 {
+		t.Fatal("independent native identity paths collapsed into the same fencing resource")
+	}
+}
