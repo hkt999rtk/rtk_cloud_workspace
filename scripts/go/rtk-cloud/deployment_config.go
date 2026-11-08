@@ -152,6 +152,9 @@ func architectureKeySet() map[string]bool {
 		out["PKI_REQUIRED_CONSUMERS_"+strings.ToUpper(domain)] = true
 		out["PKI_REQUIRED_BUNDLE_CONSUMERS_"+strings.ToUpper(domain)] = true
 	}
+	for _, key := range environmentMQTTRoles {
+		out[key] = true
+	}
 	return out
 }
 
@@ -1209,6 +1212,9 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 		return deploymentConfig{}, err
 	}
 	if err := validateMQTTFoundationConfiguration(values); err != nil {
+		return deploymentConfig{}, err
+	}
+	if err := validateEnvironmentMQTTRoles(values); err != nil {
 		return deploymentConfig{}, err
 	}
 	if err := validateEnvironmentAuthConfiguration(values); err != nil {

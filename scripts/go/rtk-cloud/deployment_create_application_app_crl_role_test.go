@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -86,6 +87,17 @@ func TestCreateFinalPKIRolesPassActualNativeAPIValidation(t *testing.T) {
 	for _, name := range []string{"video-cloud-api-pki", "video-cloud-api-app-pki"} {
 		object := createRecipeObject(t, final, "Deployment/"+p.Stack+"-video-cloud/"+name)
 		cases[name] = createRecipeEnv(managedNamedField(environmentPKIPod(object)["containers"], "app"))
+		retained := deploymentplan.Clone(object)
+		pod := environmentPKIPod(retained)
+		container := managedNamedField(pod["containers"], "app")
+		pod["volumes"] = mergeEnvironmentNamedFields(pod["volumes"], []any{environmentCreateServiceVolume("mqtt-pki-bundles", "configMap", "original-mqtt-trust")})
+		container["volumeMounts"] = mergeEnvironmentNamedFields(container["volumeMounts"], []any{environmentCreateServiceMount("mqtt-pki-bundles", "/original/mqtt", true)})
+		container["env"] = mergeEnvironmentNamedFields(container["env"], environmentCreateEnv(map[string]string{"VIDEO_CLOUD_MQTT_SERVER_PKI_NAME": "mqtt-pki." + p.Stack + "-video-cloud.svc", "VIDEO_CLOUD_MQTT_SERVER_PKI_ROOT_SHA256": strings.Repeat("a", 64)}))
+		cases["broken/"+name] = createRecipeEnv(container)
+		if err := applyEnvironmentMQTTRole(cfg.Values, retained); err != nil {
+			t.Fatal(err)
+		}
+		cases["retained/"+name] = createRecipeEnv(container)
 	}
 	dir := t.TempDir()
 	fixture := filepath.Join(dir, "public-role-settings.json")
@@ -134,7 +146,7 @@ import (
 func TestDeploymentRenderedPKIRoleAPIValidation(t *testing.T) {
  raw, err := os.ReadFile(os.Getenv("RTK_DEPLOYMENT_PKI_ROLE_FIXTURE"))
  var cases map[string]map[string]string
- if err != nil || json.Unmarshal(raw, &cases) != nil || len(cases) != 2 { t.Fatal("isolated native role fixture unavailable") }
+ if err != nil || json.Unmarshal(raw, &cases) != nil || len(cases) != 6 { t.Fatal("isolated native role fixture unavailable") }
  for name, fields := range cases {
   t.Run(name, func(t *testing.T) {
    for key, value := range fields { t.Setenv(key, value) }
@@ -142,7 +154,12 @@ func TestDeploymentRenderedPKIRoleAPIValidation(t *testing.T) {
    // isolated existing-runtime broker key needed by the Device callback.
    t.Setenv("VIDEO_CLOUD_MQTT_BROKER_AUTH_KEY", "isolated-renderer-runtime-broker-key")
    cfg := Load()
-   app := name == "video-cloud-api-app-pki"
+   app := strings.HasSuffix(name, "video-cloud-api-app-pki")
+   if strings.HasPrefix(name,"broken/") {
+    if err := cfg.ValidateAPI(); err == nil || !strings.Contains(err.Error(),"MQTT server PKI requires TLS") { t.Fatal("retained partial trust did not reproduce actual native startup refusal",err) }
+    return
+   }
+   if strings.HasPrefix(name,"retained/") && cfg.MQTT.Enabled { t.Fatal("transport completion enabled the environment-disabled client") }
    if cfg.Auth.ProductPKIRequireCRLs == app || cfg.Auth.ProductPKIEnabled == app || cfg.Auth.AppPKIEnabled != app || !cfg.Auth.MTLSRequired || cfg.Auth.CRLManifest == "" { t.Fatal("renderer lost the exact selected incoming PKI/CRL role") }
    if err := cfg.ValidateAPI(); err != nil { t.Fatal("actual config.Load/ValidateAPI refused finalized incoming trust", err) }
    if app {

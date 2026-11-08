@@ -351,6 +351,11 @@ func renderEnvironmentResourceCatalog(env map[string]string, bindings environmen
 	if err := bindEnvironmentNewStorageClasses(definitions, env["DURABLE_DATA_STORAGE_CLASS"], bindings.Owners); err != nil {
 		return nil, err
 	}
+	for _, definition := range definitions {
+		if err := applyEnvironmentMQTTRole(env, definition.Object); err != nil {
+			return nil, err
+		}
+	}
 	if err := deriveEnvironmentCoreMQTTTransport(env, definitions); err != nil {
 		return nil, err
 	}

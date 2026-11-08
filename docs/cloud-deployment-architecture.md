@@ -1007,6 +1007,43 @@ invalid or ambiguous mounts, rejected manual settings and unbound optional domai
 
 ### MQTT Foundation registration
 
+MQTT client roles are explicit inputs in the architecture selected by the
+environment, with optional `cloud_env/<environment>/overrides/architecture.env`
+overrides. Create finalization and upgrade use the same
+`applyEnvironmentMQTTRole` projection, before deriving consumer trust bindings:
+
+| Environment setting | Process | Maintained value |
+| --- | --- | --- |
+| `CORE_API_MQTT_ENABLED` | `video-cloud-api` | `true` |
+| `DEVICE_API_MQTT_ENABLED` | `video-cloud-api-pki` | `false` |
+| `APP_API_MQTT_ENABLED` | `video-cloud-api-app-pki` | `false` |
+| `MQTT_FOUNDATION_MQTT_ENABLED` | `video-cloud-mqttfoundation` | `true` |
+| `SHADOW_WORKER_MQTT_ENABLED` | `video-cloud-shadowworker` | `true` |
+
+Each maps to that process's `VIDEO_CLOUD_MQTT_ENABLED`. These are client roles,
+not a switch to remove the MQTT broker. The Device API's broker authentication
+callback remains independent of its MQTT client. Missing or invalid settings
+are errors; neither operation infers policy from a template default or live
+workload. Resolved values are included in the plan input digest. An override
+does not authorize identity/trust migration: the normal transition checks still
+apply. Temporary enrollment commands establish identities, then finalization
+applies the same runtime intent used by upgrade.
+
+Root fingerprints, issuer IDs, original Secret/PVC references and Kubernetes
+UIDs remain verified facts from the selected environment's canonical deployment
+store and live resources. They are not editable runtime-policy defaults, and
+the role projection does not change them.
+
+A disabled MQTT client may retain its original server Root/DNS binding. The native
+API still validates that declared trust profile even when no MQTT connection is
+started. Create and upgrade therefore retain those original bindings and mounts,
+project TLS enabled plus the CA filename derived from the original read-only
+`mqtt-pki-bundles` item mapping, and keep `VIDEO_CLOUD_MQTT_ENABLED=false`. This
+is transport completion, not client activation or a change to environment intent.
+Candidate preflight validates the same projection, including disabled clients;
+missing/ambiguous public trust mounts or incomplete TLS profiles fail before
+rollout. Original offline/runtime identity and public trust data are not replaced.
+
 Every environment uses shared `MQTT_FOUNDATION_REGISTRATION_ENABLED=true`,
 `ACCOUNT_MANAGER_SERVICE_REGISTRATION_ENABLED=true`, and
 `ACCOUNT_MANAGER_SERVICE_REGISTRATION_PORT=9444` from `architecture.env`.

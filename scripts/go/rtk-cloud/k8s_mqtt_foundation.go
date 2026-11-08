@@ -138,7 +138,7 @@ spec:
             - name: VIDEO_CLOUD_DB_DSN
               value: "postgres://postgres:$(POSTGRES_PASSWORD)@postgresql.%s.svc.cluster.local:5432/video_cloud?sslmode=disable"
             - name: VIDEO_CLOUD_MQTT_ENABLED
-              value: "true"
+              value: %q
             - name: VIDEO_CLOUD_MQTT_ADDR
               value: %q
             - name: VIDEO_CLOUD_MQTT_USERNAME
@@ -189,6 +189,7 @@ spec:
 		lkeEnvValue(env, "LKE_VIDEO_CLOUD_IMAGE"),
 		firstNonEmpty(env["CLOUD_ENV_NAME"], os.Getenv("ACCOUNT_MANAGER_ENV"), env["ACCOUNT_MANAGER_ENV"], "staging"),
 		lkeNamespaceName(env, "platform"),
+		env["MQTT_FOUNDATION_MQTT_ENABLED"],
 		lkeMQTTInternalAddr(env),
 		strconv.FormatBool(lkeMQTTTenantNamespaceEnabled(env)),
 		mqttFoundationInstanceID,

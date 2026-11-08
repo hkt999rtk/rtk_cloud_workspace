@@ -163,6 +163,9 @@ func renderManagedEnvironmentAPI(env map[string]string, binding environmentPodBi
 		}
 		pod["initContainers"] = []any{map[string]any{"name": "initialize-app-trust-state", "command": []any{"/bin/sh", "-ec", trustInitialize}, "volumeMounts": []any{map[string]any{"name": "pki-state", "mountPath": "/run/pki-state"}, map[string]any{"name": "pki-app", "mountPath": "/run/pki-app", "readOnly": true}}}}
 	}
+	if err := applyEnvironmentMQTTRole(env, object); err != nil {
+		return nil, err
+	}
 	if err := applyEnvironmentAuthRole(env, object); err != nil {
 		return nil, err
 	}
