@@ -381,3 +381,57 @@ unactivated, no current-feature CI/PR/preflight GO/live teardown/deployment. Fin
 all required flow tests, review/CI/release, then scripted dev removal/archive/new
 create preflight GO/deploy/health, then staging. Do not rerun unchanged verified
 initializer components merely to produce more green output.
+
+Public-cache checkpoint: native PublicStateCustody implemented in
+internal/pkitrust/public_state_custody.go. Records use scoped
+<prefix>/public/<sha256(original-native-path)>, schema rtk.pki-public-state/v1,
+kind + environment/domain/authority binding, versioned KV CAS and exact native
+state_json. Explicit Create flag only; runtime missing state fails, not empty.
+Native file transition algorithms run in an isolated 0700 candidate directory
+inside the workload-owned projection directory. Commit authoritative KV BEFORE
+atomic projection. This reuses signature/metadata checks, expiry repair,
+revocation retention, Root cumulative distrust and terminal Device denial;
+it is NOT blind filesystem mirroring. Target projection advisory lock serializes
+publishers; CAS conflict re-reads/revalidates rather than blindly overwriting;
+lost response accepts only exact next version and payload. Native projection
+also rejects regression against already installed local evidence. HTTP outage
+leaves prior installed valid evidence intact, rejects new nondurable changes.
+
+CRLConsumerConfig and ConsumerConfig now accept optional Custody pointers;
+normal sync uses remote persistence before runtime installation/ACK. New
+CRLConsumer.PrepareLocal restores KV evidence before normal freshness/install
+checks; RegistryServerConsumer.PrepareLocal delegates to it. Root Consumer
+PrepareLocal similarly restores durable evidence independently of Controller.
+Legacy nil-Custody behavior stays covered. Standalone methods cover ApplyCRL,
+RestoreCRL, ApplyRoot, RestoreRoot, ProvisionRoots and ObserveTerminal.
+
+Tests: projection loss + expired CRL high-water, stale/weak CRL, lost committed
+response, provider outage, Root distrust + stale re-provision, terminal issuer
+surviving registry rewind, actual consumer no-ACK-before-durable-install, failed
+runtime install no ACK and local Root restore with Controller unavailable.
+Expiry advanced through supplied clock; no TTL sleep. Test initially expected
+one runtime installer invocation; existing Sync deliberately reloads before ACK,
+so corrected assertion to two, retaining original behavior. Final FULL pkitrust
+and openbao -race GREEN 17.010s/3.768s in custody-public-final.log.
+
+IMPORTANT: no app/settings loader yet supplies these Custody pointers. Consumer
+registry factories still need shared settings/transport wiring, explicit qualified
+initial-public-trust creation mode, Root provisioning/terminal propagation, and
+all owner entrypoints. Inspect native initial-trust commands/flags instead of
+silently permitting runtime reinitialization. loadServerRootTrust currently uses
+file Load/ProvisionRoots before constructing Consumer; adapt restore/provision
+there. registryCRLConsumer/RegistryServerConsumer factories build members in
+registry_crl.go/registry_server.go; automatic Device members and terminal observer
+need the same pointer. Server HTTP factories accept contexts but their lower
+registry factories currently do not; thread concrete optional storage explicitly,
+reuse already authenticated CustodyBinding.Client where possible and preserve
+Close ownership. Bootstrap CLI initial-trust flows must seed public records
+BEFORE normal runtime constructors that require them. Server export and product
+registration static-PEM flows still need the previously noted integration.
+
+No live cloud mutation, no feature CI/PR/preflight GO/deployment completion.
+Dev/staging backend activation still deferred. Next work remains full create/
+recovery projection + typed KV inspection/receipts, all cache/registration owner
+wiring, installed TLS snapshot handoff, whole isolated flow/backup-restore
+acceptance, review/CI/release, then formal dev removal/archive/create GO/deploy/
+health and staging. Component tests are not completion of those requirements.
