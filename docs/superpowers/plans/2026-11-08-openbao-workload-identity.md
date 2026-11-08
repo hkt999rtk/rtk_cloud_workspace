@@ -31,7 +31,7 @@ OpenBao restore: reconcile KV versions with original registry and revocations.
 
 - [x] 1. Update canonical Platform PKI contract and workspace custody/architecture
   sources; label accepted target separately from observed deployed state.
-- [ ] 2. Add versioned KV record read/write primitives to native OpenBao client.
+- [x] 2. Add versioned KV record read/write primitives to native OpenBao client.
   Tests: create-only CAS, stale version, missing/deleted data, forbidden response,
   lost write response and reconciliation, path traversal, bounded body, no secrets
   in errors. Preserve exact native state bytes; no generic filesystem mirroring.
@@ -72,3 +72,46 @@ CLI from the former scope. Keep backend compatibility for other environments;
 retain old local material segregated and never use it to initialize fresh PKI.
 KV record RED observed (undefined methods); full openbao package -race GREEN
 3.453s after implementation. Broader lifecycle acceptance remains pending.
+
+2026-11-08 native foundation: added internal/openbao KVRecord methods with CAS,
+strict paths, bounded/private errors, no credential redirects and existing token
+refresh transport. Added serviceidentity.OpenRemote/RemoteConfig: exact native
+pending/current state, cached TLS reads, commit-before-projection, lost-response
+readback, CAS owner fence and callback guard. Added OwnerLease get/update-only
+Kubernetes ownership, expiry/takeover/release, independent fast Check and renewal
+loop. RemoteConfig requires OwnerToken and CheckOwner; runtime callers MUST
+supply an acquired OwnerLease token/guard, NOT a permissive placeholder.
+
+RED observed for new KV, remote store and owner Lease APIs, then full
+`GOWORK=off go test -race ./internal/serviceidentity ./internal/openbao -count=1`
+GREEN (latest 9.183s / 3.837s). Logs in GoBuild tmp openbao-native-foundation.log.
+These unit/HTTP boundary tests are NOT isolated end-to-end lifecycle acceptance.
+No live resources removed, no environment policy or identities changed.
+
+NEXT: wire native custody configuration + acquired owner/token transport into
+client/server/management/factory/MQTT bootstrap and runtime entrypoints. Server
+remote wrapper/inspection still needed. Reuse pki.Store.NewServerHTTPClient
+without Controller consumers for independently pinned OpenBao TLS/SQL registry
+verification (avoid managed-service-client -> OpenBao KV -> managed-client loop).
+Existing openbaohost OpenServer must stay local. API/worker owners enter via
+pkitrust.LoadManagedServiceClientFromSettings and pkitrust.loadServerCredential;
+management/factory/emqx have direct serviceidentity constructors. Include
+cmd/serviceidentity-bootstrap initial client/server entrypoints and read-only
+inspect/export/owner-client helpers; don't inspect only internal/ usages.
+Qualified bootstrap jobs may initialize new KV state; steady runtimes require
+existing records. Then wire same backend setting through create/shared renderer,
+preflight and recovery, public trust/CRL state and no-PKI-PVC observation.
+
+Current code worktree: worktrees/dev-preflight-readiness-pr; workspace, native
+Video Cloud and contracts all on codex/openbao-workload-identity. Workspace main
+base cd9ae6a4; native latest origin/main d91abb1 (includes OpenBao root PRs770–772),
+contracts base fad5834. Workspace doc commit4effa031, contracts doc947175b.
+Do not publish parent gitlinks until leaf changes are merged. Preserve huge dirty
+primary checkout codex/dev-controller-identity-pins. Scope: fresh dev then fresh
+staging (not migration); preserve archived local generations, protect prod/CI.
+Formal remover is scripts/deploy-environment.sh remove --environment NAME
+--confirm video-cloud-NAME; it captures ownership/DNS and removes provider volumes.
+Don't use old generic destroy helper with loose stack fallback. Read removal
+implementation before execution; no deletions before new code lifecycle tests.
+Docker27.4.0 available locally, kind/k3d not installed, helm available. Plan must
+run real isolated Kubernetes lifecycle tests before deleting current dev.
