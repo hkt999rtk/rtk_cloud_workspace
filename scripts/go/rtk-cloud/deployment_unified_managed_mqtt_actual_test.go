@@ -17,6 +17,9 @@ func actualManagedMQTTConsumersFixture(t *testing.T, environment string) ([]depl
 func actualManagedMQTTConsumersEnrollmentFixture(t *testing.T, environment string, enrollment bool) ([]deploymentplan.Definition, string) {
 	t.Helper()
 	cfg, p, release, runtime, service, roots, intermediates, _ := createApplicationFinalizeFixture(t, environment)
+	// This fixture exercises an active MQTT consumer, including rejection of
+	// foreign trust mounts; the maintained Device API client defaults to disabled.
+	cfg.Values["DEVICE_API_MQTT_ENABLED"] = "true"
 	store := runtime.Backend.Store
 	if store.Root == "" || store.Environment != environment {
 		t.Fatal("actual native fixture lost selected runtime store")
