@@ -261,3 +261,14 @@ scripted dev removal/archive/create GO/deploy/health followed by staging.
 Do not rerun already passing provider components without a relevant change.
 No current tests running after these verified results; no PR/current-feature CI
 or live preflight/deployment GO has been claimed.
+
+Shared configuration follow-up: architecture now explicitly maintains
+PKI_STATE_BACKEND=pvc, PKI_STATE_KV_MOUNT=pki-identities and
+PKI_STATE_LEASE_DURATION=30s. Resolver whitelists them, preserves per-environment
+architecture overrides and validates only the existing native path/Lease wire
+contract before qualification. dev/staging/prod override/no-intent-mutation tests
+RED unknown architecture keys -> GREEN. Focused config/resolve/shared OpenBao
+baseline regression GREEN 3.289s in custody-settings-green.log. Dev/staging
+OpenBao override activation remains deferred until the remaining native stores
+and shared projections/creation roles/inspection/handoff are connected; do NOT
+enable it now and mistake a partial implementation for a deployable generation.

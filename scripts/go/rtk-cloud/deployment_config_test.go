@@ -13,6 +13,46 @@ import (
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/envroot"
 )
 
+func TestCustodyConfigurationUsesEnvironmentOverrideWithoutChangingIntent(t *testing.T) {
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		t.Run(environment, func(t *testing.T) {
+			root := writeDeploymentFixture(t, environment, "lke")
+			shared := filepath.Join(root, "cloud_deploy", "architectures", "kubernetes", "architecture.env")
+			appendFile(t, shared, "PKI_STATE_BACKEND=pvc\nPKI_STATE_KV_MOUNT=pki-identities\nPKI_STATE_LEASE_DURATION=30s\n")
+			environmentRoot := filepath.Join(root, "cloud_env", environment)
+			override := filepath.Join(environmentRoot, "overrides", "architecture.env")
+			intent := "PKI_STATE_BACKEND=openbao\nPKI_STATE_KV_MOUNT=workload_keys/" + environment + "\nPKI_STATE_LEASE_DURATION=9s\n"
+			writeTestFile(t, override, intent)
+			cfg, err := resolveDeploymentConfig(root, environment, environmentRoot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Values["PKI_STATE_BACKEND"] != "openbao" || cfg.Values["PKI_STATE_KV_MOUNT"] != "workload_keys/"+environment || cfg.Values["PKI_STATE_LEASE_DURATION"] != "9s" {
+				t.Fatal("custody setting was substituted instead of resolved from environment")
+			}
+			if readTestFile(t, override) != intent {
+				t.Fatal("resolving custody settings changed environment intent")
+			}
+		})
+	}
+}
+
+func TestCustodyConfigurationRejectsInvalidNativeInputs(t *testing.T) {
+	for _, tc := range []struct{ backend, mount, duration string }{
+		{"other", "identities", "30s"}, {"openbao", "", "30s"}, {"openbao", "../identities", "30s"},
+		{"openbao", "identities/*", "30s"}, {"openbao", "identities//dev", "30s"},
+		{"openbao", "identities", ""}, {"openbao", "identities", "2s"}, {"openbao", "identities", "3.5s"}, {"openbao", "identities", "2h"},
+	} {
+		t.Run(tc.backend+"-"+tc.mount+"-"+tc.duration, func(t *testing.T) {
+			root := writeDeploymentFixture(t, "dev", "lke")
+			appendFile(t, filepath.Join(root, "cloud_deploy", "architectures", "kubernetes", "architecture.env"), fmt.Sprintf("PKI_STATE_BACKEND=%s\nPKI_STATE_KV_MOUNT=%s\nPKI_STATE_LEASE_DURATION=%s\n", tc.backend, tc.mount, tc.duration))
+			if _, err := resolveDeploymentConfig(root, "dev", filepath.Join(root, "cloud_env", "dev")); err == nil {
+				t.Fatal("invalid custody policy reached provider qualification")
+			}
+		})
+	}
+}
+
 func TestDeploymentRuntimeEndpointsPreferExplicitServiceDomains(t *testing.T) {
 	endpoints := deploymentRuntimeEndpoints(map[string]string{
 		"CLOUD_STACK_NAME":          "coverage-123-1",

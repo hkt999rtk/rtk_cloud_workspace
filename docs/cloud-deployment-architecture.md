@@ -3183,6 +3183,11 @@ The selected environment declares `PKI_STATE_BACKEND=pvc|openbao` and, for
 OpenBao, `PKI_STATE_KV_MOUNT`; create, upgrade, recovery and preflight resolve
 these inputs identically. No script chooses or silently flips the backend.
 Records are partitioned by original environment/generation/workload/purpose.
+`PKI_STATE_LEASE_DURATION` is also maintained configuration; its value must
+satisfy the native whole-second Lease protocol. The shared retained-generation
+baseline is `pvc`, mount `pki-identities`, and a `30s` Lease duration. Environment
+architecture overrides select a fresh generation's backend, mount and duration;
+the resolver validates and preserves those values rather than rewriting intent.
 
 Native identity stores synchronously persist pending CSR state and verified
 credential changes through versioned compare-and-set, with fenced single-writer
