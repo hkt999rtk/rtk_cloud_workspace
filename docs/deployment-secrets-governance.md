@@ -1778,3 +1778,29 @@ Each environment, especially production, requires explicit installation and
 stack confirmation. No schedule is enabled by preflight or by a read-only CRL
 inspection. See [the runbook](deployment-operations.md#environment-crl-maintenance)
 for host availability and recovery requirements.
+
+## Cloud workload identity custody target (2026-11-08)
+
+The canonical Platform PKI contract selects OpenBao KV v2 as durable custody
+for cloud workload leaf identities and pending renewal state. Per-workload PVCs
+are the supported migration source, not the target custody model. Device/user
+client keys, offline CA custody and OpenBao's independent cold-start identity
+are outside this migration. Existing environments are not migrated by this
+policy update.
+
+The native workload identity store produces/consumes scoped versioned KV
+records, authenticated by dedicated Kubernetes roles; runtime consumers use
+private temporary projections (0700 directories, 0600 files). Signing/admission
+remains with the original PKI engines/registry. Private projections, credentials
+and tokens must not appear in progress, receipts, Git or cloud_env/.
+
+The formal migration executor produces private plan, journal, sanitized
+verification and retirement records under
+`~/.config/rtk_cloud/<environment>/deployment/identity-migrations/<plan-sha256>/`.
+Its recovery/rollback consumers use that same canonical path. Bootstrap and
+new-generation producers establish new records only through qualified creation;
+ordinary migration consumers require the original state. Original generation
+journals are not rewritten. Destination record version, source resource UID and
+public-key/certificate fingerprints bind recovery; receipt hashes do not expose
+private key bytes. Matching OpenBao and registry backups, with independent seal
+recovery material, are required before original storage retirement.

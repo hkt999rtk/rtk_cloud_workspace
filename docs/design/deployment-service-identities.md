@@ -109,7 +109,9 @@ stops the ceremony and requires an explicit recovery or rotation decision.
 This convention covers operator-held Service/MQTT Root keys only. Device,
 Cloud/Brand and Product CA keys remain in their approved OpenBao PKI engine;
 online intermediate keys remain with their registered signer; workload leaf keys
-remain in their own managed state/PVC. Never copy those private keys into operator
+are owned by their original workload and durably retained in environment-scoped
+OpenBao KV v2 under the accepted 2026-11-08 target contract. Existing managed
+state/PVC remains authoritative until that workload is explicitly migrated. Never copy those private keys into operator
 custody. Production's independent escrow, offline/HSM and recovery qualification
 requirements still apply; a local custody manifest does not satisfy them.
 

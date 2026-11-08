@@ -3174,3 +3174,28 @@ prerequisites. The six-day validity/48-hour lead leaves recovery time but does
 not make the operator host highly available. See
 [Environment CRL maintenance](deployment-operations.md#environment-crl-maintenance)
 for activation, status, removal and failure handling.
+
+## OpenBao workload identity custody target (2026-11-08)
+
+After the independent OpenBao root startup, configure scoped Kubernetes auth
+and KV v2 custody before Controller/CertIssuer and application consumers start.
+The selected environment declares `PKI_STATE_BACKEND=pvc|openbao` and, for
+OpenBao, `PKI_STATE_KV_MOUNT`; create, upgrade, recovery and preflight resolve
+these inputs identically. No script chooses or silently flips the backend.
+Records are partitioned by original environment/generation/workload/purpose.
+
+Native identity stores synchronously persist pending CSR state and verified
+credential changes through versioned compare-and-set, with fenced single-writer
+ownership. Existing file stores remain supported for unmigrated workloads.
+Private local files become temporary projections; a startup-only download or
+asynchronous filesystem mirroring is not a durable identity implementation.
+Trust/CRL caches preserve accepted versions and existing verification semantics.
+OpenBao itself retains independent cold-start storage; SQL admission and
+original CA custody are not migrated to KV.
+
+Formal migration must quiesce each source owner, verify full state at the
+scoped destination, switch/restart through the deployment executor and qualify
+restart, renewal and rollback before retiring original exact-ID storage.
+Targets are not deployed facts; each environment needs its own completion and
+health evidence. See the accepted OpenBao custody design and canonical
+Platform PKI contract.
