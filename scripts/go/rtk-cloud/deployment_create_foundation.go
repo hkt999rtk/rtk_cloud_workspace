@@ -329,6 +329,7 @@ func continueEnvironmentCreateAfterOpenBao(ctx context.Context, cfg deploymentCo
 		return runtime, stop, err
 	}
 	runtime.Custody = custody
+	ctx = withEnvironmentCreateBootstrapRuntime(ctx, runtime)
 	migrations, err := renderEnvironmentCreatePKIPhase(ctx, cfg, plan.Bootstrap, "migrate")
 	if err != nil {
 		return runtime, stop, err

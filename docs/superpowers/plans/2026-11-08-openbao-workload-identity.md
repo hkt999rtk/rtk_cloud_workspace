@@ -495,3 +495,39 @@ creation/recovery, matched backup/restore with newer renewal, whole-branch revie
 CI/release and real dev/staging fresh rebuild remain outstanding. Do NOT delete
 cloud yet. Environment backend overrides still unactivated; no feature preflight
 GO, current-feature PR/CI/release or deployment completion.
+
+
+Formal stage projection checkpoint: projectEnvironmentCreateCustodyStage is
+now called by actual applyEnvironmentCreateStage BEFORE child inputs/bindings
+hashing or compilation, with already frozen original child inputs loaded first.
+After KV initializer completion, continueEnvironmentCreateAfterOpenBao carries
+the updated original runtime context into subsequent stages. Workload PVCs become
+temporary volumes using the SAME original scope/Lease wiring as steady rendering.
+Foundation, business and public-only stages do not acquire a new custody dependency.
+An owned stage requires original completed scope readback and original public
+transport metadata, not fabricated PVC UIDs. Recovery may reload the exact scope
+from its canonical owners.json without inventing new generation/owners.
+
+Ruling: reuse the existing frozen child plan for the stage's original TLS mode;
+do not create another stage-projection journal/file. A global bootstrap -> managed
+TLS handoff must not change already compiled early stage bodies during replay.
+Select the original bootstrap/managed pin pair from frozen desired containers,
+validate against original CA/current immutable managed authority, and retain that
+pair. New normal stages use managed-only settings with bootstrap fields empty.
+The advancing public snapshot remains available to native early transports.
+
+Verification: component projection dev/staging, pending provider setup rejection,
+canonical scope reload, mount drift, original TLS binding, frozen-stage replay
+after handoff and new managed-only stage checks PASS. Actual native stage wrapper
+rejects missing custody setup BEFORE Kubernetes writes/leases; existing native
+wrapper replay/known-owner/qualification regression remains green. First projection
+fixture changed maintained settings before its unrelated synthetic admission;
+corrected fixture boundary, leaving production exact qualification unchanged.
+Latest root suite PASS29.279s in custody-stage-final.log; prior base projection/native
+wrapper suite PASS30.784s. No repeated real provider tests needed for unchanged
+initializer/SSA algorithms. No real cloud mutations, backend activation, feature
+CI/release/GO/deployment yet. Full isolated lifecycle is still required before
+removal; continue with typed KV receipts, product owner lifecycle, TLS distribution
+barrier and native server export. Finite legacy dev public-profile repair is not
+a fresh-create dependency: keep its original PVC contract and reject remote use
+instead of inventing an unrelated historical repair migration.
