@@ -3362,6 +3362,11 @@ release. The ordinary health queries and helper share that same authentication
 snapshot. Identical cache observations are coalesced only within this checker
 invocation; the now/window callers independently validate their expiration cutoff.
 No private application file is substituted when remote context is absent.
+Account Manager's public registration-listener verifier uses that same committed
+cache reader when its observed management container selects OpenBao. It still
+reads the actual public export and preserves the original listener cert/key/CA.
+The compiled MQTT prerequisite shares its check runtime with now/window PKI
+validation; standalone Account health retains the selected full configuration.
 
 Public TLS re-observation and ordinary upgrade preserve custody facts from the
 same generation's `bootstrap/bindings.json` and managed transport snapshot, without

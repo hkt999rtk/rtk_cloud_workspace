@@ -97,7 +97,7 @@ elif 'exec' in args:
  if mode=='public-replaced-after-exec':
   job=load('job.json');job['metadata']['uid']='33333333-3333-4333-8333-333333333333';save('job.json',job)
  if mode=='public-bad-output':print('private-error-marker')
- else:print(json.dumps(load('public.json')))
+ else:print(json.dumps(load('public-states.json')[args[-2]] if (root/'public-states.json').exists() else load('public.json')))
 elif 'logs' in args:
  if mode=='replaced-job-after-log':
   job=load('job.json');job['metadata']['uid']='33333333-3333-4333-8333-333333333333';save('job.json',job)

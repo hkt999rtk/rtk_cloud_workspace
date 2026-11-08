@@ -1911,7 +1911,10 @@ bounded temporary Job but no identity, key, KV/SQL write or maintenance writer
 Lease. Public readback is coalesced in process for that invocation, while each
 validity-window check remains independent. Missing remote context never selects a
 private application projection as fallback. No additional local receipt path is
-created by this reader.
+created by this reader. Account Manager's public-listener check consumes the
+same committed evidence while reading its actual public PEM separately; original
+listener private key, certificate and CA are preserved. Its MQTT prerequisite
+shares the invocation's configured reader rather than reconstructing settings.
 
 All local operation directories are 0700, files 0600. The common environment
 path helpers own these locations. Matching OpenBao/registry backup and restore

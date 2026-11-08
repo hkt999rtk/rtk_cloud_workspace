@@ -1142,3 +1142,45 @@ interruption, owner fencing, missing-state refusal and matched backup restore.
 Then final fresh whole-branch review, native/contracts/root CI+Release and formal
 approved dev remove/archive/create preflight GO/deploy/health, followed by staging.
 No cloud resource, active environment setting, formal GO or deployment changed.
+
+
+2026-11-09 Account public-listener checkpoint: the observed OpenBao management
+profile now compares its real public CRL output with independently read original
+committed cache state, not an application's private file projection. The compiled
+MQTT prerequisite shares the caller's configured check runtime across now/window
+and ordinary PKI checks; standalone Account health takes full configuration from
+its selected reader. The original listener/key/CA remain unchanged. Legacy PVC
+profiles retain their existing reader and checks.
+
+RED confirmed one public read followed by one forbidden private state read; the
+new test uses original projected Account/ReplicaSet/Pod/manifest, exact protected
+generation bindings and transport snapshot, and native helper process readback
+per issuer. It rejects corrupt committed state despite valid public output.
+Focused Account/MQTT tests PASS9.000s. Expanded regression PASS71.524s, including
+custody, isolated real Kubernetes projection, deployment-check/auth, existing
+Account public profiles, MQTT foundation and CRL maintenance/online paths. Log:
+/Volumes/RTKGoBuild/tmp/custody-account-readiness-regression.log.
+
+NEXT discovered real global issue: one container (notably Log Ingester) can have
+both its original internal Service client and product registration (logger) client.
+Current custodyConsumerID scans every IDENTITY_STATE and rejects different subjects;
+observe's identity cache is keyed only by container. Resolve the expected CRL
+consumer using the original client purposes and the actual CRL-state projection
+volume. Same physical projected volume / original logical storage purpose identifies
+which original client owns that cache; no guessing from Pod names or new setting
+maps. Retain unique-subject compatibility when there is only one original client.
+Pass state path through observe, public-export inventory and shared readiness;
+include it in the per-observation identity cache key. Add a two-purpose regression
+before changing behavior. This is necessary for the newly consolidated owners.
+
+Still incomplete: core client/server committed admission for every applicable
+owner; whole isolated new creation/recovery/renewal/cold restart/matched restore;
+final fresh review and dependency CI/Release; then authorized formal dev removal,
+local generation archival, create GO/deploy/health, followed by staging. Inspection
+also found local generation archival is documented but no implementation at
+'deployment/archives' in production Go yet: implement it in the formal path before
+new live state. Existing removal is deployment remove (deployment_config.go), with
+runDestroyEnvironmentResources called after native volume and DNS evidence; the
+underlying destroy CLI prints a read-only plan unless --yes, and protects nonempty
+buckets. Do not run it directly with missing runtime values (legacy default staging).
+No cloud mutation, environment backend activation or formal preflight GO occurred.

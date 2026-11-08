@@ -212,7 +212,7 @@ func defaultUnifiedDeploymentDependencies() unifiedDeploymentDependencies {
 					c.PKICheckedAt, c.PKIVerifiedUntil = now, now.Add(time.Duration(window)*time.Second)
 					for index, at := range []time.Time{now, now.Add(time.Duration(window) * time.Second)} {
 						nextStep([]string{"deployment.pki.mqtt-now", "deployment.pki.mqtt-window"}[index])
-						if err := c.CheckMQTTFoundationIdentity(ctx, at); err != nil {
+						if err := c.CheckMQTTFoundationIdentity(ctx, at, store.checkRuntime); err != nil {
 							return deploymentplan.GateEvidence{}, err
 						}
 						nextStep([]string{"deployment.pki.runtime-now", "deployment.pki.runtime-window"}[index])
