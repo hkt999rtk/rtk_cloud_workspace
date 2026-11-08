@@ -216,6 +216,8 @@ func runDeployment(args []string) error {
 			return runDeploymentDNSReconcile(args[1:])
 		case "provider-import-state":
 			return runDeploymentProviderImport(args[1:])
+		case "archive-removed-generation":
+			return runArchiveRemovedDeploymentGeneration(args[1:])
 		case "reconcile-removal-volumes":
 			return runDeploymentRemovalRecovery(args[1:])
 		case "prepare-upgrade":
@@ -1073,6 +1075,7 @@ func printDeploymentUsage() {
   rtk-cloud deployment provider-import-state --environment NAME --source-runtime ORIGINAL_RUNTIME --confirm STACK [--source-kubeconfig ORIGINAL_KUBECONFIG]
   rtk-cloud deployment acceptance --environment NAME --confirm STACK
   rtk-cloud deployment remove --environment NAME --confirm STACK
+  rtk-cloud deployment archive-removed-generation --environment dev|staging --confirm STACK --original-cluster-id ID
   rtk-cloud deployment storage-plan --environment NAME
   rtk-cloud deployment storage-bootstrap --environment NAME --purpose media|ota|artifacts --destination-env-file PATH --confirm STACK
   rtk-cloud deployment storage-reinitialize --environment NAME --purpose media|ota --source-env-file PATH --destination-env-file PATH --acknowledge-discarded-source BUCKET [--plan | --confirm STACK]

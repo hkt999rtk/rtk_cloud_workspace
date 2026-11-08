@@ -438,6 +438,9 @@ func startEnvironmentCreateExecution(ctx context.Context, cfg deploymentConfig, 
 		return nil, err
 	}
 	defer lock.Close()
+	if err := checkGenerationArchiveIdle(store); err != nil {
+		return nil, err
+	}
 	current, err := loadEnvironmentCreateArtifact(cfg, operatorSHA, artifact.PlanSHA256, admittedAt)
 	if err != nil || deploymentplan.Digest(current) != deploymentplan.Digest(artifact) {
 		if err != nil {

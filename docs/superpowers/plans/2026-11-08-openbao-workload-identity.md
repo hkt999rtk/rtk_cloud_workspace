@@ -1273,3 +1273,27 @@ canonical staging store, and its broad name matcher cannot by itself establish
 resource ownership. The formal rebuild must carry the selected environment and
 exact original provider identities across removal/absence/archive. No live
 resource, environment setting, deployment result or backend selection changed.
+
+Rebuild checkpoint. The formal `deploy-environment.sh archive-removed-generation`
+command binds the original captured LKE cluster and volume ownership to a private
+archive manifest and verifies exact cluster/volume 404 plus full selected stack
+inventory before segregating state. A manifest and pending owner allow retries
+after partial moves, and fresh qualification/admission reject the pending owner.
+Operator credentials, retained storage configuration, DNS history, and older
+archives stay in their original paths. Focused archive, removal and fresh target
+regression passed in 51.691s (deployment-generation-archive-regression.log).
+
+Read-only Linode and Kubernetes inventory confirmed live dev cluster 666130,
+edge 107939723 and TURN 107939810 match the completed create journal. LKE node
+107939721 belongs to that cluster. The canonical removal proof and live Kubernetes
+PV inventory agree on all 31 numeric CSI volume IDs. Both exact configured dev
+runtime/OTA buckets returned object count zero. No live mutation was performed.
+
+The normal remove path still needs to pin its destructive provider inventory to
+these original receipts rather than authorize deletion from its broad matcher.
+Its legacy kubeconfig/provider state archival also happens before full removal
+verification. Keep those bytes available for this generation archive while
+retaining the exact-generation retry checks. Correcting the earlier locator note,
+the normal resolved deployment configuration supplies a derived runtime path to
+legacy remove. The basename heuristic is a risk for direct canonical-store
+invocations, not evidence that normal staging remove already failed.
