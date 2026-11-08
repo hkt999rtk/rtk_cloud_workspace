@@ -1065,3 +1065,30 @@ Selected root regression after the recovery-order and committed-convergence
 changes PASS41.094s, including isolated Kubernetes custody projection, all custody
 adapters and existing CRL maintenance/online runtime tests. Log:
 /Volumes/RTKGoBuild/tmp/custody-recovery-order-regression.log.
+
+
+2026-11-09 public export checkpoint: runtime public CRL discovery now preserves
+Pod namespace metadata through the typed placement view, accepts original scoped
+KV caches rather than requiring identity PVCs, and qualifies original expected
+client purpose/controller chain without executing the stopped producer. It records
+public cache authority/path only; no registry record is fabricated as an observed
+export. Final public verification reads actual PEM/reload/readiness and independently
+inspects the original committed cache against the selected signed fresh record.
+
+RED: actual remote public discovery failed the old placement/PVC assumption;
+a second RED caught duplicate native issuer purposes being accepted. Focused GREEN
+4.843s. Extended the actual maintenance adapter test through observe (including
+remote storage selection and original consumer), install, committed inspection,
+actual public output/readiness, native registry ACK and complete converge. Cases
+reject missing reload, unready producer, corrupt committed cache despite a valid
+public output, duplicate purpose and prior foreign owner/SA/mount/role cases.
+Selected root regression, with actual isolated Kubernetes fixture, PASS45.972s:
+/Volumes/RTKGoBuild/tmp/custody-public-export-regression.log.
+
+Next: shared preflight/health CRL readers still cat app file projections; wire the
+same independent committed proof into their exact selected environment context,
+including Account Manager public-listener verification. Core identity admission
+also needs a committed proof for every applicable owner, not only product output
+completion. Preserve independent local OpenBao boot and prove the whole isolated
+creation/recovery/cold-start/renewal/matched-restore lifecycle before cloud changes.
+No live backend settings, cloud resources, feature CI/Release or GO changed.

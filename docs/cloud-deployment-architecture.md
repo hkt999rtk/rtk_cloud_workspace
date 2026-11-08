@@ -3342,6 +3342,14 @@ native inspector, checks the selected signed fresh record and still requires the
 actual registry ACK for the expected consumer. A temporary application file mirror
 is not remote durability evidence; a committed KV cache is not a runtime ACK.
 
+Native public-export discovery binds the original writer's admitted client
+purpose, current owner chain, selected remote scope and signed manifest entries.
+For KV owners it requires the scoped memory projection, not an identity PVC or a
+running exporter. It does not manufacture an observed PEM from registry data.
+Duplicate issuer/state purposes fail discovery. At convergence, the actual public
+PEM, both consumer/producer readiness and committed native KV cache evidence must
+agree with the selected current signed records; ordinary ACK checks still run.
+
 Public TLS re-observation and ordinary upgrade preserve custody facts from the
 same generation's `bootstrap/bindings.json` and managed transport snapshot, without
 copying old images, workload behavior or Kubernetes UIDs over current observation.

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -138,8 +139,14 @@ func TestCustodyMaintenanceInstallUsesCommittedKVWithoutReadingFaultedApplicatio
 		t.Fatal(err)
 	}
 	item, _, _ := maintenanceFixture(t, "dev", time.Now().UTC().Truncate(time.Second).Add(72*time.Hour))
-	c := deploymentplan.Object{"name": "app", "env": environmentCreateEnv(map[string]string{"TEST_CLIENT_IDENTITY_STATE": "/identity/private/client.json"}), "securityContext": environmentCreateServiceContainerSecurity(), "volumeMounts": []any{environmentCreateServiceMount("state", "/identity", false)}}
-	parent := deploymentplan.Object{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": deploymentplan.Object{"namespace": ns, "name": "api", "uid": "original-api"}, "spec": deploymentplan.Object{"template": deploymentplan.Object{"metadata": deploymentplan.Object{}, "spec": deploymentplan.Object{"securityContext": environmentCreateServicePodSecurity(), "containers": []any{c}, "volumes": []any{environmentCreateServiceVolume("state", "persistentVolumeClaim", "api-state")}}}}}
+	c := deploymentplan.Object{"name": "app", "env": environmentCreateEnv(map[string]string{
+		"TEST_CLIENT_IDENTITY_STATE":              "/identity/private/client.json",
+		"TEST_SERVICE_CLIENT_PUBLIC_CRL_BUNDLE":   "/export/client.crl",
+		"TEST_SERVICE_CLIENT_SERVER_CRL_MANIFEST": "/trust/crls.json",
+	}), "securityContext": environmentCreateServiceContainerSecurity(), "volumeMounts": []any{
+		environmentCreateServiceMount("state", "/identity", false), environmentCreateServiceMount("export", "/export", false), environmentCreateServiceMount("trust", "/trust", true),
+	}}
+	parent := deploymentplan.Object{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": deploymentplan.Object{"namespace": ns, "name": "api", "uid": "original-api"}, "spec": deploymentplan.Object{"template": deploymentplan.Object{"metadata": deploymentplan.Object{}, "spec": deploymentplan.Object{"securityContext": environmentCreateServicePodSecurity(), "containers": []any{c}, "volumes": []any{environmentCreateServiceVolume("state", "persistentVolumeClaim", "api-state"), deploymentplan.Object{"name": "export", "emptyDir": deploymentplan.Object{"medium": "Memory"}}, environmentCreateServiceVolume("trust", "configMap", "maintenance-crls")}}}}}
 	projected, err := projectEnvironmentCustodyResources(cfg.Values, "dev", binding, "", []deploymentplan.Definition{{Object: parent}})
 	if err != nil {
 		t.Fatal(err)
@@ -153,6 +160,7 @@ func TestCustodyMaintenanceInstallUsesCommittedKVWithoutReadingFaultedApplicatio
 		t.Fatal(err)
 	}
 	r := maintenanceRuntime{cfg: cfg, store: store, backend: environmentKubernetesBackend{Store: store, KubeconfigContent: []byte("isolated-inspection-kubeconfig"), RolloutTimeout: time.Minute}, image: "ghcr.io/fixture/native@sha256:" + strings.Repeat("d", 64), lease: maintenanceTestLease{}}
+	manifest := environmentCreateServiceCRLManifest(item.Issuer, "/identity/crl/root.json")
 	r.readOverride = func(_ context.Context, id string) (deploymentplan.Object, error) {
 		if id == "Pod/"+ns+"/faulted-api" {
 			return pod, nil
@@ -160,13 +168,33 @@ func TestCustodyMaintenanceInstallUsesCommittedKVWithoutReadingFaultedApplicatio
 		if id == deploymentplan.ID(parent) {
 			return parent, nil
 		}
+		if id == "ConfigMap/"+ns+"/maintenance-crls" {
+			return deploymentplan.Object{"metadata": deploymentplan.Object{"uid": "original-manifest"}, "data": deploymentplan.Object{"crls.json": manifest}}, nil
+		}
+		if id == "Deployment/"+ns+"/pki-controller" {
+			return deploymentplan.Object{"spec": deploymentplan.Object{"template": deploymentplan.Object{"spec": deploymentplan.Object{"containers": []any{deploymentplan.Object{"name": "pki-controller", "env": environmentCreateEnv(map[string]string{"PKI_REQUIRED_CONSUMERS_SERVICE": "video-cloud-api"})}}}}}}, nil
+		}
 		t.Fatal("unexpected original owner read", id)
 		return nil, nil
 	}
-	ackChecks := 0
+	ackChecks, exportReads := 0, 0
+	publicReady := false
 	r.commandOverride = func(_ context.Context, _ []byte, args ...string) ([]byte, error) {
+		if len(args) >= 2 && args[0] == "get" && args[1] == "pods" {
+			return json.Marshal(deploymentplan.Object{"items": []any{pod}})
+		}
+		if len(args) >= 2 && args[len(args)-2] == "cat" && args[len(args)-1] == "/export/client.crl" {
+			exportReads++
+			if !publicReady {
+				return nil, fmt.Errorf("public producer has not booted")
+			}
+			return []byte(item.Snapshot.Prior.PEM), nil
+		}
 		if len(args) >= 2 && args[len(args)-2] == "crl-maintenance-read" {
 			query := args[len(args)-1]
+			if strings.Contains(query, "json_agg(document") {
+				return json.Marshal([]any{item.Issuer.Document})
+			}
 			if strings.Contains(query, "json_build_object('prior'") {
 				return json.Marshal(item.Snapshot)
 			}
@@ -216,13 +244,61 @@ func TestCustodyMaintenanceInstallUsesCommittedKVWithoutReadingFaultedApplicatio
 			}
 		})
 	}
+	projection, err := r.publicProjection(t.Context(), pod, source, "/export/client.crl", map[string]environmentCreateRegisteredIssuer{item.Issuer.ID: item.Issuer})
+	if err != nil {
+		t.Fatal("discover remote public producer before transport or application boot", err)
+	}
+	if len(projection.Claims) != 0 || projection.Producer != "app" || projection.Original != "" || exportReads != 0 {
+		t.Fatal("discovery substituted a PVC, fabricated export or required application startup")
+	}
+	observedInventory, err := r.observe(t.Context())
+	if err != nil {
+		t.Fatal("actual remote CRL discovery", err)
+	}
+	if len(observedInventory.Consumers) != 1 || len(observedInventory.Public) != 1 || !observedInventory.Consumers[0].Custody || observedInventory.Consumers[0].ConsumerID != identity {
+		t.Fatal("observed inventory lost original remote storage or consumer")
+	}
+	originalManifest := manifest
+	var entries []json.RawMessage
+	if err := json.Unmarshal([]byte(manifest), &entries); err != nil {
+		t.Fatal(err)
+	}
+	duplicate, _ := json.Marshal(append(entries, entries[0]))
+	manifest = string(duplicate)
+	if _, err := r.publicProjection(t.Context(), pod, source, "/export/client.crl", map[string]environmentCreateRegisteredIssuer{item.Issuer.ID: item.Issuer}); err == nil {
+		t.Fatal("ambiguous native public CRL producer manifest accepted")
+	}
+	manifest = originalManifest
+	records := map[string]createRootCRLRecord{item.Issuer.ID: item.Snapshot.Prior}
+	if err := r.verifyPublicCRLs(t.Context(), []maintenancePublicCRL{projection}, records); err == nil {
+		t.Fatal("missing public reload accepted")
+	}
+	publicReady = true
+	deploymentplan.Map(pod["status"])["containerStatuses"] = []any{deploymentplan.Object{"name": "app", "ready": true}}
+	if err := r.verifyPublicCRLs(t.Context(), []maintenancePublicCRL{projection}, records); err != nil {
+		t.Fatal("committed cache and actual public reload", err)
+	}
+	deploymentplan.Map(certIssuerObjectList(deploymentplan.Map(pod["status"])["containerStatuses"])[0])["ready"] = false
+	if err := r.verifyPublicCRLs(t.Context(), []maintenancePublicCRL{projection}, records); err == nil {
+		t.Fatal("unready public producer accepted")
+	}
+	deploymentplan.Map(certIssuerObjectList(deploymentplan.Map(pod["status"])["containerStatuses"])[0])["ready"] = true
+	// A public file alone does not prove durable remote cache state.
+	if err := os.WriteFile(filepath.Join(fixture, "public.json"), []byte(`{"issuer_fingerprint":"foreign"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.verifyPublicCRLs(t.Context(), []maintenancePublicCRL{projection}, records); err == nil {
+		t.Fatal("public reload without matching committed KV proof accepted")
+	}
+	if err := os.WriteFile(filepath.Join(fixture, "public.json"), public, 0600); err != nil {
+		t.Fatal(err)
+	}
 	consumer := crlMaintenanceConsumer{Namespace: ns, Pod: "faulted-api", PodUID: "original-pod", Container: "app", StatePath: "/identity/crl/root.json", IssuerID: item.Issuer.ID}
 	if err := r.install(t.Context(), consumer, item.Issuer, item.Snapshot.Prior); err != nil {
 		t.Fatal("actual remote maintenance path", err)
 	}
 	consumer.Custody, consumer.ConsumerID = true, identity
-	inventory := crlMaintenanceInventory{Issuers: []crlMaintenanceIssuer{item}, Consumers: []crlMaintenanceConsumer{consumer}, Required: map[string][]string{item.Issuer.Domain: {identity}}}
-	if err := r.converge(t.Context(), inventory, map[string]createRootCRLRecord{item.Issuer.ID: item.Snapshot.Prior}); err != nil {
+	if err := r.converge(t.Context(), observedInventory, map[string]createRootCRLRecord{item.Issuer.ID: item.Snapshot.Prior}); err != nil {
 		t.Fatal("actual remote maintenance convergence", err)
 	}
 	if ackChecks != 1 {

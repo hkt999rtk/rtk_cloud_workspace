@@ -15,11 +15,17 @@ import (
 	"time"
 )
 
+type maintenancePublicCRLCache struct {
+	Consumer crlMaintenanceConsumer
+	Issuer   environmentCreateRegisteredIssuer
+}
+
 type maintenancePublicCRL struct {
 	Namespace, Pod, PodUID, Container, Path, Resource, UID, Version, Key, Original string
 	Issuers                                                                        []string
 	Producer                                                                       string
 	Claims                                                                         map[string]string
+	CustodyCaches                                                                  []maintenancePublicCRLCache
 }
 
 func maintenanceBundleIssuers(raw []byte, known map[string]environmentCreateRegisteredIssuer) ([]string, error) {
@@ -203,6 +209,19 @@ func (r *maintenanceRuntime) verifyPublicCRLs(ctx context.Context, projections [
 			actual, err := r.read(ctx, claim)
 			if err != nil || deploymentplan.String(deploymentplan.Map(actual["metadata"])["uid"]) != uid {
 				return errors.New("public CRL producer durable volume changed")
+			}
+		}
+		for _, cache := range p.CustodyCaches {
+			expected, exists := records[cache.Issuer.ID]
+			if !exists {
+				return errors.New("public CRL producer authority is missing")
+			}
+			installed, err := r.installedCRL(ctx, cache.Consumer, cache.Issuer)
+			if err != nil || installed.Terminal != "" || installed.IssuerSHA256 != deploymentplan.String(cache.Issuer.Document["certificate_fingerprint_sha256"]) || installed.CRL.Digest != expected.Digest {
+				return errors.New("public CRL producer committed cache differs from selected signed record")
+			}
+			if _, err := validateMaintenanceCRL(r.cfg.Environment, cache.Issuer, installed.CRL, true, time.Now().UTC()); err != nil {
+				return errors.New("public CRL producer committed cache is not fresh")
 			}
 		}
 		ready, producerReady := false, p.Producer == ""

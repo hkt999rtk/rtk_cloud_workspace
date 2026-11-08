@@ -1898,6 +1898,11 @@ local provider caches precede remote caches regardless of discovery list order.
 Convergence also uses committed readback for remote caches rather than reading a
 faulted application's private projection. This adds no local secret or temporary
 operation-data path and never mounts a workload private identity PVC.
+Native public-export inventory retains only the original public cache authority
+and expected workload purpose. It can discover a stopped remote producer without
+reading an application projection or fabricating a PEM. Actual public reload,
+producer/consumer readiness and independently read committed KV evidence are
+required after recovery. No new local state path or private export is introduced.
 
 All local operation directories are 0700, files 0600. The common environment
 path helpers own these locations. Matching OpenBao/registry backup and restore
