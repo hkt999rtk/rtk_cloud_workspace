@@ -214,3 +214,10 @@ allocations and persist public CRL/trust anti-rollback state in KV, adapt inspec
 preflight/health/renewal, formal CI/release then scripted dev teardown/new-generation
 archive/create GO/deploy/health, then staging. Do NOT substitute old deployment
 or library tests for this final state. No dev/staging/prod cloud mutation occurred.
+
+Reader follow-up verification COMPLETE: exec84734 terminal exit0; full -race
+bootstrap command35.870s/pkitrust21.772s/config1.502s/serviceidentity18.880s all
+PASS in custody-cli-reader-final.log. Reader follow-up committed in native repo.
+No test processes remain running; real kind and Postgres fixtures remain live.
+Next continuation should start real OpenBao lifecycle fixture and shared
+renderer/publisher implementation, not rerun these already passing checks.
