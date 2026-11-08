@@ -1863,6 +1863,13 @@ Job and Pod ownership are fenced; cleanup deletes only the original Job UID and
 verifies foreground removal. A changed owner or uncertain cleanup fails the
 observation. No new local operation-data path is introduced by this reader.
 
+Transport handoff consumes that same original public snapshot: publication to
+the existing ConfigMaps is followed by bounded reads of active clients' mounted
+public JSON and original Pod UID/spec. Neither this projection barrier nor its
+final managed-only phase reads a private key, changes an auth scope, renews a
+certificate or generates a separate local receipt path. It does not require a
+failed client container or Controller HTTP to become available.
+
 All local operation directories are 0700, files 0600. The common environment
 path helpers own these locations. Matching OpenBao/registry backup and restore
 remain part of validating the newly created generation, without adding an old

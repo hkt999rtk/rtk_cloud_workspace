@@ -43,7 +43,7 @@ func environmentDeviceMQTTCallbackClientName(object, container deploymentplan.Ob
 		return "emqx-pki", nil
 	}
 	identity := mqttFoundationEnv(container, "VIDEO_CLOUD_CONTROLLER_IDENTITY_STATE")
-	if !native || marker != path.Join(path.Dir(identity), "incoming-root-bootstrap.json") || !managedMQTTPVCFile(object, container, "controller-identity", identity) || !environmentPreflightDigest.MatchString(mqttFoundationEnv(container, "VIDEO_CLOUD_CONTROLLER_IDENTITY_ROOT_SHA256")) {
+	if !native || marker != path.Join(path.Dir(identity), "incoming-root-bootstrap.json") || !managedMQTTStateFile(object, container, "controller-identity", identity) || !environmentPreflightDigest.MatchString(mqttFoundationEnv(container, "VIDEO_CLOUD_CONTROLLER_IDENTITY_ROOT_SHA256")) {
 		return "", mqttCallbackBlocker(object, "native callback requires its original native trust initialization and same-owner installed Service identity admission")
 	}
 	return "service:emqx-pki", nil

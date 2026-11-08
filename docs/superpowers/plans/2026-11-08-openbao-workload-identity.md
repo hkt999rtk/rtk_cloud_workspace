@@ -830,3 +830,91 @@ prepared/final transport publication and mounted-snapshot barrier, full isolated
 create/renewal/cold-recovery/matched-backup flow, final review and CI/Release. Only
 then approved dev removal/archive/create/deploy/health, then staging. Neither cloud
 environment has been removed, nor have backend settings been activated.
+
+### Memory-backed observed bindings and transport handoff checkpoint
+
+Root c01f8410 committed the independent admitted reader adapters. Final focused
+reader cleanup/product observation PASS5.804s, including exact-name reconciliation
+of a successful deletion with a lost response. Native 6c7431a remains unchanged.
+
+Added an actual projected-memory Controller observation -> full renderer -> PKI
+transition roundtrip, instead of attaching a custody field to legacy PVC fixtures.
+RED exposed the old PVC initializer during observation. The projector now removes
+only the named obsolete PVC permission recipes from selected custody owners;
+remote native stores create their own private subdirectories, and the explicit
+non-root runtime owner remains required. Shared placement checks bind original
+namespace/environment/generation/auth role, writable Memory emptyDir, canonical
+paths and unshadowed complete mounts. Ordinary PVC profiles keep their original
+initializer and live permission checks. Independent KV admission remains a separate
+proof; memory placement is not a substitute for it.
+
+Core API and LogIngester MQTT transport now use that selected storage predicate.
+RED exposed remote API permission preparation still requiring a physical claim;
+backend-aware preparation no longer fabricates a claim or requires old private
+files. Genuine remote MQTT worker/API rebinding exposed two more PVC-only branches:
+native identity claim detection and current worker cache placement. Adapted these
+to their original scoped identity + memory cache while keeping public trust owner
+checks, delivery Secret references and existing accepted affinity. No new node
+placement/replica policy or environmental value is introduced. Focused existing
+Controller/core/log/projection regression PASS11.008s; live CRL placement/shared
+maintenance regression PASS19.476s. Current/managed MQTT legacy regression passed
+4.392s before the added remote current-placement case; final combined check follows.
+
+The typed live CRL view now retains namespace, service account and emptyDir.
+Its common placement adapter accepts the explicit remote profile and rejects
+foreign environment/role, disk-backed caches, read-only/subPath/shadow mounts;
+legacy PVC admission stays intact. This is placement only: full remote public
+cache readback and maintenance writes still need committed KV-aware adapters.
+Do not treat this step as complete CRL renewal/health acceptance.
+
+OpenBao Root distribution now publishes overlapping custody transport trust before
+provider consumer rollout; managed listener cutover rechecks active clients'
+mounted snapshot first. Successful managed-host readiness is followed by managed-
+only publication and the same bounded original-Pod projection check. It verifies
+unchanged Pod UID/spec, namespace, original SA/owner scope and public mount. It
+never polls Controller HTTP or requires a stopped container to start. Existing
+selected rollout timeout bounds convergence and parent execution remains fenced.
+RED observed undefined barrier, then a wrong preexisting sortedMapKeys map type;
+corrected without a new generic utility. Focused barrier/trust/placement GREEN1.757s.
+Formal fresh full creation/recovery still requires its whole-flow test below.
+
+Ruling: retain already accepted MQTT self/enrollment affinity while adapting remote
+cache placement — this is existing placement input and changing it is unnecessary
+for removing PKI volumes — at worst it retains an unnecessary same-node preference;
+it does not allocate a PKI PVC or prevent the existing self-affinity first Pod.
+
+NEXT: finish remote committed public CRL cache inspection/maintenance writes and
+shared identity/preflight/health observation (currently independent native reader
+is wired for product completion, not every core gate). Run whole fresh isolated
+OpenBao/PostgreSQL/Kubernetes create -> renewal -> interrupted recovery -> cold
+restart -> matched backup restore, then final review and native/contracts/root
+CI/Release in dependency order. Only after those pass, activate selected backend
+for a new generation and run formal dev remove/archive/create GO/deploy/health,
+then staging. No cloud resources or live settings were changed in this checkpoint.
+
+Final focused placement/handoff verification PASS19.836s on the final source,
+including the selected isolated Kubernetes SSA/RBAC fixture, independent reader,
+original/frozen stage projection, core/log/controller permissions and current/
+managed MQTT compatibility. The added current worker fixture initially iterated
+both Service and Deployment objects that share a name; corrected the fixture to
+inspect only actual Deployments. Earlier core rebinding/current placement REDs
+still exercise the production PVC-only defects; no provider rule was relaxed.
+
+Extended the full observed-Controller renderer test to an originally admitted
+bootstrap-snapshot client as well as a pure managed client. RED proved ordinary
+rendering unnecessarily cleared PKI_STATE_BOOTSTRAP_ROOT_SHA256 and
+PKI_STATE_TRANSPORT_TRUST, making the identity transition reject its own source.
+The projector now retains the already admitted transport recipe and original
+optional managed pin, checking the original owner scope, snapshot path and bound
+managed authority. Managed-only public snapshot publication removes bootstrap
+admission; erasing the historical client configuration is not necessary. No
+identity-comparison bypass was added and no environment settings were changed.
+
+The first broader historical regex accidentally selected real signed expiry
+nightly tests. Interrupted that run explicitly (423.737s; no completed test failure
+before interruption), rather than waiting for all old expirations. The maintained
+PR selector RTK_SKIP_HISTORICAL_WALL_CLOCK_EXPIRY=1 is now used for its replacement;
+nightly validation is unchanged. That replacement broader regression is still
+running at this entry and is not a PASS claim. The focused final19.836s run above
+contains the latest transport-recipe correction; retain this distinction if the
+older broader binary completes later.

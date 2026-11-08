@@ -328,7 +328,7 @@ func validateMountedPKICRLManifest(raw, environment, domain string, deployment l
 	seenIDs, seenPaths := map[string]bool{}, map[string]bool{}
 	for _, entry := range entries {
 		issuer := entry.Issuer
-		if !livePKIIssuerIDPattern.MatchString(issuer.ID) || issuer.Environment != environment || issuer.Domain != domain || (issuer.Status != "active" && issuer.Status != "retiring") || seenIDs[issuer.ID] || seenPaths[entry.StatePath] || !livePKICRLStateOnPVC(deployment, containerName, entry.StatePath) {
+		if !livePKIIssuerIDPattern.MatchString(issuer.ID) || issuer.Environment != environment || issuer.Domain != domain || (issuer.Status != "active" && issuer.Status != "retiring") || seenIDs[issuer.ID] || seenPaths[entry.StatePath] || !livePKIStateOnStorage(deployment, containerName, entry.StatePath) {
 			return fmt.Errorf("CRL manifest has an invalid issuer scope or state path")
 		}
 		block, _ := pem.Decode([]byte(issuer.Certificate))

@@ -16,8 +16,10 @@ Do not upload device/user client private keys or rotate identities for migration
 
 Retaining leaf PVCs and deleting only caches saves too few volumes. Reissuing
 per-Pod identities changes lifecycle and is not the selected compatibility
-model. The selected KV custody preserves original complete state and allows
-bounded per-service migration without dual writers or a new storage service.
+model. The selected KV custody preserves complete native state across cold
+restarts without dual writers or an additional storage service. The accepted
+implementation creates fresh dev/staging generations; it does not migrate the
+old cloud workloads.
 
 ## Interface and persistence
 

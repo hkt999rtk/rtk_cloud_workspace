@@ -216,6 +216,18 @@ func projectEnvironmentCustodyResources(values map[string]string, environment st
 				if bootstrapRoot != "" {
 					settings["PKI_STATE_TRANSPORT_TRUST"] = environmentCustodyTrustPath + "/transport.json"
 				}
+				// Already admitted early clients keep their transport recipe. The
+				// published managed-only snapshot withdraws bootstrap authority;
+				// changing these original settings is not needed for an upgrade.
+				if previous := mqttFoundationEnv(container, "PKI_STATE_BOOTSTRAP_ROOT_SHA256"); existingPrefix != "" && bootstrapRoot == "" && previous != "" {
+					currentRoot := mqttFoundationEnv(container, "PKI_STATE_OPENBAO_SERVER_PKI_ROOT_SHA256")
+					if !environmentPreflightDigest.MatchString(previous) || mqttFoundationEnv(container, "PKI_STATE_TRANSPORT_TRUST") != environmentCustodyTrustPath+"/transport.json" || currentRoot != "" && currentRoot != binding.OpenBaoRootSHA256 {
+						return nil, environmentCreateBootstrapBlocker("original custody transport profile differs from its bound authority or public snapshot mount")
+					}
+					settings["PKI_STATE_BOOTSTRAP_ROOT_SHA256"] = previous
+					settings["PKI_STATE_TRANSPORT_TRUST"] = environmentCustodyTrustPath + "/transport.json"
+					settings["PKI_STATE_OPENBAO_SERVER_PKI_ROOT_SHA256"] = currentRoot
+				}
 				fields := environmentCreateEnv(settings)
 				for _, field := range []struct{ key, source string }{{"PKI_STATE_NAMESPACE", "metadata.namespace"}, {"PKI_STATE_POD_UID", "metadata.uid"}} {
 					fields = append(fields, deploymentplan.Object{"name": field.key, "valueFrom": deploymentplan.Object{"fieldRef": deploymentplan.Object{"fieldPath": field.source}}})
@@ -236,6 +248,11 @@ func projectEnvironmentCustodyResources(values map[string]string, environment st
 			}
 		}
 		if account != "" {
+			// PVC permission recipes require an existing private file and cannot
+			// run against a fresh disposable projection. Native stores create
+			// their own private subdirectories as the selected runtime user.
+			pod["initContainers"] = environmentCreateServiceWithoutNamed(pod["initContainers"], controllerIdentityInitializerName)
+			pod["initContainers"] = environmentCreateServiceWithoutNamed(pod["initContainers"], coreIdentityInitializerName)
 			podDependencies["ServiceAccount/"+namespace+"/"+account] = true
 			if additionalNamespaces[namespace] {
 				podDependencies["NetworkPolicy/"+stack+"-secrets/allow-openbao-workload-custody"] = true

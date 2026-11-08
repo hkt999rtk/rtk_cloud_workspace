@@ -130,7 +130,7 @@ func (r *maintenanceRuntime) observe(ctx context.Context) (crlMaintenanceInvento
 				}
 				for _, entry := range entries {
 					issuer, ok := known[entry.Issuer.ID]
-					if !ok || entry.Issuer.Environment != r.cfg.Environment || entry.Issuer.Certificate != issuer.Certificate || entry.Issuer.Fingerprint != deploymentplan.String(issuer.Document["certificate_fingerprint_sha256"]) || !livePKICRLStateOnPVC(typed, container, entry.StatePath) {
+					if !ok || entry.Issuer.Environment != r.cfg.Environment || entry.Issuer.Certificate != issuer.Certificate || entry.Issuer.Fingerprint != deploymentplan.String(issuer.Document["certificate_fingerprint_sha256"]) || !livePKIStateOnStorage(typed, container, entry.StatePath) {
 						return out, errors.New("mounted CRL authority or durable state differs from selected registry")
 					}
 					id := ns + "/" + uid + "/" + container + "/" + entry.StatePath

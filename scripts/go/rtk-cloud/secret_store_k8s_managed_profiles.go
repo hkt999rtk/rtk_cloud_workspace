@@ -31,7 +31,7 @@ func verifyManagedDeviceTrustConsumers(environment, kubeconfig, namespace string
 			if d.Metadata.Name != target.name {
 				continue
 			}
-			if found || !livePKICRLStateOnPVC(d, target.container, target.state) {
+			if found || !livePKIStateOnStorage(d, target.container, target.state) {
 				return errors.New("managed Device trust state must have one original private PVC owner")
 			}
 			found = true
@@ -79,7 +79,7 @@ func verifyManagedAccountOrigins(d liveDeployment) error {
 			}
 			origin, err := url.Parse(settings[prefix+"_URL"])
 			management, managementErr := url.Parse(settings[prefix+"_PKI_CONTROLLER_URL"])
-			if err != nil || managementErr != nil || origin.Scheme != "https" || origin.Hostname() == "" || origin.User != nil || origin.RawQuery != "" || origin.Fragment != "" || origin.Path != "" || management.Scheme != "https" || management.Hostname() == "" || management.User != nil || management.RawQuery != "" || management.Fragment != "" || management.Path != "" || settings[prefix+"_SERVER_PKI_NAME"] != origin.Hostname() || !environmentPreflightDigest.MatchString(settings[prefix+"_SERVER_PKI_ROOT_SHA256"]) || !filepath.IsAbs(settings[prefix+"_TLS_CA"]) || !filepath.IsAbs(settings[prefix+"_MANAGEMENT_CA"]) || !filepath.IsAbs(settings[prefix+"_SERVER_CRL_MANIFEST"]) || !livePKICRLStateOnPVC(d, "pkimanagement", settings["PKI_MANAGEMENT_IDENTITY_STATE"]) {
+			if err != nil || managementErr != nil || origin.Scheme != "https" || origin.Hostname() == "" || origin.User != nil || origin.RawQuery != "" || origin.Fragment != "" || origin.Path != "" || management.Scheme != "https" || management.Hostname() == "" || management.User != nil || management.RawQuery != "" || management.Fragment != "" || management.Path != "" || settings[prefix+"_SERVER_PKI_NAME"] != origin.Hostname() || !environmentPreflightDigest.MatchString(settings[prefix+"_SERVER_PKI_ROOT_SHA256"]) || !filepath.IsAbs(settings[prefix+"_TLS_CA"]) || !filepath.IsAbs(settings[prefix+"_MANAGEMENT_CA"]) || !filepath.IsAbs(settings[prefix+"_SERVER_CRL_MANIFEST"]) || !livePKIStateOnStorage(d, "pkimanagement", settings["PKI_MANAGEMENT_IDENTITY_STATE"]) {
 				return fmt.Errorf("%s_SERVER_CRL_MANIFEST requires the complete managed identity and independently pinned HTTPS origin", prefix)
 			}
 		}

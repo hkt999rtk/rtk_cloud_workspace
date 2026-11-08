@@ -3260,8 +3260,23 @@ namespaces projects this snapshot into `/run/pki-custody-openbao/` read-only,
 without `subPath`. Snapshot scope uses the original bootstrap generation, even
 when a forward recovery has a different execution-plan hash. Foundation recovery
 republishes the latest recorded handoff and never restores withdrawn bootstrap
-admission. Managed anchors must reach the actual consumers before listener TLS
-changes; final runtime uses managed admission without bootstrap authorization.
+admission. The managed-Root distribution callback publishes the overlapping
+custody snapshot before replacing any provider consumer. Before managed listener
+cutover, the executor verifies each active original custody client's mounted
+snapshot, namespace/service account and unchanged Pod UID/spec. Stopped containers
+hold no old connection and are not required to start to satisfy this barrier.
+The selected rollout deadline bounds projection convergence; it never polls the
+Controller HTTP endpoint. After successful managed-host readiness, publication
+withdraws bootstrap trust and repeats the mounted snapshot check.
+
+Creation and ordinary rendering share backend-aware state placement checks.
+The OpenBao profile retains original logical identity paths, generation, auth
+scope and writable memory projections; it does not require a nonexistent PKI PVC.
+PVC permission initializers that require old files are removed only from selected
+custody owners. Native stores create private subdirectories as the explicit
+non-root runtime UID. Existing PVC profiles retain their original preparation
+and permission checks. CRL placement metadata uses the same selected storage
+profile; signed cache admission and actual runtime reload remain separate checks.
 
 Creation and continuation verify product KV identities through the native
 `serviceidentity-bootstrap inspect-admitted` command. A logical `openbao-kv-v2`

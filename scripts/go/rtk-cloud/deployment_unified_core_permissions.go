@@ -95,6 +95,12 @@ func maintainedCoreIdentityInitializer(object deploymentplan.Object, image strin
 		}
 	}
 	state := mqttFoundationEnv(app, "VIDEO_CLOUD_CONTROLLER_IDENTITY_STATE")
+	if mqttFoundationEnv(app, "PKI_STATE_BACKEND") == "openbao" {
+		if _, ok := environmentCustodyMemoryRelativeFile(object, app, "service-identity", state); !ok {
+			return nil, coreIdentityPermissionBlocker(object, "original scoped OpenBao identity projection is unavailable")
+		}
+		return nil, nil // No persistent file or PVC directory exists to repair.
+	}
 	if !coreMQTTIdentityFile(object, app, state) || !immutableEnvironmentImage.MatchString(image) {
 		return nil, coreIdentityPermissionBlocker(object, "original managed Service identity state, writable PVC or pinned permission image is unavailable")
 	}
@@ -155,6 +161,10 @@ func applyCoreIdentityPreparation(definitions []deploymentplan.Definition, image
 					initializers = append(initializers, existing)
 				}
 			}
+			pod["initContainers"] = initializers
+			if expected == nil {
+				continue
+			}
 			pod["initContainers"] = append(initializers, expected)
 			security := deploymentplan.Map(c["securityContext"])
 			if security == nil {
@@ -172,6 +182,12 @@ func validateCoreIdentityInitializer(object deploymentplan.Object, image string)
 	expected, err := maintainedCoreIdentityInitializer(object, image)
 	if err != nil {
 		return err
+	}
+	if expected == nil {
+		if managedNamedField(environmentPKIPod(object)["initContainers"], coreIdentityInitializerName) != nil {
+			return coreIdentityPermissionBlocker(object, "OpenBao memory projection cannot execute a retained PVC permission recipe")
+		}
+		return nil
 	}
 	for _, raw := range certIssuerObjectList(environmentPKIPod(object)["containers"]) {
 		c := deploymentplan.Map(raw)
@@ -213,6 +229,11 @@ func validateCoreIdentityInitializer(object deploymentplan.Object, image string)
 }
 
 func coreCRLParentPrepared(object, c deploymentplan.Object, state string) bool {
+	if mqttFoundationEnv(c, "PKI_STATE_BACKEND") == "openbao" {
+		_, cacheOK := environmentCustodyMemoryRelativeFile(object, c, "service-identity", state)
+		_, identityOK := environmentCustodyMemoryRelativeFile(object, c, "service-identity", mqttFoundationEnv(c, "VIDEO_CLOUD_CONTROLLER_IDENTITY_STATE"))
+		return cacheOK && identityOK
+	}
 	relative, valid := managedMQTTPVCRelativeFile(object, c, "service-identity", state)
 	if !valid {
 		return false

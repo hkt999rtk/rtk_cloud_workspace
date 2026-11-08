@@ -62,7 +62,7 @@ func validateEnvironmentManagedMQTTPlacement(b environmentIdentityBindings, p en
 	if deploymentplan.Digest(a) != deploymentplan.Digest(expected) {
 		return fail()
 	}
-	o := deploymentplan.Object{"kind": p.Kind, "metadata": deploymentplan.Object{"name": p.Name, "namespace": b.Stack + "-video-cloud"}, "spec": deploymentplan.Object{"template": deploymentplan.Object{"spec": deploymentplan.Object{"volumes": p.PodFields["volumes"], "containers": []any{deploymentplan.Object{"name": container, "env": p.Containers[0].Fields["env"], "volumeMounts": p.Containers[0].Fields["volumeMounts"]}}}}}}
+	o := deploymentplan.Object{"kind": p.Kind, "metadata": deploymentplan.Object{"name": p.Name, "namespace": b.Stack + "-video-cloud"}, "spec": deploymentplan.Object{"template": deploymentplan.Object{"spec": deploymentplan.Object{"serviceAccountName": p.PodFields["serviceAccountName"], "volumes": p.PodFields["volumes"], "containers": []any{deploymentplan.Object{"name": container, "env": p.Containers[0].Fields["env"], "volumeMounts": p.Containers[0].Fields["volumeMounts"]}}}}}}
 	c := mqttFoundationPrimary(o)
 	secret := mqttFoundationIdentitySecretName
 	if role == "shadow" {
@@ -73,7 +73,12 @@ func validateEnvironmentManagedMQTTPlacement(b environmentIdentityBindings, p en
 	}
 	volumes, err := environmentPKINamedFields(environmentPKIPod(o)["volumes"])
 	mounts, mountErr := environmentPKINamedFields(c["volumeMounts"])
-	if err != nil || mountErr != nil || deploymentplan.Map(volumes["mqtt-bundle-state"]["persistentVolumeClaim"])["claimName"] != managedMQTTConsumerClaim(o, c) || mounts["mqtt-bundle-state"]["mountPath"] != "/var/lib/mqtt-trust" || mounts["mqtt-bundle-state"]["readOnly"] == true {
+	storage := deploymentplan.Map(volumes["mqtt-bundle-state"]["persistentVolumeClaim"])["claimName"] == managedMQTTConsumerClaim(o, c)
+	if mqttFoundationEnv(c, "PKI_STATE_BACKEND") == "openbao" {
+		_, identity := environmentCustodyMemoryRelativeFile(o, c, "pki-registration-state", mqttFoundationEnv(c, "PKI_REGISTRATION_IDENTITY_STATE"))
+		storage = identity && len(volumes["mqtt-bundle-state"]) == 2 && deploymentplan.Map(volumes["mqtt-bundle-state"]["emptyDir"])["medium"] == "Memory"
+	}
+	if err != nil || mountErr != nil || !storage || mounts["mqtt-bundle-state"]["mountPath"] != "/var/lib/mqtt-trust" || mounts["mqtt-bundle-state"]["readOnly"] == true || mounts["mqtt-bundle-state"]["subPath"] != nil || mounts["mqtt-bundle-state"]["subPathExpr"] != nil {
 		return fail()
 	}
 	return nil

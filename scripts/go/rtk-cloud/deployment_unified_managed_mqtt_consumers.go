@@ -143,6 +143,7 @@ func bindEnvironmentManagedMQTTConsumersProfile(defs []deploymentplan.Definition
 		for _, raw := range certIssuerObjectList(pod["containers"]) {
 			c := deploymentplan.Map(raw)
 			claim := managedMQTTConsumerClaim(d.Object, c)
+			remote := mqttFoundationEnv(c, "PKI_STATE_BACKEND") == "openbao"
 			if claim == "" || mqttFoundationEnv(c, "VIDEO_CLOUD_MQTT_ENABLED") != "true" {
 				continue
 			}
@@ -162,7 +163,11 @@ func bindEnvironmentManagedMQTTConsumersProfile(defs []deploymentplan.Definition
 			} else {
 				own := false
 				for _, v := range certIssuerObjectList(pod["volumes"]) {
-					if deploymentplan.Map(deploymentplan.Map(v)["persistentVolumeClaim"])["claimName"] == claim {
+					volume := deploymentplan.Map(v)
+					if remote {
+						_, valid := environmentCustodyMemoryRelativeFile(d.Object, c, deploymentplan.String(volume["name"]), mqttFoundationEnv(c, "VIDEO_CLOUD_CONTROLLER_IDENTITY_STATE"))
+						own = own || valid
+					} else if deploymentplan.Map(volume["persistentVolumeClaim"])["claimName"] == claim {
 						own = true
 					}
 				}
@@ -196,6 +201,14 @@ func bindEnvironmentManagedMQTTConsumersProfile(defs []deploymentplan.Definition
 				c["volumeMounts"] = mergeEnvironmentNamedFields(c["volumeMounts"], []any{deploymentplan.Clone(sourceMounts[role])})
 			}
 			stateVolume := environmentCreateServiceVolume("mqtt-bundle-state", "persistentVolumeClaim", claim)
+			if remote {
+				stateVolume = deploymentplan.Object{"name": "mqtt-bundle-state", "emptyDir": deploymentplan.Object{"medium": "Memory"}}
+				if c["name"] != "app" {
+					if _, valid := environmentCustodyMemoryRelativeFile(d.Object, c, "pki-registration-state", mqttFoundationEnv(c, "PKI_REGISTRATION_IDENTITY_STATE")); !valid {
+						return managedMQTTConsumerBlocker(deploymentplan.ID(d.Object), "native MQTT registration lost its original scoped OpenBao identity")
+					}
+				}
+			}
 			stateMount := deploymentplan.Map(environmentCreateServiceMount("mqtt-bundle-state", "/var/lib/mqtt-trust", false))
 			if current := mounts["mqtt-bundle-state"]; current != nil {
 				// Kubernetes omits false when returning an existing writable mount.
@@ -206,7 +219,7 @@ func bindEnvironmentManagedMQTTConsumersProfile(defs []deploymentplan.Definition
 			if volumes["mqtt-bundle-state"] != nil && deploymentplan.Digest(volumes["mqtt-bundle-state"]) != deploymentplan.Digest(stateVolume) || mounts["mqtt-bundle-state"] != nil && deploymentplan.Digest(mounts["mqtt-bundle-state"]) != deploymentplan.Digest(stateMount) {
 				return managedMQTTConsumerBlocker(deploymentplan.ID(d.Object), "MQTT CRL cache is not on this consumer's original claim")
 			}
-			if c["name"] != "app" {
+			if c["name"] != "app" && !remote {
 				session := ""
 				if len(sessions) == 1 {
 					session = sessions[0]
@@ -441,6 +454,9 @@ func checkEnvironmentManagedMQTTConsumers(ctx context.Context, p *deploymentplan
 				if strings.TrimSpace(data) == "" || role[1] == "roots.pem" && !coreMQTTRootMatches(data, mqttFoundationEnv(c, "VIDEO_CLOUD_MQTT_SERVER_PKI_ROOT_SHA256")) {
 					return managedMQTTConsumerBlocker(deploymentplan.ID(d.Object), "managed MQTT public trust data does not match its original binding")
 				}
+			}
+			if mqttFoundationEnv(c, "PKI_STATE_BACKEND") == "openbao" {
+				continue // Scope/placement validated above; KV admission is independent of a PVC UID.
 			}
 			claimID := "PersistentVolumeClaim/" + ns + "/" + claim
 			r := byID[claimID]

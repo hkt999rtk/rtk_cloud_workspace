@@ -52,6 +52,13 @@ func applyEnvironmentControllerNativeIdentity(object deploymentplan.Object, bind
 	} {
 		volume, mount := volumes[expected.name], mounts[expected.name]
 		wanted := environmentCreateServiceVolume(expected.name, expected.kind, expected.source)
+		if expected.name == "service-state" && value("PKI_STATE_BACKEND") == "openbao" {
+			profile := deploymentplan.Object{"metadata": deploymentplan.Object{"namespace": "video-cloud-" + value("PKI_ENVIRONMENT") + "-video-cloud"}, "spec": deploymentplan.Object{"template": deploymentplan.Object{"spec": binding.PodFields}}}
+			if _, ok := environmentCustodyMemoryRelativeFile(profile, bound.Fields, expected.name, value("PKI_HOST_IDENTITY_STATE")); !ok {
+				return bad()
+			}
+			wanted = deploymentplan.Object{"name": expected.name, "emptyDir": deploymentplan.Object{"medium": "Memory"}}
+		}
 		if volume == nil || mount == nil || deploymentplan.Digest(environmentPKIVolumeSource(volume)) != deploymentplan.Digest(environmentPKIVolumeSource(deploymentplan.Map(wanted))) || mount["mountPath"] != expected.path || (mount["readOnly"] == true) != expected.readOnly || mount["subPath"] != nil || mount["subPathExpr"] != nil {
 			return bad()
 		}

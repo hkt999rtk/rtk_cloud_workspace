@@ -78,7 +78,7 @@ func (r *maintenanceRuntime) runtimePublicProjection(ctx context.Context, pod de
 			}
 			for _, entry := range entries {
 				issuer, ok := known[entry.Issuer.ID]
-				if !ok || entry.Issuer.Environment != r.cfg.Environment || entry.Issuer.Certificate != issuer.Certificate || entry.Issuer.Fingerprint != deploymentplan.String(issuer.Document["certificate_fingerprint_sha256"]) || !livePKICRLStateOnPVC(typed, out.Producer, entry.StatePath) {
+				if !ok || entry.Issuer.Environment != r.cfg.Environment || entry.Issuer.Certificate != issuer.Certificate || entry.Issuer.Fingerprint != deploymentplan.String(issuer.Document["certificate_fingerprint_sha256"]) || !livePKIStateOnStorage(typed, out.Producer, entry.StatePath) {
 					return out, errors.New("native public CRL authority or durable state changed")
 				}
 				out.Issuers = append(out.Issuers, entry.Issuer.ID)
