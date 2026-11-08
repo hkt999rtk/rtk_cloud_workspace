@@ -240,6 +240,10 @@ func (r *maintenanceRuntime) install(ctx context.Context, c crlMaintenanceConsum
 	if err != nil || deploymentplan.String(deploymentplan.Map(pod["metadata"])["uid"]) != c.PodUID {
 		return errors.New("original CRL consumer Pod changed; rediscover before retry")
 	}
+	if source := managedNamedField(deploymentplan.Map(pod["spec"])["containers"], c.Container); mqttFoundationEnv(source, "PKI_STATE_BACKEND") == "openbao" {
+		_, err := r.custodyPublicCRL(ctx, pod, c, issuer, &record)
+		return err
+	}
 	// Identical valid native state needs no binary transfer or image lookup.
 	state, readErr := r.command(ctx, nil, "--namespace", c.Namespace, "exec", "pod/"+c.Pod, "--container", c.Container, "--", "cat", c.StatePath)
 	if readErr == nil && maintenanceInstalledMatches(r.cfg.Environment, state, issuer, record) {

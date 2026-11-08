@@ -125,7 +125,7 @@ func TestProductIdentityCapabilitiesRequireEveryActualBinaryAndSuppressPrivateEr
 		t.Fatal(err)
 	}
 	l := &createNormalTailProductLifecycle{Outputs: outputs}
-	for _, mode := range []string{"pass", "kv-supported", "kv-missing-inspection", "missing-ack", "wrong-service", "malformed", "external-error"} {
+	for _, mode := range []string{"pass", "kv-supported", "kv-missing-inspection", "kv-missing-public-crl", "missing-ack", "wrong-service", "malformed", "external-error"} {
 		t.Run(mode, func(t *testing.T) {
 			selected := config
 			selected.Values = appendMap(config.Values, nil)
@@ -149,8 +149,11 @@ func TestProductIdentityCapabilitiesRequireEveryActualBinaryAndSuppressPrivateEr
 					service = "account-manager"
 				}
 				features := []string{"deployment-bootstrap-finalize-v1", "first-trust-v1", "create-service-enrollment-v1", "registry-only-issuance-v1", "owned-server-export-v1", "service-registration-bootstrap-ack-v1"}
-				if mode == "kv-supported" {
+				if mode == "kv-supported" || mode == "kv-missing-public-crl" {
 					features = append(features, "committed-identity-inspection-v1")
+					if mode == "kv-supported" {
+						features = append(features, "committed-public-crl-maintenance-v1")
+					}
 				}
 				if entry == "/app/webrtcservice" {
 					switch mode {

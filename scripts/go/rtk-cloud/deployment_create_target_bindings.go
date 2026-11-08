@@ -35,5 +35,12 @@ func observeEnvironmentTargetBindings(ctx context.Context, cfg deploymentConfig,
 			return bindings, err
 		}
 	}
+	store, err := newSecretStore("", cfg.Environment)
+	if err != nil {
+		return bindings, err
+	}
+	if err := restoreEnvironmentCustodyBindings(ctx, cfg, store, operation, &bindings); err != nil {
+		return bindings, err
+	}
 	return bindings, nil
 }

@@ -1870,6 +1870,23 @@ final managed-only phase reads a private key, changes an auth scope, renews a
 certificate or generates a separate local receipt path. It does not require a
 failed client container or Controller HTTP to become available.
 
+The completed PKI bootstrap producer writes original custody references in
+`~/.config/rtk_cloud/<environment>/deployment/create/<generation>/bootstrap/bindings.json`.
+Ordinary observation and CRL maintenance consume only that exact generation file
+and the transport snapshot above; they do not treat it as a current preflight GO.
+Qualified in-progress creation supplies its scope through its admitted runtime
+context before the completion file exists. No other environment/worktree is a
+fallback, and neither reader initializes missing records.
+
+The public CRL helper reads the original scoped KV cache; an install streams only
+the selected public signed CRL JSON through stdin. Its temporary candidate is in
+Memory emptyDir and its original verifier database Secret remains a reference.
+The native command compares input with current registry evidence, preserves CAS,
+revocation high-water and terminal denial, and never acknowledges a runtime reload.
+After helper success, consumer/parent ownership is rechecked. Actual readiness and
+signed ACK remain required for convergence. This adds no local secret or temporary
+operation-data path and never mounts a workload private identity PVC.
+
 All local operation directories are 0700, files 0600. The common environment
 path helpers own these locations. Matching OpenBao/registry backup and restore
 remain part of validating the newly created generation, without adding an old

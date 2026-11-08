@@ -918,3 +918,82 @@ nightly validation is unchanged. That replacement broader regression is still
 running at this entry and is not a PASS claim. The focused final19.836s run above
 contains the latest transport-recipe correction; retain this distinction if the
 older broader binary completes later.
+
+### Committed public CRL operator and shared observation checkpoint
+
+Previous goal turn is progress: root commits c01f8410 and 858d8483, with final
+focused adapters PASS19.836s. The broader PR-mode regex subsequently hit the Go
+command's default 10m package timeout (600.795s) in the existing
+TestPRHistoricalLateRootCRLsCompleteDurableCheckpoints. Stack evidence shows its
+explicit signed-expiry timer in newHistoricalManagedTransportSourceExecutionContract
+and two earlier signed-expiry waits; it had no completed functional failure before
+that timeout. 829 test/subtest passes and3 skips were observed. This is NOT a whole
+package PASS. Do not repeat an undersized default-timeout broad historical run;
+use the repository CI/nightly budgets when that validation is required. Retained
+log: custody-memory-handoff-pr-regression.jsonl. No cloud operation ran.
+
+Native c97d455 adds PublicStateCustody.InspectCRL and inspect-public-crl /
+apply-public-crl commands. Inspection is GET-only, validates original KV kind/scope
+and signed native state, and creates no projection. Public repair reads the exact
+current fresh registry record, updates existing KV with native CAS/anti-rollback,
+then reads committed state back. Missing state is not recreated. No key generation,
+identity Lease, signing or ACK. Actual isolated PostgreSQL verifies registry input
+selection; controlled clock tests repair an expired old cache. Native full race
+packages: serviceidentity-bootstrap PASS6.303s; pkitrust PASS12.689s. Initial tests
+observed missing functions; then GREEN, including corrupt metadata/signature/scope,
+foreign issuer, stale input, no-local-projection and missing-record cases.
+
+Root now has typed public CRL references (original generation/owner/namespace/SA,
+mount/public key/state path/domain/issuer digest), using the same owner resolver as
+private identity references, with no fabricated claim UID or KV-version identity.
+The shared Job executor also supports a bounded keepalive helper with streamed
+native public input/output. It reuses original workload auth, verifies Job/Pod UID,
+body and owner chain around exec, caps output, and keeps exact lost-response and
+foreground UID cleanup semantics. There is no extra public-input ConfigMap or
+large JSON in arguments/environment. Only public write candidates use memory.
+
+Actual maintenanceRuntime.install dispatches remote owners to that original-scope
+helper before reading/statting the faulted application. RED proved the old private
+projection dependency. The final execution test exercises this actual dispatcher
+with an unavailable application, original controller metadata and existing private
+bootstrap/snapshot facts, and proves stdin transfer/committed readback/cleanup.
+Initial helper fixture lacked its explicitly frozen kubeconfig; fixed the fixture,
+not the production identity guard. Public interpreter/foreign ownership/output
+failures are sanitized and replacement helpers are protected.
+
+Common target observation now restores generation custody facts: exact completed
+bootstrap/bindings.json plus managed snapshot for upgrade; admitted initialized
+create context plus registered Service Root before that file exists. Public TLS
+re-observation must not drop custody. Current resource ownership/behavior is not
+replaced with historical binding data. Missing upgrade evidence fails without
+regeneration or fallback. Tests cover original scope restoration, preserved current
+UID facts, missing completion evidence and in-progress creation.
+
+Added committed-public-crl-maintenance-v1 to the existing OpenBao-only capability
+list (no additional Docker probes or latest-release comparisons). RED showed a
+missing feature incorrectly passed before allocation; corrected it. Legacy PVC
+requirements remain unchanged.
+
+Final selected root regression PASS42.811s, including the isolated Kubernetes
+SSA/RBAC fixture, all new custody references/helpers/current observation, bootstrap
+capability allocation fences, product receipts, ordinary core/controller/log/MQTT
+compatibility and existing maintenance tests. Earlier public helper execution
+PASS10.886s and actual maintenance dispatch PASS11.860s. These are component and
+adapter proofs, not whole fresh creation/recovery/health or preflight GO.
+
+Ruling: a KV record's authority is the original generation/owner/namespace/SA and
+current verified Kubernetes controller ownership chain; do not turn the creation
+Deployment UID into a new immutable identity key — ordinary upgrades can retain
+logical custody while current Kubernetes facts advance — stale current operations
+still fail UID checks around execution and never delete a replacement helper.
+
+NEXT (highest priority): remote CRL discovery/public export verification, recovery
+ordering (online OpenBao TLS CRLs must be repaired before a KV helper needs managed
+TLS), and maintenance consumer identification when the application cannot boot.
+Use original admitted enrollment evidence for expected subjects; do not guess from
+Pod display names or require a private projection/healthy TLS before repair.
+Then wire independent committed identity/CRL proofs through every core preflight/
+health reader. Actual fresh creation/renewal/interruption/cold restart/matched
+backup test still required, then final one whole-branch review, dependent native/
+contracts/root CI/Release, approved formal dev remove/archive/create GO/deploy/health,
+then staging. Cloud resources and live backend settings remain unchanged.

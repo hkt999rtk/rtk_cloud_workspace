@@ -36,26 +36,9 @@ func newEnvironmentCustodyStateReference(cfg deploymentConfig, binding *environm
 	if cfg.Values["PKI_STATE_BACKEND"] != "openbao" || binding == nil || !filepath.IsAbs(path) || filepath.Clean(path) != path || path == "/" || !environmentPreflightDigest.MatchString(root) {
 		return bad()
 	}
-	var selected *environmentCustodyOwnerBinding
-	for _, owner := range binding.Owners {
-		aliases := owner.StorageAliases
-		if len(aliases) == 0 {
-			aliases = []string{owner.ID}
-		}
-		if owner.Namespace != namespace || !slices.Contains(aliases, alias) {
-			continue
-		}
-		if selected != nil {
-			return bad()
-		}
-		copy := owner
-		selected = &copy
-	}
-	if selected == nil {
+	selected, err := environmentCustodyStateOwner(cfg, binding, namespace, alias, path)
+	if err != nil {
 		return bad()
-	}
-	if _, err := environmentCustodyPolicy(cfg.Values, cfg.Environment, *binding, *selected); err != nil {
-		return nil, err
 	}
 	return &environmentCustodyStateReference{
 		Backend: "openbao-kv-v2", Generation: binding.Generation, Owner: selected.ID,
@@ -94,4 +77,64 @@ func validateEnvironmentProductIdentityStorage(cfg deploymentConfig, l *createNo
 		return err
 	}
 	return validateEnvironmentCustodyStateReference(receipt.Custody, cfg, binding, cfg.Values["CLOUD_STACK_NAME"]+"-video-cloud", output.Claim, environmentCreateServiceOwnerIdentityPath(strings.TrimPrefix(output.Subject, "service:"), "client.json"), l.Root.RootFingerprint)
+}
+
+// Both identity and public records retain this original logical owner. Physical
+// PVC identity and mutable KV versions are not durable custody references.
+func environmentCustodyStateOwner(cfg deploymentConfig, binding *environmentCustodyBinding, namespace, alias, path string) (*environmentCustodyOwnerBinding, error) {
+	bad := func() (*environmentCustodyOwnerBinding, error) {
+		return nil, environmentCreateBootstrapBlocker("state requires its original environment, generation and workload owner")
+	}
+	if cfg.Values["PKI_STATE_BACKEND"] != "openbao" || binding == nil || !filepath.IsAbs(path) || filepath.Clean(path) != path || path == "/" || strings.ContainsAny(path, "\x00\r\n") {
+		return bad()
+	}
+	var selected *environmentCustodyOwnerBinding
+	for _, owner := range binding.Owners {
+		aliases := owner.StorageAliases
+		if len(aliases) == 0 {
+			aliases = []string{owner.ID}
+		}
+		if owner.Namespace != namespace || !slices.Contains(aliases, alias) {
+			continue
+		}
+		if selected != nil {
+			return bad()
+		}
+		copy := owner
+		selected = &copy
+	}
+	if selected == nil {
+		return bad()
+	}
+	if _, err := environmentCustodyPolicy(cfg.Values, cfg.Environment, *binding, *selected); err != nil {
+		return nil, err
+	}
+	return selected, nil
+}
+
+type environmentCustodyPublicCRLReference struct {
+	Backend, Generation, Owner, Namespace, ServiceAccount, Mount, RecordKey, StatePath string
+	Domain, IssuerID, IssuerSHA256                                                     string
+}
+
+func newEnvironmentCustodyPublicCRLReference(cfg deploymentConfig, binding *environmentCustodyBinding, namespace, alias, path, domain, issuer, pin string) (*environmentCustodyPublicCRLReference, error) {
+	if !slices.Contains(managedPKIDomains, domain) || !environmentBootstrapOwnerUUID.MatchString(issuer) || !environmentPreflightDigest.MatchString(pin) {
+		return nil, environmentCreateBootstrapBlocker("public CRL record requires its exact original issuer binding")
+	}
+	owner, err := environmentCustodyStateOwner(cfg, binding, namespace, alias, path)
+	if err != nil {
+		return nil, err
+	}
+	return &environmentCustodyPublicCRLReference{Backend: "openbao-kv-v2", Generation: binding.Generation, Owner: owner.ID, Namespace: namespace, ServiceAccount: owner.ServiceAccount, Mount: cfg.Values["PKI_STATE_KV_MOUNT"], RecordKey: environmentCustodyRecordKey(cfg.Environment+"/"+binding.Generation+"/"+owner.ID+"/public", path), StatePath: path, Domain: domain, IssuerID: issuer, IssuerSHA256: pin}, nil
+}
+
+func validateEnvironmentCustodyPublicCRLReference(actual *environmentCustodyPublicCRLReference, cfg deploymentConfig, binding *environmentCustodyBinding, namespace, alias, path, domain, issuer, pin string) error {
+	expected, err := newEnvironmentCustodyPublicCRLReference(cfg, binding, namespace, alias, path, domain, issuer, pin)
+	if err != nil {
+		return err
+	}
+	if actual == nil || deploymentplan.Digest(actual) != deploymentplan.Digest(expected) {
+		return environmentCreateBootstrapBlocker("public CRL record differs from its original workload or authority")
+	}
+	return nil
 }

@@ -3307,6 +3307,39 @@ also require `committed-identity-inspection-v1` before allocation. This adds no
 container probe and does not compare the assigned image with another release.
 PVC configurations retain their existing capability requirements.
 
+Committed public CRL maintenance uses the same original generation scope. Native
+`inspect-public-crl` verifies committed signed cache evidence without restoring a
+file; expired evidence remains observable for repair and does not count as healthy
+admission. `apply-public-crl` accepts only the current fresh record from the native
+registry, uses the existing CAS/monotonic cache writer, and reads back committed
+state. It cannot create a missing KV cache, sign a CRL or publish a runtime ACK.
+Existing capability probes additionally require
+`committed-public-crl-maintenance-v1` for the OpenBao backend, without another
+Docker probe or comparison to a different release.
+
+The public maintenance adapter runs a bounded temporary Job with the original
+workload service account and public trust. Public input is streamed through stdin
+to the native helper; private identity files are not mounted. A write projects its
+public candidate only in Memory emptyDir. The shared executor fences Job/Pod UIDs,
+recipe and owner references before/after execution, limits public output, reconciles
+lost create/delete responses by exact name, and uses UID-preconditioned foreground
+cleanup. Job deadline/TTL bound a lost operator. The application container may be
+faulted; only its metadata and current controller ownership chain are needed.
+The existing CRL maintenance `install` dispatcher now uses this path for OpenBao
+owners; PVC consumers keep the existing native file installer.
+
+Public TLS re-observation and ordinary upgrade preserve custody facts from the
+same generation's `bootstrap/bindings.json` and managed transport snapshot, without
+copying old images, workload behavior or Kubernetes UIDs over current observation.
+Before that completion file exists, only the admitted create runtime context may
+supply its initialized scope and registered Service Root. Missing upgrade evidence
+is an error, never permission to create another identity or search a different
+environment. Current placement and native KV/registry admission remain distinct.
+
+Adapter integration remains incomplete until discovery, public export readback,
+expiry recovery ordering and every core preflight/health reader also use committed
+KV state; this checkpoint alone is not full renewal or environment acceptance.
+
 Targets are not deployed facts; each environment needs its own completion and
 health evidence. See the accepted OpenBao custody design and canonical
 Platform PKI contract.

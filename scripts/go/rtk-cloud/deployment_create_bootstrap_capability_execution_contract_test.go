@@ -12,7 +12,7 @@ import (
 )
 
 func TestBootstrapCapabilityExecutionContractChecksImmutableImagesBeforeAllocation(t *testing.T) {
-	for _, mode := range []string{"original", "kv-supported", "kv-missing-inspection", "wrong-environment", "mutable-image", "missing-operator", "changed-operator", "changed-template", "existing-authority", "missing-binary", "wrong-service", "missing-feature", "malformed", "oversized", "command-failed"} {
+	for _, mode := range []string{"original", "kv-supported", "kv-missing-inspection", "kv-missing-public-crl", "wrong-environment", "mutable-image", "missing-operator", "changed-operator", "changed-template", "existing-authority", "missing-binary", "wrong-service", "missing-feature", "malformed", "oversized", "command-failed"} {
 		t.Run(mode, func(t *testing.T) {
 			cfg, store, _, operator, plan := createDependencyContractFixture(t)
 			cfg.Values["PKI_REQUIRE_USER_MFA"] = "false"
@@ -28,8 +28,11 @@ func TestBootstrapCapabilityExecutionContractChecksImmutableImagesBeforeAllocati
 			bin := t.TempDir()
 			log := filepath.Join(bin, "calls")
 			features := []string{"deployment-bootstrap-finalize-v1", "first-trust-v1", "create-service-enrollment-v1", "registry-only-issuance-v1", "fresh-bootstrap-trust-v1", "mqtt-bundle-bootstrap-v1", "owned-server-export-v1", "managed-callback-export-v1", "managed-test-lab-callback-v1", "service-registration-bootstrap-ack-v1"}
-			if mode == "kv-supported" {
+			if mode == "kv-supported" || mode == "kv-missing-public-crl" {
 				features = append(features, "committed-identity-inspection-v1")
+				if mode == "kv-supported" {
+					features = append(features, "committed-public-crl-maintenance-v1")
+				}
 			}
 			for _, service := range []string{"rtk-account-manager", "pkimanagement", "certissuer", "api", "logingester", "pkibroker", "serviceidentity-bootstrap", "emqxpkihost", "mqttfoundation", "shadowworker", "otaservice", "videostorage", "webrtcservice", "cloudlogger"} {
 				name := service

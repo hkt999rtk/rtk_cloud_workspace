@@ -133,7 +133,7 @@ func verifyProductCapabilities(ctx context.Context, cfg deploymentConfig, releas
 func serviceIdentityBootstrapCapabilities(backend string) []string {
 	features := []string{"owned-server-export-v1"}
 	if backend == "openbao" {
-		features = append(features, "committed-identity-inspection-v1")
+		features = append(features, "committed-identity-inspection-v1", "committed-public-crl-maintenance-v1")
 	}
 	return features
 }
