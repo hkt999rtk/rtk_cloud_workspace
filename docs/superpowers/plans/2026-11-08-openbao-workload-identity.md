@@ -1237,3 +1237,39 @@ fallbacks if not called through resolved environment config; do not invoke blind
 All live dev/staging backend values and resources remain unchanged. Final fresh
 review, dependency CI/Release, then approved dev removal/archive/create GO/deploy/
 health and staging remain required. Goal remains active.
+
+Follow-up checkpoint: the operator selected fresh generations for both dev and
+staging. Keep the deployment order dev, then staging after dev health acceptance.
+The original local identities and operating evidence still need to be archived;
+no legacy workload identity is to be copied into either new generation.
+
+Workspace 04f5978e: complete native fresh dev/staging inventory is projected to
+OpenBao, observed through the canonical binding path and rendered again. The App
+API's retained App Root and Service client paths are validated against the
+scoped memory profile; the original PVC mode keeps its original claim checks.
+The new roundtrip initially failed on App API's PVC-only check, then passed in
+1.439s. Focused workspace regression passed in 73.206s. The test proves
+render/observe consistency, including retention of independent OpenBao and
+PostgreSQL storage, rather than a real cloud deployment.
+
+Native 60e1205: the isolated OpenBao TLS/Kubernetes owner lifecycle additionally
+uses actual PostgreSQL issuance and CRL admission for the same enrolled and
+renewed credential. After renewal it seals/stops OpenBao, backs up the encrypted
+file data and the exact private fixture schema, restores OpenBao into a new
+volume and opens the renewed identity from an empty projection. The older pair
+is rejected with a newer registry CRL and admitted after restoring the matched
+PostgreSQL dump. The opt-in race test ran without a skip in 9.219s, and the
+serviceidentity package race run passed. Proof log:
+`/Volumes/RTKGoBuild/tmp/custody-matched-backup-proof.log`. This is an isolated
+file-backed provider/registry recovery proof, not the full fresh environment
+orchestrator or a proof of production backup tooling.
+
+Remaining before live removal: run the complete fresh orchestrator with
+OpenBao custody; ensure ordinary preflight/health independently admits original
+committed identities for all applicable owners; implement exact-generation
+removal and private archival. Current removal delegates through the legacy
+`--env-root` resolver, whose basename heuristic appends `runtime` even to a
+canonical staging store, and its broad name matcher cannot by itself establish
+resource ownership. The formal rebuild must carry the selected environment and
+exact original provider identities across removal/absence/archive. No live
+resource, environment setting, deployment result or backend selection changed.
