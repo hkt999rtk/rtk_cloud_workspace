@@ -557,3 +557,88 @@ need actual KV cold restore + renewal; typed KV identity inspection/receipts mus
 replace applicable PVC assumptions; publish prepared/final TLS handoff and verify
 actual installed snapshots before listener swap; complete isolated whole lifecycle
 and matched recovery, review/CI/release; only then formal fresh dev then staging.
+
+Product native-owner checkpoint (native7fd2487): added
+runtime.RegistrationTransport to compose existing pkitrust.ManagedServiceClient
+and the unchanged serviceregistration protocol. With backend pvc/empty it calls
+the same PEM constructor. With openbao it requires an INSTALLED original private
+record, selected PKI registry and explicit registration identity settings; no
+bootstrap enrollment/file fallback. Existing DB pools are reused; client-only
+registrars may open configured cfg.DB.DSN without migration. Cleanup stops native
+renewal/Lease/provider before closing an owned DB pool. Optional services have
+explicit Close and Run cleanup. MQTT foundation/Shadow reuse this identity and its
+public custody for MQTT server trust; Log Ingester keeps its separate internal
+Service identity and registration credential under the same workload scope.
+
+IMPORTANT registration ACK ruling: keep actual ready-heartbeat capture/ACK in
+serviceregistration.bootstrap_ack. Do NOT let merely loading a managed key ACK an
+unready product. Registration native manager uses Controller as its private
+management endpoint and CertIssuer as renewal endpoint, with BootstrapSessionID
+empty. serviceregistration.NewMTLSHTTPClientWithIdentity accepts the owner's
+current credential callback and preserves legacy TLS1.3/per-request connections
+and bootstrap identity capture. This preserves existing registration protocol
+behavior; package serviceregistration itself does not obtain/store a key.
+All applicable callers now use runtime.NewRegistrationTransport: optionalserviceapp
+(webrtc/video-storage/ota), mqttfoundationapp, shadowworkerapp, logingesterapp,
+otaregistrarapp. Private key file paths remain only for legacy backend.
+
+Native runtime inputs to emit from original environment creation facts:
+ PKI_REGISTRATION_IDENTITY_STATE
+ PKI_REGISTRATION_ROOT_SHA256
+ PKI_REGISTRATION_CONTROLLER_URL
+ PKI_REGISTRATION_CONTROLLER_SERVER_PKI_ROOT_SHA256
+ PKI_REGISTRATION_CONTROLLER_SERVER_PKI_NAME
+ PKI_REGISTRATION_CONTROLLER_TLS_CA
+ PKI_REGISTRATION_RENEWAL_URL
+ PKI_REGISTRATION_RENEWAL_SERVER_PKI_ROOT_SHA256
+ PKI_REGISTRATION_RENEWAL_SERVER_PKI_NAME
+ PKI_REGISTRATION_RENEWAL_TLS_CA
+(optional existing ServerHTTPTrust fields are supported). Runtime config uses
+cfg.IdentityCustody and cfg.Env, not inferred backend/settings. State subject is
+exact service:mqtt/shadow/ota/video-storage/webrtc/logger. New manager is installed
+only and automatic renewal uses the existing native machinery. These fields are
+NOT YET emitted by root rendering: no new backend is enabled/live.
+
+Tests: dynamic registration TLS identity rotation passes with BOTH cert/key files
+removed, accepts successor in memory, denies after owner callback failure; same
+shared constructor retains all existing ready-ACK tests. RED undefined constructor
+then full serviceregistration -race2.237s. Runtime remote missing settings/unknown
+backend fail before file fallback or DB/network; RED undefined owner helper, GREEN
+runtime1.721s/serviceregistration2.515s. App wiring full -race -p1 passes runtime1.440s,
+serviceregistration1.917s,optionalserviceapp1.616s,shadowworkerapp1.509s,
+logingesterapp1.565s in custody-registration-apps.log. MQTT foundation/OTA registrar
+have NO test files (compiled, not an end-to-end claim). No SQL DSN was supplied for
+this last app suite; earlier core graph/renewal tests used real isolated Postgres.
+No tests running, all native changes committed, root gitlinks still not staged.
+
+NEXT concrete root work:
+- Product steady Deployments currently mount only exported PEM Secrets, so the
+  shared custody projector cannot discover a bound identity volume. Add the
+  maintained product identity mount/state path and the above managed settings
+  BEFORE shared projection, using original registered Service Root/Controller/
+  CertIssuer facts. Never set policy values from the script. A small optional
+  Service Root reference on workload_custody (or equivalent original binding)
+  can carry the public fact into steady rendering. Runtime.ServiceCeremony has
+  the original registered Service Root during create; update context after it is
+  assigned. Existing pki-create-service-trust ConfigMap key root.pem is public
+  trust, mounted at environmentCreateServiceTrust=/run/pki-service. Controller
+  origin is https://pki-controller.<stack>-video-cloud.svc:18446; CertIssuer is
+  https://certissuer.<stack>-video-cloud.svc:18445, matching existing maintained
+  recipes. Use shared helpers and existing namespace/DNS contracts.
+- root Product outputs STILL require SecretUID + ClaimUID and read raw local
+  state/private mirrors. Replace applicable NEW-backend assertions with typed
+  original KV scope/key references and native read-only public inspection; do
+  NOT fake ClaimUID. Historical bootstrap receipts may pin their initial observed
+  certificate, but ongoing health must accept a genuine newer committed renewal.
+  Decide whether to omit unused private output Secrets for the new backend; the
+  registration runtime no longer needs them. Preserve legacy backend behavior.
+- Final completed bindings must attach Custody + original managed OpenBao Root
+  and any Service trust reference before the normal renderer runs; currently
+  completeEnvironmentCreateBootstrap re-observes bindings and does not attach it.
+- TLS prepared/final snapshot publication + installed projection barrier remain;
+  full isolated new-backend lifecycle/recovery/backup test, final review/CI/release
+  and formal dev then staging teardown/create/health still outstanding.
+No real environment config/identity/data changed, no cloud resources removed,
+no current-feature PR/CI/release/preflight GO/deployment yet. Do not delete cloud
+until complete isolated acceptance. Existing root/native feature worktree only;
+primary checkout remains untouched.
