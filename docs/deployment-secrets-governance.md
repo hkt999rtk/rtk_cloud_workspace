@@ -1794,6 +1794,17 @@ private temporary projections (0700 directories, 0600 files). Signing/admission
 remains with the original PKI engines/registry. Private projections, credentials
 and tokens must not appear in progress, receipts, Git or cloud_env/.
 
+Public trust-cache producers/consumers use the same selected workload KV
+scope at `<environment>/<generation>/<workload>/public/<sha256(original-state-path)>`
+in the configured mount, with schema `rtk.pki-public-state/v1`. Signed CRLs,
+Root distrust/high-water state and the native API first-Root admission record
+(including its consumed policy-path marker) persist before private atomic file
+projection. These records contain public evidence, not signing keys. Runtime
+restore requires the original records; initial creation is reserved for the
+explicit native bootstrap flow or a validated newly discovered authority.
+API Root provisioning and TLS construction consume restored policy before
+opening a listener. Consumer ACKs still require actual runtime installation.
+
 The approved rollout uses formal removal and new creation for dev then staging;
 it does not implement an in-place identity migration. Original local generation
 material is segregated under the existing generation-archive contract before

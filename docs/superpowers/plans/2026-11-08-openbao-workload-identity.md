@@ -435,3 +435,63 @@ recovery projection + typed KV inspection/receipts, all cache/registration owner
 wiring, installed TLS snapshot handoff, whole isolated flow/backup-restore
 acceptance, review/CI/release, then formal dev removal/archive/create GO/deploy/
 health and staging. Component tests are not completion of those requirements.
+
+
+2026-11-09 native trust-owner wiring checkpoint (native e55b354): connected
+PublicStateCustody through App/Device/Broker/Service/MQTT/OpenBao registry factories,
+shared Service HTTP client pairs, managed Service identity owners, ServerHost,
+Controller/CertIssuer provider and listener factories, Management, Factory Enroll,
+API Root/CRL consumers and its MQTT transport, and Log Ingester's managed MQTT
+transport. Reuses the original authenticated custody client instead of constructing
+another key/owner. Registry automatic Device descendants use explicit initial
+trust only AFTER native registry hierarchy validation; normal missing public
+records still fail. Root provisioning restores KV evidence and persists reviewed
+successors through CAS before projection; stale files cannot restore withdrawn
+anchors. Existing file backend remains supported.
+
+Ruling: the native API incoming-root-bootstrap admission is ALSO durable public
+state. Its previous file lived on the removed PKI PVC; leaving it file-only would
+lose original admission or repeat initial trust after Pod recreation. Moved its
+format into pkitrust.IncomingRootAdmission without changing fields, storing it
+under the same public KV path/schema with kind incoming-admission. Exact original
+Root/bundle/Service identity binding and consumed PolicyPath advance monotonically;
+replayed initial commands cannot clear consumption. Native initial-trust commands
+use an installed-private-key-only loader with separate public initialization;
+ordinary runtime does not implicitly enroll identities. API restores policy before
+TLS construction and can restore consumed admission/policy without Controller
+requests. This adds no preflight setting/value generation.
+
+Tests: registry App/Device actual SQL + KV provider floor/projection-loss tests
+GREEN 3.545s; reviewed App Root provisioning tests now run file + KV and verify
+successor durability. Server Root factory restoration checks service/mqtt/openbao_tls
+with stale provisioned overlap and Controller unavailable. API incoming admission
+file + KV in App/Device tests GREEN 7.152s; cold restart loses both files, restores
+original policy, makes no new first-policy request or premature ACK. Admission
+store rejects runtime creation, original Root replacement and consumed rollback.
+Initial new factory fixture used noncanonical Root ID; corrected fixture to UUID.
+
+Full -race + real isolated Postgres: pkitrust95.437s, apiapp40.926s,
+pkibrokerapp8.892s, pkicontrollerapp33.133s, certissuerapp24.539s,
+factoryenrollapp11.473s PASS in custody-runtime-wiring-race.log. That combined run
+found a real pre-existing Manager.Current vs successful renewal race on fallback
+fields, reproduced by new TestManagerCurrentDuringRenewal (-race RED 5.277s).
+Fixed with short credential snapshot locking, separate from the mutation/HTTP
+mutex so TLS callbacks cannot deadlock their own issuer request. GREEN full
+serviceidentity15.958s, pkimanagementapp4.777s, mqtt11.083s,
+logingesterapp1.746s (-race -p1 with real SQL) in custody-renewal-final.log. MQTT's
+combined-run 3-second CONNECT deadline failed under concurrent DB package load;
+isolated exact test passed9.76s, full package passed11.083s without changing
+production behavior or relaxing deadlines. Log Ingester's getter incorrectly
+returned empty for custody environment fields; now passes through os.Getenv.
+No tests remain running, no live cloud writes.
+
+NEXT: formal create/recovery STAGE projection, typed KV inspection/receipts,
+prepared/managed-only TLS snapshot publication with installed-file barrier,
+server export/public profile and product registration cold restore/renewal. Product
+static PEM consumers are not yet converted; do not claim all workload custody is
+done. API incoming admission and core native trust graph are now wired, superseding
+the prior note that no loader supplies custody pointers. Full isolated environment
+creation/recovery, matched backup/restore with newer renewal, whole-branch review,
+CI/release and real dev/staging fresh rebuild remain outstanding. Do NOT delete
+cloud yet. Environment backend overrides still unactivated; no feature preflight
+GO, current-feature PR/CI/release or deployment completion.

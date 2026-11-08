@@ -3223,6 +3223,13 @@ ownership. Existing file stores remain supported for unmigrated workloads.
 Private local files become temporary projections; a startup-only download or
 asynchronous filesystem mirroring is not a durable identity implementation.
 Trust/CRL caches preserve accepted versions and existing verification semantics.
+Registry factories, private HTTP transports and native API trust consumers use
+an explicit shared public-state custody handle from their managed identity owner.
+They preserve CRL progress, cumulative Root distrust and terminal issuer markers
+through projection loss. The API's first-Root admission is also durable: its
+consumed marker cannot be cleared by restarting a Pod. Public-cache initialization
+is separate from private-key enrollment; the bounded initial trust command
+requires the installed original Service key and cannot replace it.
 OpenBao itself retains independent cold-start storage; SQL admission and
 original CA custody are not migrated to KV.
 
