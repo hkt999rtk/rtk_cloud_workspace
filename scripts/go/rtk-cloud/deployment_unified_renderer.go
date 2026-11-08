@@ -412,6 +412,13 @@ func renderEnvironmentResourceCatalog(env map[string]string, bindings environmen
 	if err := validateEnvironmentOTARegistrationRelease(definitions, release); err != nil {
 		return nil, err
 	}
+	if intent == nil {
+		var err error
+		definitions, err = projectEnvironmentCustodyResources(env, bindings.Environment, bindings.Custody, "", definitions)
+		if err != nil {
+			return nil, err
+		}
+	}
 	sort.Slice(definitions, func(i, j int) bool {
 		return deploymentplan.ID(definitions[i].Object) < deploymentplan.ID(definitions[j].Object)
 	})

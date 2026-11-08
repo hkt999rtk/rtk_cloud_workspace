@@ -3189,6 +3189,22 @@ baseline is `pvc`, mount `pki-identities`, and a `30s` Lease duration. Environme
 architecture overrides select a fresh generation's backend, mount and duration;
 the resolver validates and preserves those values rather than rewriting intent.
 
+The original `workload_custody` binding records the generation, managed OpenBao
+Root fingerprint and each logical storage owner's namespace/service account.
+Shared rendering derives the same KV record prefix and per-state Lease for
+enrollment Jobs and runtime containers. Only explicitly bound PKI storage
+becomes a memory-backed `emptyDir`; business claims and OpenBao's independent
+storage remain. Credentials use separate projected OpenBao/API tokens and the
+Kubernetes CA; Pod namespace/UID come from the downward API. Existing workload
+UID/GID settings are not replaced by custody rendering.
+
+Each identity path has an additive named Role/RoleBinding (`get`, `update`)
+and a pre-created Lease. A different lifecycle stage cannot narrow another
+state path's rights. Lease declarations contain no `spec`, so replay cannot
+clear a native writer's holder. Cross-namespace OpenBao access adds only the
+selected custody Pod ingress; it does not introduce an Egress policy that would
+isolate existing database, DNS or Kubernetes API connections.
+
 Native identity stores synchronously persist pending CSR state and verified
 credential changes through versioned compare-and-set, with fenced single-writer
 ownership. Existing file stores remain supported for unmigrated workloads.

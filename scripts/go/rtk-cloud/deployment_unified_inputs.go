@@ -94,6 +94,7 @@ type environmentIdentityBindings struct {
 	AppIngress        *environmentAppIngressBinding       `json:"app_ingress,omitempty"`
 	AppRouting        *environmentAppRoutingBinding       `json:"app_routing,omitempty"`
 	ProductIdentities *environmentFreshProductBinding     `json:"product_identities,omitempty"`
+	Custody           *environmentCustodyBinding          `json:"workload_custody,omitempty"`
 }
 
 type environmentAdmissionBinding struct {
@@ -128,6 +129,18 @@ func validateEnvironmentIdentityBindings(b environmentIdentityBindings, environm
 	}
 	if !validFreshProductBinding(b.ProductIdentities) {
 		return errors.New("deployment.bindings: fresh product lifecycle reference is invalid")
+	}
+	if b.Custody != nil {
+		if !environmentPreflightDigest.MatchString(b.Custody.Generation) || !environmentPreflightDigest.MatchString(b.Custody.OpenBaoRootSHA256) || len(b.Custody.Owners) == 0 {
+			return errors.New("deployment.bindings: original workload custody generation and OpenBao authority are required")
+		}
+		owners := map[string]bool{}
+		for _, owner := range b.Custody.Owners {
+			if owners[owner.ID] || !secretEnvironmentPattern.MatchString(owner.ID) || !strings.HasPrefix(owner.Namespace, b.Stack+"-") || !secretEnvironmentPattern.MatchString(owner.ServiceAccount) || len(owner.ServiceAccount) > 63 || owner.ServiceAccount == "default" || owner.ID == "openbao-pki-identity" {
+				return errors.New("deployment.bindings: invalid original workload custody owner")
+			}
+			owners[owner.ID] = true
+		}
 	}
 	if err := validateEnvironmentBootstrapCleanupBinding(b.BootstrapCleanup, environment); err != nil {
 		return err

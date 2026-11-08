@@ -272,3 +272,47 @@ baseline regression GREEN 3.289s in custody-settings-green.log. Dev/staging
 OpenBao override activation remains deferred until the remaining native stores
 and shared projections/creation roles/inspection/handoff are connected; do NOT
 enable it now and mistake a partial implementation for a deployable generation.
+
+2026-11-09 continuation checkpoint: shared custody projection implemented in
+scripts/go/rtk-cloud/deployment_custody_projection.go. New typed workload_custody
+binding holds original generation + managed OpenBao Root + logical owner/namespace/
+SA. The steady renderer now invokes it (fresh dependency preview remains deferred,
+with no invented future generation). It converts only bound PKI PVC definitions/
+mounts to memory emptyDir, keeps paths/prefixes stable between real maintained
+Service enrollment and runtime recipes, injects separate projected OpenBao/Kube
+JWTs/CA and downward API fields, and precreates per-path named Leases plus exact
+get/update Roles/Bindings. Per-path RBAC is additive across stages: do NOT collapse
+it into one repeatedly narrowed per-SA resourceNames list. Lease declaration has
+NO spec: replay preserves a live holder. Idempotent projection preserves source
+recipes and business data/OpenBao cold-start; conflicting existing owner RBAC is
+rejected. Account Manager namespace OpenBao role support added by explicit scoped
+helper, preserving legacy role intent/readback. Additional custody namespace
+OpenBao ingress is additive; existing ingress-only default does not need a new
+Egress policy. Do not accidentally isolate DB/DNS/Kubernetes access.
+
+Verification: projection/policy/core recipe parity and idempotency tests GREEN;
+real isolated Kubernetes SSA/RBAC test GREEN 0.82s test time/2.225s package: holder
+survives reapply; selected SA can get/update its exact Lease, cannot create or
+get/update foreign Leases. Native config wire-name guard committed d39fc27, full
+config -race GREEN 1.585s. Root/native use the same independently calculated
+pki-state-b39c2fe9345ed9d9b6fdb41c858f540d fixture. Final all TestCustody,
+TestCreateOpenBaoCompletedRole and TestCommonEnvironmentRenderer regression
+GREEN 38.983s in custody-projection-network-final.log. This covers component
+projection, actual API/RBAC and legacy steady rendering, NOT a full native Pod
+creation lifecycle or actual NetworkPolicy packet enforcement. No real cloud
+resources changed. Native current HEAD d39fc27; previous 3591c41 includes actual
+OpenBao provider lifecycle and MicroTime fix. Both kind and Postgres fixtures live.
+
+NEXT: produce the complete original owner binding from maintained Service,
+application, MQTT and product identity inventory (multiple MQTT containers need
+separate prefixes on the same Pod SA), establish CAS-required KV v2 + exact scoped
+owner policies/Kubernetes roles before any workload enrollment, and connect the
+shared projection to the formal create/recovery stage renderer. The new namespace
+role helper configureEnvironmentCreateOpenBaoRoleInNamespace is available; old
+wrapper remains exact legacy behavior. Do not fabricate PVC UIDs for remote state:
+adapt native inspection/receipt readers to typed KV references. Public CRL/trust
+anti-rollback adapters and native CLI server export still need review/wiring.
+Complete prepared + managed-only snapshot publication/distribution/readback at
+OpenBao listener TLS handoff. Only then enable dev/staging OpenBao overrides,
+prove full isolated creation/recovery/renewal/restart, review/CI/release and perform
+formal dev remove/archive/create preflight GO/deploy/health, then staging.

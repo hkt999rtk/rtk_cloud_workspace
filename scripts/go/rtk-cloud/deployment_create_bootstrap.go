@@ -1111,6 +1111,10 @@ func configureEnvironmentCreateIssuerPolicies(ctx context.Context, cfg deploymen
 }
 
 func configureEnvironmentCreateOpenBaoRole(ctx context.Context, cfg deploymentConfig, runtime environmentCreateBootstrapRuntime, name string, accounts, policies []string) error {
+	return configureEnvironmentCreateOpenBaoRoleInNamespace(ctx, cfg, runtime, name, cfg.Values["CLOUD_STACK_NAME"]+"-video-cloud", accounts, policies)
+}
+
+func configureEnvironmentCreateOpenBaoRoleInNamespace(ctx context.Context, cfg deploymentConfig, runtime environmentCreateBootstrapRuntime, name, namespace string, accounts, policies []string) error {
 	if runtime.Execution == nil || !secretEnvironmentPattern.MatchString(name) || len(accounts) == 0 || len(policies) == 0 {
 		return environmentCreateBootstrapBlocker("exact native selected Kubernetes auth role is required")
 	}
@@ -1119,7 +1123,15 @@ func configureEnvironmentCreateOpenBaoRole(ctx context.Context, cfg deploymentCo
 			return environmentCreateBootstrapBlocker("exact role binding contains malformed identity")
 		}
 	}
-	namespace := cfg.Values["CLOUD_STACK_NAME"] + "-video-cloud"
+	ownedNamespace := false
+	for _, original := range lkeNamespaces(cfg.Values) {
+		if original.Name == namespace {
+			ownedNamespace = true
+		}
+	}
+	if !ownedNamespace {
+		return environmentCreateBootstrapBlocker("OpenBao role must bind an exact namespace of the selected environment")
+	}
 	intent := deploymentplan.Object{"role": name, "namespace": namespace, "service_accounts": accounts, "policies": policies, "audience": "openbao", "ttl": "15m", "no_default_policy": true}
 	key := "openbao-role-" + name + "-" + deploymentplan.Digest(intent)[:12]
 	body, _ := json.Marshal(intent)

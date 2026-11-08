@@ -14,7 +14,7 @@ import (
 // A completed role is immutable execution evidence: reuse must issue only a
 // native read, preserve the original journal, and reject widened live bindings.
 func TestCreateOpenBaoCompletedRoleReusesOnlyExactNativeRead(t *testing.T) {
-	for _, mode := range []string{"valid", "ttl", "max-ttl", "policy", "audience", "account", "namespace", "default-policy", "pending", "receipt", "duplicate"} {
+	for _, mode := range []string{"valid", "account-namespace", "foreign-target", "ttl", "max-ttl", "policy", "audience", "account", "namespace", "default-policy", "pending", "receipt", "duplicate"} {
 		t.Run(mode, func(t *testing.T) {
 			cfg, store, backend, e, _ := createOpenBaoNativeFixture(t, "valid")
 			tokenRel := "openbao/role-test-token"
@@ -23,7 +23,14 @@ func TestCreateOpenBaoCompletedRoleReusesOnlyExactNativeRead(t *testing.T) {
 			}
 			accounts, policies := []string{"certissuer"}, []string{"create-device-signer", "create-service-signer"}
 			name := "certissuer-dev"
-			intent := deploymentplan.Object{"role": name, "namespace": "video-cloud-dev-video-cloud", "service_accounts": accounts, "policies": policies, "audience": "openbao", "ttl": "15m", "no_default_policy": true}
+			namespace := "video-cloud-dev-video-cloud"
+			if mode == "account-namespace" {
+				namespace = "video-cloud-dev-account-manager"
+			}
+			if mode == "foreign-target" {
+				namespace = "video-cloud-staging-account-manager"
+			}
+			intent := deploymentplan.Object{"role": name, "namespace": namespace, "service_accounts": accounts, "policies": policies, "audience": "openbao", "ttl": "15m", "no_default_policy": true}
 			key := "openbao-role-" + name + "-" + deploymentplan.Digest(intent)[:12]
 			body, _ := json.Marshal(intent)
 			if err := e.BeginEntry(key, "bootstrap", body, time.Now().UTC()); err != nil {
@@ -45,7 +52,7 @@ func TestCreateOpenBaoCompletedRoleReusesOnlyExactNativeRead(t *testing.T) {
 				e.Journal.Entries = append(e.Journal.Entries, e.Journal.Entries[len(e.Journal.Entries)-1])
 			}
 			before := deploymentplan.Digest(e.Journal)
-			data := deploymentplan.Object{"bound_service_account_names": accounts, "bound_service_account_namespaces": []string{"video-cloud-dev-video-cloud"}, "token_policies": policies, "audience": "openbao", "token_no_default_policy": true, "token_ttl": 900, "token_max_ttl": 900}
+			data := deploymentplan.Object{"bound_service_account_names": accounts, "bound_service_account_namespaces": []string{namespace}, "token_policies": policies, "audience": "openbao", "token_no_default_policy": true, "token_ttl": 900, "token_max_ttl": 900}
 			switch mode {
 			case "ttl":
 				data["token_ttl"] = 1800
@@ -82,8 +89,13 @@ esac
 			t.Setenv("RTK_ROLE_TEST_LOG", log)
 			t.Setenv("RTK_ROLE_TEST_RESPONSE", filepath.Join(dir, "response"))
 			rt := environmentCreateBootstrapRuntime{Execution: e, Backend: backend, OpenBao: environmentCreateOpenBaoBootstrap{RootTokenPath: filepath.Join(store.Root, tokenRel)}}
-			err := configureEnvironmentCreateOpenBaoRole(context.Background(), cfg, rt, name, accounts, policies)
-			if (mode == "valid") != (err == nil) {
+			var err error
+			if mode == "account-namespace" || mode == "foreign-target" {
+				err = configureEnvironmentCreateOpenBaoRoleInNamespace(context.Background(), cfg, rt, name, namespace, accounts, policies)
+			} else {
+				err = configureEnvironmentCreateOpenBaoRole(context.Background(), cfg, rt, name, accounts, policies)
+			}
+			if (mode == "valid" || mode == "account-namespace") != (err == nil) {
 				t.Fatalf("mode %s: %v", mode, err)
 			}
 			if before != deploymentplan.Digest(e.Journal) {
@@ -93,7 +105,7 @@ esac
 			if strings.Contains(string(calls), "bao write") || strings.Contains(string(calls), "private-role-fixture-token") {
 				t.Fatal("reuse wrote role or exposed credential")
 			}
-			if mode == "pending" || mode == "receipt" || mode == "duplicate" {
+			if mode == "pending" || mode == "receipt" || mode == "duplicate" || mode == "foreign-target" {
 				if len(calls) != 0 {
 					t.Fatal("unverified original role was queried")
 				}

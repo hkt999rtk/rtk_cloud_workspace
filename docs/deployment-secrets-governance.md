@@ -1815,6 +1815,15 @@ current TLS/registry policy. Normal completed runtime templates remove bootstrap
 authorization. Private keys are not snapshot content. Producer publication and
 live-consumer projection checks must precede serving TLS handoff.
 
+The original generation's non-secret `workload_custody` references belong in
+`~/.config/rtk_cloud/<environment>/deployment/identity-bindings.json` alongside
+the existing deployment identity bindings (0700 parent, 0600 file). The completed
+create executor produces them; normal preflight/upgrade consumes them. They name
+the generation, managed OpenBao Root and logical storage owners, not private keys,
+Pod UIDs or mutable KV versions. Runtime containers consume projected tokens from
+`/run/pki-custody-auth/` and public TLS evidence from `/run/pki-custody-openbao/`;
+only the original bound PKI file projections use memory-backed temporary volumes.
+
 All local operation directories are 0700, files 0600. The common environment
 path helpers own these locations. Matching OpenBao/registry backup and restore
 remain part of validating the newly created generation, without adding an old
