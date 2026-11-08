@@ -531,3 +531,29 @@ removal; continue with typed KV receipts, product owner lifecycle, TLS distribut
 barrier and native server export. Finite legacy dev public-profile repair is not
 a fresh-create dependency: keep its original PVC contract and reject remote use
 instead of inventing an unrelated historical repair migration.
+
+Native server-export checkpoint (native18ec7d8): production export opens ONE
+independently admitted custody transport using the already-open selected PKI
+registry. Server and final Service-client readers share it; they never claim a
+writer Lease, mutate KV or create private projections. Existing native public
+snapshot-before/after plus every-DNS registry admission remain. The private export
+retains the exact committed certificate/key and is still consumed only by the
+protected deployment mirror adapter; no key enters public evidence.
+
+RED: new remote export test failed on unsupported explicit reader parameter.
+GREEN full bootstrap-command -race32.667s. Test removes both original file states,
+reads exact committed synthetic KV states, verifies unchanged cert/key, rejects
+non-GET operations and unknown paths, asserts no projection/owner lock is created,
+and rejects a pending renewal committed during registry verification. Final whole
+command package -race28.175s in custody-export-final.log after adding explicit
+legacy-profile backend guards (their new test observed RED then GREEN).
+Finite historical dev public-DNS repair now rejects OpenBao custody before private
+state/registry access; fresh environment creation already uses maintained DNS
+policy. It does not get an invented migration path or rewrite old repair rules.
+No tests remain running and no real cloud state changed.
+
+Remaining: product registration owners still use static PEM/mirror lifecycle and
+need actual KV cold restore + renewal; typed KV identity inspection/receipts must
+replace applicable PVC assumptions; publish prepared/final TLS handoff and verify
+actual installed snapshots before listener swap; complete isolated whole lifecycle
+and matched recovery, review/CI/release; only then formal fresh dev then staging.
