@@ -216,6 +216,10 @@ func runDeployment(args []string) error {
 			return runDeploymentDNSReconcile(args[1:])
 		case "provider-import-state":
 			return runDeploymentProviderImport(args[1:])
+		case "remove":
+			if hasFlag(args[1:], "--original-cluster-id") {
+				return runRemoveOriginalGeneration(args[1:])
+			}
 		case "archive-removed-generation":
 			return runArchiveRemovedDeploymentGeneration(args[1:])
 		case "reconcile-removal-volumes":
@@ -592,6 +596,13 @@ func validateExistingDeploymentEnvironment(cfg deploymentConfig) error {
 }
 
 func cleanupDeploymentEnvironment(cfg deploymentConfig) error {
+	store, err := newSecretStore("", cfg.Environment)
+	if err != nil {
+		return err
+	}
+	if err := checkGenerationRemovalIdle(store.Root); err != nil {
+		return err
+	}
 	stack := cfg.Values["CLOUD_STACK_NAME"]
 	if _, _, _, err := readLKEStateForTarget(provisionPaths{EnvRoot: cfg.RuntimeRoot}, map[string]string{"CLOUD_ENV_NAME": cfg.Environment, "CLOUD_STACK_NAME": stack}); err != nil {
 		return wrapDeploymentPhaseError("environment ownership", err)
@@ -1074,7 +1085,7 @@ func printDeploymentUsage() {
   rtk-cloud deployment dns-reconcile-state --environment NAME --confirm STACK --review-sha256 REVIEW_SHA256
   rtk-cloud deployment provider-import-state --environment NAME --source-runtime ORIGINAL_RUNTIME --confirm STACK [--source-kubeconfig ORIGINAL_KUBECONFIG]
   rtk-cloud deployment acceptance --environment NAME --confirm STACK
-  rtk-cloud deployment remove --environment NAME --confirm STACK
+  rtk-cloud deployment remove --environment NAME --confirm STACK [--original-cluster-id ID [--plan]]
   rtk-cloud deployment archive-removed-generation --environment dev|staging --confirm STACK --original-cluster-id ID
   rtk-cloud deployment storage-plan --environment NAME
   rtk-cloud deployment storage-bootstrap --environment NAME --purpose media|ota|artifacts --destination-env-file PATH --confirm STACK

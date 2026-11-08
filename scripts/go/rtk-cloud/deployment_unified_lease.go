@@ -32,6 +32,11 @@ func (l *environmentExecutionLease) Owner() deploymentplan.LeaseOwner {
 }
 
 func (b environmentKubernetesBackend) AcquireExecution(ctx context.Context, plan *deploymentplan.Plan) (deploymentplan.ExecutionLease, error) {
+	if b.Store.Root != "" {
+		if err := checkGenerationRemovalIdle(b.Store.Root); err != nil {
+			return nil, err
+		}
+	}
 	return acquireEnvironmentExecutionLease(ctx, b, plan)
 }
 
@@ -94,6 +99,9 @@ func checkEnvironmentExecutionAvailable(ctx context.Context, cfg deploymentConfi
 	store, err := newSecretStore("", cfg.Environment)
 	if err != nil {
 		return &deploymentplan.Blocker{ID: "deployment.execution.lease", Cause: "selected environment store cannot be resolved", Next: "restore the selected canonical environment store before repeating preflight"}
+	}
+	if err := checkGenerationRemovalIdle(store.Root); err != nil {
+		return &deploymentplan.Blocker{ID: "deployment.execution.lease", Cause: err.Error(), Next: "resume the original remove command and archive the verified removed generation"}
 	}
 	// A local interrupted owner needs no Kubernetes access to identify. Stop
 	// before loading credentials, preparing storage or resolving CI images.

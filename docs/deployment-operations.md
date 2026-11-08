@@ -1376,6 +1376,19 @@ selected operator inputs, storage evidence and DNS ownership required by the
 new plan. An archive records local preservation, not provider removal or a
 successful deployment.
 
+For dev and staging with a completed native create journal, qualify the original
+scope first, then run the same command without `--plan` to remove that generation.
+The original provider receipts identify the cluster, edge, TURN, media and OTA.
+The script captures original worker and volume IDs, checks both buckets are empty,
+and stops if the provider lists an additional resource matching the stack. It
+records Kubernetes cleanup before deleting provider resources, so a retry can
+continue even after the original Kubernetes API is gone.
+
+```sh
+./scripts/deploy-environment.sh remove \
+  --environment dev --confirm video-cloud-dev --original-cluster-id <original-id> --plan
+```
+
 After the formal remove step, run the archive command with the original numeric
 LKE cluster ID from the removal record. The command checks native absence of
 that cluster and each recorded volume, and checks the selected stack inventory

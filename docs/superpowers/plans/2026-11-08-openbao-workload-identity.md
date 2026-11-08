@@ -1297,3 +1297,26 @@ retaining the exact-generation retry checks. Correcting the earlier locator note
 the normal resolved deployment configuration supplies a derived runtime path to
 legacy remove. The basename heuristic is a risk for direct canonical-store
 invocations, not evidence that normal staging remove already failed.
+
+Exact removal checkpoint. The normal script now accepts
+`remove --environment NAME --confirm STACK --original-cluster-id ID --plan`
+for the completed dev/staging native generation. It binds the active ledger to
+the completed journal, rechecks exact native targets, requires empty original
+media/OTA buckets, and captures current LKE pool membership plus canonical
+CSI volume ownership. Broad label/tag matching detects extra candidates but
+grants no deletion authority. The durable intent preserves the verified
+Kubernetes purge across retries and keeps the original kubeconfig, LKE state
+and worker binding available for `archive-removed-generation`. Archive checks
+exact original instances, cluster and volumes for absence. A pending removal
+blocks ordinary create and upgrade admission.
+
+The live read-only plans verified dev 666130 (1 worker, 31 captured volumes) and
+staging 694047 (6 workers, 28 captured volumes), with their original edge, TURN,
+and empty media/OTA buckets. An independent read confirmed both deployment
+Leases were absent. The isolated removal fixture refuses an extra stack VM
+before any Kubernetes or provider mutation, simulates an edge API failure
+after successful LKE deletion, then retries to exact provider absence and
+archives the original generation. Live resources have not been removed.
+The final removal, archive, fresh target, lease and execution fence regression
+passed in 57.497s (deployment-original-generation-complete.log). Final formal
+`remove --plan` commands passed for both environments with the same IDs.

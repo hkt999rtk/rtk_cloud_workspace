@@ -26,11 +26,11 @@ const generationArchivePending = "deployment/.generation-archive-active"
 
 var generationArchivePaths = []string{
 	"openbao", "pki", "runtime", "inventory.json", "kube",
-	"deployment/adapters/lke/state.env", "deployment/identity-bindings.json",
+	"deployment/adapters/lke/state.env", "deployment/adapters/lke/worker-labels.json", "deployment/identity-bindings.json",
 	"deployment/account-bootstrap-retired.json", "deployment/create",
 	"deployment/resources", "deployment/recovery", "deployment/rollback",
 	"deployment/turn", "deployment/crl", "deployment/crl-maintenance",
-	environmentCreateStorageAllocationPath, generationRemovalProof,
+	environmentCreateStorageAllocationPath, generationRemovalProof, generationRemovalIntent,
 }
 
 type deploymentGenerationArchive struct {
@@ -38,6 +38,7 @@ type deploymentGenerationArchive struct {
 	Environment string                       `json:"environment"`
 	ClusterID   string                       `json:"original_cluster_id"`
 	VolumeIDs   []string                     `json:"original_volume_ids"`
+	InstanceIDs []string                     `json:"original_instance_ids,omitempty"`
 	Entries     map[string]map[string]string `json:"entries"`
 }
 
@@ -123,6 +124,28 @@ func archiveRemovedDeploymentGeneration(ctx context.Context, cfg deploymentConfi
 			return err
 		}
 		manifest.VolumeIDs = proof.VolumeIDs
+		intentPath := filepath.Join(store.Root, generationRemovalIntent)
+		if _, err := os.Lstat(intentPath); err == nil {
+			var intent originalGenerationRemoval
+			targets, ledgerSHA, kubeSHA, loadErr := loadGenerationRemovalTargets(cfg, store, clusterID)
+			if loadErr != nil {
+				return loadErr
+			}
+			if readEnvironmentPreflightJSON(intentPath, &intent) != nil || intent.Schema != 1 || intent.Environment != cfg.Environment ||
+				intent.ClusterID != clusterID || intent.LedgerSHA256 != ledgerSHA || intent.KubeSHA256 != kubeSHA ||
+				intent.KubeSHA256 != proof.KubeSHA256 || !intent.KubernetesPurged || !slices.Equal(intent.VolumeIDs, proof.VolumeIDs) {
+				return errors.New("original generation removal is incomplete or its exact ownership cannot be verified")
+			}
+			manifest.InstanceIDs = slices.Clone(intent.WorkerIDs)
+			for _, target := range targets {
+				if target.Kind == "instance" {
+					manifest.InstanceIDs = append(manifest.InstanceIDs, target.NativeID)
+				}
+			}
+			slices.Sort(manifest.InstanceIDs)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
 	} else if statErr != nil || validateEnvironmentPreflightDirectories(store, filepath.Dir(manifestPath)) != nil ||
 		readEnvironmentPreflightJSON(manifestPath, &manifest) != nil || manifest.Schema != 1 || manifest.Environment != cfg.Environment || manifest.ClusterID != clusterID || manifest.VolumeIDs == nil || manifest.Entries[generationRemovalProof]["."] == "" {
 		return errors.New("existing generation archive manifest cannot be verified")
@@ -311,6 +334,14 @@ func verifyArchivedGenerationProviderAbsence(ctx context.Context, cfg deployment
 			return err
 		}
 		if err := checkAbsent("/volumes/" + id); err != nil {
+			return err
+		}
+	}
+	for _, id := range m.InstanceIDs {
+		if _, err := positiveIntValue("original instance ID", id); err != nil {
+			return err
+		}
+		if err := checkAbsent("/linode/instances/" + id); err != nil {
 			return err
 		}
 	}
