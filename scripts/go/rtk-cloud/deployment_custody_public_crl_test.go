@@ -163,7 +163,21 @@ func TestCustodyMaintenanceInstallUsesCommittedKVWithoutReadingFaultedApplicatio
 		t.Fatal("unexpected original owner read", id)
 		return nil, nil
 	}
-	r.commandOverride = func(context.Context, []byte, ...string) ([]byte, error) {
+	ackChecks := 0
+	r.commandOverride = func(_ context.Context, _ []byte, args ...string) ([]byte, error) {
+		if len(args) >= 2 && args[len(args)-2] == "crl-maintenance-read" {
+			query := args[len(args)-1]
+			if strings.Contains(query, "json_build_object('prior'") {
+				return json.Marshal(item.Snapshot)
+			}
+			if strings.Contains(query, "pki_crl_acknowledgments") {
+				if !strings.Contains(query, "consumer_id='video-cloud-api'") || !strings.Contains(query, "digest='"+item.Snapshot.Prior.Digest+"'") {
+					t.Fatal("ACK lost native consumer/digest binding")
+				}
+				ackChecks++
+				return []byte("t"), nil
+			}
+		}
 		t.Fatal("maintenance must not read a private projection or stat the faulted application")
 		return nil, nil
 	}
@@ -205,6 +219,14 @@ func TestCustodyMaintenanceInstallUsesCommittedKVWithoutReadingFaultedApplicatio
 	consumer := crlMaintenanceConsumer{Namespace: ns, Pod: "faulted-api", PodUID: "original-pod", Container: "app", StatePath: "/identity/crl/root.json", IssuerID: item.Issuer.ID}
 	if err := r.install(t.Context(), consumer, item.Issuer, item.Snapshot.Prior); err != nil {
 		t.Fatal("actual remote maintenance path", err)
+	}
+	consumer.Custody, consumer.ConsumerID = true, identity
+	inventory := crlMaintenanceInventory{Issuers: []crlMaintenanceIssuer{item}, Consumers: []crlMaintenanceConsumer{consumer}, Required: map[string][]string{item.Issuer.Domain: {identity}}}
+	if err := r.converge(t.Context(), inventory, map[string]createRootCRLRecord{item.Issuer.ID: item.Snapshot.Prior}); err != nil {
+		t.Fatal("actual remote maintenance convergence", err)
+	}
+	if ackChecks != 1 {
+		t.Fatal("committed KV proof replaced native runtime ACK")
 	}
 	observed := environmentIdentityBindings{Version: 1, Environment: "dev", Stack: "video-cloud-dev", Owners: map[string]string{deploymentplan.ID(parent): "current-api"}, Pods: []environmentPodBindings{{Kind: "Deployment", Name: "api", NamespaceSuffix: "video-cloud", PodFields: map[string]any{"serviceAccountName": "api"}, Containers: []environmentContainerBindings{{Name: "app", Fields: map[string]any{"env": managedNamedField(environmentPKIPod(parent)["containers"], "app")["env"]}}}}}}
 	if err := restoreEnvironmentCustodyBindings(t.Context(), cfg, store, "upgrade", &observed); err != nil {

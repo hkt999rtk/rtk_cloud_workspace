@@ -1892,7 +1892,11 @@ Memory emptyDir and its original verifier database Secret remains a reference.
 The native command compares input with current registry evidence, preserves CAS,
 revocation high-water and terminal denial, and never acknowledges a runtime reload.
 After helper success, consumer/parent ownership is rechecked. Actual readiness and
-signed ACK remain required for convergence. This adds no local secret or temporary
+signed ACK remain required for convergence. Recovery restores independent local
+Root caches and provider-managed online CRLs before a KV-dependent installation;
+local provider caches precede remote caches regardless of discovery list order.
+Convergence also uses committed readback for remote caches rather than reading a
+faulted application's private projection. This adds no local secret or temporary
 operation-data path and never mounts a workload private identity PVC.
 
 All local operation directories are 0700, files 0600. The common environment

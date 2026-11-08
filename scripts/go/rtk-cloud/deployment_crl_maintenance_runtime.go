@@ -150,7 +150,7 @@ func (r *maintenanceRuntime) observe(ctx context.Context) (crlMaintenanceInvento
 					if !environmentCreateConsumerID.MatchString(consumer) {
 						return out, errors.New("CRL consumer identity cannot be resolved")
 					}
-					out.Consumers = append(out.Consumers, crlMaintenanceConsumer{Namespace: ns, Pod: name, PodUID: uid, Container: container, StatePath: entry.StatePath, IssuerID: issuer.ID, ConsumerID: consumer})
+					out.Consumers = append(out.Consumers, crlMaintenanceConsumer{Namespace: ns, Pod: name, PodUID: uid, Container: container, StatePath: entry.StatePath, IssuerID: issuer.ID, ConsumerID: consumer, Custody: mqttFoundationEnv(c, "PKI_STATE_BACKEND") == "openbao"})
 				}
 			}
 		}
@@ -286,16 +286,42 @@ func (r *maintenanceRuntime) install(ctx context.Context, c crlMaintenanceConsum
 	return nil
 }
 
+// Remote health is committed native readback, not an application's temporary
+// mirror. The caller still checks the selected record, freshness and actual ACK.
+func (r *maintenanceRuntime) installedCRL(ctx context.Context, c crlMaintenanceConsumer, issuer environmentCreateRegisteredIssuer) (environmentCustodyCRLState, error) {
+	var result environmentCustodyCRLState
+	pod, err := r.read(ctx, "Pod/"+c.Namespace+"/"+c.Pod)
+	if err != nil || deploymentplan.Map(pod["metadata"])["uid"] != c.PodUID {
+		return result, errors.New("original CRL consumer changed during cache verification")
+	}
+	source := managedNamedField(deploymentplan.Map(pod["spec"])["containers"], c.Container)
+	if mqttFoundationEnv(source, "PKI_STATE_BACKEND") == "openbao" {
+		return r.custodyPublicCRL(ctx, pod, c, issuer, nil)
+	}
+	if c.Custody {
+		return result, errors.New("original CRL consumer storage backend changed")
+	}
+	raw, err := r.command(ctx, nil, "--namespace", c.Namespace, "exec", "pod/"+c.Pod, "--container", c.Container, "--", "cat", c.StatePath)
+	if err != nil {
+		return result, err
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return result, errors.New("native CRL cache is invalid")
+	}
+	return result, nil
+}
+
 func (r *maintenanceRuntime) converge(ctx context.Context, inventory crlMaintenanceInventory, records map[string]createRootCRLRecord) error {
 	issuers := map[string]environmentCreateRegisteredIssuer{}
 	for _, i := range inventory.Issuers {
 		issuers[i.Issuer.ID] = i.Issuer
 	}
-	// Offline roots first break transport-expiry cycles. Online issuers remain
-	// under their original controller/provider; never mint their keys locally.
+	// Independent local roots break the provider transport-expiry cycle first.
+	// KV readers wait for native online recovery and local provider installation.
+	// Online issuers remain under their original provider; never mint keys here.
 	for _, c := range inventory.Consumers {
 		issuer := issuers[c.IssuerID]
-		if issuer.Kind == "root" && issuer.Document["signer_provider"] == "offline" {
+		if !c.Custody && issuer.Kind == "root" && issuer.Document["signer_provider"] == "offline" {
 			if err := r.install(ctx, c, issuer, records[c.IssuerID]); err != nil {
 				return err
 			}
@@ -306,6 +332,14 @@ func (r *maintenanceRuntime) converge(ctx context.Context, inventory crlMaintena
 	}
 	if err := r.recoverOnline(ctx, inventory, records); err != nil {
 		return err
+	}
+	for _, c := range inventory.Consumers {
+		issuer := issuers[c.IssuerID]
+		if c.Custody && issuer.Kind == "root" && issuer.Document["signer_provider"] == "offline" {
+			if err := r.install(ctx, c, issuer, records[c.IssuerID]); err != nil {
+				return err
+			}
+		}
 	}
 	if err := r.publishPublicCRLs(ctx, inventory.Public, records); err != nil {
 		return err
@@ -342,19 +376,14 @@ func (r *maintenanceRuntime) converge(ctx context.Context, inventory crlMaintena
 		}
 		for _, c := range inventory.Consumers {
 			record := records[c.IssuerID]
-			state, err := r.command(ctx, nil, "--namespace", c.Namespace, "exec", "pod/"+c.Pod, "--container", c.Container, "--", "cat", c.StatePath)
-			var installed struct {
-				Fingerprint string              `json:"issuer_fingerprint"`
-				Terminal    string              `json:"terminal_issuer_id"`
-				CRL         createRootCRLRecord `json:"crl"`
-			}
-			if err != nil || json.Unmarshal(state, &installed) != nil || installed.Terminal != "" || installed.CRL.Digest != record.Digest {
+			installed, err := r.installedCRL(ctx, c, issuers[c.IssuerID])
+			if err != nil || installed.Terminal != "" || installed.CRL.Digest != record.Digest {
 				complete = false
 				pendingConsumers = append(pendingConsumers, c)
 				pending = append(pending, c.Namespace+"/"+c.Pod+"/"+c.Container+" "+c.IssuerID+" state")
 				continue
 			}
-			if installed.Fingerprint != deploymentplan.String(issuers[c.IssuerID].Document["certificate_fingerprint_sha256"]) {
+			if installed.IssuerSHA256 != deploymentplan.String(issuers[c.IssuerID].Document["certificate_fingerprint_sha256"]) {
 				return errors.New("consumer CRL state authority changed")
 			}
 			if _, err := validateMaintenanceCRL(r.cfg.Environment, issuers[c.IssuerID], installed.CRL, true, time.Now()); err != nil {

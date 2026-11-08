@@ -1034,3 +1034,34 @@ isolated Kubernetes fixture, original-generation scope/stage checks, custody
 inspection/install/discovery and ordinary core/controller/log/MQTT maintenance
 compatibility. Log: /Volumes/RTKGoBuild/tmp/custody-consumer-discovery-regression.log.
 This verifies components/adapters, not the pending whole fresh lifecycle.
+
+
+2026-11-09 next checkpoint: actual maintenance convergence now restores local
+Root caches before online provider recovery, installs local online caches before
+remote online caches, then installs remote Root caches. Discovery records the
+selected remote backend; array order no longer schedules a KV reader before its
+provider transport. RED reproduced both a remote Root and remote intermediate
+being attempted before the local provider installation; GREEN uses the real
+converge/recoverOnline adapters, native-helper process/installation boundaries and
+signed fixture records (no new dependency callbacks just for tests).
+
+Convergence also reads installed remote CRLs with independent committed native
+inspection rather than cat of a private app projection. RED reproduced the last
+private-file dependency after installation. The actual adapter test now completes
+remote install + committed readback + exact native registry ACK query with the
+application private-file/stat paths forbidden. Missing ACK is not substituted by
+KV commit. Focused maintenance/online/recovery tests PASS16.444s; log
+/Volumes/RTKGoBuild/tmp/custody-recovery-convergence-green.log.
+
+Remaining priority: runtime public-export discovery still assumes a PVC and
+reads the export before recovery. Bind that to original remote cache metadata,
+then require committed readback plus actual public reload/readiness at acceptance.
+Review local provider discovery when its own container cannot boot as part of the
+whole recovery matrix. Core preflight/health readers and whole fresh lifecycle,
+final fresh review, dependency CI/Release and actual dev/staging script operations
+remain incomplete. No live environment changes were made in this checkpoint.
+
+Selected root regression after the recovery-order and committed-convergence
+changes PASS41.094s, including isolated Kubernetes custody projection, all custody
+adapters and existing CRL maintenance/online runtime tests. Log:
+/Volumes/RTKGoBuild/tmp/custody-recovery-order-regression.log.

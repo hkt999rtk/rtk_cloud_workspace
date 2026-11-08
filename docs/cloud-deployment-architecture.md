@@ -3334,6 +3334,14 @@ faulted; only its metadata and current controller ownership chain are needed.
 The existing CRL maintenance `install` dispatcher now uses this path for OpenBao
 owners; PVC consumers keep the existing native file installer.
 
+Maintenance recovery orders independent local offline Root caches first, online
+provider renewal second, then local online caches before any KV-dependent cache
+installation. Kubernetes discovery order does not choose these dependencies.
+Convergence reads remote cache state through the same independently authenticated
+native inspector, checks the selected signed fresh record and still requires the
+actual registry ACK for the expected consumer. A temporary application file mirror
+is not remote durability evidence; a committed KV cache is not a runtime ACK.
+
 Public TLS re-observation and ordinary upgrade preserve custody facts from the
 same generation's `bootstrap/bindings.json` and managed transport snapshot, without
 copying old images, workload behavior or Kubernetes UIDs over current observation.
