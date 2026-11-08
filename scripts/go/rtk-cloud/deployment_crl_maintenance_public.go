@@ -243,9 +243,9 @@ func (r *maintenanceRuntime) verifyPublicCRLs(ctx context.Context, projections [
 
 // Local ACK identities use authenticated Service state. Remote discovery uses
 // original enrollment intent; neither branch guesses from a Pod display name.
-func (r *maintenanceRuntime) consumerID(ctx context.Context, ns, pod, container string, c deploymentplan.Object) (string, error) {
+func (r *maintenanceRuntime) consumerID(ctx context.Context, ns, pod, container string, c deploymentplan.Object, states ...string) (string, error) {
 	if mqttFoundationEnv(c, "PKI_STATE_BACKEND") == "openbao" {
-		return r.custodyConsumerID(ctx, ns, pod, container, c)
+		return r.custodyConsumerID(ctx, ns, pod, container, c, states...)
 	}
 	subject := ""
 	for _, ev := range certIssuerObjectList(c["env"]) {

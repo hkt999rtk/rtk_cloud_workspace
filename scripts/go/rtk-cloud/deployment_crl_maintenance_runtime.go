@@ -138,10 +138,10 @@ func (r *maintenanceRuntime) observe(ctx context.Context) (crlMaintenanceInvento
 						continue
 					}
 					seen[id] = true
-					identityKey := ns + "/" + uid + "/" + container
+					identityKey := ns + "/" + uid + "/" + container + "/" + entry.StatePath
 					consumer := identityCache[identityKey]
 					if consumer == "" {
-						consumer, err = r.consumerID(ctx, ns, name, container, c)
+						consumer, err = r.consumerID(ctx, ns, name, container, c, entry.StatePath)
 						if err != nil {
 							return out, err
 						}

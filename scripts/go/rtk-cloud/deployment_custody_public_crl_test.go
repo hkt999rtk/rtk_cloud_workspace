@@ -122,7 +122,7 @@ func TestCustodyMaintenanceInstallUsesCommittedKVWithoutReadingFaultedApplicatio
 	managed := next.Root
 	managed.Domain = "openbao_tls"
 	managed.Status = "active"
-	binding := &environmentCustodyBinding{Generation: generation, ServiceRootSHA256: original.Root.RootFingerprint, OpenBaoRootSHA256: managed.RootFingerprint, Owners: []environmentCustodyOwnerBinding{{ID: "api", Namespace: ns, ServiceAccount: "api", StorageAliases: []string{"api-state"}, Clients: []environmentCustodyClientBinding{{Subject: "service:video-cloud-api", StatePath: "/identity/private/client.json"}}}}}
+	binding := &environmentCustodyBinding{Generation: generation, ServiceRootSHA256: original.Root.RootFingerprint, OpenBaoRootSHA256: managed.RootFingerprint, Owners: []environmentCustodyOwnerBinding{{ID: "api", Namespace: ns, ServiceAccount: "api", StorageAliases: []string{"api-state", "registration-state"}, Clients: []environmentCustodyClientBinding{{Subject: "service:video-cloud-api", StatePath: "/identity/private/client.json"}, {Subject: "service:logger", StatePath: "/registration/private/client.json"}}}}}
 	trust, err := renderEnvironmentCustodyTrust(cfg, generation, original.Root.Certificate, &managed, true)
 	if err != nil {
 		t.Fatal(err)
@@ -244,6 +244,51 @@ func TestCustodyMaintenanceInstallUsesCommittedKVWithoutReadingFaultedApplicatio
 			}
 		})
 	}
+	t.Run("multiple-original-client-purposes", func(t *testing.T) {
+		pod = deploymentplan.Clone(originalPod)
+		defer func() { pod = originalPod }()
+		spec := deploymentplan.Map(pod["spec"])
+		candidate := managedNamedField(spec["containers"], "app")
+		setEnvironmentContainerEnv(candidate, "PKI_REGISTRATION_IDENTITY_STATE", "/registration/private/client.json")
+		candidate["volumeMounts"] = append(certIssuerObjectList(candidate["volumeMounts"]), environmentCreateServiceMount("registration", "/registration", false))
+		spec["volumes"] = append(certIssuerObjectList(spec["volumes"]), deploymentplan.Object{"name": "registration", "emptyDir": deploymentplan.Object{"medium": "Memory"}})
+		for path, want := range map[string]string{"/identity/crl/root.json": "video-cloud-api", "/registration/private/crl/root.json": "logger"} {
+			got, err := r.consumerID(t.Context(), ns, "faulted-api", "app", candidate, path)
+			if err != nil || got != want {
+				t.Fatalf("cache %s resolved %q instead of original purpose %q: %v", path, got, want, err)
+			}
+		}
+		// Exercise the actual observer too: the second cache must not reuse
+		// the first purpose's container-level identity-cache entry.
+		setEnvironmentContainerEnv(candidate, "PKI_REGISTRATION_CONTROLLER_SERVER_CRL_MANIFEST", "/registration-trust/crls.json")
+		candidate["volumeMounts"] = append(certIssuerObjectList(candidate["volumeMounts"]), environmentCreateServiceMount("registration-trust", "/registration-trust", true))
+		spec["volumes"] = append(certIssuerObjectList(spec["volumes"]), environmentCreateServiceVolume("registration-trust", "configMap", "registration-crls"))
+		originalRead := r.readOverride
+		defer func() { r.readOverride = originalRead }()
+		r.readOverride = func(ctx context.Context, id string) (deploymentplan.Object, error) {
+			if id == "ConfigMap/"+ns+"/registration-crls" {
+				return deploymentplan.Object{"data": deploymentplan.Object{"crls.json": environmentCreateServiceCRLManifest(item.Issuer, "/registration/private/crl/root.json")}}, nil
+			}
+			return originalRead(ctx, id)
+		}
+		inventory, err := r.observe(t.Context())
+		if err != nil {
+			t.Fatal("actual multi-purpose observation", err)
+		}
+		found := map[string]bool{}
+		for _, consumer := range inventory.Consumers {
+			found[consumer.ConsumerID] = true
+		}
+		if len(inventory.Consumers) != 2 || !found["video-cloud-api"] || !found["logger"] {
+			t.Fatal("observer conflated independently owned client purposes")
+		}
+		if _, err := r.consumerID(t.Context(), ns, "faulted-api", "app", candidate, "/outside/root.json"); err == nil {
+			t.Fatal("guessed a consumer for an unbound multi-purpose cache")
+		}
+		if _, err := r.consumerID(t.Context(), ns, "faulted-api", "app", candidate); err == nil {
+			t.Fatal("accepted ambiguous purposes without cache ownership")
+		}
+	})
 	projection, err := r.publicProjection(t.Context(), pod, source, "/export/client.crl", map[string]environmentCreateRegisteredIssuer{item.Issuer.ID: item.Issuer})
 	if err != nil {
 		t.Fatal("discover remote public producer before transport or application boot", err)

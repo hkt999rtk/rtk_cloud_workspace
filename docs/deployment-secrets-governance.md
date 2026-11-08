@@ -1881,7 +1881,11 @@ controller ownership and the bound service account; no application private state
 provider TLS connection or SQL query is needed to identify the expected consumer.
 Missing enrollment metadata fails discovery rather than guessing a Pod-name
 subject. The expected subject does not prove key possession or replace a signed
-ACK. No new local operational path is introduced.
+ACK. Independently mounted client purposes within one container are resolved
+against the original purpose sharing that CRL cache's scoped memory projection;
+observations cache by state path as well as owner/container. A unique client can
+still own a separate public trust/cache volume. No new local operational path is
+introduced and no private identity file is read for this expected-subject decision.
 Qualified in-progress creation supplies its scope through its admitted runtime
 context before the completion file exists. No other environment/worktree is a
 fallback, and neither reader initializes missing records.

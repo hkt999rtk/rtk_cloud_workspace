@@ -64,14 +64,6 @@ func (r *maintenanceRuntime) runtimePublicProjection(ctx context.Context, pod de
 			}
 			out.Producer = deploymentplan.String(writer["name"])
 			remote := mqttFoundationEnv(writer, "PKI_STATE_BACKEND") == "openbao"
-			consumerID := ""
-			if remote {
-				var err error
-				consumerID, err = r.custodyConsumerID(ctx, out.Namespace, out.Pod, out.Producer, writer)
-				if err != nil {
-					return out, err
-				}
-			}
 			manifestPath := mqttFoundationEnv(writer, strings.TrimSuffix(setting, "_PUBLIC_CRL_BUNDLE")+"_SERVER_CRL_MANIFEST")
 			cm, key, err := mountedPKICRLConfigMap(typed, out.Producer, manifestPath)
 			if err != nil {
@@ -97,6 +89,10 @@ func (r *maintenanceRuntime) runtimePublicProjection(ctx context.Context, pod de
 				}
 				out.Issuers = append(out.Issuers, entry.Issuer.ID)
 				if remote {
+					consumerID, err := r.custodyConsumerID(ctx, out.Namespace, out.Pod, out.Producer, writer, entry.StatePath)
+					if err != nil {
+						return out, err
+					}
 					out.CustodyCaches = append(out.CustodyCaches, maintenancePublicCRLCache{
 						Consumer: crlMaintenanceConsumer{Namespace: out.Namespace, Pod: out.Pod, PodUID: out.PodUID, Container: out.Producer, StatePath: entry.StatePath, IssuerID: issuer.ID, ConsumerID: consumerID, Custody: true},
 						Issuer:   issuer,

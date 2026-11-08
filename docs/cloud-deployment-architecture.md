@@ -3201,6 +3201,12 @@ current Pod/Deployment ownership and the selected service account to identify th
 expected ACK consumer without reading a failed container's private projection or
 contacting managed OpenBao TLS. This identifies an expected subject only: actual
 runtime readiness and the native registry ACK must still converge after recovery.
+When a container holds independent internal and registration clients, the original
+client purpose sharing the cache's scoped memory volume determines the expected
+ACK subject. Observations retain the state path in their identity-cache key; one
+container is not assumed to have one client. A separate trust/cache volume remains
+compatible with a single uniquely identified client. Ambiguous or unbound multiple
+purposes fail rather than introducing a hand-maintained manifest/subject mapping.
 Shared rendering derives the same KV record prefix and per-state Lease for
 enrollment Jobs and runtime containers. Only explicitly bound PKI storage
 becomes a memory-backed `emptyDir`; business claims and OpenBao's independent

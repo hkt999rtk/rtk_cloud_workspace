@@ -10,7 +10,7 @@ import (
 // This resolves the expected ACK subject from original admitted enrollment
 // intent. It is not evidence of current key possession, leaf health or an ACK.
 // Discovery must precede recovery of the managed OpenBao TLS transport.
-func (r *maintenanceRuntime) custodyConsumerID(ctx context.Context, ns, name, container string, source deploymentplan.Object) (string, error) {
+func (r *maintenanceRuntime) custodyConsumerID(ctx context.Context, ns, name, container string, source deploymentplan.Object, states ...string) (string, error) {
 	bad := func() (string, error) {
 		return "", environmentCreateBootstrapBlocker("CRL consumer differs from its original admitted custody enrollment purpose")
 	}
@@ -45,21 +45,51 @@ func (r *maintenanceRuntime) custodyConsumerID(ctx context.Context, ns, name, co
 	if owner == nil {
 		return bad()
 	}
-	subject := ""
+	if len(states) > 1 {
+		return bad()
+	}
+	placement := deploymentplan.Object{"metadata": pod["metadata"], "spec": deploymentplan.Object{"template": deploymentplan.Object{"spec": spec}}}
+	cacheVolumes := map[string]bool{}
+	if len(states) == 1 {
+		for _, raw := range certIssuerObjectList(source["volumeMounts"]) {
+			role := deploymentplan.String(deploymentplan.Map(raw)["name"])
+			if _, valid := environmentCustodyMemoryRelativeFile(placement, source, role, states[0]); valid {
+				cacheVolumes[role] = true
+			}
+		}
+		if len(cacheVolumes) == 0 {
+			return bad()
+		}
+	}
+	subjects, cacheSubjects := map[string]bool{}, map[string]bool{}
 	for _, value := range certIssuerObjectList(source["env"]) {
 		e := deploymentplan.Map(value)
-		if !strings.HasSuffix(deploymentplan.String(e["name"]), "_IDENTITY_STATE") {
+		if e["valueFrom"] != nil || !strings.HasSuffix(deploymentplan.String(e["name"]), "_IDENTITY_STATE") {
 			continue
 		}
 		for _, purpose := range owner.Clients {
 			if e["value"] != purpose.StatePath {
 				continue
 			}
-			if subject != "" && subject != purpose.Subject {
-				return bad()
+			subjects[purpose.Subject] = true
+			for role := range cacheVolumes {
+				if _, valid := environmentCustodyMemoryRelativeFile(placement, source, role, purpose.StatePath); valid {
+					cacheSubjects[purpose.Subject] = true
+				}
 			}
-			subject = purpose.Subject
 		}
+	}
+	// Original independently mounted purposes remain distinct within one owner.
+	// A separate trust/cache volume can still belong to a single unique client.
+	if len(cacheSubjects) > 0 {
+		subjects = cacheSubjects
+	}
+	if len(subjects) != 1 {
+		return bad()
+	}
+	subject := ""
+	for value := range subjects {
+		subject = value
 	}
 	if !strings.HasPrefix(subject, "service:") || !environmentCreateConsumerID.MatchString(strings.TrimPrefix(subject, "service:")) {
 		return bad()

@@ -1184,3 +1184,56 @@ runDestroyEnvironmentResources called after native volume and DNS evidence; the
 underlying destroy CLI prints a read-only plan unless --yes, and protects nonempty
 buckets. Do not run it directly with missing runtime values (legacy default staging).
 No cloud mutation, environment backend activation or formal preflight GO occurred.
+
+
+2026-11-09 multiple-client checkpoint: CRL expected-subject resolution now uses
+original admitted client purposes sharing the actual cache's scoped memory volume.
+It preserves the single-client/separate-trust-volume compatibility case and refuses
+ambiguous or unbound multi-client caches. No new settings or manual manifest-to-
+subject table. Observe, public-export discovery and shared readiness pass the exact
+cache state path; observe caches identities by state path, not only container.
+
+RED observed for the previously unavailable state-specific API. Focused two-client
++ Account tests PASS6.938s. The regression now exercises both explicit independent
+cache purposes and the real observer with two manifests in one container, proving
+that it returns two actual subjects rather than reusing the first. Unknown cache
+placement and a missing selector remain failures for ambiguous purposes. Expanded
+selected root regression PASS72.222s; log
+/Volumes/RTKGoBuild/tmp/custody-client-purpose-regression.log.
+
+Ruling: expected CRL subject comes from original admitted client intent plus the
+actual scoped projection purpose — not Pod names or a new identity policy map —
+this preserves both Log Ingester clients under one logical KV owner; if an actual
+profile combines ambiguous purposes in one volume, it fails explicitly instead of
+selecting an incorrect ACK identity.
+
+Revalidated unchanged native c97d455 with real isolated PostgreSQL, Kubernetes and
+OpenBao enabled: full -race packages cmd/serviceidentity-bootstrap 6.419s,
+internal/pkitrust 12.049s, serviceidentity 6.029s, openbao 3.267s, config 1.480s,
+apiapp 5.606s. Log /Volumes/RTKGoBuild/tmp/custody-native-provider-profile-regression.log.
+A second verbose focused run explicitly confirms the actual provider subtest ran
+(no skip): TLS + Kubernetes auth/owner transfer + pending replay + CAS fencing +
+outage + durable provider restart + JWT replacement/reauthentication + renewal.
+Actual registry/CRL admission and public-cache repair cases also passed; proof log
+/Volumes/RTKGoBuild/tmp/custody-provider-registry-explicit-proof.log. These are real
+native boundary/lifecycle proofs, NOT the still-pending whole fresh environment
+creation or matched OpenBao/registry backup restore.
+
+NEXT priority: exercise the complete fresh OpenBao-mode creation path as one flow
+before further per-gate patches. Existing createdNativeInventoryFixture and
+TestCreatedCompleteNativeOwnerInventoryCanonicalRender cover the actual final
+native recipes for all core/application owners but only the PVC profile; extend
+with OpenBao state and retained independent OpenBao/business claims, then couple
+the native provider/registry/Kubernetes lifecycle pieces for full fresh creation,
+interruption/renewal, cold restart and matched restore. Do not substitute another
+set of isolated passing adapters for the whole required flow. Admission of original
+committed client/server states must reach every applicable preflight/health owner.
+
+Known remaining operations gap: local generation archival at deployment/archives
+is specified but not implemented; formal removal uses cleanupDeploymentEnvironment
+(deployment_config.go), native PV/volume and DNS proofs, then the existing destroy
+CLI. The underlying CLI has read-only listing unless --yes but legacy staging
+fallbacks if not called through resolved environment config; do not invoke blindly.
+All live dev/staging backend values and resources remain unchanged. Final fresh
+review, dependency CI/Release, then approved dev removal/archive/create GO/deploy/
+health and staging remain required. Goal remains active.

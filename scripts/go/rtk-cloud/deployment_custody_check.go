@@ -102,7 +102,7 @@ func (r *maintenanceRuntime) checkConsumerCRL(ctx context.Context, namespace, ta
 		if selected != nil {
 			return bad()
 		}
-		c.ConsumerID, err = r.custodyConsumerID(ctx, namespace, c.Pod, container, source)
+		c.ConsumerID, err = r.custodyConsumerID(ctx, namespace, c.Pod, container, source, entry.StatePath)
 		if err != nil {
 			return empty, "", err
 		}
