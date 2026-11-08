@@ -70,7 +70,7 @@ func managedMQTTConsumersFixture(t *testing.T) []deploymentplan.Definition {
 	}
 	pod["volumes"], c["volumeMounts"] = volumes, mounts
 	defs = append(defs, deploymentplan.Definition{Object: api, Phase: "workload"})
-	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-dev", "CLOUD_ENV_NAME": "dev", "LKE_VIDEO_CLOUD_IMAGE": "ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api@sha256:" + strings.Repeat("a", 64)}
+	env := map[string]string{"MQTT_FOUNDATION_MQTT_ENABLED": "true", "SHADOW_WORKER_MQTT_ENABLED": "true", "CLOUD_STACK_NAME": "video-cloud-dev", "CLOUD_ENV_NAME": "dev", "LKE_VIDEO_CLOUD_IMAGE": "ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api@sha256:" + strings.Repeat("a", 64)}
 	workers, err := decodeEnvironmentCreateManifests(lkeMQTTFoundationDeploymentManifest(env), lkeShadowWorkerDeploymentManifest(env))
 	if err != nil {
 		t.Fatal(err)

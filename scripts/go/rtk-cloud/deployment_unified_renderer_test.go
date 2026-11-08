@@ -37,6 +37,9 @@ func completeEnvironmentRenderFixture(environment string) (map[string]string, en
 	for _, domain := range managedPKIDomains {
 		env["PKI_REQUIRED_CONSUMERS_"+strings.ToUpper(domain)] = "fixture-consumer"
 	}
+	for key, value := range map[string]string{"CORE_API_MQTT_ENABLED": "true", "DEVICE_API_MQTT_ENABLED": "false", "APP_API_MQTT_ENABLED": "false", "MQTT_FOUNDATION_MQTT_ENABLED": "true", "SHADOW_WORKER_MQTT_ENABLED": "true"} {
+		env[key] = value
+	}
 	release := environmentRelease{Schema: "rtk-cloud.release/v1", Environment: environment, Stack: stack, WorkspaceRevision: strings.Repeat("a", 40), Images: map[string]environmentReleaseImage{}}
 	for _, source := range lkeServiceImageSources() {
 		image := environmentReleaseImage{Reference: "ghcr.io/hkt999rtk/" + source.RepoName + "/" + source.Name + "@sha256:" + strings.Repeat("a", 64), SourceRevision: strings.Repeat("b", 40)}

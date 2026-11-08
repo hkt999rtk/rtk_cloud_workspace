@@ -218,6 +218,16 @@ func validateEnvironmentCoreMQTTTransport(definitions []deploymentplan.Definitio
 	for _, d := range definitions {
 		for _, raw := range certIssuerObjectList(environmentPKIPod(d.Object)["containers"]) {
 			c := deploymentplan.Map(raw)
+			ca, err := disabledEnvironmentMQTTTrustCA(d.Object, c)
+			if err != nil {
+				return err
+			}
+			if ca != "" {
+				settings, err := environmentPKINamedFields(c["env"])
+				if err != nil || settings["VIDEO_CLOUD_MQTT_TLS"]["value"] != "true" || settings["VIDEO_CLOUD_MQTT_TLS_CA_ROOT_PATH"]["value"] != ca || settings["VIDEO_CLOUD_MQTT_TLS"]["valueFrom"] != nil || settings["VIDEO_CLOUD_MQTT_TLS_CA_ROOT_PATH"]["valueFrom"] != nil {
+					return coreMQTTTransportBlocker(deploymentplan.ID(d.Object), "disabled MQTT client retains server trust without its complete original TLS/CA projection")
+				}
+			}
 			if !environmentCoreMQTTConsumer(d.Object, c) {
 				continue
 			}

@@ -1444,6 +1444,7 @@ func writeDeploymentFixture(t *testing.T, environment, adapter string) string {
 			files["cloud_deploy/architectures/kubernetes/architecture.env"] += key + "=" + value + "\n"
 		}
 	}
+	files["cloud_deploy/architectures/kubernetes/architecture.env"] += "CORE_API_MQTT_ENABLED=true\nDEVICE_API_MQTT_ENABLED=false\nAPP_API_MQTT_ENABLED=false\nMQTT_FOUNDATION_MQTT_ENABLED=true\nSHADOW_WORKER_MQTT_ENABLED=true\n"
 	for path, body := range files {
 		writeTestFile(t, filepath.Join(root, path), body)
 	}

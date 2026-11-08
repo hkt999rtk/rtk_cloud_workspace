@@ -9925,7 +9925,7 @@ func lkeDeploymentManifestWithVideoSurge(env map[string]string, workload lkeWork
             - name: VIDEO_CLOUD_AUTH_TRUSTED_CLIENT_CERT_HEADERS
               value: "true"
             - name: VIDEO_CLOUD_MQTT_ENABLED
-              value: "true"
+              value: %q
             - name: VIDEO_CLOUD_MQTT_ADDR
               value: %q
             - name: VIDEO_CLOUD_MQTT_USERNAME
@@ -10053,6 +10053,7 @@ func lkeDeploymentManifestWithVideoSurge(env map[string]string, workload lkeWork
 			lkeAccountManagerInternalURL(env),
 			lkeCloudLoggerEndpoint(env),
 			firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOGGER_SPOOL_MAX_BYTES"), "104857600"),
+			env["CORE_API_MQTT_ENABLED"],
 			lkeMQTTInternalAddr(env),
 			strconv.FormatBool(lkeMQTTTenantNamespaceEnabled(env)),
 			mqttHandlerConcurrency,

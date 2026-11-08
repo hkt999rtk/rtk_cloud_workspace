@@ -118,7 +118,7 @@ spec:
                   name: video-cloud-runtime
                   key: VIDEO_CLOUD_AUTH_SECRET
             - name: VIDEO_CLOUD_MQTT_ENABLED
-              value: "true"
+              value: %q
             - name: VIDEO_CLOUD_MQTT_ADDR
               value: %q
             - name: VIDEO_CLOUD_MQTT_USERNAME
@@ -175,6 +175,7 @@ spec:
 		lkeEnvValue(env, "LKE_VIDEO_CLOUD_IMAGE"),
 		firstNonEmpty(env["CLOUD_ENV_NAME"], os.Getenv("ACCOUNT_MANAGER_ENV"), env["ACCOUNT_MANAGER_ENV"], "staging"),
 		lkeNamespaceName(env, "platform"),
+		env["SHADOW_WORKER_MQTT_ENABLED"],
 		lkeMQTTInternalAddr(env),
 		strconv.FormatBool(lkeMQTTTenantNamespaceEnabled(env)),
 		lkeNamespaceName(env, "platform"),

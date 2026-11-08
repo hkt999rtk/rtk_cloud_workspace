@@ -209,7 +209,7 @@ func finalizeEnvironmentCreateApplicationDefinitions(ctx context.Context, cfg de
 				domain, trustName, trustPath, claim = "app", "pki-create-app-trust", "/run/pki-app", "video-cloud-api-app-pki-trust"
 			}
 			root := roots[domain]
-			settings := map[string]string{"VIDEO_CLOUD_API_ADDR": "0.0.0.0:8443", "VIDEO_CLOUD_API_BASE_URL": "https://" + name + "." + p.Stack + "-video-cloud.svc:8443", "VIDEO_CLOUD_API_TLS_CERT_PATH": "/run/pki-server/tls.crt", "VIDEO_CLOUD_API_TLS_KEY_PATH": "/run/pki-server/tls.key", "VIDEO_CLOUD_AUTH_CRL_MANIFEST": trustPath + "/api-crls.json", "VIDEO_CLOUD_AUTH_ISSUER_TRUST_MANIFEST": trustPath + "/bundles.json", "VIDEO_CLOUD_AUTH_MTLS_REQUIRED": "true", "VIDEO_CLOUD_MQTT_ENABLED": "false", "VIDEO_CLOUD_AUTH_PRODUCT_PKI_REQUIRE_CRLS": "true"}
+			settings := map[string]string{"VIDEO_CLOUD_API_ADDR": "0.0.0.0:8443", "VIDEO_CLOUD_API_BASE_URL": "https://" + name + "." + p.Stack + "-video-cloud.svc:8443", "VIDEO_CLOUD_API_TLS_CERT_PATH": "/run/pki-server/tls.crt", "VIDEO_CLOUD_API_TLS_KEY_PATH": "/run/pki-server/tls.key", "VIDEO_CLOUD_AUTH_CRL_MANIFEST": trustPath + "/api-crls.json", "VIDEO_CLOUD_AUTH_ISSUER_TRUST_MANIFEST": trustPath + "/bundles.json", "VIDEO_CLOUD_AUTH_MTLS_REQUIRED": "true", "VIDEO_CLOUD_AUTH_PRODUCT_PKI_REQUIRE_CRLS": "true"}
 			settings["VIDEO_CLOUD_DB_ENSURE_SCHEMA"] = "false"
 			settings["VIDEO_CLOUD_AUTH_ROOT_TRUST_BOOTSTRAP_STATE"] = filepath.Join(owner.StateRoot, "private", "incoming-root-bootstrap.json")
 			prefix, state := "VIDEO_CLOUD_AUTH_DEVICE_ROOT_TRUST", "/run/pki-state/root-trust-"+root.ID+".json"
@@ -268,6 +268,9 @@ func finalizeEnvironmentCreateApplicationDefinitions(ctx context.Context, cfg de
 		// claim. The alias never changes, exports or regenerates private material.
 		pod["volumes"] = mergeEnvironmentNamedFields(pod["volumes"], []any{environmentCreateServiceVolume("service-state", "persistentVolumeClaim", owner.Claim)})
 		container["volumeMounts"] = mergeEnvironmentNamedFields(container["volumeMounts"], []any{environmentCreateServiceMount("service-state", environmentCreateServiceState, false)})
+		if err := applyEnvironmentMQTTRole(values, object); err != nil {
+			return nil, err
+		}
 		if err := applyEnvironmentAuthRole(values, object); err != nil {
 			return nil, err
 		}
