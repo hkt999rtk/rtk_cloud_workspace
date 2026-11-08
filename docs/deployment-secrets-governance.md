@@ -1794,13 +1794,23 @@ private temporary projections (0700 directories, 0600 files). Signing/admission
 remains with the original PKI engines/registry. Private projections, credentials
 and tokens must not appear in progress, receipts, Git or cloud_env/.
 
-The formal migration executor produces private plan, journal, sanitized
-verification and retirement records under
-`~/.config/rtk_cloud/<environment>/deployment/identity-migrations/<plan-sha256>/`.
-Its recovery/rollback consumers use that same canonical path. Bootstrap and
-new-generation producers establish new records only through qualified creation;
-ordinary migration consumers require the original state. Original generation
-journals are not rewritten. Destination record version, source resource UID and
-public-key/certificate fingerprints bind recovery; receipt hashes do not expose
-private key bytes. Matching OpenBao and registry backups, with independent seal
-recovery material, are required before original storage retirement.
+The approved rollout uses formal removal and new creation for dev then staging;
+it does not implement an in-place identity migration. Original local generation
+material is segregated under the existing generation-archive contract before
+fresh active state initialization. Explicit cloud-data destruction is not proof
+of preserved runtime data.
+
+The creation executor produces public custody TLS handoff evidence at
+`~/.config/rtk_cloud/<environment>/deployment/create/<generation>/custody/transport.json`.
+Namespace-scoped read-only ConfigMap projections distribute this public snapshot;
+native KV transports consume it during admitted creation. Its original bootstrap
+anchor is generation-bound; managed Root IDs/certificates come from the original
+registered creation lineage. Native clients verify installed snapshot scope and
+current TLS/registry policy. Normal completed runtime templates remove bootstrap
+authorization. Private keys are not snapshot content. Producer publication and
+live-consumer projection checks must precede serving TLS handoff.
+
+All local operation directories are 0700, files 0600. The common environment
+path helpers own these locations. Matching OpenBao/registry backup and restore
+remain part of validating the newly created generation, without adding an old
+runtime backup gate for explicitly discarded cloud data.

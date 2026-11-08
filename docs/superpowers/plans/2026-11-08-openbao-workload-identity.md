@@ -115,3 +115,102 @@ Don't use old generic destroy helper with loose stack fallback. Read removal
 implementation before execution; no deletions before new code lifecycle tests.
 Docker27.4.0 available locally, kind/k3d not installed, helm available. Plan must
 run real isolated Kubernetes lifecycle tests before deleting current dev.
+
+2026-11-08 continuation progress: native IdentityCustody settings parser and
+binding now connect managed Service client/server, management sidecar, Factory,
+EMQX bootstrap/runtime and serviceidentity-bootstrap. Global config/API validation
+checks selected custody settings. Legacy file consumers still pass. Remote
+read-only inspection/certificate helpers now validate native payloads without
+claiming leases or writing KV/projections; CLI/owner-client wiring remains.
+Full nine-package native wiring -race GREEN (config/pkitrust/serviceidentity/
+openbao, bootstrap command, management/factory/emqx/factory command). Targeted
+API/LogIngester/Broker bootstrap/incoming-root tests GREEN. Real isolated
+PostgreSQL service-identity regressions GREEN 7.166s. These do NOT prove the
+new KV complete lifecycle yet.
+
+Ruling: creation KV transport must use the ORIGINAL OpenBao foundation TLS
+anchor until the managed OpenBao authority is available. Strict managed SQL
+server admission requires active/retiring issuers; current create enrolls managed
+Service core BEFORE OpenBao transport lineages. Requiring the future managed
+OpenBao Root for initial KV access would recreate the dependency deadlock.
+Reuse original temporary TLS and a public generation-scoped handoff snapshot;
+no new CA, no READY managed-issuer acceptance, no unconditional mutation retry.
+Finish normal runtime with bootstrap authorization absent. Check installed
+snapshots in live KV consumers before the OpenBao listener TLS switch.
+
+IMPORTANT: OpenBao bootstrap CA is SEPARATE from management.TransportCAPEM.
+Foundation uses baoTransport.CACert in Secret openbao-transport-tls and ConfigMap
+pki-openbao-transport-ca; runtime.OpenBao.CACertPath is canonical evidence.
+Do not mistakenly trust runtime.TransportCAPEM (Account/Controller/Issuer CA).
+Existing OpenBao Kubernetes auth ALREADY uses rotating local projected tokens:
+deployment_create_openbao.go config disable_local_ca_jwt=false, no static reviewer
+JWT, openbao ServiceAccount + auth-delegator. Reuse it; do not add another auth
+or reviewer lifecycle.
+
+Creation transport prototype implemented/tested: pkitrust.CustodyTransportTrust
+(schema/environment/generation/server_name/bootstrap_pem/managed_root_id/
+managed_root_sha256/managed_pem/managed_only). Uses Native DynamicServerConnections,
+normal TLS + independent original anchor, managed SQL/CRL verification and socket
+sweeps; reads updated read-only snapshot, never trusts unknown peer Root. Unit
+Root/expiry/foreign-snapshot/retired-anchor/keepalive tests GREEN. IdentityCustody
+adds PKI_STATE_BOOTSTRAP_ROOT_SHA256 + PKI_STATE_TRANSPORT_TRUST ONLY for creation.
+Custody-specific independent trust uses PKI_STATE_OPENBAO_SERVER_PKI_ROOT_SHA256,
+PKI_STATE_OPENBAO_SERVER_PKI_NAME, PKI_STATE_OPENBAO_TLS_CA (NOT ordinary OPENBAO_*
+provider trust keys: changing those would break temporary signing providers).
+Snapshot producer/renderer/live projection handoff barrier NOT implemented yet.
+
+Local real fixtures now live, exclusively synthetic:
+- kind binary /Volumes/RTKGoBuild/tools/kind-v0.33.0/kind, official download checksum
+  verified; cluster rtk-custody-20261108, Kubernetes v1.37.0 Ready.
+- kubeconfig /Volumes/RTKGoBuild/tmp/rtk-custody-kind-20261108/kubeconfig.yaml (0600,
+  parent0700), no global/default kubeconfig changes. Kind node Docker container
+  rtk-custody-20261108-control-plane.
+- Postgres Docker container rtk-custody-pg-20261108, --rm, loopback65097, tmpfsPGDATA
+  1g, fixture-only trust auth. DSN postgres://postgres@127.0.0.1:65097/custody?sslmode=disable
+  and actual container ID in sibling postgres.json (0600). No real cloud data.
+- Real Kubernetes test TestOwnerLeaseAgainstIsolatedKubernetes GREEN 2.435s using
+  RTK_CUSTODY_KUBECONFIG above: actual SA token, get/update-only named-Lease RBAC,
+  contention/takeover/stale-owner/release/foreign-resource denial. Simulated clock,
+  no TTL wait. Namespace cleanup completed; shared kind retained for next tests.
+- Last core -race GREEN serviceidentity17.090s/config1.584s/pkitrust18.584s/
+  openbao5.013s: /Volumes/RTKGoBuild/tmp/custody-readonly-core.log.
+
+NEXT priority: complete readonly inspection/owner-client native CLI wiring,
+then implement real OpenBao + SQL + Kubernetes full KV lifecycle acceptance.
+Refactor existing custody transport setup for a reader without a Lease; never
+invoke OpenRemote just to inspect. ReadRemoteCertificate/InspectRemote already
+exist. Complete snapshot publication/namespace distribution and mount-readback
+barrier around existing OpenBao serving TLS handoff. Integrate shared renderers,
+scoped KV policies/roles + per-state precreated Leases/SA RBAC/network rules,
+replace only logical PKI claims with emptyDir, persist CRL/trust high-water in KV,
+and update observation/preflight/health/renewal accordingly. No cloud teardown
+before complete isolated acceptance. Both dev/staging old cloud still intact.
+
+Continuation checkpoint: native ab3a848 committed the connected runtime/settings/
+creation transport work; contracts 2a9c54b committed fresh rollout and handoff
+clarifications. Root remains doc-only commits, no unpublished leaf gitlink staged.
+Latest focused native verification with real PostgreSQL and real isolated kind
+used VIDEO_CLOUD_TEST_DSN and RTK_CUSTODY_KUBECONFIG from fixture metadata:
+/Volumes/RTKGoBuild/tmp/custody-native-components-verified.log — PASS across all
+selected packages; management/emqx had no matching tests in THIS regex, their
+prior full package runs passed. No CI/preflight/deployment claimed.
+
+Readonly follow-up WIP (after ab3a848): pkitrust.NewCustodyTransport is now reusable
+without a writer Lease; CustodyBinding exposes Client/Context. serviceidentity
+InspectRemote/ReadRemoteCertificate were already committed and tested. Native
+CLI inspect/inspect-server and owner-client now select those remote readers;
+new cmd/serviceidentity-bootstrap/custody_reader.go requires the selected
+PKI_DATABASE_URL verifier reference and no state/lease mutation. Initial refactor
+compile error (cancel moved into binding) corrected to b.cancel(). Final full
+four-package race verification running as exec session84734; output
+/Volumes/RTKGoBuild/tmp/custody-cli-reader-final.log. Check this SAME handle/log,
+then commit reader follow-up if green; do not assume it passed. No other test
+sessions should be active. kind/Postgres fixture CONTAINERS remain live on purpose.
+
+Remaining major work is unchanged: real OpenBao KV/Kubernetes auth and complete
+creation/renewal/restart/failure lifecycle tests, create/shared renderer custody
+policies/SA/Leases/networks + trust-snapshot publication/handoff, remove PKI PVC
+allocations and persist public CRL/trust anti-rollback state in KV, adapt inspectors/
+preflight/health/renewal, formal CI/release then scripted dev teardown/new-generation
+archive/create GO/deploy/health, then staging. Do NOT substitute old deployment
+or library tests for this final state. No dev/staging/prod cloud mutation occurred.
