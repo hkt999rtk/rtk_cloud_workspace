@@ -33,6 +33,9 @@ func TestCompleteCompilerUsesMaintainedCatalogAndFencesNativeSnapshot(t *testing
 					architecture += key + "=" + value + "\n"
 				}
 			}
+			for _, key := range environmentMQTTRoles {
+				architecture += key + "=" + settings[key] + "\n"
+			}
 			writeTestFile(t, filepath.Join(cfg.Workspace, "cloud_deploy", "architectures", "kubernetes", "architecture.env"), architecture)
 			if environment == "prod" {
 				path := filepath.Join(cfg.Workspace, "cloud_deploy", "architectures", "kubernetes", "workloads.env")
