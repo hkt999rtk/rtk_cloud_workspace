@@ -27,7 +27,7 @@ func projectEnvironmentCustodyRegistrations(values map[string]string, environmen
 	out := make([]deploymentplan.Definition, 0, len(definitions))
 	for _, definition := range definitions {
 		product, selected := byWorkload[deploymentplan.ID(definition.Object)]
-		if !selected {
+		if !selected || definition.Retire {
 			out = append(out, definition)
 			continue
 		}

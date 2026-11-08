@@ -34,8 +34,11 @@ func resolveCreateNormalTailProductTarget(cfg deploymentConfig, l *createNormalT
 	}
 	for _, receipt := range installed.Outputs {
 		output, ok := outputs[receipt.ResourceID]
-		if !ok || receipt.Subject != output.Subject || !environmentBootstrapOwnerUUID.MatchString(receipt.SecretUID) || !environmentBootstrapOwnerUUID.MatchString(receipt.ClaimUID) || !environmentPreflightDigest.MatchString(receipt.CertificateSHA256) || owners[receipt.ResourceID] != "" {
+		if !ok || receipt.Subject != output.Subject || !environmentBootstrapOwnerUUID.MatchString(receipt.SecretUID) || !environmentPreflightDigest.MatchString(receipt.CertificateSHA256) || owners[receipt.ResourceID] != "" {
 			return bad()
+		}
+		if err := validateEnvironmentProductIdentityStorage(cfg, l, output, receipt); err != nil {
+			return nil, err
 		}
 		owners[receipt.ResourceID] = receipt.SecretUID
 	}

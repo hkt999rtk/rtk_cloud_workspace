@@ -1,8 +1,8 @@
 # OpenBao cloud workload identity custody
 
-Status: accepted target; implementation and environment migration pending.
-Approval: operator selected preservation of original keys/certificates and
-per-service restart, dev before staging, on 2026-11-08.
+Status: accepted target; implementation and fresh dev/staging acceptance pending.
+Approval: operator superseded migration with fresh dev creation and explicitly
+confirmed fresh staging creation as well. Validate dev before rebuilding staging.
 
 ## Decision
 
@@ -23,7 +23,7 @@ bounded per-service migration without dual writers or a new storage service.
 
 Environment intent selects PKI_STATE_BACKEND=pvc|openbao; OpenBao additionally
 requires PKI_STATE_KV_MOUNT. Keep existing deployments on their selected PVC
-backend until an explicit migration promotion. Derived record names include
+backend until the explicitly selected new generation replaces them. Derived record names include
 original environment, create generation, workload and identity purpose; no Pod
 UID in the durable identity key. Separate Kubernetes auth role/SA per owner,
 projected short-lived audience-bound JWT and exact-record ACLs. No root token
@@ -67,6 +67,6 @@ explicitly select openbao backend for new generations as this approved intent.
 Isolated real OpenBao + PostgreSQL + Kubernetes lifecycle tests, interrupted
 creation/renewal, CAS conflict/lost response, cross-owner denial, cold restart,
 OpenBao outage, CRL rollback/expiry using controlled clock, and matched-state backup/restore with
-newer committed renewal must pass before any live migration. Then dev full create preflight/deployment/health, followed by staging.
+newer committed renewal must pass before live teardown/recreation. Then dev full create preflight/deployment/health, followed by staging.
 Report old/new resource IDs, original archived generation evidence, and actual
 PVC counts; never claim prior cloud data survived authorized destruction.

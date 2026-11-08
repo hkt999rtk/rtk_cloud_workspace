@@ -166,6 +166,9 @@ func environmentCustodyStageOwnsStorage(binding *environmentCustodyBinding, defi
 		}
 	}
 	for _, d := range definitions {
+		if d.Retire {
+			continue
+		}
 		metadata := deploymentplan.Map(d.Object["metadata"])
 		namespace := deploymentplan.String(metadata["namespace"])
 		if d.Object["kind"] == "PersistentVolumeClaim" && claims[namespace+"/"+deploymentplan.String(metadata["name"])] {

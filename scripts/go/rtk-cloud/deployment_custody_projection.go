@@ -29,8 +29,7 @@ type environmentCustodyBinding struct {
 }
 
 func environmentCustodyLeaseName(prefix, path string) string {
-	stateHash := sha256.Sum256([]byte(path))
-	key := prefix + "/" + hex.EncodeToString(stateHash[:])
+	key := environmentCustodyRecordKey(prefix, path)
 	leaseHash := sha256.Sum256([]byte(key))
 	return "pki-state-" + hex.EncodeToString(leaseHash[:16])
 }
@@ -83,6 +82,13 @@ func projectEnvironmentCustodyResources(values map[string]string, environment st
 			byClaim[key] = owner
 		}
 	}
+	active := false
+	for _, d := range definitions {
+		active = active || !d.Retire
+	}
+	if !active {
+		return definitions, nil
+	}
 	definitions, err := projectEnvironmentCustodyRegistrations(values, environment, binding, definitions)
 	if err != nil {
 		return nil, err
@@ -116,6 +122,10 @@ func projectEnvironmentCustodyResources(values map[string]string, environment st
 	for _, definition := range definitions {
 		d := definition
 		d.Object = deploymentplan.Clone(d.Object)
+		if d.Retire {
+			result = append(result, d)
+			continue
+		}
 		metadata := deploymentplan.Map(d.Object["metadata"])
 		namespace := deploymentplan.String(metadata["namespace"])
 		if d.Object["kind"] == "PersistentVolumeClaim" {
@@ -146,6 +156,7 @@ func projectEnvironmentCustodyResources(values map[string]string, environment st
 			memoryVolumes[deploymentplan.String(volume["name"])] = deploymentplan.Map(volume["emptyDir"])["medium"] == "Memory"
 		}
 		account := ""
+		podDependencies := map[string]bool{}
 		for _, collection := range []string{"containers", "initContainers"} {
 			for _, raw := range certIssuerObjectList(pod[collection]) {
 				container := deploymentplan.Map(raw)
@@ -218,10 +229,17 @@ func projectEnvironmentCustodyResources(values map[string]string, environment st
 					add(deploymentplan.Object{"apiVersion": "coordination.k8s.io/v1", "kind": "Lease", "metadata": meta()})
 					add(deploymentplan.Object{"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "Role", "metadata": meta(), "rules": []any{deploymentplan.Object{"apiGroups": []any{"coordination.k8s.io"}, "resources": []any{"leases"}, "resourceNames": []any{name}, "verbs": []any{"get", "update"}}}})
 					add(deploymentplan.Object{"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "RoleBinding", "metadata": meta(), "roleRef": deploymentplan.Object{"apiGroup": "rbac.authorization.k8s.io", "kind": "Role", "name": name}, "subjects": []any{deploymentplan.Object{"kind": "ServiceAccount", "name": account, "namespace": namespace}}})
+					for _, kind := range []string{"Lease", "Role", "RoleBinding"} {
+						podDependencies[kind+"/"+namespace+"/"+name] = true
+					}
 				}
 			}
 		}
 		if account != "" {
+			podDependencies["ServiceAccount/"+namespace+"/"+account] = true
+			if additionalNamespaces[namespace] {
+				podDependencies["NetworkPolicy/"+stack+"-secrets/allow-openbao-workload-custody"] = true
+			}
 			pod["automountServiceAccountToken"], pod["serviceAccountName"] = false, account
 			templateMeta := deploymentplan.Map(deploymentplan.Map(deploymentplan.Map(d.Object["spec"])["template"])["metadata"])
 			if templateMeta == nil {
@@ -243,6 +261,16 @@ func projectEnvironmentCustodyResources(values map[string]string, environment st
 				}}}, environmentCreateServiceVolume("pki-custody-trust", "configMap", environmentCustodyTrustName),
 			})
 		}
+		if len(podDependencies) != 0 {
+			dependencies := append([]string(nil), d.Dependencies...)
+			for id := range podDependencies {
+				if !slices.Contains(dependencies, id) {
+					dependencies = append(dependencies, id)
+				}
+			}
+			sort.Strings(dependencies)
+			d.Dependencies = dependencies
+		}
 		result = append(result, d)
 	}
 	seen := map[string]deploymentplan.Object{}
@@ -256,9 +284,21 @@ func projectEnvironmentCustodyResources(values map[string]string, environment st
 	sort.Strings(ids)
 	for _, id := range ids {
 		if existing := seen[id]; existing == nil {
-			result = append(result, deploymentplan.Definition{Object: dependencies[id], Phase: "configuration"})
+			result = append(result, deploymentplan.Definition{Object: dependencies[id], Phase: "bootstrap"})
 		} else if existing["kind"] != "ServiceAccount" && existing["kind"] != "Lease" && deploymentplan.Digest(existing) != deploymentplan.Digest(dependencies[id]) {
 			return nil, environmentCreateBootstrapBlocker("existing native custody RBAC conflicts with the exact workload owner and identity Lease")
+		} else {
+			for i := range result {
+				if deploymentplan.ID(result[i].Object) != id {
+					continue
+				}
+				if result[i].Retire {
+					return nil, environmentCreateBootstrapBlocker("native custody cannot depend on an access owner selected for retirement")
+				}
+				if result[i].Phase != "namespace" && result[i].Phase != "storage" {
+					result[i].Phase = "bootstrap"
+				}
+			}
 		}
 	}
 	return result, nil

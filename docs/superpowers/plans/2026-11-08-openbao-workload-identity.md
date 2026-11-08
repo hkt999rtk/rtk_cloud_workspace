@@ -680,8 +680,7 @@ claim selector and full remote dependency contract. GREEN full relevant root
 custody/inventory/steady renderer/dependency tests31.994s in
 custody-registration-preflight-final.log. That includes actual full dependency
 catalog with all five fixture product producers and remote bootstrap plan; no
-kubeconfig/custody/material allocation is produced. Earlier renderer31? final
-inventory suite19.291s; registration/steady bindings suite10.078s. These are isolated
+kubeconfig/custody/material allocation is produced. Earlier renderer/inventory suite19.291s; registration/steady bindings suite10.078s. These are isolated
 component/contract tests, not complete cloud bootstrap or real whole environment.
 
 Native registration validators now match selected backend: remote profiles do
@@ -703,3 +702,90 @@ managed-only publication and installed-snapshot barrier still missing; complete
 isolated full create/renewal/recovery/backup acceptance and final review/CI/release
 remain mandatory before real dev then staging removal/create/health. No real
 cloud writes, no feature GO/PR/CI/release/deployment and no backend activation yet.
+
+
+### Checkpoint: original KV references, frozen recipes and formal access order
+
+The operator explicitly confirmed staging also rebuilds from scratch. Dev health
+acceptance still precedes staging teardown. No cloud deletion/create/deployment,
+backend override activation or feature publication has occurred at this checkpoint.
+
+Ruling: replace physical claim authority only for the selected openbao backend;
+retain original workload generation, credential Root, namespace, service account,
+logical record/path and native registry verification. Never synthesize ClaimUID or
+pin a mutable KV version. Added environmentCustodyStateReference and shared record
+key derivation (same native Lease wire golden). The actual protected server export
+adapter now uses those references, accepted child recipe/reader UID, before/after
+Pod and ReplicaSet fences, and the native committed-KV exporter. Legacy PVC export
+remains covered. KV export observation stores client/server references instead of
+claim_uid and never stores private export material as public evidence.
+
+Frozen product preparation/history checks reconstruct the shared custody projection
+from their reviewed original child inputs instead of comparing a former PVC recipe
+with an already projected deployment. Product enrollment owner comparison now uses
+the accepted desired body. This DOES NOT yet finish product receipt conversion or
+current renewal inspection; those still require the next adapter work.
+
+Isolated formal compilation exposed two integration omissions: Lease was absent
+from the common planner/access/inventory mappings, and precreated Lease/RBAC/SA
+configuration could be ordered after a bootstrap consumer. Added native Lease
+support and exact explicit consumer dependencies; existing required access owners
+move before the consumer without changing their settings. Retirement retains its
+accepted body and does not mint replacement access resources. Native Lease liveness
+fields are ignored only for a workload Lease declaration that owns no spec; resource
+UID, scope labels and all other configuration remain fenced. Native holders/renewals
+are not overwritten. Lease resources remain excluded from generic retirement.
+
+RED observed: undefined typed references; historical-recipe helper; real KV export
+wrongly demanded PVC; formal compile rejected Lease; preexisting SA caused later-
+phase dependency; renewing original workload Lease caused plan drift. Targeted KV
+adapter GREEN20.241s, common projection/history/access/inventory GREEN34.147s.
+Broader root regression including the actual isolated Kubernetes fixture is pending
+at this entry. These are not whole-environment deployment or preflight GO claims.
+
+The full internal planner suite ran367.264s and exposed an existing 250ms timeout
+fixture firing before the intended durable namespace checkpoint on external-disk
+fsync, plus an incomplete new Lease test fixture missing managed metadata. Fixed the
+new fixture. Reused the existing qualificationDeadlineContext to inject cancellation/
+deadline at the intended wait checkpoint, preserving actual cancelled-parent cleanup
+and completed-journal assertions without a wall-clock wait or production timeout
+change. Focused final verification is pending at this entry; do not claim full suite
+PASS until recorded. Test artifacts/logs remain isolated under /Volumes/RTKGoBuild/tmp.
+
+NEXT: convert product storage receipts and genuine current-renewal observation,
+backend-aware independent identity/CRL readers and placement checks, prepared/final
+OpenBao trust publication and installed-snapshot barrier, full isolated create +
+renewal + restart/recovery + matched backup restore, final whole-branch review and
+CI/Release. Only then run approved formal dev removal/archive/create GO/deploy/health,
+then staging. No prod/shared/CI resource deletion is authorized or performed.
+
+
+Final verification for the above checkpoint: broad root readers/projection/product
+protocol/access/inventory regression PASS374.031s on external-disk scratch. Then
+new typed product receipts were connected to actual enrollment, target resolution,
+normal session-forward storage validation and restoration from the frozen program's
+custody binding. Initial private projection must match native committed KV inspection
+before and after the read. No synthetic physical ClaimUID is produced. Runtime
+current-renewal/output observation remains unfinished (verifyProductIdentityOutputs
+still follows legacy mirror/claim checks and must dispatch by backend next).
+
+RED observed for missing product Custody receipt field. Final combined relevant root
+regression PASS61.147s using isolated owned APFS RAM scratch, including new receipt
+scope rejection, actual isolated Kubernetes SSA/RBAC, both storage export adapters,
+original/frozen preparation recipes, existing product protocol, common permissions
+and parallel inventory. The finite historical independent reader test skipped when
+its external helper was not selected; do not confuse this with whole-environment
+acceptance. Earlier focused product/export regression also PASS186.445s on disk.
+
+Internal planner full suite initially exposed the described timeout fixture issue;
+focused corrected cleanup/Lease tests PASS27.585s, then complete package PASS6.230s
+on RAM scratch. The redundant ongoing disk run was intentionally terminated after
+that full same-source RAM run passed. No production timeout or fsync implementation
+was weakened. The owned synthetic test root is
+/Volumes/RTKGoTestRAM/kevinhuang/tmp (0700), a newly attached 1 GiB virtual RAM disk,
+APFS mounted with ownership enabled. Its volume root uses ordinary sticky temporary
+storage permissions, with the actual user test root private. It is disposable and
+must never contain real environment data or be assumed present after restart.
+GOCACHE remains /Volumes/RTKGoBuild/cache. Future isolated tests may use this verified
+RAM root for GOTMPDIR/TMPDIR while retaining result logs on the external build disk.
+Original live configuration and canonical ~/.config/rtk_cloud stores were not moved.

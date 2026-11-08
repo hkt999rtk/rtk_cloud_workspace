@@ -172,3 +172,44 @@ func TestCreateNormalTailProductTargetRejectsUnboundNativeOutputs(t *testing.T) 
 		})
 	}
 }
+
+func TestCreateProductTargetAcceptsOriginalKVReferenceWithoutInventingClaimUID(t *testing.T) {
+	cfg, l, installed := productTargetFixture(t)
+	cfg.Values["PKI_STATE_BACKEND"], cfg.Values["PKI_STATE_KV_MOUNT"], cfg.Values["PKI_STATE_LEASE_DURATION"] = "openbao", "identities", "30s"
+	cfg.Values["SHADOW_WORKER_REGISTRATION_ENABLED"] = "true"
+	outputs, err := environmentCreateProductIdentityIntent(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.Outputs = outputs
+	l.Bootstrap = environmentCreateBootstrapPlan{Environment: cfg.Environment, Stack: cfg.Values["CLOUD_STACK_NAME"], ProductIdentities: outputs}
+	installed.PlanSHA256 = productIdentityScope(l)
+	binding, err := createEnvironmentCustodyBinding(cfg, l.Bootstrap, l.ParentSHA256, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, err := newEnvironmentCustodyStateReference(cfg, binding, "video-cloud-dev-video-cloud", outputs[0].Claim, environmentCreateServiceOwnerIdentityPath("shadow", "client.json"), l.Root.RootFingerprint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installed.Outputs[0].ClaimUID = ""
+	installed.Outputs[0].Custody = ref
+	if _, err := resolveCreateNormalTailProductTarget(cfg, l, installed, false); err != nil {
+		t.Fatal("KV output incorrectly required a PVC receipt", err)
+	}
+	for _, change := range []func(*environmentProductIdentityReceipt){
+		func(r *environmentProductIdentityReceipt) { r.ClaimUID = "11111111-1111-4111-8111-111111111111" },
+		func(r *environmentProductIdentityReceipt) { r.Custody = nil },
+		func(r *environmentProductIdentityReceipt) { r.Custody.RecordKey = "foreign/record" },
+	} {
+		copy := installed.Outputs[0]
+		state := *ref
+		copy.Custody = &state
+		change(&copy)
+		replaced := *installed
+		replaced.Outputs = []environmentProductIdentityReceipt{copy}
+		if _, err := resolveCreateNormalTailProductTarget(cfg, l, &replaced, false); err == nil {
+			t.Fatal("foreign or fabricated storage receipt accepted")
+		}
+	}
+}

@@ -109,6 +109,26 @@ func TestCreateCustodyStageUsesOriginalScopeBeforePlanCompilation(t *testing.T) 
 			for _, d := range early {
 				frozen.Resources = append(frozen.Resources, deploymentplan.Resource{Desired: d.Object})
 			}
+			history, err := projectEnvironmentCustodyFrozenRecipe(cfg, bootstrap, generation, "", definitions, frozen)
+			if err != nil || deploymentplan.Digest(history) != deploymentplan.Digest(early) {
+				t.Fatal("history checked the old PVC recipe instead of its accepted custody projection", err)
+			}
+			foreign := *frozen
+			foreign.Resources = append([]deploymentplan.Resource(nil), frozen.Resources...)
+			for i := range foreign.Resources {
+				foreign.Resources[i].Desired = deploymentplan.Clone(foreign.Resources[i].Desired)
+				pod := environmentPKIPod(foreign.Resources[i].Desired)
+				if pod == nil {
+					continue
+				}
+				for _, raw := range certIssuerObjectList(pod["containers"]) {
+					c := deploymentplan.Map(raw)
+					c["env"] = mergeEnvironmentNamedFields(c["env"], environmentCreateEnv(map[string]string{"PKI_STATE_RECORD_PREFIX": "foreign/" + generation + "/" + owner.ID}))
+				}
+			}
+			if _, err := projectEnvironmentCustodyFrozenRecipe(cfg, bootstrap, generation, "", definitions, &foreign); err == nil {
+				t.Fatal("history accepted a foreign original custody scope")
+			}
 			_, _, _, next := createServiceRecipeFixture(t, environment)
 			managed := next.Root
 			managed.Environment, managed.Domain, managed.Kind, managed.Status = environment, "openbao_tls", "root", "active"

@@ -19,6 +19,7 @@ import (
 // A product continuation is the ordered native program, not permission for a
 // journal-key prefix. Every Kubernetes effect keeps its original scoped plan.
 type productStageReader struct {
+	cfg         deploymentConfig
 	store       secretStore
 	e           *environmentCreateExecution
 	l           *createNormalTailProductLifecycle
@@ -147,6 +148,37 @@ func (r *productStageReader) kube(stage string, definitions []deploymentplan.Def
 		return false
 	}
 	if definitions != nil {
+		// Nested recovery readers retain their original call contract. Resolve
+		// missing settings only for a genuine KV child, against its frozen
+		// complete-program configuration; never infer values from live Pods.
+		if r.l != nil && r.cfg.Values == nil {
+			remote := false
+			for _, resource := range p.Resources {
+				pod := environmentPKIPod(resource.Desired)
+				for _, raw := range certIssuerObjectList(pod["containers"]) {
+					remote = remote || mqttFoundationEnv(deploymentplan.Map(raw), "PKI_STATE_BACKEND") == "openbao"
+				}
+			}
+			if remote {
+				workspace, resolveErr := workspaceRoot()
+				if resolveErr != nil {
+					r.err = resolveErr
+					return false
+				}
+				r.cfg, resolveErr = resolveDeploymentConfig(workspace, r.store.Environment, "")
+				program, programErr := readCreateNormalTailProgram(r.store, r.e)
+				if resolveErr != nil || programErr != nil || deploymentplan.Digest(r.cfg) != program.MaintainedConfigSHA256 {
+					return r.bad("changed original custody configuration")
+				}
+			}
+		}
+		if r.l != nil && r.cfg.Values["PKI_STATE_BACKEND"] == "openbao" {
+			definitions, err = projectEnvironmentCustodyFrozenRecipe(r.cfg, r.l.Bootstrap, r.e.Journal.PlanSHA256, r.l.Root.RootFingerprint, definitions, p)
+			if err != nil {
+				r.err = err
+				return false
+			}
+		}
 		if p.BindingsSHA256 != environmentCreateStageBindingsSHA(full, definitions) || len(p.Resources) != len(definitions) {
 			return r.bad("changed preparation recipe " + stage)
 		}
@@ -210,7 +242,7 @@ func validateCreateNormalTailProductStages(store secretStore, e *environmentCrea
 }
 
 func validateCreateNormalTailProductStagesWithConfig(cfg deploymentConfig, store secretStore, e *environmentCreateExecution, l *createNormalTailProductLifecycle, entries []environmentCreateJournalEntry) (int, []*deploymentplan.Plan, error) {
-	r := &productStageReader{store: store, e: e, l: l, entries: entries}
+	r := &productStageReader{cfg: cfg, store: store, e: e, l: l, entries: entries}
 	if len(entries) == 0 {
 		return r.result()
 	}
@@ -683,7 +715,7 @@ func (r *productStageReader) sessionRenewalFinalizer(service environmentCreateSe
 		return false
 	}
 	outer := r.entries[r.n]
-	nested := productStageReader{store: r.store, e: r.e, l: r.l, entries: r.entries[r.n+1:], admission: r.admission, completedAt: outer.StartedAt}
+	nested := productStageReader{cfg: r.cfg, store: r.store, e: r.e, l: r.l, entries: r.entries[r.n+1:], admission: r.admission, completedAt: outer.StartedAt}
 	for _, spec := range specs {
 		if nested.n == len(nested.entries) {
 			break

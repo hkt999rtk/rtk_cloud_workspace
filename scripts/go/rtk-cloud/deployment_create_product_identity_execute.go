@@ -36,6 +36,12 @@ func productIdentityRuntime(ctx context.Context, cfg deploymentConfig, h *create
 		return runtime, plan, err
 	}
 	runtime = l.runtime
+	if cfg.Values["PKI_STATE_BACKEND"] == "openbao" {
+		if program.Bindings.Custody == nil || program.Bindings.Custody.Generation != l.ParentSHA256 {
+			return runtime, plan, environmentCreateBootstrapBlocker("product operation lacks its original qualified workload custody binding")
+		}
+		runtime.Custody = program.Bindings.Custody
+	}
 	client := *runtime.PKIClient
 	client.mutationScope = productIdentityScope(l)
 	runtime.PKIClient = &client
@@ -506,10 +512,15 @@ func enrollProductIdentityOutputs(ctx context.Context, cfg deploymentConfig, p e
 			return nil, environmentCreateBootstrapBlocker("native product owner lacks its original accepted UID")
 		}
 		actual, err := runtime.Backend.Read(ctx, ownerID)
-		if err != nil || actual == nil || deploymentplan.Map(actual["metadata"])["uid"] != uid || !deploymentplan.Matches(owner.Object, actual) {
+		var acceptedOwner deploymentplan.Object
+		for _, resource := range original.Resources {
+			if resource.ID == ownerID {
+				acceptedOwner = resource.Desired
+			}
+		}
+		if err != nil || actual == nil || acceptedOwner == nil || deploymentplan.Map(actual["metadata"])["uid"] != uid || !deploymentplan.Matches(acceptedOwner, actual) {
 			return nil, environmentCreateBootstrapBlocker("native product owner changed before its private state was read")
 		}
-		_ = original
 		name := deploymentplan.String(deploymentplan.Map(owner.Object["metadata"])["name"])
 		path := environmentCreateServiceOwnerIdentityPath(role, "client.json")
 		proof, err := runtime.Backend.command(ctx, nil, "--namespace", p.Stack+"-video-cloud", "exec", "deployment/"+name, "--container", "enroll", "--", "/app/serviceidentity-bootstrap", "inspect", path, product.Subject, l.Root.RootFingerprint)
@@ -519,6 +530,12 @@ func enrollProductIdentityOutputs(ctx context.Context, cfg deploymentConfig, p e
 		raw, err := runtime.Backend.command(ctx, nil, "--namespace", p.Stack+"-video-cloud", "exec", "deployment/"+name, "--container", "enroll", "--", "cat", path)
 		if err != nil {
 			return nil, environmentCreateBootstrapBlocker("original native product state is unavailable and cannot be regenerated")
+		}
+		if cfg.Values["PKI_STATE_BACKEND"] == "openbao" {
+			after, readErr := runtime.Backend.command(ctx, nil, "--namespace", p.Stack+"-video-cloud", "exec", "deployment/"+name, "--container", "enroll", "--", "/app/serviceidentity-bootstrap", "inspect", path, product.Subject, l.Root.RootFingerprint)
+			if readErr != nil || deploymentplan.Digest(jsonRawObject(after)) != deploymentplan.Digest(jsonRawObject(proof)) {
+				return nil, environmentCreateBootstrapBlocker("committed product identity changed while reading its private projection")
+			}
 		}
 		rows, err := readProductIssuances(ctx, cfg, runtime, service, product.Subject)
 		if err != nil || len(rows) != 1 {
@@ -569,13 +586,24 @@ func enrollProductIdentityOutputs(ctx context.Context, cfg deploymentConfig, p e
 		if err != nil || publishedErr != nil || len(published.Resources) != 1 || published.Resources[0].ID != product.ID || actual == nil || !deploymentplan.Matches(published.Resources[0].Desired, actual) {
 			return nil, environmentCreateBootstrapBlocker("native product identity mirror has no exact private readback")
 		}
-		claimObject, err := runtime.Backend.Read(ctx, "PersistentVolumeClaim/"+p.Stack+"-video-cloud/"+product.Claim)
-		if err != nil || claimObject == nil {
-			return nil, environmentCreateBootstrapBlocker("original product identity claim cannot be read")
+		receipt := environmentProductIdentityReceipt{ResourceID: product.ID, Subject: product.Subject, SecretUID: deploymentplan.String(deploymentplan.Map(actual["metadata"])["uid"]), CertificateSHA256: rows[0].Fingerprint}
+		if cfg.Values["PKI_STATE_BACKEND"] == "openbao" {
+			if runtime.Custody == nil || runtime.Custody.Generation != l.ParentSHA256 {
+				return nil, environmentCreateBootstrapBlocker("product receipt lacks its original workload custody generation")
+			}
+			receipt.Custody, err = newEnvironmentCustodyStateReference(cfg, runtime.Custody, p.Stack+"-video-cloud", product.Claim, path, service.Root.RootFingerprint)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			claimObject, readErr := runtime.Backend.Read(ctx, "PersistentVolumeClaim/"+p.Stack+"-video-cloud/"+product.Claim)
+			if readErr != nil || claimObject == nil {
+				return nil, environmentCreateBootstrapBlocker("original product identity claim cannot be read")
+			}
+			receipt.ClaimUID = deploymentplan.String(deploymentplan.Map(claimObject["metadata"])["uid"])
 		}
-		receipt := environmentProductIdentityReceipt{ResourceID: product.ID, Subject: product.Subject, SecretUID: deploymentplan.String(deploymentplan.Map(actual["metadata"])["uid"]), ClaimUID: deploymentplan.String(deploymentplan.Map(claimObject["metadata"])["uid"]), CertificateSHA256: rows[0].Fingerprint}
-		if !environmentBootstrapOwnerUUID.MatchString(receipt.SecretUID) || !environmentBootstrapOwnerUUID.MatchString(receipt.ClaimUID) {
-			return nil, environmentCreateBootstrapBlocker("product mirror and original claim lack genuine UID receipts")
+		if !environmentBootstrapOwnerUUID.MatchString(receipt.SecretUID) || validateEnvironmentProductIdentityStorage(cfg, l, product, receipt) != nil {
+			return nil, environmentCreateBootstrapBlocker("product output lacks its original storage or mirror ownership proof")
 		}
 		receipts = append(receipts, receipt)
 		if err = approveProductWorkload(ctx, cfg, runtime, l, product, service); err != nil {

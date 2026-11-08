@@ -260,6 +260,7 @@ func executeProductIdentitySuccessor(ctx context.Context, cfg deploymentConfig, 
 
 type environmentProductIdentityReceipt struct {
 	ResourceID, Subject, SecretUID, ClaimUID, CertificateSHA256 string
+	Custody                                                     *environmentCustodyStateReference `json:"workload_custody,omitempty"`
 }
 
 type environmentProductIdentitySession struct {
