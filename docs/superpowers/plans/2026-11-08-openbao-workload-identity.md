@@ -35,7 +35,7 @@ OpenBao restore: reconcile KV versions with original registry and revocations.
   Tests: create-only CAS, stale version, missing/deleted data, forbidden response,
   lost write response and reconciliation, path traversal, bounded body, no secrets
   in errors. Preserve exact native state bytes; no generic filesystem mirroring.
-- [ ] 3. Add remote native identity backend and scoped runtime configuration.
+- [x] 3. Add remote native identity backend and scoped runtime configuration.
   Test file/remote parity, unchanged original keys, pending recovery, renewed
   state commit before exposure, initial creation vs existing record absence.
   Implement owner fencing and token lifecycle using existing Kubernetes/OpenBao
@@ -221,3 +221,43 @@ PASS in custody-cli-reader-final.log. Reader follow-up committed in native repo.
 No test processes remain running; real kind and Postgres fixtures remain live.
 Next continuation should start real OpenBao lifecycle fixture and shared
 renderer/publisher implementation, not rerun these already passing checks.
+
+Continuation checkpoint: native commit 3591c41 adds a REAL OpenBao provider
+extension to the isolated Kubernetes owner test. Actual pinned OpenBao with TLS,
+durable Docker volume, Kubernetes TokenReview and scoped KV v2 policy verifies
+pending CSR/key replay, owner transfer/stale writer denial, stale CAS denial,
+read-only inspection, sealed-provider fail-closed renewal, continued loaded
+credential use, provider restart/unseal with original keys, revoked auth token +
+replacement projected JWT reauthentication, and renewal persistence. No TTL wait.
+This exposed a real Lease wire-format defect: RFC3339Nano omitted fractional
+seconds at whole seconds, which Kubernetes MicroTime rejects with HTTP 400.
+Acquisition/renewal now emit fixed six-digit microseconds. Regression RED ->
+GREEN, real Kubernetes/provider -race lifecycle GREEN 7.458s; full serviceidentity
+and openbao -race GREEN 23.235s/5.566s in custody-provider-full-regression.log.
+The provider container/volume/reviewer binding were cleaned; shared kind and
+Postgres fixtures remain. No real cloud mutation occurred.
+
+Workspace now implements the public custody snapshot renderer/producer and
+initial foundation publication BEFORE PKI migrations/managed owners. It uses
+only the original OpenBao CA path under the original bootstrap generation,
+canonical private snapshot evidence, namespace public ConfigMaps, monotonic
+bootstrap/prepared/managed-only publication and interrupted-apply replay.
+It will not reintroduce bootstrap admission during foundation recovery or
+substitute another managed Root. Pure rendering covers dev/staging/prod;
+publisher/foundation-order tests use isolated admitted dev/staging owners.
+TestCustodyTrust plus existing TestCreateOpenBao/TestCreateFoundation regression
+GREEN 114.727s; final original-generation binding tests GREEN 10.361s in
+custody-trust-final.log. Foundational source defaults remain unchanged: backend
+selection has NOT yet been activated in dev/staging configuration.
+
+IMPORTANT remaining work: the producer is connected ONLY at initial foundation.
+Hook prepared and managed-only publication into actual consumer distribution/
+projection readback and OpenBao serving TLS handoff; do not claim that barrier
+exists yet. Complete shared pod projection + dedicated SAs/scoped KV roles/
+Lease RBAC/networks, public trust/CRL durable high-water adapters, removal of
+PKI PVC allocations and backend-aware inspection/preflight/health/renewal.
+Then full native pod/create/recovery acceptance, review, formal CI/release,
+scripted dev removal/archive/create GO/deploy/health followed by staging.
+Do not rerun already passing provider components without a relevant change.
+No current tests running after these verified results; no PR/current-feature CI
+or live preflight/deployment GO has been claimed.

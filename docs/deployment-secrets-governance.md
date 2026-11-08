@@ -1802,7 +1802,12 @@ of preserved runtime data.
 
 The creation executor produces public custody TLS handoff evidence at
 `~/.config/rtk_cloud/<environment>/deployment/create/<generation>/custody/transport.json`.
+Its original CA input is
+`~/.config/rtk_cloud/<environment>/deployment/create/material/<generation>/openbao-transport/ca.crt`;
+neither path uses a later recovery-plan hash in place of the original generation.
 Namespace-scoped read-only ConfigMap projections distribute this public snapshot;
+the resource is `pki-custody-openbao-trust`, mounted as the complete directory
+`/run/pki-custody-openbao/` so later public snapshot updates can propagate.
 native KV transports consume it during admitted creation. Its original bootstrap
 anchor is generation-bound; managed Root IDs/certificates come from the original
 registered creation lineage. Native clients verify installed snapshot scope and

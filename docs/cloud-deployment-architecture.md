@@ -3193,9 +3193,24 @@ Trust/CRL caches preserve accepted versions and existing verification semantics.
 OpenBao itself retains independent cold-start storage; SQL admission and
 original CA custody are not migrated to KV.
 
-Formal migration must quiesce each source owner, verify full state at the
-scoped destination, switch/restart through the deployment executor and qualify
-restart, renewal and rollback before retiring original exact-ID storage.
+The approved dev/staging rollout removes the old runtime through the formal
+script and creates independent new generations, dev first, then staging. It
+does not copy old workload keys into KV. Original local generation material is
+segregated under the generation archive contract before active state is initialized.
+Prod, CI runners and shared artifacts are outside this authorized removal.
+
+The admitted creation executor reads the original OpenBao bootstrap CA from
+`~/.config/rtk_cloud/<environment>/deployment/create/material/<generation>/openbao-transport/ca.crt`
+and records its public handoff at
+`~/.config/rtk_cloud/<environment>/deployment/create/<generation>/custody/transport.json`.
+The `pki-custody-openbao-trust` ConfigMap in the video-cloud and account-manager
+namespaces projects this snapshot into `/run/pki-custody-openbao/` read-only,
+without `subPath`. Snapshot scope uses the original bootstrap generation, even
+when a forward recovery has a different execution-plan hash. Foundation recovery
+republishes the latest recorded handoff and never restores withdrawn bootstrap
+admission. Managed anchors must reach the actual consumers before listener TLS
+changes; final runtime uses managed admission without bootstrap authorization.
+
 Targets are not deployed facts; each environment needs its own completion and
 health evidence. See the accepted OpenBao custody design and canonical
 Platform PKI contract.
