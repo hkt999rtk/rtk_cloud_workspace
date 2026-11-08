@@ -144,7 +144,7 @@ func renderManagedEnvironmentAPI(env map[string]string, binding environmentPodBi
 		}
 	}
 	if binding.Component == "managed-app-api" {
-		if err := validateEnvironmentAppBinding(binding); err != nil {
+		if err := validateEnvironmentAppBinding(binding, lkeNamespaceName(env, binding.NamespaceSuffix)); err != nil {
 			return nil, err
 		}
 		pod["securityContext"] = map[string]any{"fsGroup": float64(10001), "fsGroupChangePolicy": "OnRootMismatch"}

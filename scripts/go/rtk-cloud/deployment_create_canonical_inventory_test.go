@@ -16,10 +16,19 @@ import (
 // These objects are the final native definitions produced by the fresh-create
 // renderers. The assigned UIDs represent an isolated completed live installation,
 // not future identity evidence supplied to a deployment/preflight.
-func createdNativeInventoryFixture(t *testing.T, environment string) (deploymentConfig, environmentCreateBootstrapPlan, environmentRelease, environmentCreateBootstrapRuntime, environmentCreateServiceCeremony, []deploymentplan.Definition) {
+func createdNativeInventoryFixture(t *testing.T, environment string, useOpenBao ...bool) (deploymentConfig, environmentCreateBootstrapPlan, environmentRelease, environmentCreateBootstrapRuntime, environmentCreateServiceCeremony, []deploymentplan.Definition) {
 	t.Helper()
 	ctx := context.Background()
 	cfg, p, release, runtime, service, roots, intermediates, _ := createApplicationFinalizeFixture(t, environment)
+	remote := len(useOpenBao) == 1 && useOpenBao[0]
+	if remote {
+		cfg.Values["PKI_STATE_BACKEND"], cfg.Values["PKI_STATE_KV_MOUNT"], cfg.Values["PKI_STATE_LEASE_DURATION"] = "openbao", "identities", "30s"
+		var err error
+		p.ProductIdentities, err = environmentCreateProductIdentityIntent(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	p.AppRoutingMode = "internal-service"
 	service.Root.Reference = "pki-issuers/service/" + service.Root.ID + "/v1"
 	service.Intermediate.Reference = "pki-issuers/service/" + service.Intermediate.ID + "/v1"
@@ -44,6 +53,15 @@ func createdNativeInventoryFixture(t *testing.T, environment string) (deployment
 	// All producers below belong to this selected parent generation. Earlier
 	// issuer fixtures use separate stores and must not supply runtime inputs.
 	runtime.Backend.Store, runtime.Execution = store, execution
+	if remote {
+		runtime.ExecutionSHA256 = execution.Journal.PlanSHA256
+		runtime.Custody, err = createEnvironmentCustodyBinding(cfg, p, runtime.ExecutionSHA256, roots["openbao_tls"].RootFingerprint)
+		if err != nil {
+			t.Fatal(err)
+		}
+		runtime.Custody.ServiceRootSHA256 = service.Root.RootFingerprint
+		runtime.ServiceCeremony = &service
+	}
 	admission, err := prepareEnvironmentCreateIngressAdmissionMaterial(ctx, cfg, p, release, store, execution)
 	if err != nil {
 		t.Fatal(err)
@@ -178,6 +196,19 @@ func createdNativeInventoryFixture(t *testing.T, environment string) (deployment
 		t.Fatal(err)
 	}
 	definitions = append(definitions, routing)
+	if remote {
+		definitions, err = projectEnvironmentCustodyResources(cfg.Values, environment, runtime.Custody, "", definitions)
+		if err != nil {
+			t.Fatal("fresh complete native custody projection", err)
+		}
+		for i, d := range definitions {
+			meta := deploymentplan.Map(d.Object["metadata"])
+			if meta["uid"] == nil {
+				meta["uid"] = fmt.Sprintf("completed-custody-fixture-owner-%d", i)
+				meta["resourceVersion"] = "1"
+			}
+		}
+	}
 	return cfg, p, release, runtime, service, definitions
 }
 
@@ -242,6 +273,100 @@ func TestCreatedCompleteNativeOwnerInventoryCanonicalRender(t *testing.T) {
 				if err != nil || file.reference != "pki-create-mqtt-callback-ca" || mqttFoundationEnv(consumer, "VIDEO_CLOUD_MQTT_AUTH_CLIENT_CA") != file.file || mqttFoundationEnv(consumer, "VIDEO_CLOUD_MQTT_AUTH_CLIENT_NAME") != "service:emqx-pki" {
 					t.Fatal("canonical callback lost its original enrolled Service caller or read-only CA", err)
 				}
+			}
+		})
+	}
+}
+
+func TestCustodyFreshNativeInventoryCanonicalRoundTrip(t *testing.T) {
+	for _, environment := range []string{"dev", "staging"} {
+		t.Run(environment, func(t *testing.T) {
+			cfg, p, release, runtime, _, original := createdNativeInventoryFixture(t, environment, true)
+			live := make([]deploymentplan.Object, 0, len(original))
+			for _, d := range original {
+				live = append(live, d.Object)
+			}
+			bindings, err := observeEnvironmentBindings(environment, release, live)
+			if err != nil {
+				t.Fatal("observe all created OpenBao owners together", err)
+			}
+			bindings.Custody = runtime.Custody
+			target, err := renderEnvironmentResources(environmentCreateProviderValues(cfg), bindings, release)
+			if err != nil {
+				t.Fatal("render the same new generation's ordinary target", err)
+			}
+			for _, defs := range [][]deploymentplan.Definition{original, target} {
+				for _, owner := range runtime.Custody.Owners {
+					id := "Deployment/" + owner.Namespace + "/" + owner.ID
+					var object deploymentplan.Object
+					for _, d := range defs {
+						if deploymentplan.ID(d.Object) == id {
+							object = d.Object
+							break
+						}
+					}
+					// Product runtimes are installed by the normal tail after native bootstrap.
+					if object == nil && len(p.ProductIdentities) > 0 {
+						isProduct := false
+						for _, product := range p.ProductIdentities {
+							isProduct = isProduct || environmentCustodyProductWorkload(strings.TrimPrefix(product.Subject, "service:")) == owner.ID
+						}
+						if isProduct {
+							continue
+						}
+					}
+					if object == nil {
+						t.Fatal("original applicable owner missing", id)
+					}
+					pod := environmentPKIPod(object)
+					for _, raw := range certIssuerObjectList(pod["volumes"]) {
+						claim := deploymentplan.String(deploymentplan.Map(deploymentplan.Map(raw)["persistentVolumeClaim"])["claimName"])
+						for _, alias := range owner.StorageAliases {
+							if claim == alias {
+								t.Fatal("identity-only PVC reappeared", id, alias)
+							}
+						}
+					}
+					selected := false
+					for _, raw := range certIssuerObjectList(pod["containers"]) {
+						c := deploymentplan.Map(raw)
+						if mqttFoundationEnv(c, "PKI_STATE_BACKEND") != "openbao" {
+							continue
+						}
+						selected = true
+						if mqttFoundationEnv(c, "PKI_STATE_RECORD_PREFIX") != environment+"/"+runtime.Custody.Generation+"/"+owner.ID || pod["serviceAccountName"] != owner.ServiceAccount {
+							t.Fatal("original custody scope changed", id)
+						}
+					}
+					if !selected {
+						t.Fatal("owner lost OpenBao configuration", id)
+					}
+				}
+				providerFound := false
+				for _, d := range defs {
+					meta := deploymentplan.Map(d.Object["metadata"])
+					pod := environmentPKIPod(d.Object)
+					if meta["namespace"] != p.Stack+"-secrets" || meta["name"] != "openbao" || pod == nil {
+						continue
+					}
+					for _, raw := range certIssuerObjectList(pod["containers"]) {
+						if mqttFoundationEnv(deploymentplan.Map(raw), "PKI_STATE_BACKEND") == "openbao" {
+							t.Fatal("OpenBao provider now depends on its own KV")
+						}
+					}
+					for _, raw := range certIssuerObjectList(pod["volumes"]) {
+						if deploymentplan.Map(deploymentplan.Map(raw)["persistentVolumeClaim"])["claimName"] == "openbao-pki-identity" {
+							providerFound = true
+						}
+					}
+				}
+				if !providerFound {
+					t.Fatal("provider lost independent cold-start identity claim")
+				}
+			}
+			postgres := createRecipeObject(t, target, "StatefulSet/"+p.Stack+"-platform/postgresql")
+			if len(certIssuerObjectList(deploymentplan.Map(postgres["spec"])["volumeClaimTemplates"])) == 0 {
+				t.Fatal("business database volume was removed")
 			}
 		})
 	}

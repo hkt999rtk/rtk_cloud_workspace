@@ -66,11 +66,13 @@ type environmentAppTLSBinding struct {
 func environmentAppBlocker(id, cause string) error {
 	return &deploymentplan.Blocker{ID: "deployment.compatibility.app-pki", Resource: id, Cause: cause, Next: "verify the existing App API trust, TLS, management and persistent-state references and its original passthrough route; preserve identity state rather than initializing replacement identities"}
 }
-func validateEnvironmentAppBinding(pod environmentPodBindings) error {
-	id := pod.Kind + "/" + pod.NamespaceSuffix + "/" + pod.Name
+func validateEnvironmentAppBinding(pod environmentPodBindings, namespace string) error {
+	id := pod.Kind + "/" + namespace + "/" + pod.Name
 	if len(pod.Containers) != 1 || pod.Containers[0].Name != "app" || len(pod.InitContainers) != 1 || pod.InitContainers[0].Name != "initialize-app-trust-state" {
 		return environmentAppBlocker(id, "App API requires its known primary consumer and retry-safe trust initializer")
 	}
+	app := pod.Containers[0].Fields
+	custody := pod.NativeTrustInitialization && mqttFoundationEnv(app, "PKI_STATE_BACKEND") == "openbao"
 	for _, name := range []string{"pki-server", "pki-app", "pki-state", "pki-management"} {
 		found := false
 		for _, value := range certIssuerObjectList(pod.PodFields["volumes"]) {
@@ -86,14 +88,27 @@ func validateEnvironmentAppBinding(pod environmentPodBindings) error {
 				if name == "pki-management" && pod.NativeTrustInitialization {
 					source, field = "persistentVolumeClaim", "claimName"
 				}
-				found = deploymentplan.String(deploymentplan.Map(volume[source])[field]) != ""
+				if custody && (name == "pki-state" || name == "pki-management") {
+					found = len(volume) == 2 && deploymentplan.Map(volume["emptyDir"])["medium"] == "Memory"
+				} else {
+					found = deploymentplan.String(deploymentplan.Map(volume[source])[field]) != ""
+				}
 			}
 		}
 		if !found {
 			return environmentAppBlocker(id, "App API is missing its original "+name+" lifecycle reference")
 		}
 	}
-	if pod.NativeTrustInitialization {
+	const identityPath = "/var/lib/video-cloud-app-service/private/client.json"
+	if custody {
+		profile := deploymentplan.Object{"kind": pod.Kind, "metadata": deploymentplan.Object{"namespace": namespace, "name": pod.Name}, "spec": deploymentplan.Object{"template": deploymentplan.Object{"spec": pod.PodFields}}}
+		identity := mqttFoundationEnv(app, "VIDEO_CLOUD_CONTROLLER_IDENTITY_STATE")
+		_, identityOK := environmentCustodyMemoryRelativeFile(profile, app, "service-identity", identity)
+		_, trustOK := environmentCustodyMemoryRelativeFile(profile, app, "pki-state", "/run/pki-state/app/root-policy.json")
+		if identity != identityPath || !identityOK || !trustOK {
+			return environmentAppBlocker(id, "native App trust requires its original scoped memory projections for client identity and App Root state")
+		}
+	} else if pod.NativeTrustInitialization {
 		claim, identityClaim, identityMount := "", "", false
 		for _, value := range certIssuerObjectList(pod.PodFields["volumes"]) {
 			volume := deploymentplan.Map(value)
@@ -108,7 +123,7 @@ func validateEnvironmentAppBinding(pod environmentPodBindings) error {
 			mount := deploymentplan.Map(value)
 			identityMount = identityMount || mount["name"] == "service-identity" && mount["mountPath"] == "/var/lib/video-cloud-app-service" && mount["readOnly"] != true
 		}
-		if claim != "video-cloud-api-app-service-state" || identityClaim != claim || !identityMount || mqttFoundationEnv(pod.Containers[0].Fields, "VIDEO_CLOUD_CONTROLLER_IDENTITY_STATE") != "/var/lib/video-cloud-app-service/private/client.json" {
+		if claim != "video-cloud-api-app-service-state" || identityClaim != claim || !identityMount || mqttFoundationEnv(app, "VIDEO_CLOUD_CONTROLLER_IDENTITY_STATE") != identityPath {
 			return environmentAppBlocker(id, "native App trust must retain its original owned managed Service client claim and private state path")
 		}
 	}

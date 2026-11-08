@@ -149,7 +149,7 @@ func TestCreateApplicationFinalizationPreservesEnrolledOwnersAndUsesNativeTrust(
 						t.Fatal("native trust initialization was lost in canonical observation")
 					}
 					if binding.Component == "managed-app-api" {
-						if err := validateEnvironmentAppBinding(binding); err != nil {
+						if err := validateEnvironmentAppBinding(binding, "video-cloud-dev-video-cloud"); err != nil {
 							t.Fatal("final native App owner cannot be canonically adopted", err)
 						}
 					}
@@ -366,7 +366,7 @@ func TestNativeAppTrustBindingRequiresOriginalManagedClientClaim(t *testing.T) {
 				claim = "foreign-identity"
 			}
 			binding := environmentPodBindings{Kind: "Deployment", NamespaceSuffix: "video-cloud", Name: "video-cloud-api-app-pki", Component: "managed-app-api", NativeTrustInitialization: true, PodFields: map[string]any{"volumes": []any{environmentCreateServiceVolume("pki-server", "secret", "video-cloud-api-app-pki-tls"), environmentCreateServiceVolume("pki-app", "configMap", "pki-create-app-trust"), environmentCreateServiceVolume("pki-state", "persistentVolumeClaim", "video-cloud-api-app-pki-trust"), environmentCreateServiceVolume("pki-management", "persistentVolumeClaim", claim), environmentCreateServiceVolume("service-identity", "persistentVolumeClaim", claim)}}, Containers: []environmentContainerBindings{{Name: "app", ImageKey: "LKE_VIDEO_CLOUD_IMAGE", Fields: map[string]any{"volumeMounts": mounts, "env": environmentCreateEnv(map[string]string{"VIDEO_CLOUD_CONTROLLER_IDENTITY_STATE": state})}}}, InitContainers: []environmentContainerBindings{{Name: "initialize-app-trust-state", ImageKey: "LKE_VIDEO_CLOUD_IMAGE", Fields: map[string]any{"volumeMounts": []any{environmentCreateServiceMount("pki-state", "/run/pki-state", false), environmentCreateServiceMount("pki-app", "/run/pki-app", true)}}}}}
-			err := validateEnvironmentAppBinding(binding)
+			err := validateEnvironmentAppBinding(binding, "video-cloud-dev-video-cloud")
 			if changed == "" && err != nil || changed != "" && err == nil {
 				t.Fatal("native App trust accepted changed original claim or rejected managed identity", err)
 			}

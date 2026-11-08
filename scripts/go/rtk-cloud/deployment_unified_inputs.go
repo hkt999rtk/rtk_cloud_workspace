@@ -210,7 +210,7 @@ func validateEnvironmentIdentityBindings(b environmentIdentityBindings, environm
 			return deviceInitializerBlocker(id, "native trust initialization requires its original Device Root state filename")
 		}
 		if pod.Component == "managed-app-api" {
-			if err := validateEnvironmentAppBinding(pod); err != nil {
+			if err := validateEnvironmentAppBinding(pod, b.Stack+"-"+pod.NamespaceSuffix); err != nil {
 				return err
 			}
 		}
