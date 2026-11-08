@@ -1092,3 +1092,53 @@ also needs a committed proof for every applicable owner, not only product output
 completion. Preserve independent local OpenBao boot and prove the whole isolated
 creation/recovery/cold-start/renewal/matched-restore lifecycle before cloud changes.
 No live backend settings, cloud resources, feature CI/Release or GO changed.
+
+
+2026-11-09 shared readiness checkpoint: compiled preflight/consume and normal-tail
+checks now use a configured runtime carrying exact environment/store, selected
+release Controller image and frozen backend. Standalone post-deploy health and
+legacy acceptance construct the same reader from their environment's assigned
+Controller digest and canonical kubeconfig; there is no latest/other-release
+lookup. Health ordinary queries and native helper share frozen credentials.
+
+Mounted-CRL checking marks the backend from actual container metadata (not JSON
+manifest input), resolves only this original Deployment/Pod and client purpose,
+and inspects the committed cache independently. The existing native signature,
+metadata, validity-window, registry-latest and actual ACK checks remain. No unrelated
+workload readiness is used to identify this consumer. Read-only inspection is
+valid without maintenance writer ownership; applying a record still requires it.
+Identical public reads are coalesced per invocation, not persisted as a GO/cache
+artifact. The test verifies now/window reuse creates no second Job while a future
+expiry cutoff still fails.
+
+RED observed for missing checker/storage API, then configured focused GREEN5.988s
+through actual readiness with app cat forbidden and no maintenance Lease. Added
+all-environment health-context test: RED found ordinary queries and helper could
+use different Kubernetes identities. Corrected one frozen source, then corrected
+the fixture's raw-vs-normalized credential comparison (the backend deliberately
+canonicalizes kubeconfig). Selected regression PASS60.553s including custody,
+actual isolated Kubernetes projection, deployment-check/frozen-auth, native core/
+MQTT and maintenance/online tests. Log:
+/Volumes/RTKGoBuild/tmp/custody-readiness-context-regression.log.
+
+NEXT: Account Manager public-listener checker still cats its private CRL state
+in deployment_unified_account_registration_crl_health.go around line206. Route
+that branch through store.checkRuntime.committedCRLState when its original
+pkimanagement container selects OpenBao. Configure c.CheckMQTTFoundationIdentity's
+local store from c.newCheckRuntime (prefer sharing the caller's existing runtime
+across now/window) and standalone AM health from its runtime's full configuration;
+its current locally constructed cfg only contains stack. Use existing
+newRegistrationPublicHealthFixture, project its original owner to KV, write exact
+test-only generation binding/transport, provide native public-state process
+responses per issuer and forbid state cat. Require same public bytes and original
+listener/key/CA plus committed proofs; keep the public PEM read real.
+
+Core client/server committed identity proof is still wired primarily product
+completion, not yet every ordinary preflight/health owner. Scope from original
+client purposes and native profiles; do not reintroduce app-startup/Controller or
+image-version equality dependencies. Verify helper network-policy reachability
+as part of the actual whole isolated lifecycle, alongside cold start, renewal,
+interruption, owner fencing, missing-state refusal and matched backup restore.
+Then final fresh whole-branch review, native/contracts/root CI+Release and formal
+approved dev remove/archive/create preflight GO/deploy/health, followed by staging.
+No cloud resource, active environment setting, formal GO or deployment changed.

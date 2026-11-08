@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -15,7 +16,8 @@ import (
 )
 
 type livePKICRLManifestEntry struct {
-	Issuer struct {
+	Backend string `json:"-"` // observed storage selection, never accepted from manifest JSON
+	Issuer  struct {
 		ID          string `json:"issuer_id"`
 		Environment string `json:"environment"`
 		Domain      string `json:"trust_domain"`
@@ -172,6 +174,11 @@ func verifyMountedPKICRLManifestsAt(kubeconfig, namespace, environment string, d
 						}
 					}
 					for _, entry := range entries {
+						for _, setting := range container.Env {
+							if setting.Name == "PKI_STATE_BACKEND" {
+								entry.Backend = setting.Value
+							}
+						}
 						if err := verifyLivePKICRLEvidence(kubeconfig, namespace, environment, target, spec.container, entry, validUntil, runtimes...); err != nil {
 							return fmt.Errorf("%s issuer %s: %w", spec.setting, entry.Issuer.ID, err)
 						}
@@ -347,12 +354,28 @@ func validateMountedPKICRLManifest(raw, environment, domain string, deployment l
 
 var livePKIIssuerIDPattern = regexp.MustCompile(`^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$`)
 
-// The public PVC state is checked against the registry's latest signed CRL
+// The selected durable state is checked against the registry's latest signed CRL
 // and the exact workload receipt. A valid ConfigMap alone is not acceptance.
 func verifyLivePKICRLEvidence(kubeconfig, namespace, environment, target, container string, entry livePKICRLManifestEntry, validUntil time.Time, runtimes ...*deploymentCheckRuntime) error {
-	stateRaw, err := secretCheckKubectl(runtimes, false, "--kubeconfig", kubeconfig, "-n", namespace, "exec", "deployment/"+target, "-c", container, "--", "cat", entry.StatePath)
+	consumer := target
+	// Receipt membership is an enrollment purpose, not a Pod display name.
+	for _, owner := range environmentCreateApplicationOwners() {
+		if owner.Name == target && owner.Container == container {
+			consumer = owner.Role
+		}
+	}
+	var stateRaw []byte
+	var err error
+	if entry.Backend == "openbao" {
+		if len(runtimes) == 0 || runtimes[0] == nil {
+			return errors.New("remote CRL check requires selected environment custody context")
+		}
+		stateRaw, consumer, err = runtimes[0].committedCRLState(namespace, environment, target, container, entry)
+	} else {
+		stateRaw, err = secretCheckKubectl(runtimes, false, "--kubeconfig", kubeconfig, "-n", namespace, "exec", "deployment/"+target, "-c", container, "--", "cat", entry.StatePath)
+	}
 	if err != nil || len(stateRaw) == 0 || len(stateRaw) > 1<<20 {
-		return secretCheckFailure(err, "current CRL PVC state is unreadable")
+		return secretCheckFailure(err, "current durable CRL state is unreadable")
 	}
 	var state struct {
 		IssuerFingerprint string `json:"issuer_fingerprint"`
@@ -367,7 +390,7 @@ func verifyLivePKICRLEvidence(kubeconfig, namespace, environment, target, contai
 		} `json:"crl"`
 	}
 	if json.Unmarshal(stateRaw, &state) != nil || state.TerminalIssuerID != "" || state.IssuerFingerprint != entry.Issuer.Fingerprint || state.CRL.IssuerID != entry.Issuer.ID {
-		return fmt.Errorf("current CRL PVC state differs from the pinned issuer")
+		return fmt.Errorf("current durable CRL state differs from the pinned issuer")
 	}
 	certBlock, _ := pem.Decode([]byte(entry.Issuer.Certificate))
 	if certBlock == nil {
@@ -403,14 +426,6 @@ func verifyLivePKICRLEvidence(kubeconfig, namespace, environment, target, contai
 	var pods livePodList
 	if err != nil || json.Unmarshal(podsRaw, &pods) != nil || len(pods.Items) == 0 || pods.Items[0].Metadata.Name == "" {
 		return secretCheckFailure(err, "cannot read PostgreSQL Pod for CRL receipt verification")
-	}
-	consumer := target
-	// Receipt membership follows the native enrolled Service subject, not the
-	// Kubernetes owner name. Reuse the producer's exact owner/container roster.
-	for _, owner := range environmentCreateApplicationOwners() {
-		if owner.Name == target && owner.Container == container {
-			consumer = owner.Role
-		}
 	}
 	query := fmt.Sprintf(`SELECT json_build_object('digest',digest,'number',number::text,'ack',EXISTS(SELECT 1 FROM pki_crl_acknowledgments a WHERE a.issuer_id=c.issuer_id AND a.digest=c.digest AND a.consumer_id='%s')) FROM pki_crls c WHERE c.issuer_id='%s'::uuid ORDER BY c.number DESC LIMIT 1`, consumer, entry.Issuer.ID)
 	row, err := secretCheckKubectl(runtimes, false, "--kubeconfig", kubeconfig, "-n", platformNamespace, "exec", pods.Items[0].Metadata.Name, "--", "psql", "-U", "postgres", "-d", "video_cloud", "-At", "-c", query)

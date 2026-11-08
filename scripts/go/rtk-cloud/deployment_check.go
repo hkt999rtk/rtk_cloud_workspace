@@ -462,7 +462,7 @@ func executeDeploymentCheck(ctx context.Context, o deploymentCheckOptions, cfg d
 		return
 	}
 	store, storeErr := deps.store(cfg.Environment)
-	store.checkRuntime = newDeploymentCheckRuntime(ctx, cfg.Environment)
+	store.checkRuntime = newEnvironmentCheckRuntime(ctx, cfg, store, nil, "")
 	type task struct {
 		id           string
 		required     bool

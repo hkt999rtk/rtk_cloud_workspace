@@ -1903,6 +1903,15 @@ and expected workload purpose. It can discover a stopped remote producer without
 reading an application projection or fabricating a PEM. Actual public reload,
 producer/consumer readiness and independently read committed KV evidence are
 required after recovery. No new local state path or private export is introduced.
+Shared mounted-CRL readiness uses original native scope and the selected Controller
+helper image from the compiled release (preflight) or exact environment operator
+selection (health). It consumes only the canonical kubeconfig; ordinary health
+queries and helper use the same frozen credential bytes. An inspection creates a
+bounded temporary Job but no identity, key, KV/SQL write or maintenance writer
+Lease. Public readback is coalesced in process for that invocation, while each
+validity-window check remains independent. Missing remote context never selects a
+private application projection as fallback. No additional local receipt path is
+created by this reader.
 
 All local operation directories are 0700, files 0600. The common environment
 path helpers own these locations. Matching OpenBao/registry backup and restore

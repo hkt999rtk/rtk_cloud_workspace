@@ -32,6 +32,8 @@ type deploymentCheckRuntime struct {
 	pendingHealth  map[string]bool
 	frozenBackend  *environmentKubernetesBackend
 	frozenContext  string
+	custodyReader  *maintenanceRuntime
+	custodyError   error
 }
 
 const deploymentReadMaxAttempts = 3

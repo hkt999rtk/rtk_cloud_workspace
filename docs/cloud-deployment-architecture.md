@@ -3350,6 +3350,19 @@ Duplicate issuer/state purposes fail discovery. At convergence, the actual publi
 PEM, both consumer/producer readiness and committed native KV cache evidence must
 agree with the selected current signed records; ordinary ACK checks still run.
 
+Shared mounted-CRL readiness selects storage from the observed container profile,
+not a manifest-provided backend flag. For OpenBao it resolves this original
+Deployment/Pod owner and enrollment purpose, reads the committed cache with the
+native helper and verifies the existing registry/ACK/freshness rules. Read-only
+inspection needs no maintenance writer Lease; installs still require execution
+ownership. Preflight consumes its selected release image and frozen Kubernetes
+backend. Standalone health freezes its selected canonical kubeconfig and uses the
+environment's assigned Controller helper image, without looking up another
+release. The ordinary health queries and helper share that same authentication
+snapshot. Identical cache observations are coalesced only within this checker
+invocation; the now/window callers independently validate their expiration cutoff.
+No private application file is substituted when remote context is absent.
+
 Public TLS re-observation and ordinary upgrade preserve custody facts from the
 same generation's `bootstrap/bindings.json` and managed transport snapshot, without
 copying old images, workload behavior or Kubernetes UIDs over current observation.

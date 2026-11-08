@@ -195,7 +195,7 @@ func defaultUnifiedDeploymentDependencies() unifiedDeploymentDependencies {
 						return deploymentplan.GateEvidence{}, err
 					}
 					store := c.Store
-					store.checkRuntime = newFrozenDeploymentCheckRuntime(ctx, p.Environment, c.Backend)
+					store.checkRuntime = c.newCheckRuntime(ctx)
 					nextStep("deployment.pki.consumer-policy")
 					if err := checkEnvironmentCRLConsumerPolicy(p); err != nil {
 						return deploymentplan.GateEvidence{}, err
@@ -233,7 +233,7 @@ func defaultUnifiedDeploymentDependencies() unifiedDeploymentDependencies {
 						return deploymentplan.GateEvidence{}, err
 					}
 					store := c.Store
-					store.checkRuntime = newFrozenDeploymentCheckRuntime(ctx, p.Environment, c.Backend)
+					store.checkRuntime = c.newCheckRuntime(ctx)
 					if err := verifyEnvironmentReleaseSchemasForPlan(ctx, c.Configuration, store, c.Release, p, c.Backend.Read); err != nil {
 						return deploymentplan.GateEvidence{}, environmentSchemaQualificationError(err)
 					}
@@ -266,7 +266,7 @@ func defaultUnifiedDeploymentDependencies() unifiedDeploymentDependencies {
 						return deploymentplan.GateEvidence{}, err
 					}
 					store := c.Store
-					store.checkRuntime = newFrozenDeploymentCheckRuntime(ctx, p.Environment, c.Backend)
+					store.checkRuntime = c.newCheckRuntime(ctx)
 					if err := verifyDeploymentPublicCertIssuer(ctx, c.Configuration, store); err != nil {
 						return deploymentplan.GateEvidence{}, &deploymentplan.Blocker{ID: "deployment.network", Cause: "required public CertIssuer route or authenticated mTLS path is unavailable", Next: "repair the selected environment's owned DNS/ingress/Service and required mTLS path; verify with check-deployment-health.sh, then repeat preflight"}
 					}

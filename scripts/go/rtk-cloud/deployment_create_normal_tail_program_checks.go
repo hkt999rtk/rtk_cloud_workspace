@@ -67,7 +67,7 @@ func createNormalTailProgramChecks(ctx context.Context, cfg deploymentConfig, h 
 				return err
 			}
 			store := c.Store
-			store.checkRuntime = newFrozenDeploymentCheckRuntime(ctx, preview.Environment, c.Backend)
+			store.checkRuntime = c.newCheckRuntime(ctx)
 			store.checkRuntime.preflightPlan = preview
 			if err := verifySecretStoreK8SBindings(store); err != nil {
 				return environmentRuntimePKIQualificationError(err)
@@ -86,7 +86,7 @@ func createNormalTailProgramChecks(ctx context.Context, cfg deploymentConfig, h 
 		},
 		"deployment.compatibility": func(ctx context.Context) error {
 			store := c.Store
-			store.checkRuntime = newFrozenDeploymentCheckRuntime(ctx, preview.Environment, c.Backend)
+			store.checkRuntime = c.newCheckRuntime(ctx)
 			if err := verifyEnvironmentReleaseSchemasForPlan(ctx, cfg, store, p.Release, preview, c.Backend.Read); err != nil {
 				return environmentSchemaQualificationError(err)
 			}

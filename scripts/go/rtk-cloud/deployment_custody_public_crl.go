@@ -100,6 +100,9 @@ func readEnvironmentCustodyBootstrapBinding(cfg deploymentConfig, store secretSt
 
 func (r *maintenanceRuntime) custodyPublicCRL(ctx context.Context, pod deploymentplan.Object, c crlMaintenanceConsumer, issuer environmentCreateRegisteredIssuer, record *createRootCRLRecord) (environmentCustodyCRLState, error) {
 	var empty environmentCustodyCRLState
+	if record != nil && r.lease == nil {
+		return empty, environmentCreateBootstrapBlocker("public CRL installation requires original environment execution ownership")
+	}
 	spec := deploymentplan.Map(pod["spec"])
 	source := managedNamedField(spec["containers"], c.Container)
 	prefix := mqttFoundationEnv(source, "PKI_STATE_RECORD_PREFIX")
@@ -177,8 +180,10 @@ func (r *maintenanceRuntime) custodyPublicCRL(ctx context.Context, pod deploymen
 	if err != nil || deploymentplan.Map(current["metadata"])["uid"] != deploymentplan.Map(parent["metadata"])["uid"] {
 		return empty, environmentCreateBootstrapBlocker("original public CRL owner changed during committed readback")
 	}
-	if err := r.lease.Check(ctx); err != nil {
-		return empty, err
+	if r.lease != nil {
+		if err := r.lease.Check(ctx); err != nil {
+			return empty, err
+		}
 	}
 	return result, nil
 }

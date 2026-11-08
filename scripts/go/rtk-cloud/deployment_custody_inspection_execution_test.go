@@ -66,6 +66,7 @@ root=Path(os.environ['RTK_INSPECTION_FIXTURE']); mode=os.environ['RTK_INSPECTION
 def save(name,value): (root/name).write_text(json.dumps(value))
 def load(name): return json.loads((root/name).read_text())
 if 'create' in args:
+ count=root/'creates';count.write_text(str((int(count.read_text()) if count.exists() else 0)+1))
  job=json.load(sys.stdin);job['metadata']['uid']='11111111-1111-4111-8111-111111111111';job['metadata']['resourceVersion']='1';job['status']={'conditions':[{'type':'Complete','status':'True'}]};save('job.json',job)
  pod={'apiVersion':'v1','kind':'Pod','metadata':{'name':'original-inspection-pod','namespace':job['metadata']['namespace'],'uid':'22222222-2222-4222-8222-222222222222','ownerReferences':[{'kind':'Job','name':job['metadata']['name'],'uid':job['metadata']['uid'],'controller':True}],'labels':job['spec']['template']['metadata']['labels']},'spec':copy.deepcopy(job['spec']['template']['spec']),'status':{'phase':'Succeeded'}}
  if mode=='foreign-pod':pod['metadata']['ownerReferences'][0]['uid']='foreign-job'
@@ -78,13 +79,18 @@ elif 'get' in args:
  if kind.lower()=='job':
   if (root/'job.json').exists():print(json.dumps(load('job.json')))
  elif kind.lower()=='secret':print(json.dumps(load('mirror.json')))
- elif kind=='pods':print(json.dumps({'items':[load('pod.json')]}))
+ elif kind=='pods':
+  if 'app.kubernetes.io/name=postgresql' in args and (root/'sql-latest.json').exists():print(json.dumps({'items':[{'metadata':{'name':'postgresql-0'}}]}))
+  else:print(json.dumps({'items':[load('pod.json')]}))
  elif kind.lower()=='pod':print(json.dumps(load('pod.json')))
  else:sys.exit(90)
 elif 'wait' in args:
  if '--for=delete' in args:sys.exit(0)
  sys.exit(1 if mode=='failed-job' else 0)
 elif 'exec' in args:
+ if 'cat' in args and (root/'forbid-app-cat').exists():sys.exit(92)
+ if 'psql' in args and (root/'sql-latest.json').exists():
+  print(json.dumps(load('sql-latest.json')));sys.exit(0)
  save('exec.json',args)
  save('input.json',sys.stdin.read() if '-i' in args else '')
  if mode=='public-exec-failed':sys.exit(1)

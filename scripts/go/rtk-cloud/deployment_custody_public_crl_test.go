@@ -304,6 +304,47 @@ func TestCustodyMaintenanceInstallUsesCommittedKVWithoutReadingFaultedApplicatio
 	if ackChecks != 1 {
 		t.Fatal("committed KV proof replaced native runtime ACK")
 	}
+	// The ordinary readiness reader must use the same committed proof and
+	// expected subject. A stopped application's private cat is forbidden.
+	if err := os.WriteFile(filepath.Join(fixture, "forbid-app-cat"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	latestRow, _ := json.Marshal(map[string]any{"digest": item.Snapshot.Prior.Digest, "number": item.Snapshot.Prior.Number, "ack": true})
+	if err := os.WriteFile(filepath.Join(fixture, "sql-latest.json"), latestRow, 0600); err != nil {
+		t.Fatal(err)
+	}
+	compiled := &compiledEnvironmentDeployment{Configuration: cfg, Store: store, Backend: r.backend, Release: environmentRelease{Images: map[string]environmentReleaseImage{"LKE_PKI_CONTROLLER_IMAGE": {Reference: r.image}}}}
+	checker := compiled.newCheckRuntime(t.Context())
+	if checker.custodyReader == nil || checker.custodyReader.image != r.image || checker.custodyReader.backend.Store.Root != store.Root {
+		t.Fatal("formal checker lost selected environment/native image/frozen backend")
+	}
+	readOnly := r
+	readOnly.lease = nil
+	checker.custodyReader = &readOnly
+	var mountedEntries []livePKICRLManifestEntry
+	if err := json.Unmarshal([]byte(manifest), &mountedEntries); err != nil {
+		t.Fatal(err)
+	}
+	entry := mountedEntries[0]
+	entry.Backend = "openbao"
+	if err := verifyLivePKICRLEvidence("selected", ns, "dev", "api", "app", entry, time.Now().UTC(), checker); err != nil {
+		t.Fatal("formal CRL readiness reader still depends on app projection or maintenance ownership", err)
+	}
+	createsBefore, err := os.ReadFile(filepath.Join(fixture, "creates"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyLivePKICRLEvidence("selected", ns, "dev", "api", "app", entry, item.Snapshot.Prior.NextUpdate.Add(time.Second), checker); err == nil {
+		t.Fatal("cached public inspection bypassed requested expiration cutoff")
+	}
+	createsAfter, err := os.ReadFile(filepath.Join(fixture, "creates"))
+	if err != nil || string(createsAfter) != string(createsBefore) {
+		t.Fatal("now/window checks repeated an identical native inspection Job", err)
+	}
+	// Missing configured context must not fall back to cat of a memory mirror.
+	if err := verifyLivePKICRLEvidence("selected", ns, "dev", "api", "app", entry, time.Now().UTC(), newDeploymentCheckRuntime(t.Context(), "dev")); err == nil {
+		t.Fatal("remote readiness accepted missing selected custody context")
+	}
 	observed := environmentIdentityBindings{Version: 1, Environment: "dev", Stack: "video-cloud-dev", Owners: map[string]string{deploymentplan.ID(parent): "current-api"}, Pods: []environmentPodBindings{{Kind: "Deployment", Name: "api", NamespaceSuffix: "video-cloud", PodFields: map[string]any{"serviceAccountName": "api"}, Containers: []environmentContainerBindings{{Name: "app", Fields: map[string]any{"env": managedNamedField(environmentPKIPod(parent)["containers"], "app")["env"]}}}}}}
 	if err := restoreEnvironmentCustodyBindings(t.Context(), cfg, store, "upgrade", &observed); err != nil {
 		t.Fatal("restore completed generation during upgrade", err)
