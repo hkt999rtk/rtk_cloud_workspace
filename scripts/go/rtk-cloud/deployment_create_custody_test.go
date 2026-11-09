@@ -22,12 +22,12 @@ func TestCreateCustodyBootstrapReconcilesConfigurationAndRetainsOriginalScope(t 
 			binding := &environmentCustodyBinding{Generation: e.Journal.PlanSHA256, Owners: []environmentCustodyOwnerBinding{{ID: "api", Namespace: "video-cloud-dev-video-cloud", ServiceAccount: "video-cloud-api"}, {ID: "account-manager", Namespace: "video-cloud-dev-account-manager", ServiceAccount: "account-manager"}}}
 			dir := t.TempDir()
 			frames := []byte(`{"data":{"cas_required":true}}` + "\n")
-			for _, owner := range binding.Owners {
-				policy, err := environmentCustodyPolicy(cfg.Values, cfg.Environment, *binding, owner)
-				if err != nil {
-					t.Fatal(err)
-				}
-				for _, data := range []any{map[string]any{"policy": policy}, map[string]any{"bound_service_account_names": []string{owner.ServiceAccount}, "bound_service_account_namespaces": []string{owner.Namespace}, "token_policies": []string{environmentCustodyRoleName(cfg.Environment + "/" + binding.Generation + "/" + owner.ID)}, "audience": "openbao", "token_no_default_policy": true, "token_ttl": 900, "token_max_ttl": 900}} {
+			authorizations, err := environmentCustodyAuthorizations(cfg, *binding)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, auth := range authorizations {
+				for _, data := range []any{map[string]any{"policy": auth.policy}, map[string]any{"bound_service_account_names": []string{auth.account}, "bound_service_account_namespaces": []string{auth.namespace}, "token_policies": []string{auth.role}, "audience": "openbao", "token_no_default_policy": true, "token_ttl": 900, "token_max_ttl": 900}} {
 					raw, _ := json.Marshal(map[string]any{"data": data})
 					frames = append(frames, append(raw, '\n')...)
 				}
@@ -61,7 +61,7 @@ esac
 			t.Setenv("RTK_CUSTODY_TEST_DIR", dir)
 			t.Setenv("RTK_CUSTODY_TEST_MODE", mode)
 			runtime := environmentCreateBootstrapRuntime{Execution: e, ExecutionSHA256: e.Journal.PlanSHA256, Backend: backend, OpenBao: environmentCreateOpenBaoBootstrap{RootTokenPath: filepath.Join(store.Root, "openbao/root-token")}}
-			err := configureEnvironmentCreateCustody(context.Background(), cfg, runtime, binding)
+			err = configureEnvironmentCreateCustody(context.Background(), cfg, runtime, binding)
 			valid := mode == "valid" || mode == "lost-response"
 			if valid != (err == nil) {
 				t.Fatalf("mode %s: %v", mode, err)

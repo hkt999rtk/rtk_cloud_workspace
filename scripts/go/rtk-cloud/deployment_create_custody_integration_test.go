@@ -123,4 +123,22 @@ exec docker exec -i "$RTK_CUSTODY_DOCKER_ID" env BAO_ADDR=http://127.0.0.1:8200 
 			t.Fatal("real scoped policy did not deny an unbound private record")
 		}
 	}
+	reader := environmentCustodyReaderName(prefix)
+	readerToken := bytes.TrimSpace(run(nil, "exec", id, "env", "BAO_ADDR=http://127.0.0.1:8200", "BAO_TOKEN=fixture-custody-token", "bao", "token", "create", "-policy="+reader, "-no-default-policy", "-ttl=1m", "-field=token"))
+	readerInput := append(bytes.Clone(readerToken), '\n')
+	key := environmentCustodyRecordKey(prefix, owner.Clients[0].StatePath)
+	read := "IFS= read -r BAO_TOKEN; export BAO_TOKEN; bao kv get -field=value identities/"
+	if value := run(readerInput, "exec", "-i", id, "env", "BAO_ADDR=http://127.0.0.1:8200", "/bin/sh", "-ec", read+key); strings.TrimSpace(string(value)) != "fixture" {
+		t.Fatal("real inspection policy cannot read its declared credential")
+	}
+	publicKey := environmentCustodyRecordKey(prefix+"/public", "/public/initial.json")
+	for _, command := range []string{write + publicKey + " value=fixture", strings.Replace(write, "-cas=0", "-cas=1", 1) + key + " value=changed",
+		read + environmentCustodyRecordKey(prefix, "/unbound/private.json")} {
+		denied := exec.CommandContext(ctx, "docker", "exec", "-i", id, "env", "BAO_ADDR=http://127.0.0.1:8200", "/bin/sh", "-ec", command)
+		denied.Stdin = bytes.NewReader(readerInput)
+		output, err := denied.CombinedOutput()
+		if err == nil || !bytes.Contains(output, []byte("403")) {
+			t.Fatal("real inspection policy allowed mutation or unbound credential access")
+		}
+	}
 }

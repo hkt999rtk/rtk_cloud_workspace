@@ -66,7 +66,8 @@ func environmentCustodyScopedJob(cfg deploymentConfig, binding *environmentCusto
 	if !immutableEnvironmentImage.MatchString(image) || source == nil {
 		return bad()
 	}
-	if _, err := environmentCustodyStateOwner(cfg, binding, namespace, alias, state); err != nil {
+	owner, err := environmentCustodyStateOwner(cfg, binding, namespace, alias, state)
+	if err != nil {
 		return bad()
 	}
 	timeout, err := environmentRolloutTimeout(cfg.Values)
@@ -103,6 +104,9 @@ func environmentCustodyScopedJob(cfg deploymentConfig, binding *environmentCusto
 			pod := environmentPKIPod(d.Object)
 			container := deploymentplan.Map(certIssuerObjectList(pod["containers"])[0])
 			if !projection {
+				reader := environmentCustodyReaderName(cfg.Environment + "/" + binding.Generation + "/" + owner.ID)
+				pod["serviceAccountName"] = reader
+				setEnvironmentContainerEnv(container, "PKI_STATE_OPENBAO_ROLE", reader)
 				pod["volumes"] = environmentCreateRemoveNamed(pod["volumes"], "identity")
 				container["volumeMounts"] = environmentCreateRemoveNamed(container["volumeMounts"], "identity")
 			}

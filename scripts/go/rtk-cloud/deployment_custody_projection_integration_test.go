@@ -77,7 +77,10 @@ func TestCustodyProjectionAgainstIsolatedKubernetes(t *testing.T) {
 	}
 	apply := func() { run(raw, "apply", "--server-side", "--field-manager=rtk-custody-fixture", "-f", "-") }
 	apply()
-	name := environmentCustodyLeaseName(environment+"/"+binding.Generation+"/api-state", state)
+	prefix := environment + "/" + binding.Generation + "/api-state"
+	reader := environmentCustodyReaderName(prefix)
+	run(nil, "get", "serviceaccount", reader, "-n", namespace)
+	name := environmentCustodyLeaseName(prefix, state)
 	run(nil, "patch", "lease", name, "-n", namespace, "--type=merge", "-p", `{"spec":{"holderIdentity":"original-native-writer","leaseDurationSeconds":30}}`)
 	apply()
 	var lease struct {
@@ -88,11 +91,12 @@ func TestCustodyProjectionAgainstIsolatedKubernetes(t *testing.T) {
 	if json.Unmarshal(run(nil, "get", "lease", name, "-n", namespace, "-o", "json"), &lease) != nil || lease.Spec.Holder != "original-native-writer" {
 		t.Fatal("reapplying the pre-created Lease cleared its live owner")
 	}
-	for _, check := range []struct{ verb, resource, want string }{
-		{"get", "leases/" + name, "yes"}, {"update", "leases/" + name, "yes"},
-		{"get", "leases/foreign-identity", "no"}, {"update", "leases/foreign-identity", "no"}, {"create", "leases", "no"},
+	for _, check := range []struct{ account, verb, resource, want string }{
+		{"api", "get", "leases/" + name, "yes"}, {"api", "update", "leases/" + name, "yes"},
+		{"api", "get", "leases/foreign-identity", "no"}, {"api", "update", "leases/foreign-identity", "no"}, {"api", "create", "leases", "no"},
+		{reader, "get", "leases/" + name, "no"}, {reader, "update", "leases/" + name, "no"},
 	} {
-		cmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfig, "--request-timeout=10s", "auth", "can-i", check.verb, check.resource, "-n", namespace, "--as=system:serviceaccount:"+namespace+":api")
+		cmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfig, "--request-timeout=10s", "auth", "can-i", check.verb, check.resource, "-n", namespace, "--as=system:serviceaccount:"+namespace+":"+check.account)
 		answer, err := cmd.Output()
 		if strings.TrimSpace(string(answer)) != check.want || (check.want == "yes" && err != nil) {
 			t.Fatal("actual custody RBAC differs from its exact original identity scope", check.verb, check.resource)

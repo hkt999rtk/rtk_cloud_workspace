@@ -714,6 +714,9 @@ boundary is:
 - Workloads authenticate to OpenBao through Kubernetes auth or another reviewed
   workload identity method. AppRole remains a legacy VM bridge unless a specific
   transition runbook approves it.
+- Custody inspection Jobs use a separate read-only OpenBao role bound to their
+  projected Kubernetes service account. Their output is limited to public
+  admission evidence.
 - Kubernetes Secrets may hold short-lived synchronized material or bootstrap
   references needed by Pods, but those values must be generated or injected at
   deploy time and never committed.

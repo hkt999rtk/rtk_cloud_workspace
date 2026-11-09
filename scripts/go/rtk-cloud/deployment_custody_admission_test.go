@@ -39,7 +39,9 @@ func TestCustodyAdmissionBatchesOriginalClientAndServerUnderOneScope(t *testing.
 		decodeEnvironmentJSON([]byte(deploymentplan.String(command[2])), &wire) != nil || deploymentplan.Digest(wire) != deploymentplan.Digest(batch) {
 		t.Fatal("native Job did not receive the exact public batch")
 	}
-	if pod["serviceAccountName"] != owner.ServiceAccount || mqttFoundationEnv(c, "PKI_STATE_RECORD_PREFIX") != "dev/"+binding.Generation+"/"+owner.ID ||
+	prefix := "dev/" + binding.Generation + "/" + owner.ID
+	reader := environmentCustodyRoleName(prefix + "/read")
+	if pod["serviceAccountName"] != reader || mqttFoundationEnv(c, "PKI_STATE_OPENBAO_ROLE") != reader || mqttFoundationEnv(c, "PKI_STATE_RECORD_PREFIX") != prefix ||
 		managedNamedField(pod["volumes"], "identity") != nil || mqttFoundationEnv(c, "PKI_INSPECTION_IDENTITY_STATE") != "" {
 		t.Fatal("native admission lost original authentication or retained a private projection")
 	}

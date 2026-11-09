@@ -1387,3 +1387,13 @@ same owner and a foreign-environment key (custody-exact-acl-final.log).
 Separate read-only Kubernetes authentication for admission Jobs remains
 pending. Native governed pre-PR coverage is in progress for 74cd78d,
 local-video-pr-20261109002443-66417.
+
+Read-only authorization checkpoint. The generation config provisions and
+reads back paired writer and reader roles. The reader has its own projected
+Kubernetes service account and no identity Lease permissions. Admission and
+CRL inspection select the reader; explicit CRL mutation retains the writer.
+Isolated real OpenBao accepted reader access to an exact credential and denied
+private updates, public cache creation and unrelated private access. Isolated
+Kubernetes confirmed the reader account could not get or update the writer
+Lease. Normal-tail checkpoint replay and custody regressions passed in 91.829s
+(custody-readonly-role-final.log). Contracts PR #196 merged at cc6d28dc.

@@ -167,6 +167,30 @@ func environmentCreateCustodyClaims(cfg deploymentConfig, p environmentCreateBoo
 	return retained, nil
 }
 
+type environmentCustodyAuthorization struct {
+	role, account, namespace, policy string
+}
+
+func environmentCustodyAuthorizations(cfg deploymentConfig, binding environmentCustodyBinding) ([]environmentCustodyAuthorization, error) {
+	var result []environmentCustodyAuthorization
+	for _, owner := range binding.Owners {
+		prefix := cfg.Environment + "/" + binding.Generation + "/" + owner.ID
+		writer, err := environmentCustodyPolicy(cfg.Values, cfg.Environment, binding, owner)
+		if err != nil {
+			return nil, err
+		}
+		reader, err := environmentCustodyPolicyForAccess(cfg.Values, cfg.Environment, binding, owner, true)
+		if err != nil {
+			return nil, err
+		}
+		readerName := environmentCustodyReaderName(prefix)
+		result = append(result,
+			environmentCustodyAuthorization{environmentCustodyRoleName(prefix), owner.ServiceAccount, owner.Namespace, writer},
+			environmentCustodyAuthorization{readerName, readerName, owner.Namespace, reader})
+	}
+	return result, nil
+}
+
 // This is configuration reconciliation under admitted creation ownership, not
 // identity generation. Exact owned policies/roles are idempotent; a completed
 // scope is read-only. No KV data, certificate or key is created here.
@@ -243,17 +267,15 @@ func configureEnvironmentCreateCustody(ctx context.Context, cfg deploymentConfig
 	}
 	fmt.Fprintf(&writes, "bao write %s/config cas_required=true >/dev/null\n", mount)
 	fmt.Fprintf(&reads, "bao read -format=json %s/config\n", mount)
-	for _, owner := range binding.Owners {
-		policy, err := environmentCustodyPolicy(cfg.Values, cfg.Environment, *binding, owner)
-		if err != nil {
-			return err
-		}
-		role := environmentCustodyRoleName(cfg.Environment + "/" + binding.Generation + "/" + owner.ID)
-		// Retain the existing native bounded Kubernetes-auth profile. A batch
-		// executes inside the checked OpenBao Pod instead of one tunnel per role.
-		roleBody, _ := json.Marshal(deploymentplan.Object{"bound_service_account_names": []string{owner.ServiceAccount}, "bound_service_account_namespaces": []string{owner.Namespace}, "bound_service_account_namespace_selector": "", "audience": "openbao", "token_policies": []string{role}, "token_no_default_policy": true, "token_ttl": 900, "token_max_ttl": 900, "token_period": 0})
-		fmt.Fprintf(&writes, "bao policy write %s - >/dev/null <<'RTK_CUSTODY_POLICY'\n%sRTK_CUSTODY_POLICY\nbao write auth/kubernetes/role/%s - >/dev/null <<'RTK_CUSTODY_ROLE'\n%s\nRTK_CUSTODY_ROLE\n", role, policy, role, roleBody)
-		fmt.Fprintf(&reads, "bao read -format=json sys/policies/acl/%s\nbao read -format=json auth/kubernetes/role/%s\n", role, role)
+	authorizations, err := environmentCustodyAuthorizations(cfg, *binding)
+	if err != nil {
+		return err
+	}
+	for _, auth := range authorizations {
+		// Batch native Kubernetes-auth configuration inside the checked OpenBao Pod.
+		roleBody, _ := json.Marshal(deploymentplan.Object{"bound_service_account_names": []string{auth.account}, "bound_service_account_namespaces": []string{auth.namespace}, "bound_service_account_namespace_selector": "", "audience": "openbao", "token_policies": []string{auth.role}, "token_no_default_policy": true, "token_ttl": 900, "token_max_ttl": 900, "token_period": 0})
+		fmt.Fprintf(&writes, "bao policy write %s - >/dev/null <<'RTK_CUSTODY_POLICY'\n%sRTK_CUSTODY_POLICY\nbao write auth/kubernetes/role/%s - >/dev/null <<'RTK_CUSTODY_ROLE'\n%s\nRTK_CUSTODY_ROLE\n", auth.role, auth.policy, auth.role, roleBody)
+		fmt.Fprintf(&reads, "bao read -format=json sys/policies/acl/%s\nbao read -format=json auth/kubernetes/role/%s\n", auth.role, auth.role)
 	}
 	if !completed {
 		if err = e.Check(ctx); err != nil {
@@ -291,17 +313,17 @@ func verifyEnvironmentCustodyConfiguration(raw []byte, cfg deploymentConfig, bin
 	if decoder.Decode(&kv) != nil || !kv.Data.CAS {
 		return fmt.Errorf("custody KV requires conditional writes")
 	}
-	for _, owner := range binding.Owners {
-		policy, err := environmentCustodyPolicy(cfg.Values, cfg.Environment, binding, owner)
-		if err != nil {
-			return err
-		}
+	authorizations, err := environmentCustodyAuthorizations(cfg, binding)
+	if err != nil {
+		return err
+	}
+	for _, auth := range authorizations {
 		var acl struct {
 			Data struct {
 				Policy string `json:"policy"`
 			} `json:"data"`
 		}
-		if decoder.Decode(&acl) != nil || strings.TrimSpace(acl.Data.Policy) != strings.TrimSpace(policy) {
+		if decoder.Decode(&acl) != nil || strings.TrimSpace(acl.Data.Policy) != strings.TrimSpace(auth.policy) {
 			return fmt.Errorf("custody ACL differs")
 		}
 		var role struct {
@@ -317,8 +339,7 @@ func verifyEnvironmentCustodyConfiguration(raw []byte, cfg deploymentConfig, bin
 				Period     int      `json:"token_period"`
 			} `json:"data"`
 		}
-		name := environmentCustodyRoleName(cfg.Environment + "/" + binding.Generation + "/" + owner.ID)
-		if decoder.Decode(&role) != nil || !slices.Equal(role.Data.Accounts, []string{owner.ServiceAccount}) || !slices.Equal(role.Data.Namespaces, []string{owner.Namespace}) || role.Data.Selector != "" || !slices.Equal(role.Data.Policies, []string{name}) || role.Data.Audience != "openbao" || !role.Data.NoDefault || role.Data.TTL != 900 || role.Data.MaxTTL != 900 || role.Data.Period != 0 {
+		if decoder.Decode(&role) != nil || !slices.Equal(role.Data.Accounts, []string{auth.account}) || !slices.Equal(role.Data.Namespaces, []string{auth.namespace}) || role.Data.Selector != "" || !slices.Equal(role.Data.Policies, []string{auth.role}) || role.Data.Audience != "openbao" || !role.Data.NoDefault || role.Data.TTL != 900 || role.Data.MaxTTL != 900 || role.Data.Period != 0 {
 			return fmt.Errorf("custody Kubernetes role differs")
 		}
 	}

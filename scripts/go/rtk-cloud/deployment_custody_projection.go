@@ -53,6 +53,10 @@ func environmentCustodyRoleName(prefix string) string {
 	return "pki-state-" + hex.EncodeToString(sum[:16])
 }
 
+func environmentCustodyReaderName(prefix string) string {
+	return environmentCustodyRoleName(prefix + "/read")
+}
+
 // The same projection is used by bootstrap recipes and the steady renderer.
 // It changes only explicitly bound workload storage, never business data or
 // OpenBao's independent cold-start identity. It does not create KV records.
@@ -220,6 +224,8 @@ func projectEnvironmentCustodyResources(values map[string]string, environment st
 				if existingPrefix != "" && existingPrefix != prefix {
 					return nil, environmentCreateBootstrapBlocker("native custody projection cannot select another original generation or owner")
 				}
+				reader := environmentCustodyReaderName(prefix)
+				add(deploymentplan.Object{"apiVersion": "v1", "kind": "ServiceAccount", "metadata": deploymentplan.Object{"name": reader, "namespace": namespace}, "automountServiceAccountToken": false})
 				settings := map[string]string{
 					"PKI_STATE_BACKEND": "openbao", "PKI_STATE_KV_MOUNT": values["PKI_STATE_KV_MOUNT"], "PKI_STATE_RECORD_PREFIX": prefix, "PKI_ENVIRONMENT": environment,
 					"OPENBAO_ADDR": "https://openbao." + stack + "-secrets.svc:8200", "PKI_STATE_OPENBAO_ROLE": environmentCustodyRoleName(prefix), "PKI_STATE_OPENBAO_JWT_FILE": "/run/pki-custody-auth/openbao.jwt",
@@ -336,6 +342,10 @@ func projectEnvironmentCustodyResources(values map[string]string, environment st
 }
 
 func environmentCustodyPolicy(values map[string]string, environment string, binding environmentCustodyBinding, owner environmentCustodyOwnerBinding) (string, error) {
+	return environmentCustodyPolicyForAccess(values, environment, binding, owner, false)
+}
+
+func environmentCustodyPolicyForAccess(values map[string]string, environment string, binding environmentCustodyBinding, owner environmentCustodyOwnerBinding, readOnly bool) (string, error) {
 	if err := validateEnvironmentCustodySettings(values); err != nil {
 		return "", err
 	}
@@ -375,8 +385,12 @@ func environmentCustodyPolicy(values map[string]string, environment string, bind
 	// Public caches are keyed by original paths that can include future native
 	// issuer IDs. This subtree does not grant access to other private records.
 	ordered = append(ordered, prefix+"/public/*")
+	capabilities := `"create", "read", "update"`
+	if readOnly {
+		capabilities = `"read"`
+	}
 	for _, key := range ordered {
-		fmt.Fprintf(&policy, "path %q { capabilities = [\"create\", \"read\", \"update\"] }\n", values["PKI_STATE_KV_MOUNT"]+"/data/"+key)
+		fmt.Fprintf(&policy, "path %q { capabilities = [%s] }\n", values["PKI_STATE_KV_MOUNT"]+"/data/"+key, capabilities)
 	}
 	return policy.String(), nil
 }

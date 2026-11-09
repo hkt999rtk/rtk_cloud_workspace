@@ -3233,6 +3233,12 @@ clear a native writer's holder. Cross-namespace OpenBao access adds only the
 selected custody Pod ingress; it does not introduce an Egress policy that would
 isolate existing database, DNS or Kubernetes API connections.
 
+Admission and read-only CRL Jobs use a separate generation-bound service
+account and OpenBao role per owner. The role can read the declared private
+record keys and scoped public caches. Only the writer account has KV write
+capabilities and the identity Lease permissions. Explicit CRL installation
+uses the writer account under deployment execution ownership.
+
 Admitted creation establishes a CAS-required KV v2 mount and generation/workload
 policies before SQL migration and native enrollment. Provider configuration is
 batched inside the checked OpenBao Pod, with actual mount/ACL/role readback before

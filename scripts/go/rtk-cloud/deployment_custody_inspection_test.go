@@ -42,11 +42,12 @@ func TestCustodyInspectionUsesOriginalScopeWithoutPrivateStorageOrControllerBoot
 		t.Fatal(err)
 	}
 	pod := environmentPKIPod(job)
-	if pod["serviceAccountName"] != owner.ServiceAccount || deploymentplan.Map(pod["securityContext"])["runAsUser"] != float64(4242) {
+	reader := environmentCustodyReaderName("dev/" + binding.Generation + "/" + owner.ID)
+	if pod["serviceAccountName"] != reader || deploymentplan.Map(pod["securityContext"])["runAsUser"] != float64(4242) {
 		t.Fatal("inspection substituted scope or execution settings")
 	}
 	container := deploymentplan.Map(certIssuerObjectList(pod["containers"])[0])
-	if container["image"] != p.Image || mqttFoundationEnv(container, "PKI_STATE_RECORD_PREFIX") != "dev/"+binding.Generation+"/"+owner.ID || mqttFoundationEnv(container, "PKI_BOOTSTRAP_SESSION_ID") != "" {
+	if container["image"] != p.Image || mqttFoundationEnv(container, "PKI_STATE_RECORD_PREFIX") != "dev/"+binding.Generation+"/"+owner.ID || mqttFoundationEnv(container, "PKI_STATE_OPENBAO_ROLE") != reader || mqttFoundationEnv(container, "PKI_BOOTSTRAP_SESSION_ID") != "" {
 		t.Fatal("inspection uses a different original scope or bootstrap session")
 	}
 	if deploymentplan.Digest(container["command"]) != deploymentplan.Digest([]string{"/app/serviceidentity-bootstrap", "inspect-admitted", path, "-", "service:" + owner.ID, ref.RootSHA256, "-"}) {
