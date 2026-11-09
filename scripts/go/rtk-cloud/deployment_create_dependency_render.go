@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -14,6 +17,14 @@ type environmentCreateDependencyRender struct {
 	managed              map[string]bool
 	outputs              map[string]string
 	publicCertIssuerHost string
+	futureRuntime        bool
+}
+
+func (r *environmentCreateDependencyRender) addOutput(p environmentCreateBootstrapPlan, id, stage string) {
+	r.outputs[id] = deploymentplan.Digest(struct {
+		Recipe          environmentCreateBootstrapPlan
+		Stage, Resource string
+	}{p, stage, id})
 }
 
 func environmentCreateDependencyOutputs(cfg deploymentConfig, p environmentCreateBootstrapPlan, values map[string]string) (*environmentCreateDependencyRender, error) {
@@ -30,10 +41,7 @@ func environmentCreateDependencyOutputs(cfg deploymentConfig, p environmentCreat
 	}
 	intent := &environmentCreateDependencyRender{managed: map[string]bool{}, outputs: map[string]string{}, publicCertIssuerHost: host}
 	add := func(id, stage string) {
-		intent.outputs[id] = deploymentplan.Digest(struct {
-			Recipe          environmentCreateBootstrapPlan
-			Stage, Resource string
-		}{p, stage, id})
+		intent.addOutput(p, id, stage)
 	}
 	for _, name := range p.Claims {
 		suffix := "video-cloud"
@@ -122,9 +130,23 @@ func qualifyEnvironmentCreateDependencyContract(ctx context.Context, cfg deploym
 	if err != nil {
 		return 0, err
 	}
-	secrets, err := environmentRuntimeSecretSnapshot(store)
-	if err != nil {
-		return 0, err
+	secrets := map[string]string{}
+	info, runtimeErr := os.Lstat(store.RuntimeDir())
+	futureRuntime := errors.Is(runtimeErr, os.ErrNotExist)
+	if futureRuntime {
+		// The fresh entry point has already verified provider absence. A
+		// retained inventory still forbids treating missing data as new state.
+		if _, err := os.Lstat(filepath.Join(store.Root, "inventory.json")); !errors.Is(err, os.ErrNotExist) {
+			return 0, environmentCreateBlocker("deployment.create.inputs", "runtime directory is missing while the selected active inventory exists or cannot be inspected")
+		}
+	} else {
+		if runtimeErr != nil || !info.IsDir() || info.Mode().Perm() != 0700 {
+			return 0, environmentCreateBlocker("deployment.create.inputs", "selected runtime directory must be a real 0700 directory")
+		}
+		secrets, err = environmentRuntimeSecretSnapshot(store)
+		if err != nil {
+			return 0, environmentCreateBlocker("deployment.create.inputs", "selected runtime SecretStore inventory cannot be read")
+		}
 	}
 	snapshot := environmentDeploymentSnapshot{Operator: operator, Secrets: secrets}
 	var support []deploymentplan.Definition
@@ -148,6 +170,10 @@ func qualifyEnvironmentCreateDependencyContract(ctx context.Context, cfg deploym
 		if err != nil {
 			return err
 		}
+		intent.futureRuntime = futureRuntime
+		if futureRuntime {
+			intent.addOutput(p, "Secret/"+p.Stack+"-video-cloud/mqtt-pki-runtime", "managed-mqtt-dependencies")
+		}
 		for id, contract := range publicOutputs {
 			intent.outputs[id] = contract
 		}
@@ -163,7 +189,7 @@ func qualifyEnvironmentCreateDependencyContract(ctx context.Context, cfg deploym
 		if err != nil {
 			return err
 		}
-		runtime, err := renderEnvironmentRuntimeDependencyDefinitions(env, secrets, operator)
+		runtime, err := renderEnvironmentRuntimeDependencyDefinitionsWithFuture(env, secrets, operator, environmentBillingRuntimeKeyProfile, futureRuntime)
 		if err != nil {
 			return err
 		}
@@ -172,6 +198,15 @@ func qualifyEnvironmentCreateDependencyContract(ctx context.Context, cfg deploym
 		foundation, err := decodeEnvironmentCreateManifests(lkePostgresSecretManifest(env), lkeAccountManagerSecretManifest(env), lkeVideoCloudRuntimeSecretManifest(env), lkeFactoryEnrollRuntimeSecretManifest(env), lkeVideoCloudWorkersSecretManifest(env))
 		if err != nil {
 			return err
+		}
+		if futureRuntime {
+			for _, group := range [][]deploymentplan.Definition{runtime, foundation} {
+				for _, d := range group {
+					if d.Object["kind"] == "Secret" {
+						intent.addOutput(p, deploymentplan.ID(d.Object), "runtime-initialization")
+					}
+				}
+			}
 		}
 		defs = append(defs, runtime...)
 		defs = append(defs, foundation...)

@@ -1414,7 +1414,12 @@ automatically or expose it in reports. These are operator inputs for a future
 bootstrap, not evidence that the account or PKI identity has been created.
 
 Select `--operation create` explicitly and rerun complete preflight against the
-new active state. Preflight produces no OpenBao keys, CA or Service identity.
+new active state. After verifying target absence, preflight can validate the
+dependency plan without an active `runtime/` directory or `inventory.json`.
+It checks the declared producers of automatically initialized runtime secrets
+and still requires credentials that must be provided by the operator. An active
+inventory with a missing runtime directory blocks qualification.
+Preflight produces no OpenBao keys, CA or Service identity.
 Only a separately admitted deployment executor establishes the new generation's
 identities through the qualified native bootstrap ceremonies. Expiring preflight
 GO does not itself authorize deployment. See [secrets governance](deployment-secrets-governance.md#deployment-generation-identity-boundary).

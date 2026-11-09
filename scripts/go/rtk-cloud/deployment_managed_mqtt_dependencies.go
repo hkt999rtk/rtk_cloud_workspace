@@ -12,6 +12,10 @@ import (
 // dependency objects contain only maintained broker configuration and existing
 // process credentials, never legacy TLS copies or regenerated secrets.
 func renderManagedMQTTDependencyDefinitions(values map[string]string, secrets map[string]string) ([]deploymentplan.Definition, error) {
+	return renderManagedMQTTDependencyDefinitionsWithFuture(values, secrets, false)
+}
+
+func renderManagedMQTTDependencyDefinitionsWithFuture(values map[string]string, secrets map[string]string, futureRuntime bool) ([]deploymentplan.Definition, error) {
 	bad := func() ([]deploymentplan.Definition, error) {
 		return nil, environmentCreateBootstrapBlocker("managed MQTT dependencies require the selected original dashboard, callback and EMQX API credentials; missing values cannot be regenerated")
 	}
@@ -21,8 +25,9 @@ func renderManagedMQTTDependencyDefinitions(values map[string]string, secrets ma
 	}
 	credential := func(name string) string { return secrets[lkeSecretFileName(name)] }
 	dashboard, auth, key, password := credential("emqx-dashboard-password"), credential("mqtt-broker-auth"), credential("emqx-handoff-api-key"), credential("emqx-handoff-api-secret")
-	for _, value := range []string{dashboard, auth, key, password} {
-		if value == "" || strings.ContainsAny(value, "\r\n") {
+	for _, id := range []string{"emqx-dashboard-password", "mqtt-broker-auth", "emqx-handoff-api-key", "emqx-handoff-api-secret"} {
+		value := credential(id)
+		if strings.ContainsAny(value, "\r\n") || value == "" && !(futureRuntime && canInitializeCreateRuntimeSecret(id)) {
 			return bad()
 		}
 	}
@@ -53,6 +58,9 @@ func renderManagedMQTTDependencyDefinitions(values map[string]string, secrets ma
 		return bad()
 	}
 	config := deploymentplan.Object{"apiVersion": "v1", "kind": "ConfigMap", "metadata": meta("mqtt-pki-config"), "data": deploymentplan.Object{"broker": "emqx", "base.hocon": hocon}}
+	if futureRuntime {
+		return []deploymentplan.Definition{{Phase: "configuration", Object: config}}, nil
+	}
 	runtime := environmentCreateSecret(namespace, "mqtt-pki-runtime", map[string]string{"cookie": cookie, "dashboard-password": dashboard, "authentication": authentication, "api-keys.conf": key + ":" + password + ":administrator\n"})
 	runtime.Object["metadata"] = meta("mqtt-pki-runtime")
 	return []deploymentplan.Definition{{Phase: "configuration", Object: config}, runtime}, nil

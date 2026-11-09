@@ -7,6 +7,15 @@ import (
 	"strings"
 )
 
+func canInitializeCreateRuntimeSecret(id string) bool {
+	for _, entry := range rtkSecretCatalog() {
+		if entry.ID == id && entry.Category == "runtime" {
+			return !entry.ExplicitProvision
+		}
+	}
+	return false
+}
+
 // Inspect the original catalog before layout creation writes its inventory.
 // An initialized store can add newly cataloged credentials, but a recorded
 // credential missing from that store is never regenerated during fresh create.

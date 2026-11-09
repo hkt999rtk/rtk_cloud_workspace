@@ -22,6 +22,10 @@ func renderEnvironmentRuntimeDependencyDefinitions(env, secrets, operator map[st
 }
 
 func renderEnvironmentRuntimeDependencyDefinitionsForBillingProfile(env, secrets, operator map[string]string, profile string) ([]deploymentplan.Definition, error) {
+	return renderEnvironmentRuntimeDependencyDefinitionsWithFuture(env, secrets, operator, profile, false)
+}
+
+func renderEnvironmentRuntimeDependencyDefinitionsWithFuture(env, secrets, operator map[string]string, profile string, futureRuntime bool) ([]deploymentplan.Definition, error) {
 	bad := func(resource, cause string) error {
 		return &deploymentplan.Blocker{ID: "deployment.runtime.dependencies", Resource: resource, Cause: cause, Next: "restore the exact canonical credential or recorded allocation; qualify the shared complete plan without regenerating existing material"}
 	}
@@ -58,7 +62,7 @@ func renderEnvironmentRuntimeDependencyDefinitionsForBillingProfile(env, secrets
 	}
 	var missing []string
 	for _, id := range required {
-		if strings.TrimSpace(secrets[lkeSecretFileName(id)]) == "" {
+		if strings.TrimSpace(secrets[lkeSecretFileName(id)]) == "" && !(futureRuntime && canInitializeCreateRuntimeSecret(id)) {
 			missing = append(missing, "runtime/"+id)
 		}
 	}
@@ -97,7 +101,7 @@ func renderEnvironmentRuntimeDependencyDefinitionsForBillingProfile(env, secrets
 	}
 	manifests := []string{lkeBillingSecretManifest(env), lkeCloudAdminBillingSecretManifest(env), lkeCloudLoggerRuntimeSecretManifest(env), lkeGrafanaAdminSecretManifest(env), lkeCloudLoggerBillingInboxPVCManifest(env), lkeVideoCloudMQTTUsageCheckpointPVCManifest(env)}
 	if env["SUPPORT_TICKETS_ENABLED"] == "true" {
-		support, err := lkeSupportDependencySecretManifests(env)
+		support, err := lkeSupportDependencySecretManifestsWithFuture(env, futureRuntime)
 		if err != nil {
 			return nil, bad("", "canonical support dependency inputs are unavailable")
 		}
@@ -107,8 +111,10 @@ func renderEnvironmentRuntimeDependencyDefinitionsForBillingProfile(env, secrets
 	if err != nil {
 		return nil, err
 	}
-	if err := applyEnvironmentBillingRuntimeConfigurationForProfile(env, definitions, profile); err != nil {
-		return nil, err
+	if !futureRuntime {
+		if err := applyEnvironmentBillingRuntimeConfigurationForProfile(env, definitions, profile); err != nil {
+			return nil, err
+		}
 	}
 	if env["SDK_DOWNLOADS_ENABLED"] == "true" {
 		prefix := "pro2-examples/" + env["CLOUD_ENV_NAME"] + "/"
