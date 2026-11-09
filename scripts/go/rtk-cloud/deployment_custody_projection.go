@@ -351,7 +351,34 @@ func environmentCustodyPolicy(values map[string]string, environment string, bind
 	if !bound || values["CLOUD_STACK_NAME"] != "video-cloud-"+environment || !strings.HasPrefix(owner.Namespace, values["CLOUD_STACK_NAME"]+"-") || !secretEnvironmentPattern.MatchString(owner.ServiceAccount) || owner.ServiceAccount == "default" {
 		return "", environmentCreateBootstrapBlocker("native custody policy cannot authorize an owner outside its selected original generation")
 	}
-	return fmt.Sprintf("path %q { capabilities = [\"create\", \"read\", \"update\"] }\n", values["PKI_STATE_KV_MOUNT"]+"/data/"+environment+"/"+binding.Generation+"/"+owner.ID+"/*"), nil
+	prefix := environment + "/" + binding.Generation + "/" + owner.ID
+	keys := map[string]bool{}
+	paths := make([]string, 0, len(owner.Clients)+len(owner.Servers))
+	for _, client := range owner.Clients {
+		paths = append(paths, client.StatePath)
+	}
+	for _, server := range owner.Servers {
+		paths = append(paths, server.StatePath)
+	}
+	for _, path := range paths {
+		if !filepath.IsAbs(path) || filepath.Clean(path) != path || path == "/" || strings.ContainsAny(path, "\x00\r\n") {
+			return "", environmentCreateBootstrapBlocker("native custody policy requires canonical original identity paths")
+		}
+		keys[environmentCustodyRecordKey(prefix, path)] = true
+	}
+	var policy strings.Builder
+	ordered := make([]string, 0, len(keys))
+	for key := range keys {
+		ordered = append(ordered, key)
+	}
+	slices.Sort(ordered)
+	// Public caches are keyed by original paths that can include future native
+	// issuer IDs. This subtree does not grant access to other private records.
+	ordered = append(ordered, prefix+"/public/*")
+	for _, key := range ordered {
+		fmt.Fprintf(&policy, "path %q { capabilities = [\"create\", \"read\", \"update\"] }\n", values["PKI_STATE_KV_MOUNT"]+"/data/"+key)
+	}
+	return policy.String(), nil
 }
 
 func sameEnvironmentCustodyOwner(a, b environmentCustodyOwnerBinding) bool {

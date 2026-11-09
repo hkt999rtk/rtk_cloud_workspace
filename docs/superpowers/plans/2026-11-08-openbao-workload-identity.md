@@ -1370,3 +1370,20 @@ Archive requires the completed evidence, preserves its bytes, and rechecks
 the same IDs and DNS scope even when resuming an interrupted archive. The
 isolated regression rejects missing completion and a renamed original VM and
 preserves the original archive bytes (custody-exact-archive-final.log).
+
+The live dev read-only plan passed for original cluster 666130 with worker
+107939721, edge 107939723, TURN 107939810, two exact buckets, 31 volume IDs and
+its original DNS state (custody-exact-dev-removal-plan.log). Live provider
+resources have not been removed. The final selected workspace regression
+covering fresh CRL and archive changes passed in 60.413s
+(custody-fresh-stage-final-broad.log).
+
+Exact writer ACL checkpoint. The writer policy now authorizes declared
+private client/server record hashes, plus the owner's explicit public
+cache subtree for dynamic issuers. The dev/staging canonical renderer
+regression found every projected private path in its policy. Real OpenBao
+accepted the declared key and denied both an unrelated private key in the
+same owner and a foreign-environment key (custody-exact-acl-final.log).
+Separate read-only Kubernetes authentication for admission Jobs remains
+pending. Native governed pre-PR coverage is in progress for 74cd78d,
+local-video-pr-20261109002443-66417.

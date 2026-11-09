@@ -109,12 +109,18 @@ exec docker exec -i "$RTK_CUSTODY_DOCKER_ID" env BAO_ADDR=http://127.0.0.1:8200 
 	prefix := cfg.Environment + "/" + binding.Generation + "/" + owner.ID
 	role := environmentCustodyRoleName(prefix)
 	token := bytes.TrimSpace(run(nil, "exec", id, "env", "BAO_ADDR=http://127.0.0.1:8200", "BAO_TOKEN=fixture-custody-token", "bao", "token", "create", "-policy="+role, "-no-default-policy", "-ttl=1m", "-field=token"))
-	command := "IFS= read -r BAO_TOKEN; export BAO_TOKEN; bao kv put -cas=0 identities/" + prefix + "/fixture value=fixture"
+	if len(owner.Clients) == 0 {
+		t.Fatal("isolated fixture has no declared identity")
+	}
+	const write = "IFS= read -r BAO_TOKEN; export BAO_TOKEN; bao kv put -cas=0 identities/"
+	command := write + environmentCustodyRecordKey(prefix, owner.Clients[0].StatePath) + " value=fixture"
 	run(append(bytes.Clone(token), '\n'), "exec", "-i", id, "env", "BAO_ADDR=http://127.0.0.1:8200", "/bin/sh", "-ec", command)
-	denied := exec.CommandContext(ctx, "docker", "exec", "-i", id, "env", "BAO_ADDR=http://127.0.0.1:8200", "/bin/sh", "-ec", "IFS= read -r BAO_TOKEN; export BAO_TOKEN; bao kv put -cas=0 identities/staging/foreign/identity value=fixture")
-	denied.Stdin = bytes.NewReader(append(bytes.Clone(token), '\n'))
-	output, err := denied.CombinedOutput()
-	if err == nil || !bytes.Contains(output, []byte("403")) {
-		t.Fatal("real scoped policy did not deny foreign-environment writes")
+	for _, key := range []string{environmentCustodyRecordKey(prefix, "/unbound/private.json"), "staging/foreign/identity"} {
+		denied := exec.CommandContext(ctx, "docker", "exec", "-i", id, "env", "BAO_ADDR=http://127.0.0.1:8200", "/bin/sh", "-ec", write+key+" value=fixture")
+		denied.Stdin = bytes.NewReader(append(bytes.Clone(token), '\n'))
+		output, err := denied.CombinedOutput()
+		if err == nil || !bytes.Contains(output, []byte("403")) {
+			t.Fatal("real scoped policy did not deny an unbound private record")
+		}
 	}
 }

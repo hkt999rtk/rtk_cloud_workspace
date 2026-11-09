@@ -176,9 +176,12 @@ func TestCustodyProjectionPreservesBusinessDataAndIndependentOpenBao(t *testing.
 func TestCustodyPolicyOnlyAllowsExactOriginalWorkloadData(t *testing.T) {
 	values := map[string]string{"CLOUD_STACK_NAME": "video-cloud-dev", "PKI_STATE_BACKEND": "openbao", "PKI_STATE_KV_MOUNT": "identities", "PKI_STATE_LEASE_DURATION": "30s"}
 	owner := environmentCustodyOwnerBinding{ID: "api-identity", Namespace: "video-cloud-dev-video-cloud", ServiceAccount: "video-cloud-api"}
+	owner.Clients = []environmentCustodyClientBinding{{Subject: "service:video-cloud-api", StatePath: "/identity/private/client.json"}}
 	binding := environmentCustodyBinding{Generation: strings.Repeat("a", 64), Owners: []environmentCustodyOwnerBinding{owner}}
 	policy, err := environmentCustodyPolicy(values, "dev", binding, owner)
-	want := "path \"identities/data/dev/" + binding.Generation + "/api-identity/*\" { capabilities = [\"create\", \"read\", \"update\"] }\n"
+	prefix := "dev/" + binding.Generation + "/api-identity"
+	want := "path \"identities/data/" + environmentCustodyRecordKey(prefix, owner.Clients[0].StatePath) + "\" { capabilities = [\"create\", \"read\", \"update\"] }\n" +
+		"path \"identities/data/" + prefix + "/public/*\" { capabilities = [\"create\", \"read\", \"update\"] }\n"
 	if err != nil || policy != want {
 		t.Fatal("scoped native KV policy changed", err)
 	}

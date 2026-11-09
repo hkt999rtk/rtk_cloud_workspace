@@ -309,6 +309,10 @@ func TestCustodyFreshNativeInventoryCanonicalRoundTrip(t *testing.T) {
 				}
 				for _, owner := range runtime.Custody.Owners {
 					id := "Deployment/" + owner.Namespace + "/" + owner.ID
+					policy, err := environmentCustodyPolicy(cfg.Values, environment, *runtime.Custody, owner)
+					if err != nil {
+						t.Fatal("cannot render exact native authorization", id, err)
+					}
 					var object deploymentplan.Object
 					for _, d := range defs {
 						if deploymentplan.ID(d.Object) == id {
@@ -347,6 +351,15 @@ func TestCustodyFreshNativeInventoryCanonicalRoundTrip(t *testing.T) {
 						selected = true
 						if mqttFoundationEnv(c, "PKI_STATE_RECORD_PREFIX") != environment+"/"+runtime.Custody.Generation+"/"+owner.ID || pod["serviceAccountName"] != owner.ServiceAccount {
 							t.Fatal("original custody scope changed", id)
+						}
+						for field, path := range createRecipeEnv(c) {
+							if !strings.HasSuffix(field, "_IDENTITY_STATE") || path == "" {
+								continue
+							}
+							key := environmentCustodyRecordKey(mqttFoundationEnv(c, "PKI_STATE_RECORD_PREFIX"), path)
+							if !strings.Contains(policy, fmt.Sprintf("path %q ", cfg.Values["PKI_STATE_KV_MOUNT"]+"/data/"+key)) {
+								t.Fatal("rendered identity path is missing from the exact OpenBao policy", id, field, path)
+							}
 						}
 					}
 					if !selected {
