@@ -1407,3 +1407,21 @@ listener and outbound records at KV version 1 (custody-fresh-core-live-74cd78d.l
 This verifies the initial CRL stage; managed core rollout and complete creation
 acceptance are still separate. Governed native PR coverage passed at 72.66%
 (local-video-pr-20261109002443-66417). Video Cloud PR #773 is open for that head.
+
+Managed core restart checkpoint. A fresh isolated kind run used the actual
+rendered Controller, CertIssuer and Account Manager PKI recipes with real
+OpenBao, PostgreSQL, TokenReview and signed Service CRLs. Native issuance APIs
+seeded the fixture registry and isolated KV credentials. The Account Manager
+business container was a local HTTP stub. All three native PKI listeners
+started and recovered after sequential cold restarts. Six private identity
+records retained identical state digests
+(custody-fresh-core-managed-restart-74cd78d.log). Full cloud creation and
+business acceptance still require their own evidence.
+
+Video Cloud PR #773 merged at 545da59 with all four GitHub checks passing.
+Release Bundle 42541860153 succeeded and its image manifest declares exactly
+that source commit and three image digests. Workspace pins the merged native
+and contracts commits. The first full local workspace pre-PR run exhausted
+the Docker VM filesystem during Video Cloud PostgreSQL testing. Identified
+abandoned local test volumes were removed. Future pre-PR fixture cleanup
+removes its own anonymous volumes; focused cleanup tests passed.
