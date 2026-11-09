@@ -5,11 +5,13 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"math/big"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -71,20 +73,43 @@ func TestProductIdentityExpiredSessionRunsNativeRenewalBridge(t *testing.T) {
 	if err := os.WriteFile(path, mustProviderRecoveryJSON(fixture), 0600); err != nil {
 		t.Fatal(err)
 	}
-	args := []string{"test"}
-	if overlay := os.Getenv("RTK_PRODUCT_BOOTSTRAP_NATIVE_OVERLAY"); overlay != "" {
-		args = append(args, "-overlay="+overlay)
-	}
-	args = append(args, "./cmd/serviceidentity-bootstrap", "-run", "^TestNativeRenderedBootstrapExpiredProductSessionRenewal$", "-count=1", "-v", "-timeout=150s")
-	command := exec.CommandContext(t.Context(), "go", args...)
-	command.Dir = filepath.Join(f.cfg.Workspace, "repos/rtk_video_cloud")
-	command.Env = append(os.Environ(), "GOWORK=off", "RTK_PRODUCT_BOOTSTRAP_RENDERED_FIXTURE="+path)
-	raw, err := command.CombinedOutput()
-	if err != nil {
-		t.Fatalf("native rendered-job bootstrap regression failed: %v; %s", err, raw)
-	}
-	if !strings.Contains(string(raw), "--- PASS: TestNativeRenderedBootstrapExpiredProductSessionRenewal") {
-		t.Fatal("native regression did not execute")
-	}
+	runProductNativeRegression(t, f.cfg.Workspace, "cmd/serviceidentity-bootstrap", "TestNativeRenderedBootstrapExpiredProductSessionRenewal", "RTK_PRODUCT_BOOTSTRAP_RENDERED_FIXTURE="+path, "150s")
 	t.Log("actual native expiry/renewal bridge: real isolated PostgreSQL, native bootstrap command, original same key/CSR, five original identities, genuine mTLS ACK/finalization; simulated provider signing and Kubernetes cleanup boundary")
+}
+
+// Run the maintained fixture in the exact selected product checkout without writing into it.
+func runProductNativeRegression(t *testing.T, workspace, pkg, testName, fixtureEnv, timeout string) {
+	t.Helper()
+	repo := filepath.Join(workspace, "repos", "rtk_video_cloud")
+	fixtures := filepath.Join(workspace, "scripts", "go", "rtk-cloud", "testdata", "native-product", filepath.FromSlash(pkg))
+	files, err := os.ReadDir(fixtures)
+	if err != nil || len(files) == 0 {
+		t.Fatalf("native regression fixtures for %s unavailable: %v", pkg, err)
+	}
+	replacements := make(map[string]string, len(files))
+	for _, file := range files {
+		virtual := filepath.Join(repo, filepath.FromSlash(pkg), file.Name())
+		if _, err := os.Lstat(virtual); !os.IsNotExist(err) {
+			t.Fatalf("isolated native fixture would shadow product source %s", file.Name())
+		}
+		replacements[virtual] = filepath.Join(fixtures, file.Name())
+	}
+	overlay := filepath.Join(t.TempDir(), "overlay.json")
+	raw, err := json.Marshal(map[string]map[string]string{"Replace": replacements})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(overlay, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.CommandContext(t.Context(), filepath.Join(runtime.GOROOT(), "bin/go"), "test", "-overlay", overlay, "-vet=off", "./"+pkg, "-run", "^"+testName+"$", "-count=1", "-v", "-timeout="+timeout)
+	command.Dir = repo
+	command.Env = append(os.Environ(), "GOWORK=off", fixtureEnv)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("native regression %s failed: %v; %s", testName, err, output)
+	}
+	if !strings.Contains(string(output), "--- PASS: "+testName) {
+		t.Fatalf("native regression %s did not execute: %s", testName, output)
+	}
 }
