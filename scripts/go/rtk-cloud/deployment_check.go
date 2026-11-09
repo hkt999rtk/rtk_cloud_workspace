@@ -505,6 +505,11 @@ func executeDeploymentCheck(ctx context.Context, o deploymentCheckOptions, cfg d
 		{"pki.migration", o.requireMigration, []string{"secrets.local", "k8s.access-input"}, func() error { return deps.migration(store) }},
 		{"pki.product-root", o.requireProduct, []string{"secrets.local", "k8s.access-input"}, func() error { return deps.product(store) }},
 	}
+	if cfg.Values["PKI_STATE_BACKEND"] == "openbao" {
+		tasks = append(tasks, task{"pki.custody", true, []string{"secrets.local", "k8s.access-input"}, func() error {
+			return verifyEnvironmentCommittedCustody(store.checkRuntime, time.Now().UTC())
+		}})
+	}
 	if o.operation == "image-upgrade" {
 		reporter.emit(deploymentCredentialCheck{ID: "release.image-upgrade", Status: "PENDING", Required: true, Resource: cfg.Environment})
 	}

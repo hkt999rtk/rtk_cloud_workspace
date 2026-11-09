@@ -19,12 +19,20 @@ type environmentCustodyClientBinding struct {
 	StatePath string `json:"state_path"`
 }
 
+type environmentCustodyServerBinding struct {
+	Domain    string `json:"domain"`
+	Name      string `json:"name"`
+	StatePath string `json:"state_path"`
+	DNSNames  string `json:"dns_names_csv"`
+}
+
 type environmentCustodyOwnerBinding struct {
 	ID             string                            `json:"id"`
 	Namespace      string                            `json:"namespace"`
 	ServiceAccount string                            `json:"service_account"`
 	StorageAliases []string                          `json:"storage_aliases,omitempty"`
 	Clients        []environmentCustodyClientBinding `json:"clients,omitempty"`
+	Servers        []environmentCustodyServerBinding `json:"servers,omitempty"`
 }
 
 type environmentCustodyBinding struct {
@@ -347,5 +355,5 @@ func environmentCustodyPolicy(values map[string]string, environment string, bind
 }
 
 func sameEnvironmentCustodyOwner(a, b environmentCustodyOwnerBinding) bool {
-	return a.ID == b.ID && a.Namespace == b.Namespace && a.ServiceAccount == b.ServiceAccount && slices.Equal(a.StorageAliases, b.StorageAliases) && slices.Equal(a.Clients, b.Clients)
+	return a.ID == b.ID && a.Namespace == b.Namespace && a.ServiceAccount == b.ServiceAccount && slices.Equal(a.StorageAliases, b.StorageAliases) && slices.Equal(a.Clients, b.Clients) && slices.Equal(a.Servers, b.Servers)
 }

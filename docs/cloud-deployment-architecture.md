@@ -3314,10 +3314,16 @@ environment's rollout timeout bounds the read, without resetting its parent
 deadline. The same canonical public transport reader serves stage compilation
 and inspection; it cannot restore a withdrawn bootstrap anchor.
 
-For the selected OpenBao backend, existing immutable-image capability probes
-also require `committed-identity-inspection-v1` before allocation. This adds no
-container probe and does not compare the assigned image with another release.
-PVC configurations retain their existing capability requirements.
+For the selected OpenBao backend, the existing immutable-image capability probe
+requires `committed-identity-inspection-v1` and
+`committed-identity-batch-admission-v1` before allocation. The original bootstrap
+binding freezes both client purposes and server DNS policies. Existing-environment
+preflight, execution rechecks, and post-deploy health inspect the committed
+records in one native Job per workload, through the original workload service
+account. Preflight and execution verify the same current credential both now and
+through the configured qualification cutoff. Post-deploy health checks current
+admission. The original activated MQTT Root comes from the same generation's
+issuer evidence. PVC configurations retain their existing capability requirements.
 
 Committed public CRL maintenance uses the same original generation scope. Native
 `inspect-public-crl` verifies committed signed cache evidence without restoring a

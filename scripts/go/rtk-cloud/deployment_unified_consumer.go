@@ -184,6 +184,10 @@ func executionEnvironmentChecks(c *compiledEnvironmentDeployment) map[string]dep
 			if err != nil {
 				return deploymentplan.GateEvidence{}, err
 			}
+			nextStep("deployment.pki.custody")
+			if err := verifyEnvironmentCommittedCustody(store.checkRuntime, cutoff); err != nil {
+				return deploymentplan.GateEvidence{}, environmentRuntimePKIQualificationError(err)
+			}
 			for index, at := range []time.Time{now, cutoff} {
 				nextStep([]string{"deployment.pki.mqtt-now", "deployment.pki.mqtt-window"}[index])
 				if err := c.CheckMQTTFoundationIdentity(ctx, at, store.checkRuntime); err != nil {

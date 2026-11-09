@@ -1320,3 +1320,24 @@ archives the original generation. Live resources have not been removed.
 The final removal, archive, fresh target, lease and execution fence regression
 passed in 57.497s (deployment-original-generation-complete.log). Final formal
 `remove --plan` commands passed for both environments with the same IDs.
+
+Committed identity admission checkpoint. Native 924a723 introduced bounded
+batch admission over each original workload scope, verifying the same committed
+client/server credential and current native registry/CRLs at now and the rollout
+cutoff. Workspace preserves the original service and MQTT server purposes and
+connects the native batch to existing-environment qualification, execution
+recheck, steady health, and normal-tail qualification. Only a validated native
+producer can defer an unprojected product client during normal-tail preflight.
+Ordinary health has no producer deferral.
+
+Final selected workspace regression, including the isolated real provider
+bootstrap and Kubernetes projection fixture, passed in 69.063s
+(custody-admission-live-fixtures.log). Native ba8196a ran the production batch
+binary against real OpenBao, PostgreSQL and Kubernetes TokenReview before and
+after matched backup restoration. The same committed renewal was admitted,
+future expiration and cross-owner access were denied, and the successful KV
+write whose response was dropped was reconciled without reissuing the identity.
+The real fixture ran without a skip in 8.674s (custody-batch-restore-loss.log).
+This exercises the full native identity lifecycle in one real fixture, alongside
+formal bootstrap and renderer tests. The complete dev create preflight and
+deployment remain live operations after review, delivery and isolated acceptance.

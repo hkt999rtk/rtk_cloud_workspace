@@ -23,6 +23,7 @@ func createdNativeInventoryFixture(t *testing.T, environment string, useOpenBao 
 	remote := len(useOpenBao) == 1 && useOpenBao[0]
 	if remote {
 		cfg.Values["PKI_STATE_BACKEND"], cfg.Values["PKI_STATE_KV_MOUNT"], cfg.Values["PKI_STATE_LEASE_DURATION"] = "openbao", "identities", "30s"
+		cfg.Values["DEPLOYMENT_ROLLOUT_TIMEOUT_SECONDS"], cfg.Values["DEPLOYMENT_UPGRADE_WINDOW_SECONDS"] = "120", "300"
 		var err error
 		p.ProductIdentities, err = environmentCreateProductIdentityIntent(cfg)
 		if err != nil {
@@ -296,6 +297,16 @@ func TestCustodyFreshNativeInventoryCanonicalRoundTrip(t *testing.T) {
 				t.Fatal("render the same new generation's ordinary target", err)
 			}
 			for _, defs := range [][]deploymentplan.Definition{original, target} {
+				var deployments []deploymentplan.Object
+				for _, d := range defs {
+					if d.Object["kind"] == "Deployment" {
+						deployments = append(deployments, d.Object)
+					}
+				}
+				generation, sources, err := environmentCustodyAdmissionWorkloads(cfg, deployments)
+				if err != nil || generation != runtime.Custody.Generation {
+					t.Fatal("shared checker lost original custody inventory", err)
+				}
 				for _, owner := range runtime.Custody.Owners {
 					id := "Deployment/" + owner.Namespace + "/" + owner.ID
 					var object deploymentplan.Object
@@ -340,6 +351,15 @@ func TestCustodyFreshNativeInventoryCanonicalRoundTrip(t *testing.T) {
 					}
 					if !selected {
 						t.Fatal("owner lost OpenBao configuration", id)
+					}
+					records, err := environmentCustodyAdmissionRecords(runtime.Custody, owner, strings.Repeat("f", 64))
+					if err != nil || len(records) == 0 {
+						t.Fatal("owner lost original credential purposes", id, err)
+					}
+					batch := environmentCustodyAdmissionBatch{ValidUntil: time.Now().UTC().Add(time.Minute), Records: records}
+					source := sources[owner.Namespace+"/"+owner.ID]
+					if _, err := environmentCustodyAdmissionJob(cfg, runtime.Custody, owner, source, p.Image, "", batch); err != nil {
+						t.Fatal("cannot build a scoped public admission batch", id, err)
 					}
 				}
 				providerFound := false

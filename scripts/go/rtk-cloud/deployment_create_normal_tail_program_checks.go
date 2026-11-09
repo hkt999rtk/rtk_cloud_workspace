@@ -77,7 +77,11 @@ func createNormalTailProgramChecks(ctx context.Context, cfg deploymentConfig, h 
 				return err
 			}
 			now := time.Now().UTC()
-			for _, at := range []time.Time{now, now.Add(time.Duration(window) * time.Second)} {
+			cutoff := now.Add(time.Duration(window) * time.Second)
+			if err := verifyEnvironmentCommittedCustodyWithOutputs(store.checkRuntime, cutoff, p.Products.Outputs); err != nil {
+				return environmentRuntimePKIQualificationError(err)
+			}
+			for _, at := range []time.Time{now, cutoff} {
 				if err := verifySecretStoreK8SRuntime(store, at); err != nil {
 					return environmentRuntimePKIQualificationError(err)
 				}

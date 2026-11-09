@@ -73,6 +73,12 @@ func environmentCustodyOwners(cfg deploymentConfig, p environmentCreateBootstrap
 		}
 		owners[id] = owner
 	}
+	addServer := func(id, domain, name, path string, names []string) {
+		owner := owners[id]
+		server := environmentCustodyServerBinding{Domain: domain, Name: name, StatePath: path, DNSNames: strings.Join(names, ",")}
+		owner.Servers = append(owner.Servers, server)
+		owners[id] = owner
+	}
 	for _, role := range []string{"pki-controller", "certissuer", "account-manager"} {
 		namespace := p.Stack + "-video-cloud"
 		if role == "account-manager" {
@@ -82,12 +88,21 @@ func environmentCustodyOwners(cfg deploymentConfig, p environmentCreateBootstrap
 			return nil, err
 		}
 		addClient(role, "service:"+role, environmentCreateServiceOwnerIdentityPath(role, "client.json"))
+		name := role + "." + namespace + ".svc"
+		if role == "account-manager" {
+			name += ".cluster.local"
+		}
+		addServer(role, "service", name, environmentCreateServiceOwnerIdentityPath(role, "server.json"), environmentCreateServiceServerDNSNames(p, role, name))
 	}
 	for _, owner := range environmentCreateApplicationOwners() {
 		if err = add(owner.Name, p.Stack+"-video-cloud", owner.Name, owner.Claim); err != nil {
 			return nil, err
 		}
 		addClient(owner.Name, "service:"+owner.Role, owner.ClientState)
+		if owner.Name == "video-cloud-api-pki" || owner.Name == "video-cloud-api-app-pki" {
+			name := owner.Name + "." + p.Stack + "-video-cloud.svc"
+			addServer(owner.Name, "service", name, filepath.Join(filepath.Dir(owner.ClientState), "server.json"), []string{name})
+		}
 	}
 	for _, purpose := range []struct{ owner, claim string }{{"video-cloud-api-pki", "video-cloud-api-pki-trust"}, {"video-cloud-api-app-pki", "video-cloud-api-app-pki-trust"}} {
 		if err = add(purpose.owner, p.Stack+"-video-cloud", purpose.owner, purpose.claim); err != nil {
@@ -101,6 +116,13 @@ func environmentCustodyOwners(cfg deploymentConfig, p environmentCreateBootstrap
 		if owner.role != "openbao" {
 			addClient("mqtt-pki", "service:"+owner.role, owner.state)
 		}
+	}
+	if names, err := environmentCreateTransportNames(p, "mqtt"); err == nil {
+		name := "mqtt-pki." + p.Stack + "-video-cloud.svc"
+		if !slices.Contains(names, name) {
+			return nil, environmentCreateBootstrapBlocker("original MQTT custody server is outside the frozen DNS policy")
+		}
+		addServer("mqtt-pki", "mqtt", name, environmentCreateMQTTIdentity+"/state.json", names)
 	}
 	for _, product := range p.ProductIdentities {
 		workload := environmentCustodyProductWorkload(strings.TrimPrefix(product.Subject, "service:"))

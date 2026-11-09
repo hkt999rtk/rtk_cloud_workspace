@@ -22,6 +22,7 @@ func newEnvironmentCheckRuntime(ctx context.Context, cfg deploymentConfig, store
 	if cfg.Values["PKI_STATE_BACKEND"] != "openbao" {
 		return r
 	}
+	r.custodyRequired = true
 	bad := func() *deploymentCheckRuntime {
 		r.custodyError = errors.New("selected environment custody inspection inputs are unavailable")
 		return r
@@ -60,6 +61,7 @@ func newEnvironmentCheckRuntime(ctx context.Context, cfg deploymentConfig, store
 	// The ordinary checker and independent helper share one selected credential
 	// snapshot, including a health invocation that started from a canonical path.
 	r = newFrozenDeploymentCheckRuntime(ctx, cfg.Environment, selected)
+	r.custodyRequired = true
 	r.custodyReader = &maintenanceRuntime{cfg: cfg, store: store, backend: selected, image: image}
 	return r
 }

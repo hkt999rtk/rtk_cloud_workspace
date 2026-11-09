@@ -150,7 +150,7 @@ func TestProductIdentityCapabilitiesRequireEveryActualBinaryAndSuppressPrivateEr
 				}
 				features := []string{"deployment-bootstrap-finalize-v1", "first-trust-v1", "create-service-enrollment-v1", "registry-only-issuance-v1", "owned-server-export-v1", "service-registration-bootstrap-ack-v1"}
 				if mode == "kv-supported" || mode == "kv-missing-public-crl" {
-					features = append(features, "committed-identity-inspection-v1")
+					features = append(features, "committed-identity-inspection-v1", "committed-identity-batch-admission-v1")
 					if mode == "kv-supported" {
 						features = append(features, "committed-public-crl-maintenance-v1")
 					}
