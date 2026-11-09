@@ -1361,3 +1361,12 @@ verified that a committed native CRL import with a lost response is read back
 and never repeated, and that core Jobs project into the expected custody owner
 and memory volume (custody-fresh-crl-root-final.log). Complete core convergence,
 exact ACL and teardown review, CI publication and live dev remain pending.
+
+Exact removal evidence checkpoint. Read-only removal planning also checks the
+original kubeconfig, unoccupied execution Lease, current persistent-volume
+ownership and DNS. Removal persists a completion only after independently
+checking the exact original VM, bucket, cluster, volume and DNS absences.
+Archive requires the completed evidence, preserves its bytes, and rechecks
+the same IDs and DNS scope even when resuming an interrupted archive. The
+isolated regression rejects missing completion and a renamed original VM and
+preserves the original archive bytes (custody-exact-archive-final.log).

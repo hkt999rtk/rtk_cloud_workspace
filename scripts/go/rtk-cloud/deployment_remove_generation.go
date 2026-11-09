@@ -20,19 +20,39 @@ import (
 const generationRemovalIntent = "deployment/remove-original-generation.json"
 
 type originalGenerationRemoval struct {
-	Schema           int      `json:"schema"`
-	Environment      string   `json:"environment"`
-	ClusterID        string   `json:"cluster_id"`
-	LedgerSHA256     string   `json:"ledger_sha256"`
-	KubeSHA256       string   `json:"kubeconfig_sha256"`
-	VolumeIDs        []string `json:"volume_ids"`
-	WorkerIDs        []string `json:"worker_ids"`
-	KubernetesPurged bool     `json:"kubernetes_purged"`
+	Schema           int        `json:"schema"`
+	Environment      string     `json:"environment"`
+	ClusterID        string     `json:"cluster_id"`
+	LedgerSHA256     string     `json:"ledger_sha256"`
+	KubeSHA256       string     `json:"kubeconfig_sha256"`
+	VolumeIDs        []string   `json:"volume_ids"`
+	WorkerIDs        []string   `json:"worker_ids"`
+	KubernetesPurged bool       `json:"kubernetes_purged"`
+	CompletedAt      *time.Time `json:"completed_at,omitempty"`
+	DNSOwnershipSHA  string     `json:"dns_ownership_sha256"`
+	InstanceIDs      []string   `json:"verified_absent_instance_ids,omitempty"`
+	BucketIDs        []string   `json:"verified_absent_bucket_ids,omitempty"`
 }
 
 type generationProviderTarget struct {
 	environmentCreateProviderReceipt
 	path string
+}
+
+func exactGenerationProviderScope(targets []generationProviderTarget, workers []string) ([]string, []string) {
+	instances := slices.Clone(workers)
+	buckets := []string{}
+	for _, target := range targets {
+		switch target.Kind {
+		case "instance":
+			instances = append(instances, target.NativeID)
+		case "bucket":
+			buckets = append(buckets, target.NativeID)
+		}
+	}
+	slices.Sort(instances)
+	slices.Sort(buckets)
+	return instances, buckets
 }
 
 var generationTurnKey = regexp.MustCompile(`^turn-0[1-5]$`)
@@ -348,10 +368,49 @@ func removeOriginalGeneration(ctx context.Context, cfg deploymentConfig, store s
 	if err := validateGenerationRemovalInventory(ctx, cfg, token, targets, intent.WorkerIDs); err != nil {
 		return err
 	}
+	dnsSHA, err := verifyGenerationRemovalDNS(ctx, cfg, intent.KubernetesPurged)
+	if err != nil {
+		return err
+	}
+	if starting {
+		intent.DNSOwnershipSHA = dnsSHA
+	} else if intent.DNSOwnershipSHA != dnsSHA {
+		return errors.New("original DNS ownership changed after removal admission")
+	}
+	adapter, err := newDNSAdapter(cfg.DNSAdapter)
+	if err != nil {
+		return err
+	}
+	if err := validateDeploymentDNSReconciliation(ctx, cfg, readRemovalRecoveryNative, adapter); err != nil {
+		return err
+	}
 	if plan {
 		proof, known, err := readDeploymentRemovalVolumes(cfg)
 		if err != nil || !known || proof.ClusterID != clusterID || proof.KubeSHA256 != kubeSHA {
 			return errors.New("read-only removal plan needs the original captured volume ownership")
+		}
+		if !intent.KubernetesPurged {
+			backend, hash, err := deploymentRemovalKubeconfig(cfg)
+			if err != nil || hash != kubeSHA {
+				return errors.New("read-only removal plan could not verify the original Kubernetes identity")
+			}
+			lease, err := backend.Read(ctx, "Lease/"+cfg.Values["CLOUD_STACK_NAME"]+"-video-cloud/rtk-deployment-execution")
+			if err != nil || lease != nil {
+				return errors.New("read-only removal plan requires a verified unoccupied Kubernetes execution lease")
+			}
+			raw, err := backend.command(ctx, nil, "get", "persistentvolume", "-o", "json")
+			if err != nil {
+				return err
+			}
+			ids, err := persistentVolumeIDsForStack(raw, cfg.Values["CLOUD_STACK_NAME"])
+			if err != nil {
+				return err
+			}
+			for _, id := range ids {
+				if !slices.Contains(proof.VolumeIDs, id) {
+					return errors.New("live persistent volume is missing from original removal ownership")
+				}
+			}
 		}
 		for _, target := range targets {
 			fmt.Printf("[VERIFIED] original %s %s %s\n", target.Kind, target.NativeID, target.Name)
@@ -397,13 +456,6 @@ func removeOriginalGeneration(ctx context.Context, cfg deploymentConfig, store s
 	proof, known, err := readDeploymentRemovalVolumes(cfg)
 	if err != nil || !known || proof.ClusterID != clusterID || proof.KubeSHA256 != kubeSHA || !slices.Equal(proof.VolumeIDs, intent.VolumeIDs) {
 		return errors.New("removal lost its exact original volume ownership evidence")
-	}
-	adapter, err := newDNSAdapter(cfg.DNSAdapter)
-	if err != nil {
-		return err
-	}
-	if err := validateDeploymentDNSReconciliation(ctx, cfg, readRemovalRecoveryNative, adapter); err != nil {
-		return err
 	}
 	if !intent.KubernetesPurged {
 		backend, hash, err := deploymentRemovalKubeconfig(cfg)
@@ -457,11 +509,60 @@ func removeOriginalGeneration(ctx context.Context, cfg deploymentConfig, store s
 	}); err != nil {
 		return err
 	}
-	if err := verifyArchivedGenerationProviderAbsence(ctx, cfg, deploymentGenerationArchive{ClusterID: clusterID, VolumeIDs: intent.VolumeIDs}); err != nil {
+	instanceIDs, bucketIDs := exactGenerationProviderScope(targets, intent.WorkerIDs)
+	if err := verifyArchivedGenerationProviderAbsence(ctx, cfg, deploymentGenerationArchive{ClusterID: clusterID, VolumeIDs: intent.VolumeIDs, InstanceIDs: instanceIDs, BucketIDs: bucketIDs}); err != nil {
 		return err
+	}
+	if digest, err := verifyGenerationRemovalDNS(ctx, cfg, true); err != nil || digest != intent.DNSOwnershipSHA {
+		return errors.Join(errors.New("exact original DNS removal could not be confirmed"), err)
+	}
+	if intent.CompletedAt == nil {
+		now := time.Now().UTC()
+		intent.CompletedAt = &now
+		intent.InstanceIDs, intent.BucketIDs = instanceIDs, bucketIDs
+		if err := save(true); err != nil {
+			return err
+		}
+	} else if !slices.Equal(intent.InstanceIDs, instanceIDs) || !slices.Equal(intent.BucketIDs, bucketIDs) {
+		return errors.New("completed removal scope differs from the original provider identities")
 	}
 	fmt.Printf("[VERIFIED] environment=%s original-cluster-id=%s exact provider generation absent\n", cfg.Environment, clusterID)
 	return nil
+}
+
+func verifyGenerationRemovalDNS(ctx context.Context, cfg deploymentConfig, absent bool) (string, error) {
+	values := appendMap(cfg.Values, cfg.DNSValues)
+	values["CLOUD_ENV_NAME"] = cfg.Environment
+	paths := newProvisionPaths(cfg.Workspace, cfg.RuntimeRoot, provisionOptions{})
+	local := dnsContext(paths, values)
+	raw, err := readDNSLocalState(local, cfg.DNSAdapter, "ownership.json")
+	if err != nil {
+		return "", fmt.Errorf("original DNS ownership is unavailable: %w", err)
+	}
+	ownership, err := readDNSOwnership(local, cfg.DNSAdapter)
+	if err != nil {
+		return "", err
+	}
+	challenges, err := readDNSChallenges(local, cfg.DNSAdapter)
+	if err != nil || len(challenges) != 0 {
+		return "", errors.Join(errors.New("original ACME challenge cleanup is incomplete"), err)
+	}
+	if len(ownership.Records) != 0 {
+		adapter, adapterCtx, zone, err := selectedDNSAdapter(paths, values)
+		if err != nil {
+			return "", err
+		}
+		for _, record := range ownership.Records {
+			current, err := adapter.GetRecordSet(ctx, adapterCtx, zone, record.Name, record.Type)
+			if err != nil {
+				return "", err
+			}
+			if len(current.Values) != 0 && (absent || !slices.Equal(mergeDNSValues(current.Values), mergeDNSValues(record.Values))) {
+				return "", fmt.Errorf("DNS record %s %s differs from its expected removal state", record.Type, record.Name)
+			}
+		}
+	}
+	return environmentPreflightBytesSHA256(raw), nil
 }
 
 func remainingGenerationRemovalTime(ctx context.Context) time.Duration {

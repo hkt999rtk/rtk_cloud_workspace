@@ -11,6 +11,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -34,12 +35,14 @@ var generationArchivePaths = []string{
 }
 
 type deploymentGenerationArchive struct {
-	Schema      int                          `json:"schema"`
-	Environment string                       `json:"environment"`
-	ClusterID   string                       `json:"original_cluster_id"`
-	VolumeIDs   []string                     `json:"original_volume_ids"`
-	InstanceIDs []string                     `json:"original_instance_ids,omitempty"`
-	Entries     map[string]map[string]string `json:"entries"`
+	Schema          int                          `json:"schema"`
+	Environment     string                       `json:"environment"`
+	ClusterID       string                       `json:"original_cluster_id"`
+	VolumeIDs       []string                     `json:"original_volume_ids"`
+	InstanceIDs     []string                     `json:"original_instance_ids,omitempty"`
+	BucketIDs       []string                     `json:"original_bucket_ids,omitempty"`
+	DNSOwnershipSHA string                       `json:"dns_ownership_sha256"`
+	Entries         map[string]map[string]string `json:"entries"`
 }
 
 func runArchiveRemovedDeploymentGeneration(args []string) error {
@@ -125,29 +128,30 @@ func archiveRemovedDeploymentGeneration(ctx context.Context, cfg deploymentConfi
 		}
 		manifest.VolumeIDs = proof.VolumeIDs
 		intentPath := filepath.Join(store.Root, generationRemovalIntent)
-		if _, err := os.Lstat(intentPath); err == nil {
-			var intent originalGenerationRemoval
-			targets, ledgerSHA, kubeSHA, loadErr := loadGenerationRemovalTargets(cfg, store, clusterID)
-			if loadErr != nil {
-				return loadErr
-			}
-			if readEnvironmentPreflightJSON(intentPath, &intent) != nil || intent.Schema != 1 || intent.Environment != cfg.Environment ||
-				intent.ClusterID != clusterID || intent.LedgerSHA256 != ledgerSHA || intent.KubeSHA256 != kubeSHA ||
-				intent.KubeSHA256 != proof.KubeSHA256 || !intent.KubernetesPurged || !slices.Equal(intent.VolumeIDs, proof.VolumeIDs) {
-				return errors.New("original generation removal is incomplete or its exact ownership cannot be verified")
-			}
-			manifest.InstanceIDs = slices.Clone(intent.WorkerIDs)
-			for _, target := range targets {
-				if target.Kind == "instance" {
-					manifest.InstanceIDs = append(manifest.InstanceIDs, target.NativeID)
-				}
-			}
-			slices.Sort(manifest.InstanceIDs)
-		} else if !errors.Is(err, os.ErrNotExist) {
+		var intent originalGenerationRemoval
+		if readEnvironmentPreflightJSON(intentPath, &intent) != nil || intent.Schema != 1 || intent.Environment != cfg.Environment ||
+			intent.ClusterID != clusterID || intent.KubeSHA256 != proof.KubeSHA256 || intent.WorkerIDs == nil ||
+			!intent.KubernetesPurged || intent.CompletedAt == nil || intent.CompletedAt.IsZero() || intent.CompletedAt.After(time.Now().UTC()) ||
+			!slices.Equal(intent.VolumeIDs, proof.VolumeIDs) || !environmentPreflightDigest.MatchString(intent.DNSOwnershipSHA) {
+			return errors.New("completed exact original generation removal is required before archive")
+		}
+		targets, ledgerSHA, kubeSHA, err := loadGenerationRemovalTargets(cfg, store, clusterID)
+		if err != nil {
 			return err
 		}
+		if intent.LedgerSHA256 != ledgerSHA || intent.KubeSHA256 != kubeSHA {
+			return errors.New("completed removal differs from the original generation ownership")
+		}
+		manifest.InstanceIDs, manifest.BucketIDs = exactGenerationProviderScope(targets, intent.WorkerIDs)
+		if !slices.Equal(intent.InstanceIDs, manifest.InstanceIDs) || !slices.Equal(intent.BucketIDs, manifest.BucketIDs) {
+			return errors.New("completed removal did not verify the exact original VM and bucket identities")
+		}
+		manifest.DNSOwnershipSHA = intent.DNSOwnershipSHA
 	} else if statErr != nil || validateEnvironmentPreflightDirectories(store, filepath.Dir(manifestPath)) != nil ||
-		readEnvironmentPreflightJSON(manifestPath, &manifest) != nil || manifest.Schema != 1 || manifest.Environment != cfg.Environment || manifest.ClusterID != clusterID || manifest.VolumeIDs == nil || manifest.Entries[generationRemovalProof]["."] == "" {
+		readEnvironmentPreflightJSON(manifestPath, &manifest) != nil || manifest.Schema != 1 || manifest.Environment != cfg.Environment || manifest.ClusterID != clusterID ||
+		manifest.VolumeIDs == nil || len(manifest.InstanceIDs) < 2 || len(manifest.BucketIDs) != 2 ||
+		manifest.Entries[generationRemovalProof]["."] == "" || manifest.Entries[generationRemovalIntent]["."] == "" ||
+		!environmentPreflightDigest.MatchString(manifest.DNSOwnershipSHA) {
 		return errors.New("existing generation archive manifest cannot be verified")
 	}
 
@@ -198,6 +202,23 @@ func archiveRemovedDeploymentGeneration(ctx context.Context, cfg deploymentConfi
 		default:
 			return fmt.Errorf("generation archive source or destination changed at %s", relative)
 		}
+	}
+	if !fresh {
+		intentPath := filepath.Join(store.Root, base, "state", generationRemovalIntent)
+		if slices.Contains(pending, generationRemovalIntent) {
+			intentPath = filepath.Join(store.Root, generationRemovalIntent)
+		}
+		var intent originalGenerationRemoval
+		if readEnvironmentPreflightJSON(intentPath, &intent) != nil || intent.Schema != 1 || intent.Environment != manifest.Environment ||
+			intent.ClusterID != manifest.ClusterID || !intent.KubernetesPurged || intent.CompletedAt == nil ||
+			intent.CompletedAt.IsZero() || intent.CompletedAt.After(time.Now().UTC()) ||
+			!slices.Equal(intent.VolumeIDs, manifest.VolumeIDs) || !slices.Equal(intent.InstanceIDs, manifest.InstanceIDs) ||
+			!slices.Equal(intent.BucketIDs, manifest.BucketIDs) || intent.DNSOwnershipSHA != manifest.DNSOwnershipSHA {
+			return errors.New("archived exact removal evidence differs from the original manifest")
+		}
+	}
+	if digest, err := verifyGenerationRemovalDNS(ctx, cfg, true); err != nil || digest != manifest.DNSOwnershipSHA {
+		return errors.Join(errors.New("archive requires absence of the exact original DNS records"), err)
 	}
 	if err := verifyAbsence(ctx, cfg, manifest); err != nil {
 		return err
@@ -346,6 +367,15 @@ func verifyArchivedGenerationProviderAbsence(ctx context.Context, cfg deployment
 		}
 	}
 	values := environmentCreateProviderValues(cfg)
+	for _, bucket := range m.BucketIDs {
+		region, name, ok := strings.Cut(bucket, "/")
+		if !ok || validateDestroyRuntimeBucket(values, name, region) != nil {
+			return errors.New("original bucket identity is invalid")
+		}
+		if err := checkAbsent("/object-storage/buckets/" + url.PathEscape(region) + "/" + url.PathEscape(name)); err != nil {
+			return err
+		}
+	}
 	match := linodeDestroyMatcher(values, values["CLOUD_STACK_NAME"], "")
 	for _, group := range []string{"/lke/clusters", "/linode/instances", "/networking/firewalls", "/vpcs", "/nodebalancers", "/object-storage/buckets"} {
 		items, err := environmentCreateProviderList(ctx, token, group)

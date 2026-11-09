@@ -8,13 +8,17 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestArchiveRemovedGenerationPreservesAndResumesExactBytes(t *testing.T) {
 	cfg, store := deploymentRemovalFixture(t, "dev", false)
+	cfg.Storage.RuntimeMedia = deploymentStorageTarget{Purpose: "runtime-media", Bucket: "rtk-cloud-dev-runtime-us-sea", Region: "us-sea"}
+	cfg.Storage.OTAFirmware = deploymentStorageTarget{Purpose: "ota-firmware", Bucket: "rtk-cloud-dev-ota-firmware-us-lax", Region: "us-lax"}
+	kubeSHA := environmentPreflightBytesSHA256([]byte("original-kubeconfig"))
 	proof, err := json.Marshal(deploymentRemovalVolumes{
 		Schema: 1, Environment: "dev", Stack: cfg.Values["CLOUD_STACK_NAME"], ClusterID: "123",
-		KubeSHA256: environmentPreflightBytesSHA256([]byte("original-kubeconfig")), VolumeIDs: []string{"456"},
+		KubeSHA256: kubeSHA, VolumeIDs: []string{"456"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -38,6 +42,34 @@ func TestArchiveRemovedGenerationPreservesAndResumesExactBytes(t *testing.T) {
 	run := func(verify func(context.Context, deploymentConfig, deploymentGenerationArchive) error) error {
 		return archiveRemovedDeploymentGeneration(context.Background(), cfg, store, "123", verify)
 	}
+	called := false
+	if err := run(func(context.Context, deploymentConfig, deploymentGenerationArchive) error {
+		called = true
+		return nil
+	}); err == nil || called {
+		t.Fatal("volume proof alone authorized archiving without completed exact-generation removal")
+	}
+	writeOriginalGenerationTestLedger(t, cfg, store, "123", kubeSHA)
+	targets, ledgerSHA, _, err := loadGenerationRemovalTargets(cfg, store, "123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	dnsSHA, err := verifyGenerationRemovalDNS(t.Context(), cfg, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workers := []string{"90"}
+	instances, buckets := exactGenerationProviderScope(targets, workers)
+	original[generationRemovalIntent], err = json.Marshal(originalGenerationRemoval{Schema: 1, Environment: "dev", ClusterID: "123",
+		LedgerSHA256: ledgerSHA, KubeSHA256: kubeSHA, WorkerIDs: workers, VolumeIDs: []string{"456"}, KubernetesPurged: true,
+		CompletedAt: &now, DNSOwnershipSHA: dnsSHA, InstanceIDs: instances, BucketIDs: buckets})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.write(generationRemovalIntent, original[generationRemovalIntent], false); err != nil {
+		t.Fatal(err)
+	}
 	denied := errors.New("exact volume still present")
 	if err := run(func(context.Context, deploymentConfig, deploymentGenerationArchive) error { return denied }); !errors.Is(err, denied) {
 		t.Fatalf("expected absence failure, got %v", err)
@@ -48,6 +80,9 @@ func TestArchiveRemovedGenerationPreservesAndResumesExactBytes(t *testing.T) {
 	verified := func(_ context.Context, selected deploymentConfig, m deploymentGenerationArchive) error {
 		if selected.Environment != "dev" || m.ClusterID != "123" || len(m.VolumeIDs) != 1 || m.VolumeIDs[0] != "456" {
 			t.Fatalf("wrong selected removal authority: %s %s %v", selected.Environment, m.ClusterID, m.VolumeIDs)
+		}
+		if strings.Join(m.InstanceIDs, ",") != "71,72,90" || strings.Join(m.BucketIDs, ",") != "us-lax/rtk-cloud-dev-ota-firmware-us-lax,us-sea/rtk-cloud-dev-runtime-us-sea" {
+			t.Fatal("archive omitted original VM or bucket identities")
 		}
 		return nil
 	}
