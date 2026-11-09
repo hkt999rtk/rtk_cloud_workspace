@@ -1397,3 +1397,13 @@ private updates, public cache creation and unrelated private access. Isolated
 Kubernetes confirmed the reader account could not get or update the writer
 Lease. Normal-tail checkpoint replay and custody regressions passed in 91.829s
 (custody-readonly-role-final.log). Contracts PR #196 merged at cc6d28dc.
+
+Real rendered core CRL stage checkpoint. An isolated kind cluster applied the
+unmodified Service CRL Job recipes and OpenBao custody projection, substituting
+only the locally built 74cd78d image reference. All three Jobs used real
+Kubernetes TokenReview authentication and a separate PostgreSQL registry and
+OpenBao instance. Each committed its four expected Service Root/intermediate
+listener and outbound records at KV version 1 (custody-fresh-core-live-74cd78d.log).
+This verifies the initial CRL stage; managed core rollout and complete creation
+acceptance are still separate. Governed native PR coverage passed at 72.66%
+(local-video-pr-20261109002443-66417). Video Cloud PR #773 is open for that head.
