@@ -310,7 +310,7 @@ func TestStartVideoCloudPRFixturesUsesIsolatedDependenciesAndRestoresEnvironment
 		"docker port rtk-video-",
 		"docker exec rtk-video-",
 		"go test ./internal/mqtt -run ^TestBrokerPublishSubscribeIntegration$ -count=1",
-		"docker rm --force rtk-video-",
+		"docker rm --force --volumes rtk-video-",
 	} {
 		if !strings.Contains(strings.Join(joined, "\n"), want) {
 			t.Fatalf("fixture calls missing %q:\n%s", want, strings.Join(joined, "\n"))
