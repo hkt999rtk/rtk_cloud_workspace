@@ -131,9 +131,7 @@ func TestExecutionCleanupReleasesStoppedOwnersAndPreservesEveryOutcome(t *testin
 				ctx, cancel := context.WithCancel(ctx)
 				defer cancel()
 				if mode == "timeout" {
-					var expire context.CancelFunc
-					ctx, expire = context.WithTimeout(ctx, 250*time.Millisecond)
-					defer expire()
+					ctx = qualificationDeadlineContext{ctx}
 				}
 				qualified := func(context.Context, *Plan) error { return nil }
 				fence := qualified
@@ -148,9 +146,9 @@ func TestExecutionCleanupReleasesStoppedOwnersAndPreservesEveryOutcome(t *testin
 				case "timeout", "cancelled":
 					backend.waitHook = func(waitCtx context.Context, r Resource) error {
 						if r.ID == namespaceID {
-							if mode == "cancelled" {
-								cancel()
-							}
+							// Inject the interruption at its intended checkpoint,
+							// after durable progress, independently of fsync speed.
+							cancel()
 							<-waitCtx.Done()
 						}
 						return nil

@@ -162,6 +162,9 @@ func controllerStaticIdentityProfile(object deploymentplan.Object) (bool, error)
 }
 
 func applyControllerIdentityPreparation(object deploymentplan.Object, release environmentRelease) error {
+	if remote, err := controllerCustodyPlacement(object); remote || err != nil {
+		return err
+	}
 	if static, err := controllerStaticIdentityProfile(object); err != nil || static {
 		return err
 	}
@@ -182,6 +185,15 @@ func applyControllerIdentityPreparation(object deploymentplan.Object, release en
 }
 
 func validateControllerIdentityInitializer(object deploymentplan.Object, image string) error {
+	if remote, err := controllerCustodyPlacement(object); remote || err != nil {
+		if err != nil {
+			return err
+		}
+		if len(identityPermissionList(environmentPKIPod(object)["initContainers"])) != 0 {
+			return controllerIdentityPermissionBlocker(deploymentplan.ID(object), "OpenBao memory projection cannot execute a retained PVC permission recipe")
+		}
+		return nil
+	}
 	expected, err := maintainedControllerIdentityInitializer(object, image)
 	if err != nil {
 		return err

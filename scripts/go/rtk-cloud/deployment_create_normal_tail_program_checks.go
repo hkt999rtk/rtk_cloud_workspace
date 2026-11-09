@@ -41,7 +41,7 @@ func createNormalTailProgramChecks(ctx context.Context, cfg deploymentConfig, h 
 			if err := verifyEnvironmentRelease(ctx, cfg, p.Release); err != nil {
 				return err
 			}
-			return verifyCreateNormalTailProductCapabilities(ctx, p.Release, p.Products, cfg.Values["TEST_LAB_ENABLED"] == "true")
+			return verifyCreateNormalTailProductCapabilities(ctx, cfg, p.Release, p.Products, cfg.Values["TEST_LAB_ENABLED"] == "true")
 		},
 		"deployment.execution": func(ctx context.Context) error {
 			for _, check := range []func(context.Context, *deploymentplan.Plan) error{c.CheckProviderQuota, c.CheckNodeCapacity, c.CheckSurgeCapacity, c.Backend.CheckStorageBindings, c.Backend.CheckPlanAccess} {
@@ -67,7 +67,7 @@ func createNormalTailProgramChecks(ctx context.Context, cfg deploymentConfig, h 
 				return err
 			}
 			store := c.Store
-			store.checkRuntime = newFrozenDeploymentCheckRuntime(ctx, preview.Environment, c.Backend)
+			store.checkRuntime = c.newCheckRuntime(ctx)
 			store.checkRuntime.preflightPlan = preview
 			if err := verifySecretStoreK8SBindings(store); err != nil {
 				return environmentRuntimePKIQualificationError(err)
@@ -77,7 +77,11 @@ func createNormalTailProgramChecks(ctx context.Context, cfg deploymentConfig, h 
 				return err
 			}
 			now := time.Now().UTC()
-			for _, at := range []time.Time{now, now.Add(time.Duration(window) * time.Second)} {
+			cutoff := now.Add(time.Duration(window) * time.Second)
+			if err := verifyEnvironmentCommittedCustodyWithOutputs(store.checkRuntime, cutoff, p.Products.Outputs); err != nil {
+				return environmentRuntimePKIQualificationError(err)
+			}
+			for _, at := range []time.Time{now, cutoff} {
 				if err := verifySecretStoreK8SRuntime(store, at); err != nil {
 					return environmentRuntimePKIQualificationError(err)
 				}
@@ -86,7 +90,7 @@ func createNormalTailProgramChecks(ctx context.Context, cfg deploymentConfig, h 
 		},
 		"deployment.compatibility": func(ctx context.Context) error {
 			store := c.Store
-			store.checkRuntime = newFrozenDeploymentCheckRuntime(ctx, preview.Environment, c.Backend)
+			store.checkRuntime = c.newCheckRuntime(ctx)
 			if err := verifyEnvironmentReleaseSchemasForPlan(ctx, cfg, store, p.Release, preview, c.Backend.Read); err != nil {
 				return environmentSchemaQualificationError(err)
 			}

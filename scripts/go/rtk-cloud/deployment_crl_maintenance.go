@@ -19,7 +19,10 @@ type crlMaintenanceIssuer struct {
 	Issuer   environmentCreateRegisteredIssuer
 	Snapshot createRootCRLNativeSnapshot
 }
-type crlMaintenanceConsumer struct{ Namespace, Pod, PodUID, Container, StatePath, IssuerID, ConsumerID string }
+type crlMaintenanceConsumer struct {
+	Namespace, Pod, PodUID, Container, StatePath, IssuerID, ConsumerID string
+	Custody                                                            bool `json:"custody,omitempty"`
+}
 type crlMaintenanceInventory struct {
 	Issuers   []crlMaintenanceIssuer
 	Consumers []crlMaintenanceConsumer

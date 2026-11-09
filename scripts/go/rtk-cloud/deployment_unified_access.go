@@ -17,7 +17,7 @@ type environmentAccessRequirement struct {
 
 // These lists are shared with the phase inventory reader. A narrower list would
 // miss an unplanned owner; label selectors do not restrict RBAC list permission.
-const environmentNamespacedInventoryKinds = "deployment,statefulset,daemonset,replicaset,pod,job,cronjob,service,configmap,secret,persistentvolumeclaim,serviceaccount,role,rolebinding,networkpolicy,ingress,poddisruptionbudget,horizontalpodautoscaler"
+const environmentNamespacedInventoryKinds = "deployment,statefulset,daemonset,replicaset,pod,job,cronjob,service,configmap,secret,persistentvolumeclaim,serviceaccount,role,rolebinding,networkpolicy,ingress,poddisruptionbudget,horizontalpodautoscaler,lease"
 const environmentClusterInventoryKinds = "clusterrole,clusterrolebinding,ingressclass,validatingwebhookconfiguration"
 
 var environmentAPIResources = map[string]environmentAccessRequirement{
@@ -28,6 +28,7 @@ var environmentAPIResources = map[string]environmentAccessRequirement{
 	"service": {Resource: "services"}, "configmap": {Resource: "configmaps"}, "secret": {Resource: "secrets"},
 	"persistentvolumeclaim": {Resource: "persistentvolumeclaims"}, "serviceaccount": {Resource: "serviceaccounts"},
 	"storageclass": {Group: "storage.k8s.io", Resource: "storageclasses"},
+	"lease":        {Group: "coordination.k8s.io", Resource: "leases"},
 	"role":         {Group: "rbac.authorization.k8s.io", Resource: "roles"}, "rolebinding": {Group: "rbac.authorization.k8s.io", Resource: "rolebindings"},
 	"clusterrole": {Group: "rbac.authorization.k8s.io", Resource: "clusterroles"}, "clusterrolebinding": {Group: "rbac.authorization.k8s.io", Resource: "clusterrolebindings"},
 	"networkpolicy": {Group: "networking.k8s.io", Resource: "networkpolicies"}, "ingress": {Group: "networking.k8s.io", Resource: "ingresses"},

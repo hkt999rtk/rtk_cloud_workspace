@@ -57,6 +57,9 @@ func productPreparationDefinitions(cfg deploymentConfig, store secretStore, e *e
 			full = stage
 		}
 		p, j, err := acceptedCreateStage(store, e, "kubernetes/"+full)
+		if err == nil {
+			recipe, err = projectEnvironmentCustodyFrozenRecipe(cfg, l.Bootstrap, e.Journal.PlanSHA256, l.Root.RootFingerprint, recipe, p)
+		}
 		if err != nil || !isFresh && p.CreateParentSHA256 != e.Journal.PlanSHA256 || p.Environment != cfg.Environment || p.Stack != e.Journal.Stack || p.BindingsSHA256 != environmentCreateStageBindingsSHA(full, recipe) || len(p.Resources) != len(recipe) {
 			return bad()
 		}

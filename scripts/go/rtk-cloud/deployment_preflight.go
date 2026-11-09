@@ -285,7 +285,7 @@ func runDeploymentPreflightWithChecksContext(ctx context.Context, cfg deployment
 	}
 	if !rtkCloudTestMode() {
 		store, err := newSecretStore("", cfg.Environment)
-		store.checkRuntime = newDeploymentCheckRuntime(ctx, cfg.Environment)
+		store.checkRuntime = newEnvironmentCheckRuntime(ctx, cfg, store, nil, "")
 		if err != nil {
 			reporter.fail("secret-store", err)
 		} else if err := verifySecretStoreContents(store); err != nil {

@@ -362,8 +362,8 @@ func startVideoCloudPRFixtures(workspace string) (func(), error) {
 	runKey := fmt.Sprintf("pre-pr-%d", time.Now().UTC().UnixNano())
 	postgresName, emqxName := "rtk-video-"+runKey+"-pg", "rtk-video-"+runKey+"-emqx"
 	cleanup := func() {
-		_, _ = prePRRunFixtureCommand("", nil, "docker", "rm", "--force", emqxName)
-		_, _ = prePRRunFixtureCommand("", nil, "docker", "rm", "--force", postgresName)
+		_, _ = prePRRunFixtureCommand("", nil, "docker", "rm", "--force", "--volumes", emqxName)
+		_, _ = prePRRunFixtureCommand("", nil, "docker", "rm", "--force", "--volumes", postgresName)
 	}
 	fail := func(err error) (func(), error) { cleanup(); return nil, err }
 	if _, err := prePRRunFixtureCommand("", nil, "docker", "run", "--detach", "--name", postgresName,

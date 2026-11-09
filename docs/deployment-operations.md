@@ -1376,6 +1376,35 @@ selected operator inputs, storage evidence and DNS ownership required by the
 new plan. An archive records local preservation, not provider removal or a
 successful deployment.
 
+For dev and staging with a completed native create journal, qualify the original
+scope first, then run the same command without `--plan` to remove that generation.
+The original provider receipts identify the cluster, edge, TURN, media and OTA.
+The script captures original worker and volume IDs, checks both buckets are empty,
+and stops if the provider lists an additional resource matching the stack. It
+records Kubernetes cleanup before deleting provider resources, so a retry can
+continue even after the original Kubernetes API is gone.
+
+```sh
+./scripts/deploy-environment.sh remove \
+  --environment dev --confirm video-cloud-dev --original-cluster-id <original-id> --plan
+```
+
+After the formal remove step, run the archive command with the original numeric
+LKE cluster ID from the removal record. The command checks native absence of
+that cluster and each recorded volume, and checks the selected stack inventory
+before moving the original files. It keeps the selected operator credentials
+and DNS ownership in place.
+
+```sh
+./scripts/deploy-environment.sh archive-removed-generation \
+  --environment dev --confirm video-cloud-dev --original-cluster-id <original-id>
+```
+
+The manifest and original files go in `deployment/archives/lke-<original-id>/`.
+If the operation is interrupted, rerun the same command before create preflight.
+The command checks the hashes of files already moved and resumes the remaining
+moves. Create admission rejects an unfinished archive.
+
 Prepare the new generation's explicit initial Platform Admin email and strong
 password in `operator/env/ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL` and
 `operator/env/ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD`, alongside the

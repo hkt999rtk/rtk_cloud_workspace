@@ -239,3 +239,23 @@ func TestCreateDependencyPublicTransportRejectsUndeclaredOrBrokenEdges(t *testin
 		})
 	}
 }
+
+func TestCreateDependencyContractQualifiesRemoteStorageWithoutInventedGeneration(t *testing.T) {
+	cfg, store, release, operator, _ := createDependencyContractFixture(t)
+	cfg.Values["PKI_STATE_BACKEND"], cfg.Values["PKI_STATE_KV_MOUNT"], cfg.Values["PKI_STATE_LEASE_DURATION"] = "openbao", "identities", "30s"
+	p, err := buildEnvironmentCreateBootstrapPlan(context.Background(), cfg, release, store, operator)
+	if err != nil {
+		t.Fatal("actual remote bootstrap recipe", err)
+	}
+	if len(p.Claims) != 3 {
+		t.Fatal("fresh plan still allocates per-workload identity/trust claims", p.Claims)
+	}
+	if _, err := qualifyEnvironmentCreateDependencyContract(context.Background(), cfg, release, store, operator, p); err != nil {
+		t.Fatal("preflight rejected qualified KV identity producers", err)
+	}
+	for _, path := range []string{"kube/kubeconfig.yaml", "pki/custody", "deployment/create/material"} {
+		if _, err := os.Lstat(filepath.Join(store.Root, path)); !os.IsNotExist(err) {
+			t.Fatal("preflight allocated custody/identity state", path, err)
+		}
+	}
+}

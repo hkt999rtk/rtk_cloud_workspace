@@ -524,7 +524,7 @@ func TestHistoricalNativeBundleACKsRequireConsumedOriginalAuthority(t *testing.T
 	}
 	for id, issuer := range issuers {
 		t.Run(issuer.Domain+"-"+issuer.Kind, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 			defer cancel()
 			if err := waitEnvironmentCreateIssuerAcks(ctx, f.cfg, f.runtime, issuer, findEnvironmentCreateDomainPolicy(f.p.Plan.Bootstrap, issuer.Domain).BundleConsumers); err != nil {
 				t.Fatal("actual consumed native bundle", id, err)

@@ -94,6 +94,7 @@ type environmentIdentityBindings struct {
 	AppIngress        *environmentAppIngressBinding       `json:"app_ingress,omitempty"`
 	AppRouting        *environmentAppRoutingBinding       `json:"app_routing,omitempty"`
 	ProductIdentities *environmentFreshProductBinding     `json:"product_identities,omitempty"`
+	Custody           *environmentCustodyBinding          `json:"workload_custody,omitempty"`
 }
 
 type environmentAdmissionBinding struct {
@@ -128,6 +129,33 @@ func validateEnvironmentIdentityBindings(b environmentIdentityBindings, environm
 	}
 	if !validFreshProductBinding(b.ProductIdentities) {
 		return errors.New("deployment.bindings: fresh product lifecycle reference is invalid")
+	}
+	if b.Custody != nil {
+		if b.Custody.ServiceRootSHA256 != "" && !environmentPreflightDigest.MatchString(b.Custody.ServiceRootSHA256) || !environmentPreflightDigest.MatchString(b.Custody.Generation) || !environmentPreflightDigest.MatchString(b.Custody.OpenBaoRootSHA256) || len(b.Custody.Owners) == 0 {
+			return errors.New("deployment.bindings: original workload custody generation and OpenBao authority are required")
+		}
+		owners := map[string]bool{}
+		aliases := map[string]string{}
+		for _, owner := range b.Custody.Owners {
+			if owners[owner.ID] || !secretEnvironmentPattern.MatchString(owner.ID) || !strings.HasPrefix(owner.Namespace, b.Stack+"-") || !secretEnvironmentPattern.MatchString(owner.ServiceAccount) || len(owner.ServiceAccount) > 63 || owner.ServiceAccount == "default" || owner.ID == "openbao-pki-identity" {
+				return errors.New("deployment.bindings: invalid original workload custody owner")
+			}
+			owners[owner.ID] = true
+			clientPaths := map[string]bool{}
+			for _, client := range owner.Clients {
+				if !strings.HasPrefix(client.Subject, "service:") || !environmentCreateConsumerID.MatchString(strings.TrimPrefix(client.Subject, "service:")) || !path.IsAbs(client.StatePath) || path.Clean(client.StatePath) != client.StatePath || client.StatePath == "/" || strings.ContainsAny(client.StatePath, "\x00\r\n") || clientPaths[client.StatePath] {
+					return errors.New("deployment.bindings: invalid or ambiguous original client enrollment purpose")
+				}
+				clientPaths[client.StatePath] = true
+			}
+			for _, alias := range owner.StorageAliases {
+				key := owner.Namespace + "/" + alias
+				if !secretEnvironmentPattern.MatchString(alias) || alias == "openbao-pki-identity" || aliases[key] != "" && aliases[key] != owner.ID {
+					return errors.New("deployment.bindings: invalid original workload storage alias")
+				}
+				aliases[key] = owner.ID
+			}
+		}
 	}
 	if err := validateEnvironmentBootstrapCleanupBinding(b.BootstrapCleanup, environment); err != nil {
 		return err
@@ -182,7 +210,7 @@ func validateEnvironmentIdentityBindings(b environmentIdentityBindings, environm
 			return deviceInitializerBlocker(id, "native trust initialization requires its original Device Root state filename")
 		}
 		if pod.Component == "managed-app-api" {
-			if err := validateEnvironmentAppBinding(pod); err != nil {
+			if err := validateEnvironmentAppBinding(pod, b.Stack+"-"+pod.NamespaceSuffix); err != nil {
 				return err
 			}
 		}

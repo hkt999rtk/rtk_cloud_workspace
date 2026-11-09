@@ -16,7 +16,7 @@ import (
 )
 
 func TestCreateOwnedServerExportFencesExactPVCReaderAndNativePod(t *testing.T) {
-	for _, mode := range []string{"success", "omitted-readonly", "readonly-drift", "foreign-stack", "foreign-parent", "foreign-backend", "foreign-claim", "missing-pvc", "foreign-pvc-label", "pvc-before", "pvc-after", "reader-before", "reader-after", "reader-recipe-after", "foreign-pod-controller", "pod-after", "replicaset-after", "selector-collision", "missing-pod", "malformed-pod-list", "export-failure", "private-malformed-output"} {
+	for _, mode := range []string{"success", "omitted-readonly", "readonly-drift", "foreign-stack", "foreign-parent", "foreign-backend", "foreign-claim", "missing-pvc", "foreign-pvc-label", "pvc-before", "pvc-after", "reader-before", "reader-after", "reader-recipe-after", "foreign-pod-controller", "pod-after", "replicaset-after", "selector-collision", "missing-pod", "malformed-pod-list", "export-failure", "private-malformed-output", "kv-success", "kv-reader-after", "kv-foreign-scope"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx := context.Background()
 			_, p, _, service := createServiceRecipeFixture(t, "dev")
@@ -31,6 +31,18 @@ func TestCreateOwnedServerExportFencesExactPVCReaderAndNativePod(t *testing.T) {
 			serverName := owner.Name + "." + namespace + ".svc"
 			serverState := filepath.Join(filepath.Dir(owner.ClientState), "server.json")
 			runtime := environmentCreateBootstrapRuntime{Execution: execution, ExecutionSHA256: artifact.PlanSHA256, Backend: environmentKubernetesBackend{Store: store, KubeconfigContent: []byte("isolated-frozen-export-kubeconfig")}}
+			remote := strings.HasPrefix(mode, "kv-")
+			if remote {
+				cfg.Values["PKI_STATE_BACKEND"], cfg.Values["PKI_STATE_KV_MOUNT"], cfg.Values["PKI_STATE_LEASE_DURATION"] = "openbao", "identities", "30s"
+				runtime.Custody, err = createEnvironmentCustodyBinding(cfg, p, artifact.PlanSHA256, strings.Repeat("a", 64))
+				if err != nil {
+					t.Fatal(err)
+				}
+				runtime.Custody.ServiceRootSHA256 = service.Root.RootFingerprint
+				if mode == "kv-foreign-scope" {
+					runtime.Custody.Generation = strings.Repeat("f", 64)
+				}
+			}
 			fixture := t.TempDir()
 			writeJSON := func(name string, object any) {
 				t.Helper()
@@ -69,6 +81,7 @@ func TestCreateOwnedServerExportFencesExactPVCReaderAndNativePod(t *testing.T) {
 set -eu
 case "$*" in
   *' get PersistentVolumeClaim '*)
+    case "$RTK_EXPORT_MODE" in kv-*) exit 98 ;; esac
     test ! -e "$RTK_EXPORT_FIXTURE/claim.json" || cat "$RTK_EXPORT_FIXTURE/claim.json" ;;
   *' get Deployment '*)
     count=0
@@ -83,7 +96,7 @@ case "$*" in
     printf 'native-pod-export\n' >> "$RTK_EXPORT_FIXTURE/exec-calls"
     case "$RTK_EXPORT_MODE" in
       pvc-after) cp "$RTK_EXPORT_FIXTURE/claim-changed.json" "$RTK_EXPORT_FIXTURE/claim.json" ;;
-      reader-after|reader-recipe-after) cp "$RTK_EXPORT_FIXTURE/reader-changed.json" "$RTK_EXPORT_FIXTURE/reader.json" ;;
+      reader-after|reader-recipe-after|kv-reader-after) cp "$RTK_EXPORT_FIXTURE/reader-changed.json" "$RTK_EXPORT_FIXTURE/reader.json" ;;
       pod-after) cp "$RTK_EXPORT_FIXTURE/pod-changed.json" "$RTK_EXPORT_FIXTURE/pod.json" ;;
       replicaset-after) cp "$RTK_EXPORT_FIXTURE/rs-changed.json" "$RTK_EXPORT_FIXTURE/rs.json" ;;
       export-failure) printf 'private-native-export-error-marker' >&2; exit 1 ;;
@@ -101,7 +114,7 @@ esac
 			t.Setenv("RTK_EXPORT_FIXTURE", fixture)
 			t.Setenv("RTK_EXPORT_MODE", mode)
 			applyCalls, retirementCalls := 0, 0
-			apply := environmentCreateBootstrapApply(func(_ context.Context, _ string, definitions []deploymentplan.Definition) error {
+			apply := environmentCreateBootstrapApply(func(_ context.Context, stage string, definitions []deploymentplan.Definition) error {
 				applyCalls++
 				if len(definitions) != 1 {
 					t.Fatal("export adapter applied an unrelated resource")
@@ -116,6 +129,45 @@ esac
 					}
 					retirementCalls++
 					return os.Remove(filepath.Join(fixture, "reader.json"))
+				}
+				if remote {
+					projected, projectionErr := projectEnvironmentCustodyResources(cfg.Values, cfg.Environment, runtime.Custody, "", definitions)
+					if projectionErr != nil {
+						return projectionErr
+					}
+					var compiled *deploymentplan.Plan
+					compiled, projectionErr = deploymentplan.Compile(deploymentplan.Inputs{Environment: cfg.Environment, Stack: p.Stack, Operation: "scoped", ConfigurationSHA256: strings.Repeat("a", 64), ReleaseSHA256: strings.Repeat("b", 64), BindingsSHA256: strings.Repeat("c", 64)}, projected, nil)
+					if projectionErr != nil {
+						return projectionErr
+					}
+					journal := deploymentplan.Journal{PlanSHA256: compiled.SHA256(), Accepted: true, Owners: map[string]string{}}
+					for _, resource := range compiled.Resources {
+						journal.Owners[resource.ID] = "original-reader-uid"
+						journal.Completed = append(journal.Completed, resource.ID)
+						if resource.ID == deploymentplan.ID(body) {
+							body = deploymentplan.Clone(resource.Desired)
+						}
+					}
+					intent, intentErr := environmentCreateKubernetesStageIntent(compiled)
+					if intentErr != nil {
+						return intentErr
+					}
+					if err := execution.BeginEntry("kubernetes/"+stage, stage, intent, time.Now().UTC()); err != nil {
+						return err
+					}
+					for name, value := range map[string]any{"plan.json": compiled, "journal.json": journal} {
+						encoded, _ := json.Marshal(value)
+						if err := store.write(filepath.Join("deployment/rollback", compiled.SHA256(), name), encoded, false); err != nil {
+							return err
+						}
+					}
+					receipt, _ := json.Marshal(map[string]string{"plan_sha256": compiled.SHA256()})
+					if err := execution.RecordReceipt("kubernetes/"+stage, receipt); err != nil {
+						return err
+					}
+					if err := execution.CompleteEntry("kubernetes/"+stage, time.Now().UTC()); err != nil {
+						return err
+					}
 				}
 				encoded, _ := json.Marshal(body)
 				if strings.Contains(string(encoded), material.Key) || strings.Contains(string(encoded), base64.StdEncoding.EncodeToString(privateKey)) {
@@ -187,15 +239,31 @@ esac
 				selectedClaim += "-foreign"
 			}
 			actual, err := readEnvironmentCreateOwnedServer(ctx, cfg, p, runtime, service, namespace, owner.Name, owner.Role, selectedClaim, owner.StateRoot, owner.ClientState, serverState, serverName, apply)
-			if mode == "success" || mode == "omitted-readonly" {
+			if mode == "success" || mode == "omitted-readonly" || mode == "kv-success" {
 				if err != nil || !reflect.DeepEqual(actual, material) || applyCalls != 2 || retirementCalls != 1 {
 					t.Fatal("exact native Pod export did not complete and retire its reader", err)
 				}
 			} else if err == nil || !reflect.DeepEqual(actual, environmentCreateOwnedServerMaterial{}) || retirementCalls != 0 || strings.Contains(err.Error(), "private-native-export-error-marker") || strings.Contains(err.Error(), string(privateKey)) {
 				t.Fatal("foreign or uncertain native owner exported private serving material or leaked diagnostics", err)
 			}
-			if mode != "success" && mode != "omitted-readonly" && len(execution.Journal.Entries) != 0 {
+			if !remote && mode != "success" && mode != "omitted-readonly" && len(execution.Journal.Entries) != 0 {
 				t.Fatal("failed original-owner checks fabricated an export receipt")
+			}
+			if remote {
+				observed := false
+				for _, entry := range execution.Journal.Entries {
+					if entry.Key != "server-export-"+owner.Name {
+						continue
+					}
+					observed = true
+					body := jsonRawObject(entry.Receipt)
+					if mode != "kv-success" || body["claim_uid"] != nil || body["client_state"] == nil || body["server_state"] == nil {
+						t.Fatal("KV export fabricated a PVC proof or accepted an uncertain reader")
+					}
+				}
+				if mode == "kv-success" && !observed {
+					t.Fatal("verified KV export has no original storage proof")
+				}
 			}
 			if err := filepath.WalkDir(store.Root, func(path string, entry os.DirEntry, walkErr error) error {
 				if walkErr != nil {

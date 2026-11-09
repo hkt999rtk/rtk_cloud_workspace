@@ -195,7 +195,7 @@ func defaultUnifiedDeploymentDependencies() unifiedDeploymentDependencies {
 						return deploymentplan.GateEvidence{}, err
 					}
 					store := c.Store
-					store.checkRuntime = newFrozenDeploymentCheckRuntime(ctx, p.Environment, c.Backend)
+					store.checkRuntime = c.newCheckRuntime(ctx)
 					nextStep("deployment.pki.consumer-policy")
 					if err := checkEnvironmentCRLConsumerPolicy(p); err != nil {
 						return deploymentplan.GateEvidence{}, err
@@ -210,9 +210,13 @@ func defaultUnifiedDeploymentDependencies() unifiedDeploymentDependencies {
 					}
 					now := time.Now().UTC()
 					c.PKICheckedAt, c.PKIVerifiedUntil = now, now.Add(time.Duration(window)*time.Second)
+					nextStep("deployment.pki.custody")
+					if err := verifyEnvironmentCommittedCustody(store.checkRuntime, c.PKIVerifiedUntil); err != nil {
+						return deploymentplan.GateEvidence{}, environmentRuntimePKIQualificationError(err)
+					}
 					for index, at := range []time.Time{now, now.Add(time.Duration(window) * time.Second)} {
 						nextStep([]string{"deployment.pki.mqtt-now", "deployment.pki.mqtt-window"}[index])
-						if err := c.CheckMQTTFoundationIdentity(ctx, at); err != nil {
+						if err := c.CheckMQTTFoundationIdentity(ctx, at, store.checkRuntime); err != nil {
 							return deploymentplan.GateEvidence{}, err
 						}
 						nextStep([]string{"deployment.pki.runtime-now", "deployment.pki.runtime-window"}[index])
@@ -233,7 +237,7 @@ func defaultUnifiedDeploymentDependencies() unifiedDeploymentDependencies {
 						return deploymentplan.GateEvidence{}, err
 					}
 					store := c.Store
-					store.checkRuntime = newFrozenDeploymentCheckRuntime(ctx, p.Environment, c.Backend)
+					store.checkRuntime = c.newCheckRuntime(ctx)
 					if err := verifyEnvironmentReleaseSchemasForPlan(ctx, c.Configuration, store, c.Release, p, c.Backend.Read); err != nil {
 						return deploymentplan.GateEvidence{}, environmentSchemaQualificationError(err)
 					}
@@ -266,7 +270,7 @@ func defaultUnifiedDeploymentDependencies() unifiedDeploymentDependencies {
 						return deploymentplan.GateEvidence{}, err
 					}
 					store := c.Store
-					store.checkRuntime = newFrozenDeploymentCheckRuntime(ctx, p.Environment, c.Backend)
+					store.checkRuntime = c.newCheckRuntime(ctx)
 					if err := verifyDeploymentPublicCertIssuer(ctx, c.Configuration, store); err != nil {
 						return deploymentplan.GateEvidence{}, &deploymentplan.Blocker{ID: "deployment.network", Cause: "required public CertIssuer route or authenticated mTLS path is unavailable", Next: "repair the selected environment's owned DNS/ingress/Service and required mTLS path; verify with check-deployment-health.sh, then repeat preflight"}
 					}

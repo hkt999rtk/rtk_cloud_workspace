@@ -20,18 +20,21 @@ import (
 // deploymentCheckRuntime belongs to one checker invocation. Legacy callers leave
 // secretStore.checkRuntime nil and retain their existing behavior.
 type deploymentCheckRuntime struct {
-	ctx            context.Context
-	environment    string
-	requestTimeout time.Duration
-	processTimeout time.Duration
-	sqlTimeout     time.Duration
-	retryDelay     time.Duration
-	mu             sync.Mutex
-	cache          map[string]*deploymentCheckRead
-	preflightPlan  *deploymentplan.Plan
-	pendingHealth  map[string]bool
-	frozenBackend  *environmentKubernetesBackend
-	frozenContext  string
+	ctx             context.Context
+	environment     string
+	requestTimeout  time.Duration
+	processTimeout  time.Duration
+	sqlTimeout      time.Duration
+	retryDelay      time.Duration
+	mu              sync.Mutex
+	cache           map[string]*deploymentCheckRead
+	preflightPlan   *deploymentplan.Plan
+	pendingHealth   map[string]bool
+	frozenBackend   *environmentKubernetesBackend
+	frozenContext   string
+	custodyRequired bool
+	custodyReader   *maintenanceRuntime
+	custodyError    error
 }
 
 const deploymentReadMaxAttempts = 3

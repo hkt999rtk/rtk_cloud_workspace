@@ -168,6 +168,7 @@ func productPKIRootPin(deployment liveDeployment, environment string) (string, s
 type liveDeployment struct {
 	Metadata struct {
 		Name       string `json:"name"`
+		Namespace  string `json:"namespace"`
 		UID        string `json:"uid"`
 		Generation int64  `json:"generation"`
 	} `json:"metadata"`
@@ -175,7 +176,8 @@ type liveDeployment struct {
 		Replicas *int32 `json:"replicas"`
 		Template struct {
 			Spec struct {
-				Containers []struct {
+				ServiceAccountName string `json:"serviceAccountName"`
+				Containers         []struct {
 					Name string `json:"name"`
 					Env  []struct {
 						Name      string `json:"name"`
@@ -203,6 +205,7 @@ type liveDeployment struct {
 						} `json:"items"`
 					} `json:"configMap"`
 					PersistentVolumeClaim any `json:"persistentVolumeClaim"`
+					EmptyDir              any `json:"emptyDir"`
 				} `json:"volumes"`
 			} `json:"spec"`
 		} `json:"template"`

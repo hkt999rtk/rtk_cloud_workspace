@@ -9,7 +9,6 @@ import (
 	"encoding/pem"
 	"math/big"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -199,20 +198,6 @@ func TestProductIdentityRenderedJobRunsNativeBootstrapWithCurrentOpenBaoCA(t *te
 	if err := os.WriteFile(path, mustProviderRecoveryJSON(fixture), 0600); err != nil {
 		t.Fatal(err)
 	}
-	args := []string{"test"}
-	if overlay := os.Getenv("RTK_PRODUCT_BOOTSTRAP_NATIVE_OVERLAY"); overlay != "" {
-		args = append(args, "-overlay="+overlay)
-	}
-	args = append(args, "./cmd/serviceidentity-bootstrap", "-run", "^TestNativeRenderedBootstrapOpenBaoTrustAndSameKeyResume$", "-count=1", "-v", "-timeout=90s")
-	command := exec.CommandContext(t.Context(), "go", args...)
-	command.Dir = filepath.Join(f.cfg.Workspace, "repos/rtk_video_cloud")
-	command.Env = append(os.Environ(), "GOWORK=off", "RTK_PRODUCT_BOOTSTRAP_RENDERED_FIXTURE="+path)
-	raw, err := command.CombinedOutput()
-	if err != nil {
-		t.Fatalf("native rendered-job bootstrap regression failed: %v; %s", err, raw)
-	}
-	if !strings.Contains(string(raw), "--- PASS: TestNativeRenderedBootstrapOpenBaoTrustAndSameKeyResume") {
-		t.Fatal("native regression did not execute")
-	}
+	runProductNativeRegression(t, f.cfg.Workspace, "cmd/serviceidentity-bootstrap", "TestNativeRenderedBootstrapOpenBaoTrustAndSameKeyResume", "RTK_PRODUCT_BOOTSTRAP_RENDERED_FIXTURE="+path, "90s")
 	t.Log("actual native bootstrap: old CA refused before sign/session, current CA issued once, original key/CSR and session resumed")
 }

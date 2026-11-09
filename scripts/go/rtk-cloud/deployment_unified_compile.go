@@ -594,6 +594,9 @@ func (c *compiledEnvironmentDeployment) FenceInventory(ctx context.Context, plan
 	if c == nil || c.Plan == nil || plan == nil || plan.SHA256() != c.Plan.SHA256() {
 		return nil, environmentFenceFailure(nil, "deployment.inputs.plan", "selected execution plan changed")
 	}
+	if err := checkGenerationRemovalIdle(c.Store.Root); err != nil {
+		return nil, err
+	}
 	fresh, err := resolveDeploymentConfig(c.Configuration.Workspace, c.Configuration.Environment, c.Configuration.EnvironmentRoot)
 	if err != nil {
 		return nil, environmentFenceFailure(err, "deployment.inputs.configuration-resolution", "maintained environment configuration cannot be re-resolved")

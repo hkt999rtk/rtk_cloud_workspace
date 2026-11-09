@@ -318,6 +318,18 @@ func continueEnvironmentCreateFoundation(ctx context.Context, cfg deploymentConf
 
 func continueEnvironmentCreateAfterOpenBao(ctx context.Context, cfg deploymentConfig, plan *environmentCreatePlan, store secretStore, operator map[string]string, execution *environmentCreateExecution, apply environmentCreateBootstrapApply, runtime environmentCreateBootstrapRuntime, management environmentCreateTransport) (environmentCreateBootstrapRuntime, func(), error) {
 	stop := func() {}
+	if err := publishEnvironmentCreateCustodyTrust(ctx, cfg, runtime, nil, false, apply); err != nil {
+		return runtime, stop, err
+	}
+	custody, err := createEnvironmentCustodyBinding(cfg, plan.Bootstrap, runtime.ExecutionSHA256, "")
+	if err != nil {
+		return runtime, stop, err
+	}
+	if err := configureEnvironmentCreateCustody(ctx, cfg, runtime, custody); err != nil {
+		return runtime, stop, err
+	}
+	runtime.Custody = custody
+	ctx = withEnvironmentCreateBootstrapRuntime(ctx, runtime)
 	migrations, err := renderEnvironmentCreatePKIPhase(ctx, cfg, plan.Bootstrap, "migrate")
 	if err != nil {
 		return runtime, stop, err

@@ -51,7 +51,7 @@ func validateEnvironmentLogMQTTRollout(object, container deploymentplan.Object) 
 	if spec["replicas"] != float64(1) {
 		return logMQTTRolloutBlocker(object, "managed LogIngester requires exactly one original MQTT identity/state writer")
 	}
-	if !managedMQTTPVCFile(object, container, "mqtt-pki-state", mqttFoundationEnv(container, logMQTTIdentityPrefix+"STATE")) {
+	if !managedMQTTStateFile(object, container, "mqtt-pki-state", mqttFoundationEnv(container, logMQTTIdentityPrefix+"STATE")) {
 		return logMQTTRolloutBlocker(object, "managed LogIngester state must remain on its original writable MQTT PVC and canonical path")
 	}
 	strategy := deploymentplan.Map(spec["strategy"])
@@ -75,7 +75,7 @@ func logMQTTTransportSettings(object, c deploymentplan.Object, definitions []dep
 			return nil, nil, logMQTTBlocker(object, "managed LogIngester MQTT requires its original independent Root binding: "+key)
 		}
 	}
-	if !managedMQTTPVCFile(object, c, "mqtt-pki-state", mqttFoundationEnv(c, logMQTTIdentityPrefix+"STATE")) {
+	if !managedMQTTStateFile(object, c, "mqtt-pki-state", mqttFoundationEnv(c, logMQTTIdentityPrefix+"STATE")) {
 		return nil, nil, logMQTTBlocker(object, "original managed Service identity state is outside its writable MQTT PVC")
 	}
 	for _, key := range []string{"VIDEO_CLOUD_MQTT_MANAGEMENT_CERT", "VIDEO_CLOUD_MQTT_MANAGEMENT_KEY", logMQTTIdentityPrefix + "BOOTSTRAP_CERT", logMQTTIdentityPrefix + "BOOTSTRAP_KEY", logMQTTIdentityPrefix + "TRANSITION_FROM_STATE", logMQTTIdentityPrefix + "TRANSITION_FROM_ROOT_SHA256"} {
@@ -255,7 +255,7 @@ func validateEnvironmentLogCRLManifest(object, container deploymentplan.Object, 
 	}
 	ids, paths, fingerprints := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	for _, entry := range entries {
-		if !managedMQTTPVCFile(object, container, "mqtt-pki-state", entry.StatePath) {
+		if !managedMQTTStateFile(object, container, "mqtt-pki-state", entry.StatePath) {
 			return logMQTTBlocker(object, "LogIngester CRL state is outside its original writable MQTT PVC")
 		}
 		issuer := entry.Issuer

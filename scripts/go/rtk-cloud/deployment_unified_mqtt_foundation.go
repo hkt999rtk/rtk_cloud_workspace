@@ -119,7 +119,7 @@ func validateMQTTFoundationTarget(env map[string]string, definitions []deploymen
 	}
 	return nil
 }
-func (c *compiledEnvironmentDeployment) CheckMQTTFoundationIdentity(ctx context.Context, now time.Time) error {
+func (c *compiledEnvironmentDeployment) CheckMQTTFoundationIdentity(ctx context.Context, now time.Time, runtimes ...*deploymentCheckRuntime) error {
 	if c.Configuration.Values["MQTT_FOUNDATION_REGISTRATION_ENABLED"] != "true" {
 		return nil
 	}
@@ -131,8 +131,14 @@ func (c *compiledEnvironmentDeployment) CheckMQTTFoundationIdentity(ctx context.
 			definitions = append(definitions, deploymentplan.Definition{Object: object})
 		}
 	}
+	store := c.Store
+	if len(runtimes) > 0 && runtimes[0] != nil {
+		store.checkRuntime = runtimes[0]
+	} else {
+		store.checkRuntime = c.newCheckRuntime(ctx)
+	}
 	return checkMQTTFoundationIdentity(ctx, c.Configuration.Values, definitions, now, c.Backend.Read, func(ctx context.Context, account, listener deploymentplan.Object) (deploymentplan.Object, error) {
-		return readAccountRegistrationPublicListener(ctx, c.Configuration, c.Store, account, listener, now, c.Backend.Read, func(ctx context.Context, args ...string) ([]byte, error) { return c.Backend.command(ctx, nil, args...) })
+		return readAccountRegistrationPublicListener(ctx, c.Configuration, store, account, listener, now, c.Backend.Read, func(ctx context.Context, args ...string) ([]byte, error) { return c.Backend.command(ctx, nil, args...) })
 	})
 }
 func checkMQTTFoundationIdentity(ctx context.Context, env map[string]string, definitions []deploymentplan.Definition, now time.Time, read func(context.Context, string) (deploymentplan.Object, error), liveListeners ...accountRegistrationListenerRead) error {

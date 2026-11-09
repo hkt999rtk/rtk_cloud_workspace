@@ -18,7 +18,7 @@ type environmentCreateOwnedServerMaterial struct {
 	Environment string `json:"environment"`
 }
 
-// Native keys remain on their original owner PVC. The adapter captures the
+// Native keys remain in their original selected durable store. The adapter captures the
 // registry-verified exporter in memory and publishes only to that owner's TLS
 // Secret. Export receipts/logs contain no key; ordinary admitted Secret plans
 // remain private recovery data in the canonical 0600 child plan store.
@@ -71,16 +71,37 @@ func readEnvironmentCreateOwnedServer(ctx context.Context, cfg deploymentConfig,
 		return readManagedLateCompletedAccountServer(ctx, cfg, p, runtime, service, namespace, role, claim, stateRoot, clientState, serverState, serverName)
 	}
 	claimID := "PersistentVolumeClaim/" + namespace + "/" + claim
-	originalClaim, err := runtime.Backend.Read(ctx, claimID)
-	if err != nil || originalClaim == nil || deploymentplan.String(deploymentplan.Map(originalClaim["metadata"])["uid"]) == "" || deploymentplan.Map(originalClaim["metadata"])["deletionTimestamp"] != nil || deploymentplan.Map(deploymentplan.Map(originalClaim["metadata"])["labels"])["rtk.realtek.com/stack"] != p.Stack {
-		return empty, environmentCreateBootstrapBlocker("native serving key owner claim cannot be read before export")
+	remote := cfg.Values["PKI_STATE_BACKEND"] == "openbao"
+	var clientRef, serverRef *environmentCustodyStateReference
+	var claimUID any
+	var err error
+	if remote {
+		if runtime.Custody == nil || runtime.Custody.Generation != runtime.ExecutionSHA256 {
+			return empty, environmentCreateBootstrapBlocker("native server export lacks its original workload custody generation")
+		}
+		clientRef, err = newEnvironmentCustodyStateReference(cfg, runtime.Custody, namespace, claim, clientState, service.Root.RootFingerprint)
+		if err != nil {
+			return empty, err
+		}
+		serverRef, err = newEnvironmentCustodyStateReference(cfg, runtime.Custody, namespace, claim, serverState, service.Root.RootFingerprint)
+		if err != nil {
+			return empty, err
+		}
+	} else {
+		originalClaim, readErr := runtime.Backend.Read(ctx, claimID)
+		if readErr != nil || originalClaim == nil || deploymentplan.String(deploymentplan.Map(originalClaim["metadata"])["uid"]) == "" || deploymentplan.Map(originalClaim["metadata"])["deletionTimestamp"] != nil || deploymentplan.Map(deploymentplan.Map(originalClaim["metadata"])["labels"])["rtk.realtek.com/stack"] != p.Stack {
+			return empty, environmentCreateBootstrapBlocker("native serving key owner claim cannot be read before export")
+		}
+		claimUID = deploymentplan.Map(originalClaim["metadata"])["uid"]
 	}
-	claimUID := deploymentplan.Map(originalClaim["metadata"])["uid"]
 	readerName := "pki-export-" + owner + "-" + runtime.ExecutionSHA256[:12]
 	labels := deploymentplan.Object{"app.kubernetes.io/name": readerName, "rtk.realtek.com/stack": p.Stack}
 	readerLabels := deploymentplan.Clone(labels)
 	readerLabels["app.kubernetes.io/managed-by"] = "rtk-cloud"
 	settings := map[string]string{"PKI_ENVIRONMENT": p.Environment, "PKI_SERVER_NAME": serverName, "PKI_SERVER_BOOTSTRAP_OWNER_CLIENT_STATE": clientState, "PKI_SERVER_BOOTSTRAP_OWNER_CLIENT_SUBJECT": "service:" + role, "PKI_SERVER_BOOTSTRAP_OWNER_CLIENT_ROOT_SHA256": service.Root.RootFingerprint}
+	if remote {
+		settings["PKI_CLIENT_IDENTITY_STATE"], settings["PKI_SERVER_IDENTITY_STATE"] = clientState, serverState
+	}
 	container := deploymentplan.Object{"name": "custody", "image": p.Image, "command": []any{"/bin/sh", "-ec", "exec sleep 3600"}, "env": append(environmentCreateEnv(settings), environmentCreateServiceDatabaseEnv("pki-verifier-database")), "securityContext": environmentCreateServiceContainerSecurity(), "volumeMounts": []any{environmentCreateServiceMount("owner-state", stateRoot, false)}}
 	reader := deploymentplan.Definition{Phase: "bootstrap", Object: deploymentplan.Object{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": deploymentplan.Object{"name": readerName, "namespace": namespace, "labels": readerLabels}, "spec": deploymentplan.Object{"replicas": float64(1), "strategy": deploymentplan.Object{"type": "Recreate"}, "selector": deploymentplan.Object{"matchLabels": deploymentplan.Object{"app.kubernetes.io/name": readerName}}, "template": deploymentplan.Object{"metadata": deploymentplan.Object{"labels": labels}, "spec": deploymentplan.Object{"automountServiceAccountToken": false, "imagePullSecrets": []any{deploymentplan.Object{"name": "ghcr-pull"}}, "securityContext": environmentCreateServicePodSecurity(), "containers": []any{container}, "volumes": []any{environmentCreateServiceVolume("owner-state", "persistentVolumeClaim", claim)}}}}}}
 	stage := "server-custody-" + owner
@@ -94,8 +115,39 @@ func readEnvironmentCreateOwnedServer(ctx context.Context, cfg deploymentConfig,
 		}
 	}
 	readerID := "Deployment/" + namespace + "/" + readerName
+	var originalReaderUID string
+	if remote {
+		accepted, journal, readErr := acceptedCreateStage(runtime.Execution.Store, runtime.Execution, "kubernetes/"+stage)
+		if readErr != nil {
+			return empty, readErr
+		}
+		var desired deploymentplan.Object
+		for _, resource := range accepted.Resources {
+			if resource.ID == readerID {
+				desired = resource.Desired
+			}
+		}
+		originalReaderUID = journal.Owners[readerID]
+		if desired == nil || originalReaderUID == "" {
+			return empty, environmentCreateBootstrapBlocker("native KV export reader lacks its accepted original resource")
+		}
+		recipe, readErr := projectEnvironmentCustodyFrozenRecipe(cfg, p, runtime.ExecutionSHA256, service.Root.RootFingerprint, []deploymentplan.Definition{reader}, accepted)
+		if readErr != nil {
+			return empty, readErr
+		}
+		matched := false
+		for _, definition := range recipe {
+			if deploymentplan.ID(definition.Object) == readerID {
+				matched = deploymentplan.Matches(deploymentplan.Projection(definition.Object), desired)
+			}
+		}
+		if !matched {
+			return empty, environmentCreateBootstrapBlocker("native KV export reader differs from its maintained original recipe")
+		}
+		reader.Object = desired
+	}
 	actualReader, err := runtime.Backend.Read(ctx, readerID)
-	if err != nil || actualReader == nil || deploymentplan.String(deploymentplan.Map(actualReader["metadata"])["uid"]) == "" {
+	if err != nil || actualReader == nil || deploymentplan.String(deploymentplan.Map(actualReader["metadata"])["uid"]) == "" || remote && deploymentplan.Map(actualReader["metadata"])["uid"] != originalReaderUID {
 		return empty, environmentCreateBootstrapBlocker("native export reader owner cannot be verified")
 	}
 	readerUID := deploymentplan.Map(actualReader["metadata"])["uid"]
@@ -107,9 +159,24 @@ func readEnvironmentCreateOwnedServer(ctx context.Context, cfg deploymentConfig,
 		if err := runtime.Execution.Check(ctx); err != nil {
 			return err
 		}
-		claimNow, err := runtime.Backend.Read(ctx, claimID)
+		if remote {
+			if runtime.Custody == nil || runtime.Custody.Generation != runtime.ExecutionSHA256 {
+				return environmentCreateBootstrapBlocker("native server export custody generation changed")
+			}
+			if err := validateEnvironmentCustodyStateReference(clientRef, cfg, runtime.Custody, namespace, claim, clientState, service.Root.RootFingerprint); err != nil {
+				return err
+			}
+			if err := validateEnvironmentCustodyStateReference(serverRef, cfg, runtime.Custody, namespace, claim, serverState, service.Root.RootFingerprint); err != nil {
+				return err
+			}
+		} else {
+			claimNow, err := runtime.Backend.Read(ctx, claimID)
+			if err != nil || claimNow == nil || deploymentplan.Map(claimNow["metadata"])["uid"] != claimUID || deploymentplan.Map(claimNow["metadata"])["deletionTimestamp"] != nil || deploymentplan.Map(deploymentplan.Map(claimNow["metadata"])["labels"])["rtk.realtek.com/stack"] != p.Stack {
+				return environmentCreateBootstrapBlocker("original native server export PVC changed")
+			}
+		}
 		readerNow, readerErr := runtime.Backend.Read(ctx, readerID)
-		if err != nil || readerErr != nil || claimNow == nil || readerNow == nil || deploymentplan.Map(claimNow["metadata"])["uid"] != claimUID || deploymentplan.Map(claimNow["metadata"])["deletionTimestamp"] != nil || deploymentplan.Map(deploymentplan.Map(claimNow["metadata"])["labels"])["rtk.realtek.com/stack"] != p.Stack || deploymentplan.Map(readerNow["metadata"])["uid"] != readerUID || deploymentplan.Map(readerNow["metadata"])["deletionTimestamp"] != nil || !deploymentplan.Matches(deploymentplan.Projection(reader.Object), deploymentplan.Projection(readerNow)) {
+		if readerErr != nil || readerNow == nil || deploymentplan.Map(readerNow["metadata"])["uid"] != readerUID || deploymentplan.Map(readerNow["metadata"])["deletionTimestamp"] != nil || !deploymentplan.Matches(deploymentplan.Projection(reader.Object), deploymentplan.Projection(readerNow)) {
 			return environmentCreateBootstrapBlocker("original native server export PVC or reader changed")
 		}
 		return ownedPod.Verify(ctx, runtime.Backend, reader.Object, deploymentplan.String(readerUID))
@@ -129,9 +196,17 @@ func readEnvironmentCreateOwnedServer(ctx context.Context, cfg deploymentConfig,
 	if err := verify(); err != nil {
 		return empty, err
 	}
-	intent, _ := json.Marshal(deploymentplan.Object{"owner": owner, "namespace": namespace, "claim_uid": claimUID, "reader_uid": readerUID, "pod_uid": ownedPod.UID, "replicaset_uid": ownedPod.ReplicaSetUID, "server_name": serverName, "root_sha256": material.Root})
+	intentBody := deploymentplan.Object{"owner": owner, "namespace": namespace, "claim_uid": claimUID, "reader_uid": readerUID, "pod_uid": ownedPod.UID, "replicaset_uid": ownedPod.ReplicaSetUID, "server_name": serverName, "root_sha256": material.Root}
+	proofBody := deploymentplan.Object{"certificate_sha256": environmentPreflightBytesSHA256([]byte(material.Certificate)), "claim_uid": claimUID, "reader_uid": readerUID, "pod_uid": ownedPod.UID, "replicaset_uid": ownedPod.ReplicaSetUID, "server_name": serverName}
+	if remote {
+		delete(intentBody, "claim_uid")
+		delete(proofBody, "claim_uid")
+		intentBody["client_state"], intentBody["server_state"] = clientRef, serverRef
+		proofBody["client_state"], proofBody["server_state"] = clientRef, serverRef
+	}
+	intent, _ := json.Marshal(intentBody)
 	key := "server-export-" + owner
-	proof, _ := json.Marshal(deploymentplan.Object{"certificate_sha256": environmentPreflightBytesSHA256([]byte(material.Certificate)), "claim_uid": claimUID, "reader_uid": readerUID, "pod_uid": ownedPod.UID, "replicaset_uid": ownedPod.ReplicaSetUID, "server_name": serverName})
+	proof, _ := json.Marshal(proofBody)
 	retained, err = verifyManagedTransportRetainedServerExport(runtime, owner, intent, proof)
 	if err != nil {
 		return empty, err

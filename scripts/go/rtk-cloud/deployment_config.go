@@ -131,6 +131,7 @@ func architectureKeySet() map[string]bool {
 		"ZAMMAD_CHART_VERSION", "ZAMMAD_CHART_SHA256",
 		"OPENBAO_STORAGE_BACKEND", "OPENBAO_DATA_STORAGE", "OPENBAO_AUDIT_STORAGE", "OPENBAO_POD_MANAGEMENT_POLICY", "OPENBAO_UPDATE_STRATEGY",
 		"PKI_APP_CRL_WORKER_ENABLED", "PKI_SERVER_CRL_DOMAIN", "PKI_REQUIRE_USER_MFA",
+		"PKI_STATE_BACKEND", "PKI_STATE_KV_MOUNT", "PKI_STATE_LEASE_DURATION",
 		"CAPACITY_TARGET_CONNECTIONS", "CAPACITY_CONNECTIONS_PER_MQTT_POD",
 		"CAPACITY_ACTIVE_DEVICES", "CAPACITY_ACTIVE_DEVICES_PER_API_POD", "CAPACITY_SYSTEM_RESERVED_CPU_MILLI", "CAPACITY_SYSTEM_RESERVED_MEMORY_MIB",
 		"NODE_CLASS_GENERAL_MIN_COUNT", "NODE_CLASS_BROKER_MIN_COUNT", "NODE_CLASS_DATABASE_MIN_COUNT",
@@ -215,6 +216,12 @@ func runDeployment(args []string) error {
 			return runDeploymentDNSReconcile(args[1:])
 		case "provider-import-state":
 			return runDeploymentProviderImport(args[1:])
+		case "remove":
+			if hasFlag(args[1:], "--original-cluster-id") {
+				return runRemoveOriginalGeneration(args[1:])
+			}
+		case "archive-removed-generation":
+			return runArchiveRemovedDeploymentGeneration(args[1:])
 		case "reconcile-removal-volumes":
 			return runDeploymentRemovalRecovery(args[1:])
 		case "prepare-upgrade":
@@ -589,6 +596,13 @@ func validateExistingDeploymentEnvironment(cfg deploymentConfig) error {
 }
 
 func cleanupDeploymentEnvironment(cfg deploymentConfig) error {
+	store, err := newSecretStore("", cfg.Environment)
+	if err != nil {
+		return err
+	}
+	if err := checkGenerationRemovalIdle(store.Root); err != nil {
+		return err
+	}
 	stack := cfg.Values["CLOUD_STACK_NAME"]
 	if _, _, _, err := readLKEStateForTarget(provisionPaths{EnvRoot: cfg.RuntimeRoot}, map[string]string{"CLOUD_ENV_NAME": cfg.Environment, "CLOUD_STACK_NAME": stack}); err != nil {
 		return wrapDeploymentPhaseError("environment ownership", err)
@@ -1071,7 +1085,8 @@ func printDeploymentUsage() {
   rtk-cloud deployment dns-reconcile-state --environment NAME --confirm STACK --review-sha256 REVIEW_SHA256
   rtk-cloud deployment provider-import-state --environment NAME --source-runtime ORIGINAL_RUNTIME --confirm STACK [--source-kubeconfig ORIGINAL_KUBECONFIG]
   rtk-cloud deployment acceptance --environment NAME --confirm STACK
-  rtk-cloud deployment remove --environment NAME --confirm STACK
+  rtk-cloud deployment remove --environment NAME --confirm STACK [--original-cluster-id ID [--plan]]
+  rtk-cloud deployment archive-removed-generation --environment dev|staging --confirm STACK --original-cluster-id ID
   rtk-cloud deployment storage-plan --environment NAME
   rtk-cloud deployment storage-bootstrap --environment NAME --purpose media|ota|artifacts --destination-env-file PATH --confirm STACK
   rtk-cloud deployment storage-reinitialize --environment NAME --purpose media|ota --source-env-file PATH --destination-env-file PATH --acknowledge-discarded-source BUCKET [--plan | --confirm STACK]
@@ -1381,6 +1396,9 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 	if values["DEPLOYMENT_RUNTIME"] != "kubernetes" {
 		return deploymentConfig{}, fmt.Errorf("unsupported deployment runtime %q", values["DEPLOYMENT_RUNTIME"])
 	}
+	if err := validateEnvironmentCustodySettings(values); err != nil {
+		return deploymentConfig{}, err
+	}
 	capacity, capacityValues, err := buildSharedCapacityPlan(values)
 	if err != nil {
 		return deploymentConfig{}, err
@@ -1404,6 +1422,29 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 		return deploymentConfig{}, err
 	}
 	return cfg, nil
+}
+
+// Match the native IdentityCustody wire contract before provider qualification.
+// Empty backend retains compatibility with existing file-backed generations.
+func validateEnvironmentCustodySettings(values map[string]string) error {
+	switch values["PKI_STATE_BACKEND"] {
+	case "", "pvc":
+		return nil
+	case "openbao":
+	default:
+		return errors.New("PKI_STATE_BACKEND must be pvc or openbao")
+	}
+	const characters = "abcdefghijklmnopqrstuvwxyz0123456789._-"
+	for _, segment := range strings.Split(values["PKI_STATE_KV_MOUNT"], "/") {
+		if segment == "" || segment == "." || segment == ".." || strings.Trim(segment, characters) != "" || strings.Trim(segment[:1], "abcdefghijklmnopqrstuvwxyz0123456789") != "" {
+			return errors.New("PKI_STATE_KV_MOUNT must name the selected native KV mount without traversal or wildcards")
+		}
+	}
+	duration, err := time.ParseDuration(values["PKI_STATE_LEASE_DURATION"])
+	if err != nil || duration < 3*time.Second || duration > time.Hour || duration%time.Second != 0 {
+		return errors.New("PKI_STATE_LEASE_DURATION must satisfy the native whole-second owner lease contract (3s through 1h)")
+	}
+	return nil
 }
 
 func validateFactoryEnrollmentDomain(domain, stack, root string) error {

@@ -219,6 +219,21 @@ func applyEnvironmentCreateStage(ctx context.Context, cfg deploymentConfig, stor
 	if len(definitions) == 0 {
 		return environmentCreateBlocker("deployment.create.stage", "an enabled Kubernetes stage has no concrete exact resource bodies: "+stage)
 	}
+	plan, err := readEnvironmentCreateStageInput(store, execution, stage)
+	if err != nil {
+		return err
+	}
+	entry := createOpenBaoACKCompletionEntry(execution.Journal, "kubernetes/"+stage)
+	if plan == nil && entry != nil {
+		plan, _, err = originalCreateChildAtIntent(store, execution, *entry)
+		if err != nil {
+			return err
+		}
+	}
+	definitions, err = projectEnvironmentCreateCustodyStage(ctx, cfg, store, parent, execution, definitions, plan)
+	if err != nil {
+		return err
+	}
 	raw, err := readBoundedEnvironmentFile(store.KubeconfigPath(), true)
 	if err != nil {
 		return err
@@ -241,17 +256,6 @@ func applyEnvironmentCreateStage(ctx context.Context, cfg deploymentConfig, stor
 	}
 	backend := environmentCreateKubernetesBackend{environmentKubernetesBackend: native, execution: execution, cfg: cfg, store: store}
 	inputs := deploymentplan.Inputs{Environment: cfg.Environment, Stack: parent.Stack, Operation: "scoped", ConfigurationSHA256: parent.ConfigurationSHA256, ReleaseSHA256: deploymentplan.Digest(parent.Release), BindingsSHA256: environmentCreateStageBindingsSHA(stage, definitions)}
-	plan, err := readEnvironmentCreateStageInput(store, execution, stage)
-	if err != nil {
-		return err
-	}
-	entry := createOpenBaoACKCompletionEntry(execution.Journal, "kubernetes/"+stage)
-	if plan == nil && entry != nil {
-		plan, _, err = originalCreateChildAtIntent(store, execution, *entry)
-		if err != nil {
-			return err
-		}
-	}
 	if plan == nil {
 		live, err := native.Inventory(ctx, parent.Stack)
 		if err != nil {

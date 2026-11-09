@@ -71,7 +71,7 @@ func coreMQTTManagementSettings(object, container deploymentplan.Object, definit
 }
 
 func coreMQTTIdentityFile(object, container deploymentplan.Object, file string) bool {
-	return managedMQTTPVCFile(object, container, "service-identity", file)
+	return managedMQTTStateFile(object, container, "service-identity", file)
 }
 
 func managedMQTTPVCFile(object, container deploymentplan.Object, role, file string) bool {

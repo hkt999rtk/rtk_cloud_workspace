@@ -111,6 +111,9 @@ func executeEnvironmentCreateTransportLineages(ctx context.Context, cfg deployme
 		distribute := distributeMQTT
 		if domain == "openbao_tls" {
 			distribute = func(root environmentCreateRegisteredIssuer, additional ...environmentCreateRegisteredIssuer) error {
+				if err := publishAndWaitEnvironmentCreateCustodyTrust(ctx, cfg, runtime, root, false, apply); err != nil {
+					return err
+				}
 				definitions, err := renderEnvironmentCreatePreparedOpenBaoConsumers(ctx, cfg, p, runtime, s, root, additional...)
 				if err != nil {
 					return err
@@ -263,10 +266,19 @@ func executeEnvironmentCreateManagedTransports(ctx context.Context, cfg deployme
 	if err != nil {
 		return err
 	}
-	if partial {
-		return executeManagedTransportPartialForward(ctx, cfg, runtime, managed, apply)
+	// Existing clients must receive the overlap snapshot before OpenBao's
+	// listener changes. Final bootstrap withdrawal follows successful cutover.
+	if err := publishAndWaitEnvironmentCreateCustodyTrust(ctx, cfg, runtime, roots["openbao_tls"], false, apply); err != nil {
+		return err
 	}
-	return apply(ctx, "transport-managed-hosts", managed)
+	if partial {
+		if err := executeManagedTransportPartialForward(ctx, cfg, runtime, managed, apply); err != nil {
+			return err
+		}
+	} else if err := apply(ctx, "transport-managed-hosts", managed); err != nil {
+		return err
+	}
+	return publishAndWaitEnvironmentCreateCustodyTrust(ctx, cfg, runtime, roots["openbao_tls"], true, apply)
 }
 
 // Apply to maintained desired core workload recipes only after the managed

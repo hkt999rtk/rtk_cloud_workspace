@@ -66,6 +66,8 @@ if [[ "$*" == *"get persistentvolume"* ]]; then
     exit 1
   fi
   cat ` + shellSingleQuote(pv) + `
+elif [[ "$*" == *"get Lease"* ]]; then
+  exit 0
 elif [[ "$*" == *delete* && ` + shellSingleQuote(failure) + ` == purge ]]; then
   exit 1
 else

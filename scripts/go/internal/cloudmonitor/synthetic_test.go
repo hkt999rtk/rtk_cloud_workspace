@@ -373,29 +373,48 @@ func TestSyntheticMQTTCancellationClosesPendingHandshake(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer listener.Close()
+	handshake := make(chan struct{})
 	closed := make(chan struct{})
 	go func() {
+		defer close(closed)
 		conn, err := listener.Accept()
 		if err != nil {
-			close(closed)
 			return
 		}
 		defer conn.Close()
 		buffer := make([]byte, 2048)
+		if _, err := conn.Read(buffer); err != nil {
+			return
+		}
+		close(handshake)
 		for {
 			if _, err := conn.Read(buffer); err != nil {
-				close(closed)
 				return
 			}
 		}
 	}()
 	rt, reference := syntheticFixture(t, syntheticCredentials{Dedicated: true, Username: "monitor", Password: "secret"})
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	start := time.Now()
-	r, cleanup := probeSyntheticMQTT(ctx, Config{TimeoutSeconds: 5}, rt, MQTTProbe{Name: "blackhole", Broker: "tcp://" + listener.Addr().String(), Topic: "monitor/dev", CredentialsFile: reference}, time.Now())
-	if r.Status != Fail || cleanup.Status != Pass || time.Since(start) > time.Second {
-		t.Fatalf("MQTT did not honor group deadline: %+v %+v", r, cleanup)
+	results := make(chan [2]Result, 1)
+	probe := MQTTProbe{Name: "blackhole", Broker: "tcp://" + listener.Addr().String(), Topic: "monitor/dev", CredentialsFile: reference}
+	go func() {
+		r, cleanup := probeSyntheticMQTT(ctx, Config{TimeoutSeconds: 5}, rt, probe, time.Now())
+		results <- [2]Result{r, cleanup}
+	}()
+	select {
+	case <-handshake:
+	case <-time.After(5 * time.Second):
+		t.Fatal("MQTT probe did not start its handshake")
+	}
+	cancel()
+	select {
+	case got := <-results:
+		if got[0].Status != Fail || got[1].Status != Pass {
+			t.Fatalf("MQTT did not honor group cancellation: %+v %+v", got[0], got[1])
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("MQTT probe did not return after cancellation")
 	}
 	select {
 	case <-closed:

@@ -30,11 +30,11 @@ func productRegistrationCapabilities(image string, outputs []environmentCreatePr
 
 // Qualification runs only the immutable release's metadata interface; no
 // deployment configuration, network or private identity enters the container.
-func verifyCreateNormalTailProductCapabilities(ctx context.Context, release environmentRelease, products *createNormalTailProductLifecycle, testLab bool) error {
+func verifyCreateNormalTailProductCapabilities(ctx context.Context, cfg deploymentConfig, release environmentRelease, products *createNormalTailProductLifecycle, testLab bool) error {
 	run := func(ctx context.Context, args ...string) ([]byte, error) {
 		return exec.CommandContext(ctx, "docker", args...).Output()
 	}
-	if err := verifyProductCapabilities(ctx, release, products, run); err != nil {
+	if err := verifyProductCapabilities(ctx, cfg, release, products, run); err != nil {
 		return err
 	}
 	return verifyManagedTestLabCapability(ctx, release, testLab, run)
@@ -72,7 +72,7 @@ func verifyManagedTestLabCapability(ctx context.Context, release environmentRele
 	return ctx.Err()
 }
 
-func verifyProductCapabilities(ctx context.Context, release environmentRelease, products *createNormalTailProductLifecycle, run func(context.Context, ...string) ([]byte, error)) error {
+func verifyProductCapabilities(ctx context.Context, cfg deploymentConfig, release environmentRelease, products *createNormalTailProductLifecycle, run func(context.Context, ...string) ([]byte, error)) error {
 	if products == nil || len(products.Outputs) == 0 || run == nil {
 		return environmentCreateBootstrapBlocker("qualified product lifecycle capabilities are unavailable")
 	}
@@ -84,7 +84,7 @@ func verifyProductCapabilities(ctx context.Context, release environmentRelease, 
 		binary, service string
 		features        []string
 	}
-	caps := []capability{{"/app/certissuer", "certissuer", []string{"create-service-enrollment-v1", "registry-only-issuance-v1"}}, {"/app/pkimanagement", "pkimanagement", []string{"first-trust-v1", "deployment-bootstrap-finalize-v1"}}, {"/app/serviceidentity-bootstrap", "serviceidentity-bootstrap", []string{"owned-server-export-v1"}}}
+	caps := []capability{{"/app/certissuer", "certissuer", []string{"create-service-enrollment-v1", "registry-only-issuance-v1"}}, {"/app/pkimanagement", "pkimanagement", []string{"first-trust-v1", "deployment-bootstrap-finalize-v1"}}, {"/app/serviceidentity-bootstrap", "serviceidentity-bootstrap", serviceIdentityBootstrapCapabilities(cfg.Values["PKI_STATE_BACKEND"])}}
 	productCaps, err := productRegistrationCapabilities(image, products.Outputs)
 	if err != nil {
 		return err
@@ -128,4 +128,12 @@ func verifyProductCapabilities(ctx context.Context, release environmentRelease, 
 		return environmentCreateBootstrapBlocker("formal product image lacks the native same-Root ceremony and policy producers")
 	}
 	return ctx.Err()
+}
+
+func serviceIdentityBootstrapCapabilities(backend string) []string {
+	features := []string{"owned-server-export-v1"}
+	if backend == "openbao" {
+		features = append(features, "committed-identity-inspection-v1", "committed-identity-batch-admission-v1", "committed-public-crl-maintenance-v1")
+	}
+	return features
 }

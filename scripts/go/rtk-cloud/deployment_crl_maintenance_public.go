@@ -15,11 +15,17 @@ import (
 	"time"
 )
 
+type maintenancePublicCRLCache struct {
+	Consumer crlMaintenanceConsumer
+	Issuer   environmentCreateRegisteredIssuer
+}
+
 type maintenancePublicCRL struct {
 	Namespace, Pod, PodUID, Container, Path, Resource, UID, Version, Key, Original string
 	Issuers                                                                        []string
 	Producer                                                                       string
 	Claims                                                                         map[string]string
+	CustodyCaches                                                                  []maintenancePublicCRLCache
 }
 
 func maintenanceBundleIssuers(raw []byte, known map[string]environmentCreateRegisteredIssuer) ([]string, error) {
@@ -205,6 +211,19 @@ func (r *maintenanceRuntime) verifyPublicCRLs(ctx context.Context, projections [
 				return errors.New("public CRL producer durable volume changed")
 			}
 		}
+		for _, cache := range p.CustodyCaches {
+			expected, exists := records[cache.Issuer.ID]
+			if !exists {
+				return errors.New("public CRL producer authority is missing")
+			}
+			installed, err := r.installedCRL(ctx, cache.Consumer, cache.Issuer)
+			if err != nil || installed.Terminal != "" || installed.IssuerSHA256 != deploymentplan.String(cache.Issuer.Document["certificate_fingerprint_sha256"]) || installed.CRL.Digest != expected.Digest {
+				return errors.New("public CRL producer committed cache differs from selected signed record")
+			}
+			if _, err := validateMaintenanceCRL(r.cfg.Environment, cache.Issuer, installed.CRL, true, time.Now().UTC()); err != nil {
+				return errors.New("public CRL producer committed cache is not fresh")
+			}
+		}
 		ready, producerReady := false, p.Producer == ""
 		for _, cv := range certIssuerObjectList(deploymentplan.Map(pod["status"])["containerStatuses"]) {
 			c := deploymentplan.Map(cv)
@@ -222,9 +241,12 @@ func (r *maintenanceRuntime) verifyPublicCRLs(ctx context.Context, projections [
 	return nil
 }
 
-// ACK identities come from the workload's current authenticated Service state,
-// never from a Kubernetes display name. Private fields stay in process memory.
-func (r *maintenanceRuntime) consumerID(ctx context.Context, ns, pod, container string, c deploymentplan.Object) (string, error) {
+// Local ACK identities use authenticated Service state. Remote discovery uses
+// original enrollment intent; neither branch guesses from a Pod display name.
+func (r *maintenanceRuntime) consumerID(ctx context.Context, ns, pod, container string, c deploymentplan.Object, states ...string) (string, error) {
+	if mqttFoundationEnv(c, "PKI_STATE_BACKEND") == "openbao" {
+		return r.custodyConsumerID(ctx, ns, pod, container, c, states...)
+	}
 	subject := ""
 	for _, ev := range certIssuerObjectList(c["env"]) {
 		e := deploymentplan.Map(ev)

@@ -130,19 +130,26 @@ func (r *maintenanceRuntime) recoverOnline(ctx context.Context, inventory crlMai
 	}
 	// This also repairs a prior interrupted installation whose registry record
 	// is already fresh. Only existing original consumer paths are touched.
-	for _, c := range inventory.Consumers {
-		var issuer environmentCreateRegisteredIssuer
-		for _, item := range inventory.Issuers {
-			if item.Issuer.ID == c.IssuerID {
-				issuer = item.Issuer
-				break
+	// Local OpenBao host caches are independent of KV and must be installed
+	// before a remote helper authenticates over the managed provider transport.
+	for _, custody := range []bool{false, true} {
+		for _, c := range inventory.Consumers {
+			if c.Custody != custody {
+				continue
 			}
-		}
-		if issuer.Document["signer_provider"] != "openbao" {
-			continue
-		}
-		if err := r.install(ctx, c, issuer, records[c.IssuerID]); err != nil {
-			return err
+			var issuer environmentCreateRegisteredIssuer
+			for _, item := range inventory.Issuers {
+				if item.Issuer.ID == c.IssuerID {
+					issuer = item.Issuer
+					break
+				}
+			}
+			if issuer.Document["signer_provider"] != "openbao" {
+				continue
+			}
+			if err := r.install(ctx, c, issuer, records[c.IssuerID]); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

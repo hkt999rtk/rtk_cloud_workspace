@@ -171,7 +171,7 @@ func executionEnvironmentChecks(c *compiledEnvironmentDeployment) map[string]dep
 				return deploymentplan.GateEvidence{}, err
 			}
 			store := c.Store
-			store.checkRuntime = newFrozenDeploymentCheckRuntime(ctx, p.Environment, c.Backend)
+			store.checkRuntime = c.newCheckRuntime(ctx)
 			// Keep deployment readiness pending until the existing rollout
 			// acceptance runs; current native trust/registry checks still run.
 			store.checkRuntime.preflightPlan = p
@@ -184,9 +184,13 @@ func executionEnvironmentChecks(c *compiledEnvironmentDeployment) map[string]dep
 			if err != nil {
 				return deploymentplan.GateEvidence{}, err
 			}
+			nextStep("deployment.pki.custody")
+			if err := verifyEnvironmentCommittedCustody(store.checkRuntime, cutoff); err != nil {
+				return deploymentplan.GateEvidence{}, environmentRuntimePKIQualificationError(err)
+			}
 			for index, at := range []time.Time{now, cutoff} {
 				nextStep([]string{"deployment.pki.mqtt-now", "deployment.pki.mqtt-window"}[index])
-				if err := c.CheckMQTTFoundationIdentity(ctx, at); err != nil {
+				if err := c.CheckMQTTFoundationIdentity(ctx, at, store.checkRuntime); err != nil {
 					return deploymentplan.GateEvidence{}, err
 				}
 				nextStep([]string{"deployment.pki.runtime-now", "deployment.pki.runtime-window"}[index])
@@ -208,7 +212,7 @@ func executionEnvironmentChecks(c *compiledEnvironmentDeployment) map[string]dep
 				return deploymentplan.GateEvidence{}, err
 			}
 			store := c.Store
-			store.checkRuntime = newFrozenDeploymentCheckRuntime(ctx, p.Environment, c.Backend)
+			store.checkRuntime = c.newCheckRuntime(ctx)
 			if err := verifyEnvironmentReleaseSchemasForPlan(ctx, c.Configuration, store, c.Release, p, c.Backend.Read); err != nil {
 				return deploymentplan.GateEvidence{}, environmentSchemaQualificationError(err)
 			}
@@ -233,7 +237,7 @@ func executionEnvironmentChecks(c *compiledEnvironmentDeployment) map[string]dep
 				return deploymentplan.GateEvidence{}, err
 			}
 			store := c.Store
-			store.checkRuntime = newFrozenDeploymentCheckRuntime(ctx, p.Environment, c.Backend)
+			store.checkRuntime = c.newCheckRuntime(ctx)
 			if err := verifyDeploymentPublicCertIssuer(ctx, c.Configuration, store); err != nil {
 				return deploymentplan.GateEvidence{}, &deploymentplan.Blocker{ID: "deployment.network", Cause: "required public CertIssuer route or authenticated mTLS path is unavailable", Next: "repair the selected environment's owned DNS/ingress/Service and required mTLS path; verify with check-deployment-health.sh, then repeat preflight"}
 			}

@@ -193,7 +193,7 @@ func buildCreateNormalTailProductSessionForward(cfg deploymentConfig, l *createN
 		}
 		for i, output := range l.Outputs {
 			r := installed.Outputs[i]
-			if r.ResourceID != output.ID || r.Subject != output.Subject || !environmentBootstrapOwnerUUID.MatchString(r.SecretUID) || !environmentBootstrapOwnerUUID.MatchString(r.ClaimUID) || !environmentPreflightDigest.MatchString(r.CertificateSHA256) {
+			if r.ResourceID != output.ID || r.Subject != output.Subject || !environmentBootstrapOwnerUUID.MatchString(r.SecretUID) || validateEnvironmentProductIdentityStorage(cfg, l, output, r) != nil || !environmentPreflightDigest.MatchString(r.CertificateSHA256) {
 				return nil, productSessionForwardBlocked("permanent-output-identity")
 			}
 		}

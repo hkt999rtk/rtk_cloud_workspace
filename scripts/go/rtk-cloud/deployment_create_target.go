@@ -29,6 +29,12 @@ func qualifyEnvironmentCreateTargetAbsence(ctx context.Context, cfg deploymentCo
 	if err := checkLocalExecutionFence(store.Root); err != nil {
 		return createCheckpointPreflightHint(cfg, store)
 	}
+	if err := checkGenerationArchiveIdle(store); err != nil {
+		return err
+	}
+	if err := checkGenerationRemovalIdle(store.Root); err != nil {
+		return environmentCreateBlocker("deployment.create.target", err.Error())
+	}
 	// The native executor publishes new access/state only into absent canonical
 	// destinations. Retained owners need their original removal/recovery flow.
 	kubeconfig, err := privateDeploymentStatePath(cfg.Environment, "kube/kubeconfig.yaml")

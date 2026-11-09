@@ -10,7 +10,7 @@ import (
 )
 
 // A runtime export must resolve to an explicit native writer in this same Pod,
-// sharing the exact file and backed by the writer's original CRL state PVC.
+// sharing the exact file and backed by its original durable CRL state.
 // The maintenance command never writes the exported PEM itself.
 func (r *maintenanceRuntime) runtimePublicProjection(ctx context.Context, pod deploymentplan.Object, out maintenancePublicCRL, mount, volume deploymentplan.Object, known map[string]environmentCreateRegisteredIssuer) (maintenancePublicCRL, error) {
 	if volume["emptyDir"] == nil && volume["persistentVolumeClaim"] == nil {
@@ -19,7 +19,7 @@ func (r *maintenanceRuntime) runtimePublicProjection(ctx context.Context, pod de
 	relative := strings.TrimPrefix(out.Path, deploymentplan.String(mount["mountPath"])+"/")
 	spec := deploymentplan.Map(pod["spec"])
 	var typed liveDeployment
-	adapted, _ := json.Marshal(deploymentplan.Object{"spec": deploymentplan.Object{"template": deploymentplan.Object{"spec": spec}}})
+	adapted, _ := json.Marshal(deploymentplan.Object{"metadata": pod["metadata"], "spec": deploymentplan.Object{"template": deploymentplan.Object{"spec": spec}}})
 	if json.Unmarshal(adapted, &typed) != nil {
 		return out, errors.New("public CRL producer mounts invalid")
 	}
@@ -63,6 +63,7 @@ func (r *maintenanceRuntime) runtimePublicProjection(ctx context.Context, pod de
 				return out, errors.New("public CRL output has ambiguous native writers")
 			}
 			out.Producer = deploymentplan.String(writer["name"])
+			remote := mqttFoundationEnv(writer, "PKI_STATE_BACKEND") == "openbao"
 			manifestPath := mqttFoundationEnv(writer, strings.TrimSuffix(setting, "_PUBLIC_CRL_BUNDLE")+"_SERVER_CRL_MANIFEST")
 			cm, key, err := mountedPKICRLConfigMap(typed, out.Producer, manifestPath)
 			if err != nil {
@@ -76,12 +77,28 @@ func (r *maintenanceRuntime) runtimePublicProjection(ctx context.Context, pod de
 			if json.Unmarshal([]byte(deploymentplan.String(deploymentplan.Map(source["data"])[key])), &entries) != nil || len(entries) == 0 {
 				return out, errors.New("native public CRL manifest missing")
 			}
+			issuerIDs, statePaths := map[string]bool{}, map[string]bool{}
 			for _, entry := range entries {
+				if issuerIDs[entry.Issuer.ID] || statePaths[entry.StatePath] {
+					return out, errors.New("native public CRL manifest has duplicate issuer or state purposes")
+				}
+				issuerIDs[entry.Issuer.ID], statePaths[entry.StatePath] = true, true
 				issuer, ok := known[entry.Issuer.ID]
-				if !ok || entry.Issuer.Environment != r.cfg.Environment || entry.Issuer.Certificate != issuer.Certificate || entry.Issuer.Fingerprint != deploymentplan.String(issuer.Document["certificate_fingerprint_sha256"]) || !livePKICRLStateOnPVC(typed, out.Producer, entry.StatePath) {
+				if !ok || entry.Issuer.Environment != r.cfg.Environment || entry.Issuer.Certificate != issuer.Certificate || entry.Issuer.Fingerprint != deploymentplan.String(issuer.Document["certificate_fingerprint_sha256"]) || !livePKIStateOnStorage(typed, out.Producer, entry.StatePath) {
 					return out, errors.New("native public CRL authority or durable state changed")
 				}
 				out.Issuers = append(out.Issuers, entry.Issuer.ID)
+				if remote {
+					consumerID, err := r.custodyConsumerID(ctx, out.Namespace, out.Pod, out.Producer, writer, entry.StatePath)
+					if err != nil {
+						return out, err
+					}
+					out.CustodyCaches = append(out.CustodyCaches, maintenancePublicCRLCache{
+						Consumer: crlMaintenanceConsumer{Namespace: out.Namespace, Pod: out.Pod, PodUID: out.PodUID, Container: out.Producer, StatePath: entry.StatePath, IssuerID: issuer.ID, ConsumerID: consumerID, Custody: true},
+						Issuer:   issuer,
+					})
+					continue
+				}
 				for _, mv := range certIssuerObjectList(writer["volumeMounts"]) {
 					m := deploymentplan.Map(mv)
 					if !strings.HasPrefix(entry.StatePath, deploymentplan.String(m["mountPath"])+"/") {
@@ -102,8 +119,14 @@ func (r *maintenanceRuntime) runtimePublicProjection(ctx context.Context, pod de
 			}
 		}
 	}
-	if out.Producer == "" || len(out.Claims) == 0 || out.PodUID == "" {
+	if out.Producer == "" || len(out.Claims) == 0 && len(out.CustodyCaches) == 0 || out.PodUID == "" {
 		return out, errors.New("public CRL shared output lacks a bound native writer")
+	}
+	// A bound remote producer may be down while its provider transport is
+	// being repaired. Discovery records original purpose/authority, not a fake
+	// installed bundle. Actual committed cache and reload are checked at convergence.
+	if len(out.CustodyCaches) != 0 {
+		return out, nil
 	}
 	raw, err := r.command(ctx, nil, "--namespace", out.Namespace, "exec", "pod/"+out.Pod, "--container", out.Container, "--", "cat", out.Path)
 	if err != nil {

@@ -72,6 +72,7 @@ type environmentCreateBootstrapRuntime struct {
 	TransportRootSHA256                 string
 	TransportCAPEM                      string
 	OpenBao                             environmentCreateOpenBaoBootstrap
+	Custody                             *environmentCustodyBinding
 	Execution                           *environmentCreateExecution
 	PKIClient                           *environmentCreatePKIClient
 	ServiceCeremony                     *environmentCreateServiceCeremony
@@ -203,6 +204,10 @@ func buildEnvironmentCreateBootstrapPlan(ctx context.Context, cfg deploymentConf
 		p.ProductIdentities[i].PolicySHA256 = deploymentplan.Digest(findEnvironmentCreateDomainPolicy(p, "service"))
 		p.Claims = append(p.Claims, p.ProductIdentities[i].Claim)
 	}
+	p.Claims, err = environmentCreateCustodyClaims(cfg, p, p.Claims)
+	if err != nil {
+		return p, err
+	}
 	return p, nil
 }
 
@@ -290,7 +295,11 @@ func qualifyEnvironmentCreateBootstrapCapabilitiesWithRouting(ctx context.Contex
 	if command.Run() != nil {
 		return environmentCreateBootstrapBlocker("the exact formal API image lacks complete native bootstrap and encrypted custody ceremony capabilities")
 	}
-	capabilities := []environmentProductCapability{{p.AccountManagerImage, "/app/rtk-account-manager", "account-manager", []string{"deployment-bootstrap-finalize-v1"}}, {p.Image, "/app/pkimanagement", "pkimanagement", []string{"first-trust-v1", "deployment-bootstrap-finalize-v1"}}, {p.Image, "/app/certissuer", "certissuer", []string{"create-service-enrollment-v1", "registry-only-issuance-v1"}}, {p.Image, "/app/api", "api", []string{"fresh-bootstrap-trust-v1", "mqtt-bundle-bootstrap-v1"}}, {p.Image, "/app/logingester", "logingester", []string{"fresh-bootstrap-trust-v1", "mqtt-bundle-bootstrap-v1"}}, {p.Image, "/app/pkibroker", "pkibroker", []string{"fresh-bootstrap-trust-v1"}}, {p.Image, "/app/serviceidentity-bootstrap", "serviceidentity-bootstrap", []string{"owned-server-export-v1"}}, {p.Images["LKE_MQTT_PKI_IMAGE"], "/usr/local/bin/emqxpkihost", "emqxpkihost", managedMQTTRequiredCapabilities(cfg.Values["TEST_LAB_ENABLED"] == "true")}}
+	identityCapabilities := serviceIdentityBootstrapCapabilities(cfg.Values["PKI_STATE_BACKEND"])
+	if cfg.Values["PKI_STATE_BACKEND"] == "openbao" {
+		identityCapabilities = append(identityCapabilities, "initial-service-crl-custody-v1")
+	}
+	capabilities := []environmentProductCapability{{p.AccountManagerImage, "/app/rtk-account-manager", "account-manager", []string{"deployment-bootstrap-finalize-v1"}}, {p.Image, "/app/pkimanagement", "pkimanagement", []string{"first-trust-v1", "deployment-bootstrap-finalize-v1"}}, {p.Image, "/app/certissuer", "certissuer", []string{"create-service-enrollment-v1", "registry-only-issuance-v1"}}, {p.Image, "/app/api", "api", []string{"fresh-bootstrap-trust-v1", "mqtt-bundle-bootstrap-v1"}}, {p.Image, "/app/logingester", "logingester", []string{"fresh-bootstrap-trust-v1", "mqtt-bundle-bootstrap-v1"}}, {p.Image, "/app/pkibroker", "pkibroker", []string{"fresh-bootstrap-trust-v1"}}, {p.Image, "/app/serviceidentity-bootstrap", "serviceidentity-bootstrap", identityCapabilities}, {p.Images["LKE_MQTT_PKI_IMAGE"], "/usr/local/bin/emqxpkihost", "emqxpkihost", managedMQTTRequiredCapabilities(cfg.Values["TEST_LAB_ENABLED"] == "true")}}
 	productCaps, err := productRegistrationCapabilities(p.Image, p.ProductIdentities)
 	if err != nil {
 		return err
@@ -1111,6 +1120,10 @@ func configureEnvironmentCreateIssuerPolicies(ctx context.Context, cfg deploymen
 }
 
 func configureEnvironmentCreateOpenBaoRole(ctx context.Context, cfg deploymentConfig, runtime environmentCreateBootstrapRuntime, name string, accounts, policies []string) error {
+	return configureEnvironmentCreateOpenBaoRoleInNamespace(ctx, cfg, runtime, name, cfg.Values["CLOUD_STACK_NAME"]+"-video-cloud", accounts, policies)
+}
+
+func configureEnvironmentCreateOpenBaoRoleInNamespace(ctx context.Context, cfg deploymentConfig, runtime environmentCreateBootstrapRuntime, name, namespace string, accounts, policies []string) error {
 	if runtime.Execution == nil || !secretEnvironmentPattern.MatchString(name) || len(accounts) == 0 || len(policies) == 0 {
 		return environmentCreateBootstrapBlocker("exact native selected Kubernetes auth role is required")
 	}
@@ -1119,7 +1132,15 @@ func configureEnvironmentCreateOpenBaoRole(ctx context.Context, cfg deploymentCo
 			return environmentCreateBootstrapBlocker("exact role binding contains malformed identity")
 		}
 	}
-	namespace := cfg.Values["CLOUD_STACK_NAME"] + "-video-cloud"
+	ownedNamespace := false
+	for _, original := range lkeNamespaces(cfg.Values) {
+		if original.Name == namespace {
+			ownedNamespace = true
+		}
+	}
+	if !ownedNamespace {
+		return environmentCreateBootstrapBlocker("OpenBao role must bind an exact namespace of the selected environment")
+	}
 	intent := deploymentplan.Object{"role": name, "namespace": namespace, "service_accounts": accounts, "policies": policies, "audience": "openbao", "ttl": "15m", "no_default_policy": true}
 	key := "openbao-role-" + name + "-" + deploymentplan.Digest(intent)[:12]
 	body, _ := json.Marshal(intent)

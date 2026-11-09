@@ -9,9 +9,7 @@ import (
 	"encoding/pem"
 	"math/big"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -62,20 +60,6 @@ func TestProductIdentityRenderedManagementEnrollmentUsesCurrentRoot(t *testing.T
 	if err := os.WriteFile(path, mustProviderRecoveryJSON(deploymentplan.Object{"Environment": f.cfg.Environment, "HistoricalTransport": historical, "Settings": settings}), 0600); err != nil {
 		t.Fatal(err)
 	}
-	args := []string{"test"}
-	if overlay := os.Getenv("RTK_PRODUCT_MANAGEMENT_NATIVE_OVERLAY"); overlay != "" {
-		args = append(args, "-overlay="+overlay)
-	}
-	args = append(args, "./internal/pkitrust", "-run", "^TestProductManagementEnrollmentUsesCurrentServiceRootAndSameBootstrap$", "-count=1", "-v", "-timeout=90s")
-	command := exec.CommandContext(t.Context(), "go", args...)
-	command.Dir = filepath.Join(f.cfg.Workspace, "repos/rtk_video_cloud")
-	command.Env = append(os.Environ(), "GOWORK=off", "RTK_PRODUCT_MANAGEMENT_TLS_FIXTURE="+path)
-	raw, err := command.CombinedOutput()
-	if err != nil {
-		t.Fatalf("native management enrollment boundary failed: %v; %s", err, raw)
-	}
-	if !strings.Contains(string(raw), "--- PASS: TestProductManagementEnrollmentUsesCurrentServiceRootAndSameBootstrap") {
-		t.Fatal("native management TLS regression did not execute")
-	}
+	runProductNativeRegression(t, f.cfg.Workspace, "internal/pkitrust", "TestProductManagementEnrollmentUsesCurrentServiceRootAndSameBootstrap", "RTK_PRODUCT_MANAGEMENT_TLS_FIXTURE="+path, "90s")
 	t.Log("maintained5 recipes with expired historical CA: native current ServiceRoot enrollment and ACK passed, original bootstrap reused")
 }

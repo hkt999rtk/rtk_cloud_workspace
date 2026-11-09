@@ -415,6 +415,9 @@ func completeEnvironmentCreateAfterApplicationOwners(ctx context.Context, cfg de
 	if err := applyEnvironmentFreshProductBindings(ctx, cfg, runtime.Execution, &bindings); err != nil {
 		return empty, err
 	}
+	if err := applyEnvironmentCreateCustodyBindings(cfg, p, runtime, service.Root, roots["openbao_tls"], &bindings); err != nil {
+		return empty, err
+	}
 	if err := validateEnvironmentIdentityBindings(bindings, cfg.Environment); err != nil {
 		return empty, err
 	}
@@ -446,6 +449,9 @@ func completeEnvironmentCreateAfterApplicationOwners(ctx context.Context, cfg de
 			return empty, err
 		}
 		if err := applyManagedLateBootstrapBindings(ctx, cfg, runtime, &bindings, live); err != nil {
+			return empty, err
+		}
+		if err := applyEnvironmentCreateCustodyBindings(cfg, p, runtime, service.Root, roots["openbao_tls"], &bindings); err != nil {
 			return empty, err
 		}
 		if err := validateEnvironmentIdentityBindings(bindings, cfg.Environment); err != nil {

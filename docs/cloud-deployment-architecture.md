@@ -3174,3 +3174,230 @@ prerequisites. The six-day validity/48-hour lead leaves recovery time but does
 not make the operator host highly available. See
 [Environment CRL maintenance](deployment-operations.md#environment-crl-maintenance)
 for activation, status, removal and failure handling.
+
+## OpenBao workload identity custody target (2026-11-08)
+
+After the independent OpenBao root startup, configure scoped Kubernetes auth
+and KV v2 custody before Controller/CertIssuer and application consumers start.
+The selected environment declares `PKI_STATE_BACKEND=pvc|openbao` and, for
+OpenBao, `PKI_STATE_KV_MOUNT`; create, upgrade, recovery and preflight resolve
+these inputs identically. No script chooses or silently flips the backend.
+Records are partitioned by original environment/generation/workload/purpose.
+`PKI_STATE_LEASE_DURATION` is also maintained configuration; its value must
+satisfy the native whole-second Lease protocol. The shared retained-generation
+baseline is `pvc`, mount `pki-identities`, and a `30s` Lease duration. Environment
+architecture overrides select a fresh generation's backend, mount and duration;
+the resolver validates and preserves those values rather than rewriting intent.
+
+The original `workload_custody` binding records the generation, managed OpenBao
+Root fingerprint, the original Service Root fingerprint and each logical storage owner's namespace/service account.
+Maintained storage aliases group multiple credential purposes within one
+workload: MQTT host/broker state share its workload scope; Log Ingester's internal
+and registration credentials also share a scope while retaining independent
+state-path hashes. A legacy PVC name is not itself a new cloud identity.
+The original admitted owner scope also records each client subject and state path
+from the maintained native enrollment recipes. CRL discovery uses these facts,
+current Pod/Deployment ownership and the selected service account to identify the
+expected ACK consumer without reading a failed container's private projection or
+contacting managed OpenBao TLS. This identifies an expected subject only: actual
+runtime readiness and the native registry ACK must still converge after recovery.
+When a container holds independent internal and registration clients, the original
+client purpose sharing the cache's scoped memory volume determines the expected
+ACK subject. Observations retain the state path in their identity-cache key; one
+container is not assumed to have one client. A separate trust/cache volume remains
+compatible with a single uniquely identified client. Ambiguous or unbound multiple
+purposes fail rather than introducing a hand-maintained manifest/subject mapping.
+Shared rendering derives the same KV record prefix and per-state Lease for
+enrollment Jobs and runtime containers. Only explicitly bound PKI storage
+becomes a memory-backed `emptyDir`; business claims and OpenBao's independent
+storage remain. Credentials use separate projected OpenBao/API tokens and the
+Kubernetes CA; Pod namespace/UID come from the downward API. Existing workload
+UID/GID settings are not replaced by custody rendering.
+
+Product registration uses the same projection: its original declared state purpose
+is mounted temporarily and managed Controller/CertIssuer references come from the
+registered Service lineage. Public Service trust uses a read-only ConfigMap;
+loading the installed key does not ACK a ready service. Final native completion
+attaches both Root references before ordinary rendering; Pod shape observation
+cannot supply those facts. Device/App accepted-cache storage aliases belong to
+their respective API owners. New OpenBao bootstrap plans exclude these workload
+identity/cache claims from provider demand; independent OpenBao/bootstrap state
+and business storage remain. Logical owner inventory requires no generated
+identity, fake generation or certificate during preflight. Named environment
+facts have fixed rendering order so equal inputs produce equal child plan hashes.
+
+Each identity path has an additive named Role/RoleBinding (`get`, `update`)
+and a pre-created Lease. A different lifecycle stage cannot narrow another
+state path's rights. Lease declarations contain no `spec`, so replay cannot
+clear a native writer's holder. Cross-namespace OpenBao access adds only the
+selected custody Pod ingress; it does not introduce an Egress policy that would
+isolate existing database, DNS or Kubernetes API connections.
+
+Admission and read-only CRL Jobs use a separate generation-bound service
+account and OpenBao role per owner. The role can read the declared private
+record keys and scoped public caches. Only the writer account has KV write
+capabilities and the identity Lease permissions. Explicit CRL installation
+uses the writer account under deployment execution ownership.
+
+Admitted creation establishes a CAS-required KV v2 mount and generation/workload
+policies before SQL migration and native enrollment. Provider configuration is
+batched inside the checked OpenBao Pod, with actual mount/ACL/role readback before
+completion is recorded. A lost configuration response is reconciled by readback;
+completed scopes are reused read-only. This initializes configuration, not leaf
+keys or certificates. The original scope metadata is recorded at
+`~/.config/rtk_cloud/<environment>/deployment/create/<generation>/custody/owners.json`.
+
+Native identity stores synchronously persist pending CSR state and verified
+credential changes through versioned compare-and-set, with fenced single-writer
+ownership. Existing file stores remain supported for unmigrated workloads.
+Private local files become temporary projections; a startup-only download or
+asynchronous filesystem mirroring is not a durable identity implementation.
+Trust/CRL caches preserve accepted versions and existing verification semantics.
+Registry factories, private HTTP transports and native API trust consumers use
+an explicit shared public-state custody handle from their managed identity owner.
+They preserve CRL progress, cumulative Root distrust and terminal issuer markers
+through projection loss. The API's first-Root admission is also durable: its
+consumed marker cannot be cleared by restarting a Pod. Public-cache initialization
+is separate from private-key enrollment; the bounded initial trust command
+requires the installed original Service key and cannot replace it.
+OpenBao itself retains independent cold-start storage; SQL admission and
+original CA custody are not migrated to KV.
+
+The approved dev/staging rollout removes the old runtime through the formal
+script and creates independent new generations, dev first, then staging. It
+does not copy old workload keys into KV. Original local generation material is
+segregated under the generation archive contract before active state is initialized.
+Prod, CI runners and shared artifacts are outside this authorized removal.
+
+The admitted creation executor reads the original OpenBao bootstrap CA from
+`~/.config/rtk_cloud/<environment>/deployment/create/material/<generation>/openbao-transport/ca.crt`
+and records its public handoff at
+`~/.config/rtk_cloud/<environment>/deployment/create/<generation>/custody/transport.json`.
+The `pki-custody-openbao-trust` ConfigMap in the video-cloud and account-manager
+namespaces projects this snapshot into `/run/pki-custody-openbao/` read-only,
+without `subPath`. Snapshot scope uses the original bootstrap generation, even
+when a forward recovery has a different execution-plan hash. Foundation recovery
+republishes the latest recorded handoff and never restores withdrawn bootstrap
+admission. The managed-Root distribution callback publishes the overlapping
+custody snapshot before replacing any provider consumer. Before managed listener
+cutover, the executor verifies each active original custody client's mounted
+snapshot, namespace/service account and unchanged Pod UID/spec. Stopped containers
+hold no old connection and are not required to start to satisfy this barrier.
+The selected rollout deadline bounds projection convergence; it never polls the
+Controller HTTP endpoint. After successful managed-host readiness, publication
+withdraws bootstrap trust and repeats the mounted snapshot check.
+
+Creation and ordinary rendering share backend-aware state placement checks.
+The OpenBao profile retains original logical identity paths, generation, auth
+scope and writable memory projections; it does not require a nonexistent PKI PVC.
+PVC permission initializers that require old files are removed only from selected
+custody owners. Native stores create private subdirectories as the explicit
+non-root runtime UID. Existing PVC profiles retain their original preparation
+and permission checks. CRL placement metadata uses the same selected storage
+profile; signed cache admission and actual runtime reload remain separate checks.
+
+Creation and continuation verify product KV identities through the native
+`serviceidentity-bootstrap inspect-admitted` command. A logical `openbao-kv-v2`
+reference binds the original generation, owner, namespace/service account,
+mount, state-path key and credential Root. The original enrollment child plan
+and journal in the canonical environment's `deployment/rollback/<sha>/` supply
+the execution profile even after that enrollment Deployment retires. Inspection
+does not need its container, Controller HTTP, or the finalized bootstrap session.
+It accepts genuine current renewal rather than comparing the current leaf with
+an old bootstrap delivery mirror; mirror ownership remains checked while the
+declared consumer still mounts that resource.
+
+The inspection command reads committed KV state and native SQL issuance,
+current signed CRLs and Root distrust policy, and emits only public metadata.
+It neither acquires a writer Lease nor projects a private identity. The helper
+inherits the original execution profile, existing workload auth role and public
+trust; it creates no PVC, policy, Role or signing request. Inspection is read-only
+for PKI/registry state, with a bounded temporary Kubernetes Job as its execution
+side effect. Job/Pod UIDs and the original requested body are verified around
+log collection. A lost create response is reconciled by the unique exact name;
+cleanup uses UID-preconditioned foreground deletion and verifies absence. The
+environment's rollout timeout bounds the read, without resetting its parent
+deadline. The same canonical public transport reader serves stage compilation
+and inspection; it cannot restore a withdrawn bootstrap anchor.
+
+For the selected OpenBao backend, the existing immutable-image capability probe
+requires `committed-identity-inspection-v1` and
+`committed-identity-batch-admission-v1` before allocation. The original bootstrap
+binding freezes both client purposes and server DNS policies. Existing-environment
+preflight, execution rechecks, and post-deploy health inspect the committed
+records in one native Job per workload, through the original workload service
+account. Preflight and execution verify the same current credential both now and
+through the configured qualification cutoff. Post-deploy health checks current
+admission. The original activated MQTT Root comes from the same generation's
+issuer evidence. PVC configurations retain their existing capability requirements.
+
+Committed public CRL maintenance uses the same original generation scope. Native
+`inspect-public-crl` verifies committed signed cache evidence without restoring a
+file; expired evidence remains observable for repair and does not count as healthy
+admission. `apply-public-crl` accepts only the current fresh record from the native
+registry, uses the existing CAS/monotonic cache writer, and reads back committed
+state. It cannot create a missing KV cache, sign a CRL or publish a runtime ACK.
+Existing capability probes additionally require
+`committed-public-crl-maintenance-v1` for the OpenBao backend, without another
+Docker probe or comparison to a different release.
+
+The public maintenance adapter runs a bounded temporary Job with the original
+workload service account and public trust. Public input is streamed through stdin
+to the native helper; private identity files are not mounted. A write projects its
+public candidate only in Memory emptyDir. The shared executor fences Job/Pod UIDs,
+recipe and owner references before/after execution, limits public output, reconciles
+lost create/delete responses by exact name, and uses UID-preconditioned foreground
+cleanup. Job deadline/TTL bound a lost operator. The application container may be
+faulted; only its metadata and current controller ownership chain are needed.
+The existing CRL maintenance `install` dispatcher now uses this path for OpenBao
+owners; PVC consumers keep the existing native file installer.
+
+Maintenance recovery orders independent local offline Root caches first, online
+provider renewal second, then local online caches before any KV-dependent cache
+installation. Kubernetes discovery order does not choose these dependencies.
+Convergence reads remote cache state through the same independently authenticated
+native inspector, checks the selected signed fresh record and still requires the
+actual registry ACK for the expected consumer. A temporary application file mirror
+is not remote durability evidence; a committed KV cache is not a runtime ACK.
+
+Native public-export discovery binds the original writer's admitted client
+purpose, current owner chain, selected remote scope and signed manifest entries.
+For KV owners it requires the scoped memory projection, not an identity PVC or a
+running exporter. It does not manufacture an observed PEM from registry data.
+Duplicate issuer/state purposes fail discovery. At convergence, the actual public
+PEM, both consumer/producer readiness and committed native KV cache evidence must
+agree with the selected current signed records; ordinary ACK checks still run.
+
+Shared mounted-CRL readiness selects storage from the observed container profile,
+not a manifest-provided backend flag. For OpenBao it resolves this original
+Deployment/Pod owner and enrollment purpose, reads the committed cache with the
+native helper and verifies the existing registry/ACK/freshness rules. Read-only
+inspection needs no maintenance writer Lease; installs still require execution
+ownership. Preflight consumes its selected release image and frozen Kubernetes
+backend. Standalone health freezes its selected canonical kubeconfig and uses the
+environment's assigned Controller helper image, without looking up another
+release. The ordinary health queries and helper share that same authentication
+snapshot. Identical cache observations are coalesced only within this checker
+invocation; the now/window callers independently validate their expiration cutoff.
+No private application file is substituted when remote context is absent.
+Account Manager's public registration-listener verifier uses that same committed
+cache reader when its observed management container selects OpenBao. It still
+reads the actual public export and preserves the original listener cert/key/CA.
+The compiled MQTT prerequisite shares its check runtime with now/window PKI
+validation; standalone Account health retains the selected full configuration.
+
+Public TLS re-observation and ordinary upgrade preserve custody facts from the
+same generation's `bootstrap/bindings.json` and managed transport snapshot, without
+copying old images, workload behavior or Kubernetes UIDs over current observation.
+Before that completion file exists, only the admitted create runtime context may
+supply its initialized scope and registered Service Root. Missing upgrade evidence
+is an error, never permission to create another identity or search a different
+environment. Current placement and native KV/registry admission remain distinct.
+
+Adapter integration remains incomplete until discovery, public export readback,
+expiry recovery ordering and every core preflight/health reader also use committed
+KV state; this checkpoint alone is not full renewal or environment acceptance.
+
+Targets are not deployed facts; each environment needs its own completion and
+health evidence. See the accepted OpenBao custody design and canonical
+Platform PKI contract.

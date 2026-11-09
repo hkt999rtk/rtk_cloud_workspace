@@ -203,7 +203,16 @@ func readAccountRegistrationPublicListenerSnapshot(ctx context.Context, cfg depl
 		// used by ordinary mounted-CRL/registry/ACK health. A still-current
 		// older signed list is not the current export source.
 		entry := entries[selected]
-		stateRaw, e := command(ctx, "-n", ns, "exec", "pod/"+deploymentplan.String(pm["name"]), "-c", "pkimanagement", "--", "cat", entry.StatePath)
+		var stateRaw []byte
+		var e error
+		if mqttFoundationEnv(manager, "PKI_STATE_BACKEND") == "openbao" {
+			if store.checkRuntime == nil {
+				return fail()
+			}
+			stateRaw, _, e = store.checkRuntime.committedCRLState(ns, cfg.Environment, "account-manager", "pkimanagement", entry)
+		} else {
+			stateRaw, e = command(ctx, "-n", ns, "exec", "pod/"+deploymentplan.String(pm["name"]), "-c", "pkimanagement", "--", "cat", entry.StatePath)
+		}
 		var state struct {
 			Fingerprint string `json:"issuer_fingerprint"`
 			Terminal    string `json:"terminal_issuer_id"`
@@ -311,6 +320,9 @@ func verifyAccountRegistrationPublicCRLRuntime(store secretStore, now time.Time,
 	}
 	stack := "video-cloud-" + store.Environment
 	cfg := deploymentConfig{Environment: store.Environment, Values: map[string]string{"CLOUD_STACK_NAME": stack}}
+	if store.checkRuntime != nil && store.checkRuntime.custodyReader != nil {
+		cfg = store.checkRuntime.custodyReader.cfg
+	}
 	account, err := read(ctx, "Deployment/"+stack+"-account-manager/account-manager")
 	if err != nil {
 		return fmt.Errorf("selected Account Manager public CRL owner unavailable")
@@ -368,6 +380,7 @@ func accountRegistrationPublicPodMatches(declared deploymentplan.Object, pod dep
 }
 
 func verifyAccountRegistrationPublicCRLForBackend(ctx context.Context, cfg deploymentConfig, store secretStore, b environmentKubernetesBackend, expected deploymentplan.Object, now time.Time) error {
+	store.checkRuntime = newEnvironmentCheckRuntime(ctx, cfg, store, &b, "")
 	ns := cfg.Values["CLOUD_STACK_NAME"] + "-account-manager"
 	listener, err := b.Read(ctx, "Secret/"+ns+"/"+serviceRegistrationTLSSecretName)
 	if err != nil || listener == nil {

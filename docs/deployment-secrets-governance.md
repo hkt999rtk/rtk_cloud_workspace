@@ -714,6 +714,9 @@ boundary is:
 - Workloads authenticate to OpenBao through Kubernetes auth or another reviewed
   workload identity method. AppRole remains a legacy VM bridge unless a specific
   transition runbook approves it.
+- Custody inspection Jobs use a separate read-only OpenBao role bound to their
+  projected Kubernetes service account. Their output is limited to public
+  admission evidence.
 - Kubernetes Secrets may hold short-lived synchronized material or bootstrap
   references needed by Pods, but those values must be generated or injected at
   deploy time and never committed.
@@ -1778,3 +1781,149 @@ Each environment, especially production, requires explicit installation and
 stack confirmation. No schedule is enabled by preflight or by a read-only CRL
 inspection. See [the runbook](deployment-operations.md#environment-crl-maintenance)
 for host availability and recovery requirements.
+
+## Cloud workload identity custody target (2026-11-08)
+
+The canonical Platform PKI contract selects OpenBao KV v2 as durable custody
+for cloud workload leaf identities and pending renewal state. Per-workload PVCs
+are the supported migration source, not the target custody model. Device/user
+client keys, offline CA custody and OpenBao's independent cold-start identity
+are outside this migration. Existing environments are not migrated by this
+policy update.
+
+The native workload identity store produces/consumes scoped versioned KV
+records, authenticated by dedicated Kubernetes roles; runtime consumers use
+private temporary projections (0700 directories, 0600 files). Signing/admission
+remains with the original PKI engines/registry. Private projections, credentials
+and tokens must not appear in progress, receipts, Git or cloud_env/.
+
+Public trust-cache producers/consumers use the same selected workload KV
+scope at `<environment>/<generation>/<workload>/public/<sha256(original-state-path)>`
+in the configured mount, with schema `rtk.pki-public-state/v1`. Signed CRLs,
+Root distrust/high-water state and the native API first-Root admission record
+(including its consumed policy-path marker) persist before private atomic file
+projection. These records contain public evidence, not signing keys. Runtime
+restore requires the original records; initial creation is reserved for the
+explicit native bootstrap flow or a validated newly discovered authority.
+API Root provisioning and TLS construction consume restored policy before
+opening a listener. Consumer ACKs still require actual runtime installation.
+
+The approved rollout uses formal removal and new creation for dev then staging;
+it does not implement an in-place identity migration. Original local generation
+material is segregated under the existing generation-archive contract before
+fresh active state initialization. Explicit cloud-data destruction is not proof
+of preserved runtime data.
+
+The creation executor produces public custody TLS handoff evidence at
+`~/.config/rtk_cloud/<environment>/deployment/create/<generation>/custody/transport.json`.
+Its original CA input is
+`~/.config/rtk_cloud/<environment>/deployment/create/material/<generation>/openbao-transport/ca.crt`;
+neither path uses a later recovery-plan hash in place of the original generation.
+Namespace-scoped read-only ConfigMap projections distribute this public snapshot;
+the resource is `pki-custody-openbao-trust`, mounted as the complete directory
+`/run/pki-custody-openbao/` so later public snapshot updates can propagate.
+native KV transports consume it during admitted creation. Its original bootstrap
+anchor is generation-bound; managed Root IDs/certificates come from the original
+registered creation lineage. Native clients verify installed snapshot scope and
+current TLS/registry policy. Normal completed runtime templates remove bootstrap
+authorization. Private keys are not snapshot content. Producer publication and
+live-consumer projection checks must precede serving TLS handoff.
+
+The original generation's non-secret `workload_custody` references belong in
+`~/.config/rtk_cloud/<environment>/deployment/identity-bindings.json` alongside
+the existing deployment identity bindings (0700 parent, 0600 file). The completed
+create executor produces them; normal preflight/upgrade consumes them. They name
+the generation, managed OpenBao Root and logical storage owners, not private keys,
+Pod UIDs or mutable KV versions. The binding also records the original activated
+Service Root fingerprint for registration and renewal, never a private CA key.
+Runtime containers consume projected tokens from
+`/run/pki-custody-auth/` and public TLS evidence from `/run/pki-custody-openbao/`;
+only the original bound PKI file projections use memory-backed temporary volumes.
+
+During admitted creation, the custody initializer produces immutable non-secret
+scope metadata at
+`~/.config/rtk_cloud/<environment>/deployment/create/<generation>/custody/owners.json`
+(0700 directory, 0600 file). The initializer and original-generation recovery
+consume it and the execution journal to preserve exact mount, workload aliases
+and role scope. OpenBao configuration batches consume the existing selected
+operator token through stdin; they never put it in command arguments, settings,
+scope metadata or public evidence. Preflight does not execute this initializer.
+
+Independent product custody inspection consumes the original enrollment child
+`deployment/rollback/<sha>/plan.json` and `journal.json` from this same canonical
+environment store, plus the original-generation transport snapshot and CA paths
+above. Those existing private records supply the execution/auth scope without
+requiring the retired enrollment container or an active bootstrap session. No
+alternative checkout/environment is a fallback and no identity is generated.
+
+The temporary Kubernetes inspection Job contains Secret references for the
+selected verifier database and projected short-lived workload auth, never literal
+database credentials, root tokens or private keys. Its native command reads the
+existing KV identity in process memory, validates current registry/CRL/Root policy,
+and exports only public identity metadata. It does not create a private file
+projection, acquire a writer Lease, modify KV/SQL records or publish an ACK.
+Job and Pod ownership are fenced; cleanup deletes only the original Job UID and
+verifies foreground removal. A changed owner or uncertain cleanup fails the
+observation. No new local operation-data path is introduced by this reader.
+
+Transport handoff consumes that same original public snapshot: publication to
+the existing ConfigMaps is followed by bounded reads of active clients' mounted
+public JSON and original Pod UID/spec. Neither this projection barrier nor its
+final managed-only phase reads a private key, changes an auth scope, renews a
+certificate or generates a separate local receipt path. It does not require a
+failed client container or Controller HTTP to become available.
+
+The completed PKI bootstrap producer writes original custody references in
+`~/.config/rtk_cloud/<environment>/deployment/create/<generation>/bootstrap/bindings.json`.
+Ordinary observation and CRL maintenance consume only that exact generation file
+and the transport snapshot above; they do not treat it as a current preflight GO.
+The scope includes non-secret client subjects/state paths produced from the same
+native enrollment recipes, frozen in the original owner inventory and completed
+bindings. Maintenance discovery uses these original purposes, current Kubernetes
+controller ownership and the bound service account; no application private state,
+provider TLS connection or SQL query is needed to identify the expected consumer.
+Missing enrollment metadata fails discovery rather than guessing a Pod-name
+subject. The expected subject does not prove key possession or replace a signed
+ACK. Independently mounted client purposes within one container are resolved
+against the original purpose sharing that CRL cache's scoped memory projection;
+observations cache by state path as well as owner/container. A unique client can
+still own a separate public trust/cache volume. No new local operational path is
+introduced and no private identity file is read for this expected-subject decision.
+Qualified in-progress creation supplies its scope through its admitted runtime
+context before the completion file exists. No other environment/worktree is a
+fallback, and neither reader initializes missing records.
+
+The public CRL helper reads the original scoped KV cache; an install streams only
+the selected public signed CRL JSON through stdin. Its temporary candidate is in
+Memory emptyDir and its original verifier database Secret remains a reference.
+The native command compares input with current registry evidence, preserves CAS,
+revocation high-water and terminal denial, and never acknowledges a runtime reload.
+After helper success, consumer/parent ownership is rechecked. Actual readiness and
+signed ACK remain required for convergence. Recovery restores independent local
+Root caches and provider-managed online CRLs before a KV-dependent installation;
+local provider caches precede remote caches regardless of discovery list order.
+Convergence also uses committed readback for remote caches rather than reading a
+faulted application's private projection. This adds no local secret or temporary
+operation-data path and never mounts a workload private identity PVC.
+Native public-export inventory retains only the original public cache authority
+and expected workload purpose. It can discover a stopped remote producer without
+reading an application projection or fabricating a PEM. Actual public reload,
+producer/consumer readiness and independently read committed KV evidence are
+required after recovery. No new local state path or private export is introduced.
+Shared mounted-CRL readiness uses original native scope and the selected Controller
+helper image from the compiled release (preflight) or exact environment operator
+selection (health). It consumes only the canonical kubeconfig; ordinary health
+queries and helper use the same frozen credential bytes. An inspection creates a
+bounded temporary Job but no identity, key, KV/SQL write or maintenance writer
+Lease. Public readback is coalesced in process for that invocation, while each
+validity-window check remains independent. Missing remote context never selects a
+private application projection as fallback. No additional local receipt path is
+created by this reader. Account Manager's public-listener check consumes the
+same committed evidence while reading its actual public PEM separately; original
+listener private key, certificate and CA are preserved. Its MQTT prerequisite
+shares the invocation's configured reader rather than reconstructing settings.
+
+All local operation directories are 0700, files 0600. The common environment
+path helpers own these locations. Matching OpenBao/registry backup and restore
+remain part of validating the newly created generation, without adding an old
+runtime backup gate for explicitly discarded cloud data.

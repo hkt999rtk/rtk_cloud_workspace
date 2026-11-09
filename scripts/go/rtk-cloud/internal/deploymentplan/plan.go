@@ -81,7 +81,7 @@ func ID(o Object) string {
 }
 
 var phases = map[string]int{"namespace": 0, "storage": 1, "bootstrap": 2, "configuration": 3, "migration": 4, "workload": 5, "routing": 6, "retirement": 7}
-var kinds = map[string]bool{"Namespace": true, "Deployment": true, "StatefulSet": true, "DaemonSet": true, "Job": true, "CronJob": true, "Service": true, "ConfigMap": true, "Secret": true, "PersistentVolumeClaim": true, "ServiceAccount": true, "Role": true, "RoleBinding": true, "ClusterRole": true, "ClusterRoleBinding": true, "NetworkPolicy": true, "Ingress": true, "IngressClass": true, "ValidatingWebhookConfiguration": true, "PodDisruptionBudget": true, "HorizontalPodAutoscaler": true}
+var kinds = map[string]bool{"Namespace": true, "Deployment": true, "StatefulSet": true, "DaemonSet": true, "Job": true, "CronJob": true, "Service": true, "ConfigMap": true, "Secret": true, "PersistentVolumeClaim": true, "ServiceAccount": true, "Role": true, "RoleBinding": true, "ClusterRole": true, "ClusterRoleBinding": true, "NetworkPolicy": true, "Ingress": true, "IngressClass": true, "ValidatingWebhookConfiguration": true, "PodDisruptionBudget": true, "HorizontalPodAutoscaler": true, "Lease": true}
 
 func controller(kind string) bool {
 	return kind == "Deployment" || kind == "StatefulSet" || kind == "DaemonSet" || kind == "CronJob" || kind == "Job" || kind == "Pod" || kind == "ReplicaSet"
@@ -186,6 +186,7 @@ func Compile(in Inputs, definitions []Definition, live []Object, adoptions ...ma
 			}
 			r.UID = String(m["uid"])
 			r.Baseline = Projection(current)
+			normalizeWorkloadLeaseRuntime(desired, r.Baseline)
 			r.Action = "update"
 			if !definition.Retire && !definition.Retain {
 				if err := retainAllocatedFields(desired, current); err != nil {
@@ -538,6 +539,22 @@ func validateLifecycle(id string, desired, current Object) error {
 
 func (p *Plan) SHA256() string { return Digest(p) }
 
+// The native writer owns Lease liveness, while deployment owns its existence
+// and access policy. Ignore only the native runtime fields of a declaration
+// that does not claim spec ownership. Keep UID, labels and other fields fenced.
+func normalizeWorkloadLeaseRuntime(desired, observed Object) {
+	if desired["apiVersion"] != "coordination.k8s.io/v1" || desired["kind"] != "Lease" || !strings.HasPrefix(String(Map(desired["metadata"])["name"]), "pki-state-") || len(Map(desired["spec"])) != 0 {
+		return
+	}
+	spec := Map(observed["spec"])
+	for _, field := range []string{"holderIdentity", "leaseDurationSeconds", "acquireTime", "renewTime", "leaseTransitions"} {
+		delete(spec, field)
+	}
+	if len(spec) == 0 {
+		delete(observed, "spec")
+	}
+}
+
 // Body is shared by admission and execution; current API identity fences writes.
 func (r Resource) Body(current Object) (Object, error) {
 	if r.Action == "create" {
@@ -547,6 +564,8 @@ func (r Resource) Body(current Object) (Object, error) {
 		return Clone(r.Desired), nil
 	}
 	baseline, observed := Clone(r.Baseline), Projection(current)
+	normalizeWorkloadLeaseRuntime(r.Desired, baseline)
+	normalizeWorkloadLeaseRuntime(r.Desired, observed)
 	normalizeDeploymentRevision(baseline)
 	normalizeDeploymentRevision(observed)
 	if current == nil || String(Map(current["metadata"])["uid"]) != r.UID || !reflect.DeepEqual(observed, baseline) {
