@@ -1341,3 +1341,23 @@ The real fixture ran without a skip in 8.674s (custody-batch-restore-loss.log).
 This exercises the full native identity lifecycle in one real fixture, alongside
 formal bootstrap and renderer tests. The complete dev create preflight and
 deployment remain live operations after review, delivery and isolated acceptance.
+
+Fresh core CRL initialization checkpoint. The native registry must hold the
+signed Service intermediate CRL before bootstrap transport is replaced. Create
+now reads the original OpenBao mount's signed public CRL and reconciles native
+import by exact readback. Before managed core rollout, three bounded Jobs
+initialize the listener and outbound CRL records for Controller, CertIssuer and
+Account Manager. They reuse the same owner scopes and memory projections as
+runtime, without mounting the temporary enrollment credential or requesting a
+PKI PVC. Ordinary inspection and maintenance still reject missing records.
+Fresh OpenBao create qualifies the image capability needed by these Jobs.
+
+Native dec9ff6 preserves and reconciles exact uncertain identity writes after
+both response and immediate readback are lost. Native 74cd78d adds the CRL
+initializer. The actual CLI initialized and read back both signed Service CRLs
+against isolated OpenBao, PostgreSQL and Kubernetes TokenReview, including after
+matched backup restore (custody-fresh-crl-live.log). The targeted workspace test
+verified that a committed native CRL import with a lost response is read back
+and never repeated, and that core Jobs project into the expected custody owner
+and memory volume (custody-fresh-crl-root-final.log). Complete core convergence,
+exact ACL and teardown review, CI publication and live dev remain pending.

@@ -356,6 +356,11 @@ func executeEnvironmentCreateServiceBootstrap(ctx context.Context, cfg deploymen
 		return s, environmentCreateBootstrapBlocker("original signed Service Root CRL is unavailable")
 	}
 	s.RootCRLPEM, s.RootCRLSecret = string(crlPEM), "pki-create-service-root-crl"
+	if cfg.Values["PKI_STATE_BACKEND"] == "openbao" {
+		if err := publishEnvironmentCreateServiceIntermediateCRL(ctx, cfg, runtime, s.Intermediate); err != nil {
+			return s, err
+		}
+	}
 	if runtime.ServiceSessionRecovery == nil {
 		if err := apply(ctx, "service-active-trust", []deploymentplan.Definition{environmentCreateSecret(p.Stack+"-video-cloud", s.RootCRLSecret, map[string]string{"revocations.pem": s.RootCRLPEM})}); err != nil {
 			return s, err
@@ -390,6 +395,7 @@ func executeEnvironmentCreateServiceBootstrap(ctx context.Context, cfg deploymen
 		{"service-issuer-server-enrollment", renderEnvironmentCreateServiceIssuerServerEnrollmentDefinitions},
 		{"service-managed-enrollment-issuer", renderEnvironmentCreateManagedServiceIssuerDefinitions},
 		{"service-core-enrollment", renderEnvironmentCreateServiceEnrollmentDefinitions},
+		{"service-core-initial-crls", renderEnvironmentCreateCoreCRLInitialization},
 		{"service-managed-core", renderEnvironmentCreateManagedServiceDefinitions},
 	} {
 		if err := runtime.Execution.Check(ctx); err != nil {
@@ -398,6 +404,9 @@ func executeEnvironmentCreateServiceBootstrap(ctx context.Context, cfg deploymen
 		definitions, err := stage.render(ctx, cfg, p, runtime, s)
 		if err != nil {
 			return s, err
+		}
+		if stage.name == "service-core-initial-crls" && len(definitions) == 0 {
+			continue
 		}
 		name := stage.name
 		if runtime.ServiceSessionRecovery != nil && runtime.ServiceSessionRecovery.Renewal && (name == "service-enrollment-issuer" || name == "service-issuer-server-enrollment") {

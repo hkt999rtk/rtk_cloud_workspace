@@ -614,6 +614,49 @@ func environmentCreateServiceCRLManifest(i environmentCreateRegisteredIssuer, pa
 	return string(raw)
 }
 
+func environmentCreateCoreCRLPath(kind string) string {
+	return environmentCreateServiceState + "/private/crl/" + kind + "-root.json"
+}
+
+func renderEnvironmentCreateCoreCRLInitialization(ctx context.Context, cfg deploymentConfig, p environmentCreateBootstrapPlan, runtime environmentCreateBootstrapRuntime, s environmentCreateServiceCeremony) ([]deploymentplan.Definition, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if cfg.Values["PKI_STATE_BACKEND"] != "openbao" {
+		return nil, nil
+	}
+	if err := validateEnvironmentCreateServiceCeremony(cfg, p, runtime, s); err != nil {
+		return nil, err
+	}
+	command := []any{"/app/serviceidentity-bootstrap", "initialize-public-crl"}
+	for _, kind := range []string{"listener", "outbound"} {
+		path := environmentCreateCoreCRLPath(kind)
+		command = append(command, path, s.Root.ID, s.Root.RootFingerprint,
+			strings.TrimSuffix(path, ".json")+"-"+s.Intermediate.ID+".json", s.Intermediate.ID,
+			deploymentplan.String(s.Intermediate.Document["certificate_fingerprint_sha256"]))
+	}
+	var jobs []deploymentplan.Definition
+	for _, role := range []string{"pki-controller", "certissuer", "account-manager"} {
+		namespace := p.Stack + "-video-cloud"
+		if role == "account-manager" {
+			namespace = p.Stack + "-account-manager"
+		}
+		settings := map[string]string{
+			"PKI_ENVIRONMENT": p.Environment,
+			// Select the original owner for the custody projector. The CRL
+			// initializer never opens or acquires the private identity.
+			"PKI_CLIENT_IDENTITY_STATE": environmentCreateServiceOwnerIdentityPath(role, "client.json"),
+		}
+		job := environmentCreateServiceEnrollmentJob(p, namespace, role+"-initial-crls", environmentCreateServiceOwnerClaim(role), s, command, settings, false)
+		pod := environmentPKIPod(job.Object)
+		pod["volumes"] = environmentCreateServiceWithoutNamed(pod["volumes"], "bootstrap", "service-trust")
+		c := managedNamedField(pod["containers"], "enroll")
+		c["volumeMounts"] = environmentCreateServiceWithoutNamed(c["volumeMounts"], "bootstrap", "service-trust")
+		jobs = append(jobs, job)
+	}
+	return jobs, nil
+}
+
 func renderEnvironmentCreateManagedServiceDefinitions(ctx context.Context, cfg deploymentConfig, p environmentCreateBootstrapPlan, runtime environmentCreateBootstrapRuntime, s environmentCreateServiceCeremony) ([]deploymentplan.Definition, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -702,8 +745,8 @@ func renderEnvironmentCreateManagedServiceDefinitions(ctx context.Context, cfg d
 	for _, namespace := range []string{p.Stack + "-video-cloud", p.Stack + "-account-manager"} {
 		trust := environmentCreateServiceTrustDefinition(namespace, s.Root, "", manifest)
 		data := deploymentplan.Map(trust.Object["data"])
-		data["listener-crls.json"] = environmentCreateServiceCRLManifest(s.Root, environmentCreateServiceState+"/private/crl/listener-root.json", s.Intermediate)
-		data["outbound-crls.json"] = environmentCreateServiceCRLManifest(s.Root, environmentCreateServiceState+"/private/crl/outbound-root.json", s.Intermediate)
+		data["listener-crls.json"] = environmentCreateServiceCRLManifest(s.Root, environmentCreateCoreCRLPath("listener"), s.Intermediate)
+		data["outbound-crls.json"] = environmentCreateServiceCRLManifest(s.Root, environmentCreateCoreCRLPath("outbound"), s.Intermediate)
 		out = append(out, trust)
 	}
 	return out, nil

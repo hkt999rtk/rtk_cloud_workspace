@@ -238,6 +238,56 @@ func TestCreateManagedCoreOrderRequiresControllerThenIssuerThenAccount(t *testin
 		}
 	}
 }
+
+func TestCreateCustodyCoreInitialCRLsAreScopedToOriginalOwners(t *testing.T) {
+	cfg, p, runtime, s := createServiceRecipeFixture(t, "dev")
+	cfg.Values["PKI_STATE_BACKEND"], cfg.Values["PKI_STATE_KV_MOUNT"], cfg.Values["PKI_STATE_LEASE_DURATION"] = "openbao", "identities", "30s"
+	defs, err := renderEnvironmentCreateCoreCRLInitialization(t.Context(), cfg, p, runtime, s)
+	if err != nil || len(defs) != 3 {
+		t.Fatalf("expected one initialization Job per core owner: %v (%d definitions)", err, len(defs))
+	}
+	for _, d := range defs {
+		meta := deploymentplan.Map(d.Object["metadata"])
+		pod := environmentPKIPod(d.Object)
+		c := managedNamedField(pod["containers"], "enroll")
+		command := certIssuerObjectList(c["command"])
+		if len(command) != 14 || command[1] != "initialize-public-crl" {
+			t.Fatalf("unexpected initial CRL Job command: %v", command)
+		}
+		for index, kind := range []string{"listener", "outbound"} {
+			offset := 2 + index*6
+			path := environmentCreateServiceState + "/private/crl/" + kind + "-root"
+			if command[offset] != path+".json" || command[offset+1] != s.Root.ID || command[offset+2] != s.Root.RootFingerprint ||
+				command[offset+3] != path+"-"+s.Intermediate.ID+".json" || command[offset+4] != s.Intermediate.ID || command[offset+5] != s.Intermediate.Document["certificate_fingerprint_sha256"] {
+				t.Fatalf("initial CRL Job selected an unexpected authority or path: %v", command)
+			}
+		}
+		if managedNamedField(pod["volumes"], "bootstrap") != nil || !strings.HasPrefix(deploymentplan.String(meta["name"]), "pki-enroll-") ||
+			mqttFoundationEnv(c, "PKI_CLIENT_ISSUER_URL") != "" {
+			t.Fatal("public CRL initialization retained an enrollment credential or endpoint")
+		}
+	}
+	binding, err := createEnvironmentCustodyBinding(cfg, p, strings.Repeat("a", 64), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	projected, err := projectEnvironmentCustodyResources(cfg.Values, cfg.Environment, binding, strings.Repeat("b", 64), defs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range projected {
+		if d.Object["kind"] != "Job" {
+			continue
+		}
+		pod := environmentPKIPod(d.Object)
+		c := managedNamedField(pod["containers"], "enroll")
+		state := managedNamedField(pod["volumes"], "service-state")
+		if deploymentplan.Map(state["emptyDir"])["medium"] != "Memory" || state["persistentVolumeClaim"] != nil ||
+			mqttFoundationEnv(c, "PKI_STATE_RECORD_PREFIX") == "" || pod["serviceAccountName"] == "" {
+			t.Fatal("initial CRL Job lost its original OpenBao owner or requested a PVC", deploymentplan.ID(d.Object))
+		}
+	}
+}
 func createRecipeEnv(container deploymentplan.Object) map[string]string {
 	out := map[string]string{}
 	for _, e := range certIssuerObjectList(container["env"]) {

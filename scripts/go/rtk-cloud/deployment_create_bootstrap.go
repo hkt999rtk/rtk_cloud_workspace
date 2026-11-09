@@ -295,7 +295,11 @@ func qualifyEnvironmentCreateBootstrapCapabilitiesWithRouting(ctx context.Contex
 	if command.Run() != nil {
 		return environmentCreateBootstrapBlocker("the exact formal API image lacks complete native bootstrap and encrypted custody ceremony capabilities")
 	}
-	capabilities := []environmentProductCapability{{p.AccountManagerImage, "/app/rtk-account-manager", "account-manager", []string{"deployment-bootstrap-finalize-v1"}}, {p.Image, "/app/pkimanagement", "pkimanagement", []string{"first-trust-v1", "deployment-bootstrap-finalize-v1"}}, {p.Image, "/app/certissuer", "certissuer", []string{"create-service-enrollment-v1", "registry-only-issuance-v1"}}, {p.Image, "/app/api", "api", []string{"fresh-bootstrap-trust-v1", "mqtt-bundle-bootstrap-v1"}}, {p.Image, "/app/logingester", "logingester", []string{"fresh-bootstrap-trust-v1", "mqtt-bundle-bootstrap-v1"}}, {p.Image, "/app/pkibroker", "pkibroker", []string{"fresh-bootstrap-trust-v1"}}, {p.Image, "/app/serviceidentity-bootstrap", "serviceidentity-bootstrap", serviceIdentityBootstrapCapabilities(cfg.Values["PKI_STATE_BACKEND"])}, {p.Images["LKE_MQTT_PKI_IMAGE"], "/usr/local/bin/emqxpkihost", "emqxpkihost", managedMQTTRequiredCapabilities(cfg.Values["TEST_LAB_ENABLED"] == "true")}}
+	identityCapabilities := serviceIdentityBootstrapCapabilities(cfg.Values["PKI_STATE_BACKEND"])
+	if cfg.Values["PKI_STATE_BACKEND"] == "openbao" {
+		identityCapabilities = append(identityCapabilities, "initial-service-crl-custody-v1")
+	}
+	capabilities := []environmentProductCapability{{p.AccountManagerImage, "/app/rtk-account-manager", "account-manager", []string{"deployment-bootstrap-finalize-v1"}}, {p.Image, "/app/pkimanagement", "pkimanagement", []string{"first-trust-v1", "deployment-bootstrap-finalize-v1"}}, {p.Image, "/app/certissuer", "certissuer", []string{"create-service-enrollment-v1", "registry-only-issuance-v1"}}, {p.Image, "/app/api", "api", []string{"fresh-bootstrap-trust-v1", "mqtt-bundle-bootstrap-v1"}}, {p.Image, "/app/logingester", "logingester", []string{"fresh-bootstrap-trust-v1", "mqtt-bundle-bootstrap-v1"}}, {p.Image, "/app/pkibroker", "pkibroker", []string{"fresh-bootstrap-trust-v1"}}, {p.Image, "/app/serviceidentity-bootstrap", "serviceidentity-bootstrap", identityCapabilities}, {p.Images["LKE_MQTT_PKI_IMAGE"], "/usr/local/bin/emqxpkihost", "emqxpkihost", managedMQTTRequiredCapabilities(cfg.Values["TEST_LAB_ENABLED"] == "true")}}
 	productCaps, err := productRegistrationCapabilities(p.Image, p.ProductIdentities)
 	if err != nil {
 		return err
