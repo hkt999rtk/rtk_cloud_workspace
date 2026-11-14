@@ -128,8 +128,9 @@ func loadOriginalAppTrustPlan(store secretStore, e *environmentCreateExecution) 
 
 func loadActivatedDeviceForAppTrust(ctx context.Context, cfg deploymentConfig, store secretStore, e *environmentCreateExecution, b environmentKubernetesBackend, operator map[string]string, p *createFoundationRecoveryPlan) (environmentCreateRegisteredIssuer, environmentCreateRegisteredIssuer, error) {
 	var ready, active environmentCreateRegisteredIssuer
+	boundary := "original-device-records"
 	bad := func() (environmentCreateRegisteredIssuer, environmentCreateRegisteredIssuer, error) {
-		return ready, active, createProviderRecoveryBlock("App trust continuation requires unchanged original Device identity and its accepted ACTIVE native Job")
+		return ready, active, createProviderRecoveryBlock("App trust continuation requires unchanged original Device identity and its accepted ACTIVE native Job; boundary=" + boundary)
 	}
 	base := filepath.Join(store.Root, "deployment/create", e.Journal.PlanSHA256, "bootstrap/device")
 	var r, a map[string]any
@@ -137,6 +138,7 @@ func loadActivatedDeviceForAppTrust(ctx context.Context, cfg deploymentConfig, s
 		return bad()
 	}
 	var err error
+	boundary = "original-device-identity"
 	ready, err = environmentCreateRegisteredIssuerFromMap(r, "")
 	if err != nil {
 		return bad()
@@ -145,6 +147,7 @@ func loadActivatedDeviceForAppTrust(ctx context.Context, cfg deploymentConfig, s
 	if err != nil || validateEnvironmentCreateDeviceRoot(cfg, ready) != nil || validateEnvironmentCreateDeviceRoot(cfg, active) != nil || ready.Status != "ready" || active.Status != "active" || ready.ID != active.ID || ready.Certificate != active.Certificate || ready.ChainPEM != active.ChainPEM || ready.Reference != active.Reference || ready.BundleVersion != active.BundleVersion {
 		return bad()
 	}
+	boundary = "accepted-device-active-stage"
 	plan, j, err := acceptedCreateStage(store, e, "kubernetes/device-root-active")
 	if err != nil || len(plan.Resources) != 2 {
 		return bad()
@@ -152,11 +155,13 @@ func loadActivatedDeviceForAppTrust(ctx context.Context, cfg deploymentConfig, s
 	bound := false
 	for _, v := range plan.Resources {
 		if v.Desired["kind"] == "Job" {
+			boundary = "original-device-active-job-owner"
 			actual, err := b.Read(ctx, v.ID)
 			if err != nil || actual == nil || deploymentplan.Map(actual["metadata"])["uid"] != j.Owners[v.ID] || !deploymentplan.Matches(v.Desired, actual) {
 				return bad()
 			}
 			c := deploymentplan.Map(certIssuerObjectList(environmentPKIPod(v.Desired)["containers"])[0])
+			boundary = "original-device-active-job-result"
 			raw, err := b.command(ctx, nil, "--namespace", p.Plan.Stack+"-video-cloud", "logs", "job/"+deploymentplan.String(deploymentplan.Map(v.Desired["metadata"])["name"]), "--container", deploymentplan.String(c["name"]), "--tail=1")
 			var result struct {
 				Issuer map[string]any `json:"issuer"`
@@ -167,23 +172,50 @@ func loadActivatedDeviceForAppTrust(ctx context.Context, cfg deploymentConfig, s
 	if !bound {
 		return bad()
 	}
+	boundary = "original-operator-binding"
 	binding, _, err := resolveInitialOperatorBinding(ctx, cfg, store, e, b, operator)
 	if err != nil {
 		return bad()
 	}
+	boundary = "native-account-transport"
 	origin, httpClient, err := newEnvironmentCreateAccountClient(ctx, cfg, b, e)
 	if err != nil {
 		return bad()
 	}
+	boundary = "original-operator-client"
 	client, err := newEnvironmentCreatePKIClient(origin, httpClient, cfg.Environment, binding.UserID)
 	if err != nil {
 		return bad()
 	}
+	boundary = "original-operator-authentication"
 	if _, err = client.Authenticate(ctx, operator["ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL"], operator["ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD"]); err != nil {
 		return bad()
 	}
-	actual, err := client.ReadIssuer(ctx, active.ID)
-	if err != nil || deploymentplan.Digest(actual) != deploymentplan.Digest(a) {
+	// The ACTIVE native Job is completed history. During an ordinary workload
+	// prefix its Service can already name the target Controller port while the
+	// original Pod still uses its previous port name. Read the actual registry
+	// through the existing selected read-only database boundary, independently
+	// of that pending transport; never substitute a local publication for it.
+	boundary = "native-original-device-registry"
+	raw, err := readEnvironmentCreateRegistryJSON(ctx, cfg, environmentCreateBootstrapRuntime{Backend: b, Execution: e}, "SELECT json_agg(json_build_object('id',id,'environment',environment,'domain',domain,'kind',kind,'status',status,'document',document) ORDER BY id) FROM pki_issuers")
+	var observed []struct {
+		ID, Environment, Domain, Kind, Status string
+		Document                              map[string]any
+	}
+	if err != nil || json.Unmarshal(raw, &observed) != nil {
+		return bad()
+	}
+	found := false
+	for _, current := range observed {
+		if current.ID != active.ID {
+			continue
+		}
+		if found || current.Environment != cfg.Environment || current.Domain != "device" || current.Kind != "root" || current.Status != "active" || deploymentplan.Digest(current.Document) != deploymentplan.Digest(a) {
+			return bad()
+		}
+		found = true
+	}
+	if !found {
 		return bad()
 	}
 	p.Materials["accepted-service-core-app-trust-device-active"] = deploymentplan.Digest(a)

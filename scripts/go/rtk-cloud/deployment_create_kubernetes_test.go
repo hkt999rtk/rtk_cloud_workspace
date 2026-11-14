@@ -13,7 +13,7 @@ import (
 )
 
 func TestCreateBackendWaitCapturesDurableOwnersAfterReadiness(t *testing.T) {
-	for _, mode := range []string{"claim-ready", "stateful-ready", "readiness-failed", "capture-failed"} {
+	for _, mode := range []string{"claim-ready", "stateful-ready", "readiness-failed", "capture-failed", "observation-only"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx := context.Background()
 			cfg, store, operatorSHA, artifact := createStateFixture(t, "dev")
@@ -57,7 +57,7 @@ esac
 			resource := deploymentplan.Resource{ID: kind + "/video-cloud-dev-platform/data", Action: "create", Desired: deploymentplan.Object{"kind": kind}}
 			var backend deploymentplan.Backend = environmentCreateKubernetesBackend{
 				environmentKubernetesBackend: environmentKubernetesBackend{Store: store, KubeconfigContent: kubeconfig, RolloutTimeout: time.Minute},
-				execution:                    execution, cfg: cfg, store: store,
+				execution:                    execution, cfg: cfg, store: store, observationOnly: mode == "observation-only",
 			}
 			err = backend.Wait(ctx, resource)
 			calls := readTestFile(t, log)
@@ -68,6 +68,12 @@ esac
 			proof, known, proofErr := readDeploymentRemovalVolumes(cfg)
 			if ledgerErr != nil || proofErr != nil {
 				t.Fatal("ownership evidence cannot be read", ledgerErr, proofErr)
+			}
+			if mode == "observation-only" {
+				if err != nil || len(ledger.Volumes) != 0 || known || strings.Contains(calls, "get persistentvolumes") {
+					t.Fatal("preflight dependency readiness produced allocation receipts", err, ledger.Volumes, known)
+				}
+				return
 			}
 			if mode == "readiness-failed" || mode == "capture-failed" {
 				var blocker *deploymentplan.Blocker

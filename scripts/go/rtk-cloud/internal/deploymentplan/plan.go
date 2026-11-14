@@ -150,7 +150,9 @@ func Compile(in Inputs, definitions []Definition, live []Object, adoptions ...ma
 		if definition.Retire && (definition.Retain || !retirable(kind) || definition.Phase != "retirement") {
 			return nil, blocked("deployment.retirement", id, "resource requires a separate data or PKI lifecycle", "ordinary retirement is limited to explicitly reviewed workload, service, route and access owners")
 		}
-		if !definition.Retain {
+		// A controller-created Pod is retired using its recorded labels as-is.
+		// Its Deployment template need not carry the management label.
+		if !definition.Retain && !(definition.Retire && kind == "Pod" && in.Operation == "scoped") {
 			labels := Map(metadata["labels"])
 			if labels == nil {
 				labels = Object{}
@@ -391,6 +393,7 @@ func Matches(desired, current Object) bool {
 	normalizeDeploymentRevision(current)
 	defaultEmptyPodEnvironment(desired)
 	defaultEmptyPodEnvironment(current)
+	matchEmptyInitContainers(desired, current)
 	for key, value := range desired {
 		if key == "metadata" {
 			for _, field := range []string{"name", "namespace", "labels", "annotations"} {
@@ -423,18 +426,45 @@ func Matches(desired, current Object) bool {
 // JSON omits.
 // A valueFrom source is never equivalent: leave it untouched so explicit empty
 // desired values still reject a webhook injecting a Secret/ConfigMap source.
-func defaultEmptyPodEnvironment(object Object) {
-	var pod Object
+func workloadPodSpec(object Object) Object {
 	switch object["kind"] {
 	case "Pod":
-		pod = Map(object["spec"])
+		return Map(object["spec"])
 	case "Deployment", "StatefulSet", "DaemonSet", "Job":
-		pod = Map(Map(Map(object["spec"])["template"])["spec"])
+		return Map(Map(Map(object["spec"])["template"])["spec"])
 	case "CronJob":
-		pod = Map(Map(Map(Map(Map(object["spec"])["jobTemplate"])["spec"])["template"])["spec"])
+		return Map(Map(Map(Map(Map(object["spec"])["jobTemplate"])["spec"])["template"])["spec"])
 	default:
+		return nil
+	}
+}
+
+// Kubernetes omits an empty initContainers list on readback. Only an explicit
+// empty desired list needs this equivalence. An injected container still fails.
+func matchEmptyInitContainers(desired, observed Object) {
+	want, declared := workloadPodSpec(desired)["initContainers"].([]any)
+	have := workloadPodSpec(observed)
+	if declared && len(want) == 0 && have != nil && have["initContainers"] == nil {
+		have["initContainers"] = []any{}
+	}
+}
+
+// Kubernetes omits an empty initializer list. These three empty JSON forms
+// carry no executable container; invalid or nonempty values stay exact fences.
+func normalizeEmptyInitContainersForDrift(object Object) {
+	pod := workloadPodSpec(object)
+	if pod == nil {
 		return
 	}
+	value, exists := pod["initContainers"]
+	list, isList := value.([]any)
+	if exists && (value == nil || isList && len(list) == 0) {
+		delete(pod, "initContainers")
+	}
+}
+
+func defaultEmptyPodEnvironment(object Object) {
+	pod := workloadPodSpec(object)
 	for _, field := range []string{"containers", "initContainers"} {
 		containers, _ := pod[field].([]any)
 		for _, container := range containers {
@@ -568,6 +598,8 @@ func (r Resource) Body(current Object) (Object, error) {
 	normalizeWorkloadLeaseRuntime(r.Desired, observed)
 	normalizeDeploymentRevision(baseline)
 	normalizeDeploymentRevision(observed)
+	normalizeEmptyInitContainersForDrift(baseline)
+	normalizeEmptyInitContainersForDrift(observed)
 	if current == nil || String(Map(current["metadata"])["uid"]) != r.UID || !reflect.DeepEqual(observed, baseline) {
 		return nil, blocked("deployment.drift", r.ID, "owner or configuration changed after qualification", "repeat planning and qualification; do not overwrite concurrent updates")
 	}
@@ -585,9 +617,31 @@ func (r Resource) Body(current Object) (Object, error) {
 	}
 	body := Clone(current)
 	delete(body, "status")
-	for k, v := range r.Desired {
+	for k, v := range Clone(r.Desired) {
 		if k != "metadata" {
 			body[k] = v
+		}
+	}
+	// Omission in an update recipe does not deallocate the original class.
+	// Use only the UID- and baseline-fenced allocation, never a cluster default.
+	// Keep frozen intent unchanged; explicit class values remain authoritative.
+	if body["kind"] == "StatefulSet" {
+		originals, _ := Map(current["spec"])["volumeClaimTemplates"].([]any)
+		wanted, _ := Map(body["spec"])["volumeClaimTemplates"].([]any)
+		for _, raw := range wanted {
+			claim := Map(raw)
+			spec := Map(claim["spec"])
+			if _, declared := spec["storageClassName"]; spec == nil || declared {
+				continue
+			}
+			for _, original := range originals {
+				old := Map(original)
+				if name := String(Map(claim["metadata"])["name"]); name != "" && name == String(Map(old["metadata"])["name"]) {
+					if class, exists := Map(old["spec"])["storageClassName"]; exists {
+						spec["storageClassName"] = class
+					}
+				}
+			}
 		}
 	}
 	m := Map(body["metadata"])

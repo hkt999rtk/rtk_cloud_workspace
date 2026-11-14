@@ -50,16 +50,16 @@ func publishEnvironmentCreateCustodyTrust(ctx context.Context, cfg deploymentCon
 	if !environmentPreflightDigest.MatchString(generation) {
 		return environmentCreateBootstrapBlocker("custody trust requires the original bootstrap generation reference")
 	}
-	originalCAPath, err := e.Store.safePath(filepath.Join("deployment", "create", "material", generation, "openbao-transport", "ca.crt"))
+	originalCAPath, caPEM, err := initialTransportAuthorityPath(e.Store, generation, "openbao")
 	if err != nil || runtime.OpenBao.CACertPath != originalCAPath {
 		return environmentCreateBootstrapBlocker("custody trust must use the selected generation's original OpenBao foundation authority")
 	}
-	ca, err := readBoundedEnvironmentFile(originalCAPath, true)
+	ca := []byte(caPEM)
+	path, err := initialTransportCustodySnapshotPath(e.Store, generation, originalCAPath)
 	if err != nil {
-		return environmentCreateBootstrapBlocker("original OpenBao foundation authority is unavailable for custody trust publication")
+		return err
 	}
-	relative := filepath.Join("deployment", "create", generation, "custody", "transport.json")
-	path, err := e.Store.safePath(relative)
+	relative, err := filepath.Rel(e.Store.Root, path)
 	if err != nil {
 		return err
 	}
@@ -172,15 +172,12 @@ func readEnvironmentCustodyTransportState(cfg deploymentConfig, store secretStor
 	if store.Environment != cfg.Environment || !environmentPreflightDigest.MatchString(generation) {
 		return bad()
 	}
-	caPath, err := store.safePath(filepath.Join("deployment", "create", "material", generation, "openbao-transport", "ca.crt"))
+	caPath, caPEM, err := initialTransportAuthorityPath(store, generation, "openbao")
 	if err != nil {
 		return empty, "", err
 	}
-	ca, err := readBoundedEnvironmentFile(caPath, true)
-	if err != nil {
-		return bad()
-	}
-	path, err := store.safePath(filepath.Join("deployment", "create", generation, "custody", "transport.json"))
+	ca := []byte(caPEM)
+	path, err := initialTransportCustodySnapshotPath(store, generation, caPath)
 	if err != nil {
 		return empty, "", err
 	}

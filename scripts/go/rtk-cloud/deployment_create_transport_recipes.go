@@ -133,6 +133,9 @@ func environmentCreateTransportHostSettings(p environmentCreateBootstrapPlan, s 
 	}
 	issuer := "certissuer." + p.Stack + "-video-cloud.svc"
 	settings := map[string]string{"PKI_ENVIRONMENT": p.Environment, "PKI_BOOTSTRAP_SESSION_ID": s.BootstrapSessionID, prefix + "_HOST_IDENTITY_STATE": state, prefix + "_HOST_NAME": name, prefix + "_HOST_DNS_NAMES": strings.Join(names, ","), prefix + "_HOST_ROOT_SHA256": root.RootFingerprint, prefix + "_HOST_RENEWAL_URL": "https://" + issuer + ":18445", prefix + "_HOST_RENEWAL_SERVER_PKI_ROOT_SHA256": s.Root.RootFingerprint, prefix + "_HOST_RENEWAL_SERVER_PKI_NAME": issuer, prefix + "_HOST_RENEWAL_TLS_CA": environmentCreateServiceTrust + "/root.pem", prefix + "_HOST_RENEWAL_SERVER_PKI_SWEEP_INTERVAL": "10s", prefix + "_SERVICE_CLIENT_IDENTITY_STATE": clientState, prefix + "_SERVICE_CLIENT_ROOT_SHA256": s.Root.RootFingerprint}
+	if domain == "openbao_tls" && prefix == "OPENBAO_PKI" {
+		settings["OPENBAO_PKI_STARTUP_TRUST"] = filepath.Join(filepath.Dir(state), "startup-trust.json")
+	}
 	return settings, nil
 }
 

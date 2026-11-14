@@ -110,6 +110,11 @@ func publishEnvironmentCreateAppRouting(ctx context.Context, cfg deploymentConfi
 	if err := runtime.Execution.Check(ctx); err != nil {
 		return err
 	}
+	if binding, fileSHA, accepted, err := readOriginalAppRoutingPublication(ctx, runtime.Execution.Store, runtime.Execution, runtime.Backend); err != nil {
+		return err
+	} else if accepted {
+		return finishOriginalAppRoutingPublication(ctx, runtime.Execution.Store, runtime.Execution, binding, fileSHA)
+	}
 	ns := p.Stack + "-video-cloud"
 	serviceID, deploymentID := "Service/"+ns+"/video-cloud-api-app-pki", "Deployment/"+ns+"/video-cloud-api-app-pki"
 	service, se := runtime.Backend.Read(ctx, serviceID)

@@ -28,6 +28,7 @@ type GateResult struct {
 	Required             bool     `json:"required"`
 	EvidenceSHA256       string   `json:"evidence_sha256,omitempty"`
 	PendingRolloutHealth []string `json:"pending_rollout_health,omitempty"`
+	Resource             string   `json:"resource,omitempty"`
 	Cause                string   `json:"cause,omitempty"`
 	Next                 string   `json:"next,omitempty"`
 	Impact               string   `json:"impact,omitempty"`

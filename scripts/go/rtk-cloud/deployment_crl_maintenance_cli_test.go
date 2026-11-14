@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -103,8 +104,9 @@ func (w *maintenanceLockedStatusWriter) Write(raw []byte) (int, error) {
 }
 
 func TestCRLMaintenanceCLIOrchestratesLeaseStatusAndCleanup(t *testing.T) {
-	for _, mode := range []string{"read-only", "healthy", "query-failure", "missing-ack", "cleanup-failure"} {
+	for _, mode := range []string{"read-only", "healthy", "healthy-long-window", "query-failure", "missing-ack", "cleanup-failure"} {
 		t.Run(mode, func(t *testing.T) {
+			healthy := mode == "healthy" || mode == "healthy-long-window"
 			workspace := writeDeploymentFixture(t, "staging", "lke")
 			kube, _ := yaml.Marshal(frozenKubernetesFixture(t))
 			store := makeIsolatedTestSecretStore(t, "staging")
@@ -150,7 +152,7 @@ func TestCRLMaintenanceCLIOrchestratesLeaseStatusAndCleanup(t *testing.T) {
 			var out, diagnostics bytes.Buffer
 			var output io.Writer = &out
 			var lockedOutput *maintenanceLockedStatusWriter
-			if mode == "healthy" {
+			if healthy {
 				lockedOutput = &maintenanceLockedStatusWriter{Writer: &out, directory: filepath.Join(store.Root, crlMaintenanceBase)}
 				output = lockedOutput
 			}
@@ -161,10 +163,16 @@ func TestCRLMaintenanceCLIOrchestratesLeaseStatusAndCleanup(t *testing.T) {
 			if mode == "missing-ack" {
 				args = append(args, "--timeout", "3s")
 			}
+			if mode == "healthy-long-window" {
+				args = append(args, "--timeout", "60m")
+			}
 			err := runCRLMaintenanceCLI(context.Background(), args, output, &diagnostics)
-			wantSuccess := mode == "read-only" || mode == "healthy"
+			wantSuccess := mode == "read-only" || healthy
 			if (err == nil) != wantSuccess {
 				t.Fatalf("result %v status=%s diagnostics=%s", err, out.String(), diagnostics.String())
+			}
+			if mode == "missing-ack" && !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("caller expiration was reported as a missing resource or lost its cause: %v", err)
 			}
 			if lockedOutput != nil && !lockedOutput.observed {
 				t.Fatal("final status was not emitted while the host lock remained owned")
@@ -173,7 +181,7 @@ func TestCRLMaintenanceCLIOrchestratesLeaseStatusAndCleanup(t *testing.T) {
 			if e := json.Unmarshal(out.Bytes(), &status); e != nil {
 				t.Fatalf("missing final structured status: %s: %v", out.String(), e)
 			}
-			if status.Completed != (mode == "healthy") {
+			if status.Completed != healthy {
 				t.Fatalf("incorrect completion after %s: %+v", mode, status)
 			}
 			events, _ := os.ReadFile(filepath.Join(dir, "events"))
@@ -195,7 +203,7 @@ func TestCRLMaintenanceCLIOrchestratesLeaseStatusAndCleanup(t *testing.T) {
 				if saved.Completed != status.Completed || saved.Failure != status.Failure {
 					t.Fatal("persisted status disagrees with final result")
 				}
-				if mode == "healthy" {
+				if healthy {
 					if !saved.LastSuccess.After(previous) || saved.Due {
 						t.Fatal("healthy run did not update success")
 					}

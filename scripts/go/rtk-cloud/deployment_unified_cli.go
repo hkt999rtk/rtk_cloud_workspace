@@ -50,7 +50,12 @@ type unifiedDeploymentDependencies struct {
 
 func defaultUnifiedDeploymentDependencies() unifiedDeploymentDependencies {
 	return unifiedDeploymentDependencies{
-		ContinueCreate:    tryUnifiedCreateNormalTail,
+		ContinueCreate: func(ctx context.Context, cfg deploymentConfig, o unifiedDeploymentOptions, report *unifiedDeploymentReport, out, diagnostics io.Writer) (bool, error) {
+			if handled, err := tryUnifiedIssuerEnrollment(ctx, cfg, o, report, out, diagnostics); handled {
+				return true, err
+			}
+			return tryUnifiedCreateNormalTail(ctx, cfg, o, report, out, diagnostics)
+		},
 		RecoveryPreflight: runEnvironmentCreateRecoveryPreflight,
 		FreshCreate: func(ctx context.Context, cfg deploymentConfig, o unifiedDeploymentOptions, report *unifiedDeploymentReport, out, diagnostics io.Writer) error {
 			return runUnifiedFreshEnvironmentDeployment(ctx, cfg, o, report, out, diagnostics, defaultEnvironmentCreateDependencies())
@@ -741,6 +746,9 @@ func emitUnifiedDeploymentReport(out, diagnostics io.Writer, path string, report
 			fmt.Fprintf(out, "  %s rollout health pending: %s\n", row.ID, strings.Join(row.PendingRolloutHealth, ", "))
 		}
 		if row.Status != "PASS" {
+			if resource := safeDeploymentDiagnosticResource(row.Resource); resource != "" {
+				fmt.Fprintf(out, "  resource: %s\n", resource)
+			}
 			fmt.Fprintf(out, "  cause: %s\n  next: %s\n  impact: %s\n  recheck: %s\n", row.Cause, row.Next, row.Impact, row.Recheck)
 		}
 	}

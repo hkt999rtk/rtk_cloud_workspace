@@ -85,6 +85,9 @@ func (p *Plan) resumableEvidence(privateRoot string) (*retainedExecutionEvidence
 	if known != len(j.Owners) {
 		return nil, existingExecutionEvidenceBlocker()
 	}
+	if err := validateRejectedCreates(directory, p, j); err != nil {
+		return nil, err
+	}
 	return &retainedExecutionEvidence{planRaw: planRaw, journalRaw: journalRaw, journal: j}, nil
 }
 

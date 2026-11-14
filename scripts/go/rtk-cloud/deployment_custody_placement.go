@@ -35,7 +35,10 @@ func environmentCustodyMemoryRelativeFile(object, container deploymentplan.Objec
 		return "", false
 	}
 	volume, mount := volumes[role], mounts[role]
-	if volume == nil || mount == nil || len(volume) != 2 || deploymentplan.Map(volume["emptyDir"])["medium"] != "Memory" || mount["readOnly"] == true || mount["subPath"] != nil || mount["subPathExpr"] != nil {
+	if volume == nil || mount == nil || len(volume) != 2 || deploymentplan.Map(volume["emptyDir"])["medium"] != "Memory" || mount["readOnly"] == true || mount["subPathExpr"] != nil {
+		return "", false
+	}
+	if mount["subPath"] != nil && !devicePrivateMemoryPlacement(object, container, role, mount) {
 		return "", false
 	}
 	base := deploymentplan.String(mount["mountPath"])

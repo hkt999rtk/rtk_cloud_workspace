@@ -358,7 +358,22 @@ func configureEnvironmentCreateExternalDataPlanes(ctx context.Context, cfg deplo
 		if err != nil {
 			return err
 		}
-		if normalTail && createOpenBaoACKCompletionEntry(execution.Journal, key) != nil {
+		entry := createOpenBaoACKCompletionEntry(execution.Journal, key)
+		resumeAbsent := normalTail && entry != nil && entry.State == "pending"
+		if resumeAbsent {
+			sha, err := environmentCreatePlanSHA256(intent)
+			if err != nil || entry.Phase != "routing" || entry.IntentSHA256 != sha || len(entry.Receipt) != 0 || !entry.CompletedAt.IsZero() {
+				return createProviderRecoveryBlock("pending data-plane intent changed: " + key)
+			}
+			absent, err := createDataPlaneConfigurationAbsent(ctx, store, plan, execution, resource, receipt)
+			if err != nil {
+				return err
+			}
+			if !absent {
+				return createProviderRecoveryBlock("data-plane outcome is not recorded: " + key)
+			}
+		}
+		if normalTail && entry != nil && !resumeAbsent {
 			var recorded struct {
 				Native           environmentCreateProviderReceipt `json:"native"`
 				ConfigurationSHA string                           `json:"configuration_sha256"`
@@ -386,8 +401,10 @@ func configureEnvironmentCreateExternalDataPlanes(ctx context.Context, cfg deplo
 				continue
 			}
 		}
-		if err := execution.BeginEntry(key, "routing", intent, time.Now().UTC()); err != nil {
-			return err
+		if !resumeAbsent {
+			if err := execution.BeginEntry(key, "routing", intent, time.Now().UTC()); err != nil {
+				return err
+			}
 		}
 		if resource.Key == "edge" {
 			maxconn, err := positiveIntValue("EDGE_MAX_CONNECTIONS", v["EDGE_MAX_CONNECTIONS"])
@@ -428,8 +445,13 @@ func mustCreateProviderID(raw string) int { id, _ := strconv.Atoi(raw); return i
 // Extract the registrar from the exact formal CI image, never build source on
 // the operator. The immutable package must actually contain its required binary.
 func extractEnvironmentCreateTURNRegistrar(ctx context.Context, cfg deploymentConfig, plan *environmentCreatePlan, store secretStore) (string, error) {
-	image := plan.Release.Images["LKE_VIDEO_CLOUD_IMAGE"].Reference
-	if !immutableEnvironmentImage.MatchString(image) || plan.Provider.TurnRegistrarImage != "" && plan.Provider.TurnRegistrarImage != image {
+	image := plan.Provider.TurnRegistrarImage
+	if image == "" {
+		// The initial create compiler freezes this source and its binary hash
+		// after qualification. API/PKI recovery preserves that provider package.
+		image = plan.Release.Images["LKE_VIDEO_CLOUD_IMAGE"].Reference
+	}
+	if !immutableEnvironmentImage.MatchString(image) {
 		return "", createProviderBlocker("formal immutable TURN registrar package is unavailable")
 	}
 	rel := filepath.Join("deployment", "create", "artifacts", environmentPreflightBytesSHA256([]byte(image)), "turnregistrar")
@@ -532,6 +554,17 @@ func qualifyEnvironmentCreateDataPlaneArtifact(ctx context.Context, cfg deployme
 		return "", err
 	}
 	return environmentPreflightBytesSHA256(raw), nil
+}
+
+// A recovery preflight must inspect the same frozen package as execution.
+// Historical plans without this package field retain their original contract;
+// the fresh compiler qualifies and freezes it before publishing its plan.
+func qualifyEnvironmentCreateFrozenDataPlaneArtifact(ctx context.Context, cfg deploymentConfig, plan *environmentCreatePlan, store secretStore) error {
+	if plan.Provider.TurnRegistrarImage == "" {
+		return nil
+	}
+	_, err := qualifyEnvironmentCreateDataPlaneArtifact(ctx, cfg, plan, store)
+	return err
 }
 
 func configureEnvironmentCreateTURN(ctx context.Context, cfg deploymentConfig, plan *environmentCreatePlan, resource environmentCreateProviderResource, receipt environmentCreateProviderReceipt, store secretStore, execution *environmentCreateExecution) error {

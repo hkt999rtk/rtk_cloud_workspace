@@ -56,7 +56,7 @@ func loadStoppedFoundationCreate(cfg deploymentConfig, store secretStore, sha st
 	if err != nil {
 		return bad("original executor is running or its process lock is unverifiable")
 	}
-	e := &environmentCreateExecution{Store: store, running: file}
+	e := &environmentCreateExecution{versionState: &createOperatorVersionState{}, Store: store, running: file}
 	loaded := false
 	defer func() {
 		if !loaded {
@@ -182,6 +182,12 @@ func foundationRecoveryMaterials(store secretStore, parentSHA string, minimumLiv
 }
 
 func foundationRecoveryMaterialsForExecution(store secretStore, parentSHA string, command *environmentCreateExecution, minimumLives ...time.Duration) (map[string]string, environmentCreateTransport, error) {
+	return readFoundationRecoveryMaterials(store, parentSHA, command, false, minimumLives...)
+}
+
+// The scoped caller authenticates the completed managed transport/session before
+// historical temporary CA bytes may be used to reconstruct an original template.
+func readFoundationRecoveryMaterials(store secretStore, parentSHA string, command *environmentCreateExecution, completedSessionHistory bool, minimumLives ...time.Duration) (map[string]string, environmentCreateTransport, error) {
 	var management environmentCreateTransport
 	minimumLife := 150 * time.Minute
 	if len(minimumLives) == 1 && minimumLives[0] > 0 {
@@ -191,6 +197,18 @@ func foundationRecoveryMaterialsForExecution(store secretStore, parentSHA string
 	renewed, proof, err := readInitialTransportRenewal(store, parentSHA, command)
 	if err != nil {
 		return nil, management, err
+	}
+	successor, successorReady, err := readCompletedInitialTransportSuccessor(store, parentSHA)
+	if err != nil || successorReady && proof != nil {
+		return nil, management, createProviderRecoveryBlock("temporary transport has conflicting or incomplete successor evidence")
+	}
+	var successorProof initialTransportSuccessorProof
+	if successorReady {
+		pointer := filepath.Join("deployment", "create", "material", parentSHA, "initial-transport-successor.json")
+		if readExecutionJSON(filepath.Join(store.Root, pointer), &successorProof) != nil || successorProof.Parent != parentSHA || successorProof.CandidateSHA != deploymentplan.Digest(successor) || !environmentPreflightDigest.MatchString(successorProof.Review) {
+			return nil, management, createProviderRecoveryBlock("completed temporary transport successor is unavailable")
+		}
+		hashes["initial-transport-successor-proof"] = deploymentplan.Digest(successorProof)
 	}
 	historicalTransport, scopeErr := managedLatePostMintHistoricalTransportScope(store, parentSHA, command)
 	if scopeErr != nil || historicalTransport && (proof == nil || proof.Schema != activeTransportRenewalSchema) {
@@ -206,6 +224,8 @@ func foundationRecoveryMaterialsForExecution(store secretStore, parentSHA string
 		base := filepath.Join("deployment/create/material", parentSHA, role+"-transport")
 		if proof != nil {
 			base = filepath.Join("deployment/create/transport-renewal", proof.Review, role+"-transport")
+		} else if successorReady {
+			base = filepath.Join("deployment/create/transport-successor", successorProof.Review, role+"-transport")
 		}
 		for _, name := range []string{"identities.json", "ca.crt"} {
 			raw, err := readProviderStorageKeyFile(filepath.Join(store.Root, base, name))
@@ -221,10 +241,16 @@ func foundationRecoveryMaterialsForExecution(store secretStore, parentSHA string
 		if proof != nil && deploymentplan.Digest(transport) != deploymentplan.Digest(renewed[role]) {
 			return nil, management, createProviderRecoveryBlock("renewed temporary transport differs from its qualified proof")
 		}
+		if successorReady && deploymentplan.Digest(transport) != deploymentplan.Digest(successor.Transports[role]) {
+			return nil, management, createProviderRecoveryBlock("successor temporary transport differs from its qualified proof")
+		}
 		cert, err := parseFirstCertificatePEM([]byte(transport.CACert))
 		ca, readErr := store.read(filepath.Join(base, "ca.crt"))
-		if err != nil || cert == nil || readErr != nil || strings.TrimSpace(transport.CACert) != ca || !cert.IsCA || cert.Subject.CommonName != "rtk-create-dev-"+role || !historicalTransport && cert.NotAfter.Before(time.Now().Add(minimumLife)) {
+		if err != nil || cert == nil || readErr != nil || strings.TrimSpace(transport.CACert) != ca || !cert.IsCA || cert.Subject.CommonName != "rtk-create-dev-"+role || !historicalTransport && !completedSessionHistory && cert.NotAfter.Before(time.Now().Add(minimumLife)) {
 			return nil, management, createProviderRecoveryBlock("original transport authority differs or cannot cover qualification and execution")
+		}
+		if completedSessionHistory && (cert.CheckSignatureFrom(cert) != nil || !cert.NotAfter.After(cert.NotBefore)) {
+			return nil, management, createProviderRecoveryBlock("original historical transport authority is invalid")
 		}
 		if role == "management" {
 			management = transport
@@ -527,7 +553,9 @@ func runEnvironmentCreateFoundationRecovery(args []string) error {
 			}
 			return validateEnvironmentCreateStorageAllocation(cfg)
 		}},
-		{"deployment.foundation.bootstrap", func() error { return qualifyEnvironmentCreateBootstrap(ctx, cfg, p.Plan.Bootstrap, store, operator) }},
+		{"deployment.foundation.bootstrap", func() error {
+			return qualifyEnvironmentCreateBootstrapForRecovery(ctx, cfg, p.Plan.Bootstrap, store, operator)
+		}},
 		{"deployment.foundation.network", func() error { return qualifyEnvironmentCreateDNS(ctx, cfg, p.Plan.DNS, operator) }},
 		{"deployment.foundation.inputs", func() error {
 			fresh, err := resolveDeploymentConfig(workspace, "dev", "")

@@ -253,7 +253,7 @@ func executeCreateNormalTailProgram(ctx context.Context, cfg deploymentConfig, o
 	if err != nil {
 		return fail(err)
 	}
-	backend, err := newEnvironmentKubernetesBackend(snapshot.Kubeconfig, cfg.Environment)
+	backend, err := newEnvironmentKubernetesBackendForConfig(snapshot.Kubeconfig, cfg)
 	if err != nil {
 		return fail(err)
 	}

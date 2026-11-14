@@ -37,6 +37,41 @@ type environmentCreateTransportIdentity struct {
 	Key         string `json:"key"`
 }
 
+type environmentCreateFoundationDiagnostic struct {
+	blocker *deploymentplan.Blocker
+	cause   error
+}
+
+func (e *environmentCreateFoundationDiagnostic) Error() string { return e.blocker.Error() }
+func (e *environmentCreateFoundationDiagnostic) Unwrap() []error {
+	return []error{e.blocker, e.cause}
+}
+
+func openBaoFirstTransportIntent(cfg deploymentConfig) json.RawMessage {
+	names := map[string][]string{"openbao": lkeOpenBaoDNSNames(environmentCreateProviderValues(cfg))}
+	intent, _ := json.Marshal(map[string]string{"role": "openbao", "names_sha256": deploymentplan.Digest(names)})
+	return intent
+}
+
+// Preserve known blockers and cancellation while identifying the fixed stage
+// for otherwise unclassified errors. Never copy raw errors into reports:
+// filesystem paths and external process output can contain private material.
+func environmentCreateFoundationStepError(step string, err error) error {
+	if err == nil {
+		return nil
+	}
+	var blocker *deploymentplan.Blocker
+	if errors.As(err, &blocker) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	switch step {
+	case "management-transport", "openbao-transport", "account-signer", "runtime-snapshot", "storage-snapshot", "foundation-render", "pull-secret-render", "openbao-render", "storage-class-binding", "foundation-apply":
+		return &environmentCreateFoundationDiagnostic{environmentCreateBlocker("deployment.bootstrap."+step, "the selected "+step+" step could not be completed; preserve original state and inspect its private execution evidence").(*deploymentplan.Blocker), err}
+	default:
+		return &environmentCreateFoundationDiagnostic{environmentCreateBlocker("deployment.bootstrap.foundation", "a selected foundation preparation step could not be completed; preserve original state and inspect its private execution evidence").(*deploymentplan.Blocker), err}
+	}
+}
+
 func createEnvironmentTransport(store secretStore, planSHA, role string, names map[string][]string, now time.Time) (environmentCreateTransport, error) {
 	material := environmentCreateTransport{Identities: map[string]environmentCreateTransportIdentity{}}
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -219,26 +254,111 @@ func prepareEnvironmentCreateBootstrap(ctx context.Context, cfg deploymentConfig
 	if err := createEnvironmentRetainStorageClass(ctx, cfg, backend, execution); err != nil {
 		return runtime, stop, err
 	}
-	management, err := createEnvironmentTransport(store, execution.Journal.PlanSHA256, "management", map[string][]string{"account-manager": {"account-manager." + plan.Stack + "-account-manager.svc.cluster.local"}, "pki-controller": {"pki-controller." + plan.Stack + "-video-cloud.svc"}, "certissuer": {"certissuer." + plan.Stack + "-video-cloud.svc"}, "video-cloud-api": {"video-cloud-api-pki." + plan.Stack + "-video-cloud.svc"}, "video-cloud-api-app-pki": {"video-cloud-api-app-pki." + plan.Stack + "-video-cloud.svc"}}, time.Now().UTC())
+	var baoTransport environmentCreateTransport
+	if plan.OpenBaoFirst {
+		names := map[string][]string{"openbao": lkeOpenBaoDNSNames(environmentCreateProviderValues(cfg))}
+		if err := execution.BeginEntry("openbao-transport-material", "bootstrap", openBaoFirstTransportIntent(cfg), time.Now().UTC()); err != nil {
+			return runtime, stop, err
+		}
+		baoTransport, err = createEnvironmentTransport(store, execution.Journal.PlanSHA256, "openbao", names, time.Now().UTC())
+		if err != nil {
+			return runtime, stop, environmentCreateFoundationStepError("openbao-transport", err)
+		}
+		materialPath := filepath.Join(store.Root, "deployment", "create", "material", execution.Journal.PlanSHA256, "openbao-transport", "identities.json")
+		material, err := readBoundedEnvironmentFile(materialPath, true)
+		if err != nil {
+			return runtime, stop, environmentCreateFoundationStepError("openbao-transport", err)
+		}
+		receipt, _ := json.Marshal(map[string]string{"identities_sha256": environmentPreflightBytesSHA256(material), "ca_sha256": environmentPreflightBytesSHA256([]byte(baoTransport.CACert))})
+		if err := execution.RecordReceipt("openbao-transport-material", receipt); err != nil {
+			return runtime, stop, err
+		}
+		if err := execution.CompleteEntry("openbao-transport-material", time.Now().UTC()); err != nil {
+			return runtime, stop, err
+		}
+		identity := baoTransport.Identities["openbao"]
+		openbao, err := renderEnvironmentCreateOpenBaoFoundation(cfg, plan.Release, "openbao-transport-tls", "pki-openbao-transport-ca")
+		if err != nil {
+			return runtime, stop, environmentCreateFoundationStepError("openbao-render", err)
+		}
+		pull, err := newK8SDockerConfigSecretObject(plan.Stack+"-secrets", lkeImagePullSecretName(environmentCreateProviderValues(cfg)), operator["GHCR_PULL_USERNAME"], operator["GHCR_PULL_TOKEN"])
+		if err != nil {
+			return runtime, stop, environmentCreateFoundationStepError("pull-secret-render", err)
+		}
+		first := append([]deploymentplan.Definition{environmentCreateSecret(plan.Stack+"-secrets", "openbao-transport-tls", map[string]string{"tls.crt": identity.Certificate, "tls.key": identity.Key, "ca.crt": baoTransport.CACert}), {Object: pull, Phase: "configuration"}}, openbao...)
+		if err := bindEnvironmentNewStorageClasses(first, cfg.Values["DURABLE_DATA_STORAGE_CLASS"], nil); err != nil {
+			return runtime, stop, environmentCreateFoundationStepError("storage-class-binding", err)
+		}
+		if err := apply(ctx, "foundation", first); err != nil {
+			return runtime, stop, environmentCreateFoundationStepError("foundation-apply", err)
+		}
+		runtime.OpenBao, err = initializeEnvironmentCreateOpenBao(ctx, cfg, store, backend, execution)
+		if err != nil {
+			return runtime, stop, err
+		}
+	}
+	var management environmentCreateTransport
+	if plan.OpenBaoFirst {
+		err = createOpenBaoFirstMaterial(ctx, cfg, store, execution, "management-transport-material", func() error {
+			var createErr error
+			management, createErr = createEnvironmentTransport(store, execution.Journal.PlanSHA256, "management", openBaoFirstManagementNames(cfg), time.Now().UTC())
+			return createErr
+		})
+	} else {
+		management, err = createEnvironmentTransport(store, execution.Journal.PlanSHA256, "management", map[string][]string{"account-manager": {"account-manager." + plan.Stack + "-account-manager.svc.cluster.local"}, "pki-controller": {"pki-controller." + plan.Stack + "-video-cloud.svc"}, "certissuer": {"certissuer." + plan.Stack + "-video-cloud.svc"}, "video-cloud-api": {"video-cloud-api-pki." + plan.Stack + "-video-cloud.svc"}, "video-cloud-api-app-pki": {"video-cloud-api-app-pki." + plan.Stack + "-video-cloud.svc"}}, time.Now().UTC())
+	}
+	if err != nil {
+		return runtime, stop, environmentCreateFoundationStepError("management-transport", err)
+	}
+	if !plan.OpenBaoFirst {
+		baoTransport, err = createEnvironmentTransport(store, execution.Journal.PlanSHA256, "openbao", map[string][]string{"openbao": lkeOpenBaoDNSNames(environmentCreateProviderValues(cfg))}, time.Now().UTC())
+		if err != nil {
+			return runtime, stop, environmentCreateFoundationStepError("openbao-transport", err)
+		}
+	}
+	var signer map[string]string
+	if plan.OpenBaoFirst {
+		err = createOpenBaoFirstMaterial(ctx, cfg, store, execution, "account-signer-material", func() error {
+			var createErr error
+			signer, createErr = ensureEnvironmentCreateAccountSigner(store)
+			return createErr
+		})
+	} else {
+		signer, err = ensureEnvironmentCreateAccountSigner(store)
+	}
+	if err != nil {
+		return runtime, stop, environmentCreateFoundationStepError("account-signer", err)
+	}
+	base, err := renderEnvironmentCreateFoundationServices(cfg, plan, store, operator, raw, management, baoTransport, signer)
 	if err != nil {
 		return runtime, stop, err
 	}
-	baoTransport, err := createEnvironmentTransport(store, execution.Journal.PlanSHA256, "openbao", map[string][]string{"openbao": lkeOpenBaoDNSNames(environmentCreateProviderValues(cfg))}, time.Now().UTC())
-	if err != nil {
-		return runtime, stop, err
+	stage := "foundation"
+	if plan.OpenBaoFirst {
+		stage = "foundation-services"
 	}
-	signer, err := ensureEnvironmentCreateAccountSigner(store)
-	if err != nil {
-		return runtime, stop, err
+	if err := apply(ctx, stage, base); err != nil {
+		return runtime, stop, environmentCreateFoundationStepError("foundation-apply", err)
 	}
+	if plan.OpenBaoFirst {
+		return continueEnvironmentCreateAfterOpenBao(ctx, cfg, plan, store, operator, execution, apply, runtime, management)
+	}
+	return continueEnvironmentCreateFoundation(ctx, cfg, plan, store, operator, execution, apply, runtime, management)
+}
+
+// renderEnvironmentCreateFoundationServices reconstructs the maintained stage
+// from the original plan and already authenticated material. It neither signs
+// identities nor changes the deployment journal, so fresh creation and fenced
+// recovery use the same definitions and native stage bindings.
+func renderEnvironmentCreateFoundationServices(cfg deploymentConfig, plan *environmentCreatePlan, store secretStore, operator map[string]string, raw []byte, management, baoTransport environmentCreateTransport, signer map[string]string) ([]deploymentplan.Definition, error) {
 	runtimeSecrets, err := environmentRuntimeSecretSnapshot(store)
 	if err != nil {
-		return runtime, stop, err
+		return nil, environmentCreateFoundationStepError("runtime-snapshot", err)
 	}
 	// The configured initial administrator is a genuine prerequisite; the
 	// canonical runtime mirror must agree before Account Manager seals bootstrap.
 	if runtimeSecrets["platform-admin"] != operator["ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD"] {
-		return runtime, stop, environmentCreateBlocker("deployment.bootstrap.operator", "canonical platform-admin credential differs from the explicit initial operator password")
+		return nil, environmentCreateBlocker("deployment.bootstrap.operator", "canonical platform-admin credential differs from the explicit initial operator password")
 	}
 	values := environmentCreateProviderValues(cfg)
 	for role, image := range plan.Release.Images {
@@ -246,7 +366,7 @@ func prepareEnvironmentCreateBootstrap(ctx context.Context, cfg deploymentConfig
 	}
 	snapshot := environmentDeploymentSnapshot{Operator: operator, Secrets: runtimeSecrets, Kubeconfig: string(raw)}
 	if err := readEnvironmentCreateStorageRenderSnapshot(cfg, store, &snapshot); err != nil {
-		return runtime, stop, err
+		return nil, environmentCreateFoundationStepError("storage-snapshot", err)
 	}
 	var base []deploymentplan.Definition
 	err = withEnvironmentRenderInputs(cfg, store, plan.Release, snapshot, func(env map[string]string) error {
@@ -255,40 +375,56 @@ func prepareEnvironmentCreateBootstrap(ctx context.Context, cfg deploymentConfig
 		return renderErr
 	})
 	if err != nil {
-		return runtime, stop, err
+		return nil, environmentCreateFoundationStepError("foundation-render", err)
 	}
 	videoNS, accountNS, secretsNS := plan.Stack+"-video-cloud", plan.Stack+"-account-manager", plan.Stack+"-secrets"
 	for _, namespace := range []string{videoNS, accountNS, secretsNS} {
 		base = append(base, deploymentplan.Definition{Phase: "configuration", Object: deploymentplan.Object{"apiVersion": "v1", "kind": "ConfigMap", "metadata": deploymentplan.Object{"name": "pki-create-transport-trust", "namespace": namespace}, "data": deploymentplan.Object{"ca.crt": management.CACert}}})
+		if plan.OpenBaoFirst && namespace == secretsNS {
+			continue
+		}
 		pull, err := newK8SDockerConfigSecretObject(namespace, lkeImagePullSecretName(values), operator["GHCR_PULL_USERNAME"], operator["GHCR_PULL_TOKEN"])
 		if err != nil {
-			return runtime, stop, err
+			return nil, environmentCreateFoundationStepError("pull-secret-render", err)
 		}
 		base = append(base, deploymentplan.Definition{Object: pull, Phase: "configuration"})
 	}
-	for name, identity := range management.Identities {
+	identityNames := make([]string, 0, len(management.Identities))
+	for name := range management.Identities {
+		identityNames = append(identityNames, name)
+	}
+	// Stage bindings include definition order. New OpenBao-first generations
+	// must reconstruct identical bindings across processes when resuming.
+	// Historical generations retain their original rendering branch.
+	if plan.OpenBaoFirst {
+		sort.Strings(identityNames)
+	}
+	for _, name := range identityNames {
+		identity := management.Identities[name]
 		namespace := videoNS
 		if name == "account-manager" {
 			namespace = accountNS
 		}
 		base = append(base, environmentCreateSecret(namespace, "pki-create-"+name+"-transport", map[string]string{"tls.crt": identity.Certificate, "tls.key": identity.Key, "ca.crt": management.CACert}))
 	}
-	baoIdentity := baoTransport.Identities["openbao"]
-	base = append(base, environmentCreateSecret(secretsNS, "openbao-transport-tls", map[string]string{"tls.crt": baoIdentity.Certificate, "tls.key": baoIdentity.Key, "ca.crt": baoTransport.CACert}), deploymentplan.Definition{Phase: "configuration", Object: deploymentplan.Object{"apiVersion": "v1", "kind": "ConfigMap", "metadata": deploymentplan.Object{"name": "pki-openbao-transport-ca", "namespace": videoNS}, "data": deploymentplan.Object{"ca.crt": baoTransport.CACert}}}, environmentCreateSecret(accountNS, "account-manager-jwt", signer))
+	if !plan.OpenBaoFirst {
+		baoIdentity := baoTransport.Identities["openbao"]
+		base = append(base, environmentCreateSecret(secretsNS, "openbao-transport-tls", map[string]string{"tls.crt": baoIdentity.Certificate, "tls.key": baoIdentity.Key, "ca.crt": baoTransport.CACert}))
+	}
+	base = append(base, deploymentplan.Definition{Phase: "configuration", Object: deploymentplan.Object{"apiVersion": "v1", "kind": "ConfigMap", "metadata": deploymentplan.Object{"name": "pki-openbao-transport-ca", "namespace": videoNS}, "data": deploymentplan.Object{"ca.crt": baoTransport.CACert}}}, environmentCreateSecret(accountNS, "account-manager-jwt", signer))
 	dbURL := "postgres://" + url.UserPassword("postgres", runtimeSecrets["postgres"]).String() + "@postgresql." + plan.Stack + "-platform.svc:5432/video_cloud?sslmode=disable"
 	base = append(base, environmentCreateSecret(videoNS, "pki-migration-database", map[string]string{"url": dbURL}), environmentCreateSecret(videoNS, "pki-controller-database", map[string]string{"url": dbURL}), environmentCreateSecret(videoNS, "pki-platform-key", map[string]string{"public.pem": signer["access.pub"]}))
-	openbao, err := renderEnvironmentCreateOpenBaoFoundation(cfg, plan.Release, "openbao-transport-tls", "pki-openbao-transport-ca")
-	if err != nil {
-		return runtime, stop, err
+	if !plan.OpenBaoFirst {
+		openbao, err := renderEnvironmentCreateOpenBaoFoundation(cfg, plan.Release, "openbao-transport-tls", "pki-openbao-transport-ca")
+		if err != nil {
+			return nil, environmentCreateFoundationStepError("openbao-render", err)
+		}
+		base = append(base, openbao...)
 	}
-	base = append(base, openbao...)
 	if err := bindEnvironmentNewStorageClasses(base, cfg.Values["DURABLE_DATA_STORAGE_CLASS"], nil); err != nil {
-		return runtime, stop, err
+		return nil, environmentCreateFoundationStepError("storage-class-binding", err)
 	}
-	if err := apply(ctx, "foundation", base); err != nil {
-		return runtime, stop, err
-	}
-	return continueEnvironmentCreateFoundation(ctx, cfg, plan, store, operator, execution, apply, runtime, management)
+	return base, nil
 }
 
 // The plan pins the foundation's storage recipe. Historical attempts keep their

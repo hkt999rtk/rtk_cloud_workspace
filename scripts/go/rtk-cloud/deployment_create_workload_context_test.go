@@ -51,6 +51,9 @@ func TestCreateWorkloadCarriesOriginalUnsealRuntime(t *testing.T) {
 	}
 	current := append(append(append([]byte{}, raw[:start]...), []byte(body)...), raw[end:]...)
 	old := bytes.Replace(current, []byte(`apply(bootstrapCtx, "workload"`), []byte(`apply(ctx, "workload"`), 1)
+	// Keep the historical negative control valid Go when apply deliberately
+	// drops the new block-local context; it must fail on lost runtime authority.
+	old = bytes.Replace(old, []byte(`bootstrapCtx := context.WithValue(bootstrapCtx, environmentCreateQualifiedStageKey{}`), []byte(`bootstrapCtx = context.WithValue(bootstrapCtx, environmentCreateQualifiedStageKey{}`), 1)
 	if bytes.Equal(current, old) {
 		t.Fatal("workload no longer binds its original runtime context")
 	}

@@ -63,9 +63,21 @@ type productProtocolFixture struct {
 	failStage           string
 	unscoped            bool
 	controls            func(environmentCreateServiceCeremony, bool) ([]deploymentplan.Definition, error)
+	registration        bool
+	currentCRLs         map[string]deploymentplan.Object
+	nativeBoundary      func([]string, []byte) ([]byte, int, bool)
+	finalizeAttempts    func(func() error) error
+	afterRetirement     func()
 }
 
 type productProtocolBackend struct{ *normalTailE2EBackend }
+
+func (b *productProtocolBackend) Wait(ctx context.Context, r deploymentplan.Resource) error {
+	if r.Action == "retire" {
+		return (completedPublicationBackend{freshStageBackend{b.normalTailE2EBackend}}).Wait(ctx, r)
+	}
+	return b.normalTailE2EBackend.Wait(ctx, r)
+}
 
 // Match the real engine holder format so independent receipt readers can
 // authenticate every genuine scoped attempt produced by this fixture.
@@ -80,6 +92,9 @@ func (b *productProtocolBackend) AcquireExecution(ctx context.Context, p *deploy
 }
 
 func (b *productProtocolBackend) Write(ctx context.Context, action string, o deploymentplan.Object, dry bool) (deploymentplan.Object, error) {
+	if action == "retire" {
+		return (completedPublicationBackend{freshStageBackend{b.normalTailE2EBackend}}).Write(ctx, action, o, dry)
+	}
 	// Model the API response independently from the submitted request: replace
 	// preserves native identity/status and the Deployment controller advances
 	// only its own revision when a persisted PodTemplate changes.
@@ -117,6 +132,10 @@ func newProductProtocolFixture(t *testing.T, successor bool, nativeConnectivity 
 }
 
 func newProductProtocolFixtureLifetime(t *testing.T, successor bool, caLifetime time.Duration, nativeConnectivity ...bool) *productProtocolFixture {
+	return newProductProtocolFixtureForRegistration(t, successor, caLifetime, false, nativeConnectivity...)
+}
+
+func newProductProtocolFixtureForRegistration(t *testing.T, successor bool, caLifetime time.Duration, registration bool, nativeConnectivity ...bool) *productProtocolFixture {
 	t.Helper()
 	cfg, p, _, r, _, domainRoots, domainIntermediates, _ := createApplicationFinalizeFixture(t, "dev")
 	// Resolved configuration carries the selected environment separately; the
@@ -129,6 +148,10 @@ func newProductProtocolFixtureLifetime(t *testing.T, successor bool, caLifetime 
 		domainIntermediates[domain] = issuer
 	}
 	enableProductIdentityFixture(&cfg)
+	if registration {
+		cfg.Values["ACCOUNT_MANAGER_SERVICE_REGISTRATION_ENABLED"], cfg.Values["ACCOUNT_MANAGER_SERVICE_REGISTRATION_PORT"] = "true", "9444"
+		cfg.Values["PKI_STATE_BACKEND"] = "pvc"
+	}
 	cfg.Workspace, _ = workspaceRoot()
 	template := "deploy/pki/render-staging-controller.py"
 	raw, err := os.ReadFile(filepath.Join(cfg.Workspace, "repos/rtk_video_cloud", template))
@@ -186,6 +209,10 @@ func newProductProtocolFixtureLifetime(t *testing.T, successor bool, caLifetime 
 	}
 	t.Cleanup(func() { e.Close() })
 	f := &productProtocolFixture{t: t, cfg: cfg, p: p, store: store, e: e, plans: map[string]*deploymentplan.Plan{}, policies: map[string]string{}, roles: map[string][]string{}, rows: map[string]managedSessionClient{}, states: map[string][]byte{}, inspections: map[string][]byte{}, bootstrap: map[string]string{}, status: "active", posts: map[string]int{}}
+	f.registration = registration
+	if registration {
+		f.currentCRLs = map[string]deploymentplan.Object{}
+	}
 	f.b = &productProtocolBackend{&normalTailE2EBackend{e: e, objects: map[string]deploymentplan.Object{}, writes: map[string]int{}}}
 	f.h = &createNormalTailHandoff{Execution: e, Pins: map[string]string{"fixture": deploymentplan.Digest("original qualified handoff")}}
 	key := func() *ecdsa.PrivateKey {
@@ -292,10 +319,16 @@ func newProductProtocolFixtureLifetime(t *testing.T, successor bool, caLifetime 
 		var out []deploymentplan.Definition
 		for _, d := range defs {
 			if d.Object["kind"] != "Deployment" {
+				if f.registration {
+					out = append(out, d)
+				}
 				continue
 			}
 			name := deploymentplan.String(deploymentplan.Map(d.Object["metadata"])["name"])
 			if name != "pki-controller" && name != "certissuer" {
+				if f.registration {
+					out = append(out, d)
+				}
 				continue
 			}
 			if name == "certissuer" && !provision {
@@ -321,6 +354,12 @@ func newProductProtocolFixtureLifetime(t *testing.T, successor bool, caLifetime 
 	f.l.SourceDefinitions = nil
 	for _, d := range maintained {
 		id := deploymentplan.ID(d.Object)
+		// The original fixture owns only the two preexisting core Deployments.
+		// New registration resources must be created by their real native stage,
+		// rather than appearing in inventory without a recorded original UID.
+		if registration && f.l.SourceOwners[id] == "" {
+			continue
+		}
 		deploymentplan.Map(d.Object["metadata"])["uid"] = f.l.SourceOwners[id]
 		deploymentplan.Map(d.Object["metadata"])["resourceVersion"] = "1"
 		labels := deploymentplan.Map(deploymentplan.Map(d.Object["metadata"])["labels"])
@@ -574,9 +613,21 @@ func (f *productProtocolFixture) serve(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "native CRL worker has no active successor", http.StatusServiceUnavailable)
 			return
 		}
+		if cached := f.currentCRLs[issuer.ID]; cached != nil {
+			json.NewEncoder(w).Encode(cached)
+			return
+		}
 		now := time.Now().UTC().Truncate(time.Second)
-		der, _ := x509.CreateRevocationList(rand.Reader, &x509.RevocationList{Number: big.NewInt(1), ThisUpdate: now.Add(-time.Minute), NextUpdate: now.Add(time.Hour)}, cert, key)
-		json.NewEncoder(w).Encode(deploymentplan.Object{"issuer_id": issuer.ID, "crl_sha256": environmentPreflightBytesSHA256(der), "crl_number": "1", "crl_pem": productPEM("X509 CRL", der), "this_update": now.Add(-time.Minute), "next_update": now.Add(time.Hour)})
+		number := int64(1)
+		if f.registration && issuer.ID == f.l.Root.ID {
+			number = 2
+		}
+		der, _ := x509.CreateRevocationList(rand.Reader, &x509.RevocationList{Number: big.NewInt(number), ThisUpdate: now.Add(-time.Minute), NextUpdate: now.Add(time.Hour)}, cert, key)
+		record := deploymentplan.Object{"issuer_id": issuer.ID, "crl_sha256": environmentPreflightBytesSHA256(der), "crl_number": fmt.Sprint(number), "crl_pem": productPEM("X509 CRL", der), "this_update": now.Add(-time.Minute), "next_update": now.Add(time.Hour)}
+		if f.registration {
+			f.currentCRLs[issuer.ID] = record
+		}
+		json.NewEncoder(w).Encode(record)
 		return
 	}
 	if strings.HasSuffix(r.URL.Path, f.l.Root.ID) {
@@ -621,6 +672,12 @@ func (f *productProtocolFixture) serveBoundary(w http.ResponseWriter, r *http.Re
 		}
 		respond(nil, 1)
 		return
+	}
+	if f.nativeBoundary != nil {
+		if raw, code, handled := f.nativeBoundary(args, input); handled {
+			respond(raw, code)
+			return
+		}
 	}
 	joined := strings.Join(args, " ")
 	if slices.Contains(args, "delete") {
@@ -755,7 +812,13 @@ func (f *productProtocolFixture) serveBoundary(w http.ResponseWriter, r *http.Re
 			}
 			respond(mustProviderRecoveryJSON(rows), 0)
 		case strings.Contains(q, "finalized_at IS NOT NULL"):
-			respond(mustProviderRecoveryJSON(f.final), 0)
+			if f.final.SessionID == "" {
+				respond(nil, 0)
+			} else {
+				respond(mustProviderRecoveryJSON(f.final), 0)
+			}
+		case strings.Contains(q, "'installed_subjects',installed_subjects"):
+			respond(mustProviderRecoveryJSON(managedSessionState{Session: f.session, Issuer: f.next.ID, Root: f.l.Root.RootFingerprint, Fingerprint: f.rows["service:deployment-bootstrap"].Fingerprint, Status: f.status, Expires: f.expires, Subjects: f.subjects, Installed: f.installed}), 0)
 		case strings.Contains(q, "'installed',installed_subjects"):
 			respond(mustProviderRecoveryJSON(productSessionInstallations{Session: f.session, Issuer: f.next.ID, Root: f.l.Root.RootFingerprint, Subjects: f.subjects, Installed: f.installed, Status: f.status, Expires: f.expires}), 0)
 		default:
@@ -994,11 +1057,33 @@ func TestProductIdentityProductionProtocolAllFiveAndOriginalSessionResume(t *tes
 }
 
 func TestProductIdentityFreshFourteenFinalizationRestoresBeforeSeedCeremony(t *testing.T) {
-	f := newProductProtocolFixture(t, false)
+	runFreshFourteenProductProtocol(t, false)
+}
+
+func TestProductIdentityFreshFourteenResumesAdmittedProgramWithRecoveryContext(t *testing.T) {
+	runFreshFourteenProductProtocol(t, true)
+}
+
+func runFreshFourteenProductProtocol(t *testing.T, resumed bool, tail ...func(*testing.T, *productProtocolFixture, environmentCreateServiceCeremony, []deploymentplan.Definition)) {
+	t.Helper()
+	var f *productProtocolFixture
+	if len(tail) == 1 {
+		f = newProductProtocolFixtureForRegistration(t, false, 24*time.Hour, true)
+	} else {
+		f = newProductProtocolFixture(t, false)
+	}
 	f.unscoped = true
 	f.runtime.ProductIdentityScope = ""
 	f.runtime.PKIClient.mutationScope = ""
 	var err error
+	if f.registration {
+		// The production client enrollment owns this storage before the late
+		// serving export. Exercise that native producer before the core/program
+		// checkpoint instead of adding an unrecorded claim to live inventory.
+		if err = f.apply(t.Context(), "fixture-original-account-storage", []deploymentplan.Definition{environmentCreateServiceClaimDefinition(f.cfg, f.p.Stack+"-account-manager", "account-manager-service-state")}); err != nil {
+			t.Fatal("original Account Manager client storage", err)
+		}
+	}
 	f.subjects, err = environmentCreatePlannedServiceSubjects(f.cfg, f.p)
 	if err != nil || len(f.subjects) != 14 {
 		t.Fatal("fresh original policy", err)
@@ -1018,8 +1103,53 @@ func TestProductIdentityFreshFourteenFinalizationRestoresBeforeSeedCeremony(t *t
 	if err = f.apply(t.Context(), "managed-complete-issuer", controls); err != nil {
 		t.Fatal("original maintained temporary issuer stage", err)
 	}
-	if err = executeEnvironmentCreateFreshProductIdentities(t.Context(), f.cfg, f.p, environmentRelease{}, f.store, f.runtime, s, f.apply); err != nil {
+	producerApply := environmentCreateBootstrapApply(f.apply)
+	var originalProgram []byte
+	var firstIdentity string
+	if resumed {
+		stopped := false
+		producerApply = func(ctx context.Context, stage string, definitions []deploymentplan.Definition) error {
+			if err := f.apply(ctx, stage, definitions); err != nil {
+				return err
+			}
+			if !stopped && strings.Contains(stage, "-enroll-") {
+				stopped = true
+				return errors.New("isolated product producer interruption")
+			}
+			return nil
+		}
+		if err := executeEnvironmentCreateFreshProductIdentities(t.Context(), f.cfg, f.p, environmentRelease{}, f.store, f.runtime, s, producerApply); err == nil || !strings.Contains(err.Error(), "isolated product producer interruption") {
+			t.Fatal("first enrolled child must retain its original interrupted program", err)
+		}
+		var readErr error
+		originalProgram, readErr = os.ReadFile(filepath.Join(f.store.Root, freshProductProgramPath(f.e.Journal.PlanSHA256)))
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		firstIdentity = f.rows[f.p.ProductIdentities[0].Subject].Fingerprint
+		if firstIdentity == "" {
+			t.Fatal("interruption did not install the first native identity")
+		}
+		// This is an already admitted original program, not new authority.
+		// Its exact scope, parent, ceremony and children must survive recovery.
+		f.runtime.ServiceSessionRecovery = &createServiceSessionRecovery{}
+	}
+	if err = executeEnvironmentCreateFreshProductIdentities(t.Context(), f.cfg, f.p, environmentRelease{}, f.store, f.runtime, s, producerApply); err != nil {
 		t.Fatal("actual fresh five-output producer", err)
+	}
+	if resumed {
+		current, readErr := os.ReadFile(filepath.Join(f.store.Root, freshProductProgramPath(f.e.Journal.PlanSHA256)))
+		if readErr != nil || !bytes.Equal(current, originalProgram) || f.rows[f.p.ProductIdentities[0].Subject].Fingerprint != firstIdentity {
+			t.Fatal("resumed product producer changed its original scope or key", readErr)
+		}
+		for _, output := range f.p.ProductIdentities {
+			if f.b.writes[output.ID] != 1 {
+				t.Fatal("resumed producer replayed a credential mirror", output.ID)
+			}
+		}
+	}
+	if len(tail) == 1 {
+		tail[0](t, f, s, controls)
 	}
 	program, err := readFreshProductProgram(f.store, f.e)
 	if err != nil {
@@ -1043,7 +1173,15 @@ func TestProductIdentityFreshFourteenFinalizationRestoresBeforeSeedCeremony(t *t
 	freshApply := prepareFreshProductWorkload(t, f, l, installed, bindings)
 	f.installed = slices.Clone(f.subjects)
 	slices.Reverse(f.installed)
-	if err = finalizeEnvironmentCreateServiceSession(t.Context(), f.runtime.PKIClient, f.cfg, f.p, f.store, f.runtime, s, nil); err != nil {
+	finalize := func() error {
+		return finalizeEnvironmentCreateServiceSession(t.Context(), f.runtime.PKIClient, f.cfg, f.p, f.store, f.runtime, s, nil)
+	}
+	if f.finalizeAttempts != nil {
+		err = f.finalizeAttempts(finalize)
+	} else {
+		err = finalize()
+	}
+	if err != nil {
 		t.Fatal("actual original14 native finalizer", err)
 	}
 	if _, err = verifyProductFinalization(t.Context(), f.cfg, f.runtime, l, installed); err != nil {
@@ -1051,6 +1189,33 @@ func TestProductIdentityFreshFourteenFinalizationRestoresBeforeSeedCeremony(t *t
 	}
 	if err = completeFreshProductPreparations(t.Context(), f.cfg, f.store, f.e, l, installed, f.runtime.Backend, freshApply); err != nil {
 		t.Fatal("fresh standard preparation cleanup", err)
+	}
+	if f.afterRetirement != nil {
+		f.afterRetirement()
+	}
+	if len(f.p.ProductIdentities) == 0 {
+		t.Fatal("fixture must execute nonempty fresh product identities")
+	}
+	selected := environmentRelease{Images: map[string]environmentReleaseImage{"LKE_OPENBAO_PKI_IMAGE": {Reference: "ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-openbao-pki@sha256:" + strings.Repeat("f", 64)}}}
+	compiled := &compiledEnvironmentDeployment{Release: selected}
+	interrupted := errors.New("simulated steady compile interruption")
+	compileCalls := 0
+	compile := func(ctx context.Context, cfg deploymentConfig, operation string, release environmentRelease, source environmentReleaseCommand) (*compiledEnvironmentDeployment, error) {
+		compileCalls++
+		if operation != "create" || deploymentplan.Digest(release) != deploymentplan.Digest(selected) {
+			t.Fatal("fresh product finalization changed the selected release")
+		}
+		if compileCalls == 1 {
+			return nil, interrupted
+		}
+		return &compiledEnvironmentDeployment{Release: release}, nil
+	}
+	beforeSteadyRetry := deploymentplan.Digest(f.e.Journal)
+	if _, err = compileFreshProductSteadyTarget(t.Context(), f.cfg, compiled, compile); !errors.Is(err, interrupted) {
+		t.Fatal("steady compile interruption lost", err)
+	}
+	if _, err = compileFreshProductSteadyTarget(t.Context(), f.cfg, compiled, compile); err != nil || compileCalls != 2 || deploymentplan.Digest(f.e.Journal) != beforeSteadyRetry {
+		t.Fatal("steady compile retry changed original execution", err)
 	}
 	_, _, release := completeEnvironmentRenderFixture("dev")
 	before := deploymentplan.Digest(f.e.Journal)

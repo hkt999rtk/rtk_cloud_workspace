@@ -28,6 +28,10 @@ func (r *environmentCreateDependencyRender) addOutput(p environmentCreateBootstr
 }
 
 func environmentCreateDependencyOutputs(cfg deploymentConfig, p environmentCreateBootstrapPlan, values map[string]string) (*environmentCreateDependencyRender, error) {
+	return environmentCreateDependencyOutputsForOrder(cfg, p, values, environmentCreateOpenBaoFirst(cfg))
+}
+
+func environmentCreateDependencyOutputsForOrder(cfg deploymentConfig, p environmentCreateBootstrapPlan, values map[string]string, openBaoFirst bool) (*environmentCreateDependencyRender, error) {
 	if p.Environment != cfg.Environment || p.Stack != cfg.Values["CLOUD_STACK_NAME"] || p.Stack != "video-cloud-"+cfg.Environment || p.IngressAdmissionProfile != environmentCreateIngressAdmissionProfile || len(p.Claims) == 0 {
 		return nil, environmentCreateBootstrapBlocker("fresh dependency qualification requires the complete selected bootstrap recipe")
 	}
@@ -80,7 +84,11 @@ func environmentCreateDependencyOutputs(cfg deploymentConfig, p environmentCreat
 	add("Secret/"+p.Stack+"-account-manager/account-manager-service-registration-tls", "account-registration")
 	add("IngressClass//"+environmentIngressClass(values), "ingress-controller")
 	for _, suffix := range []string{"video-cloud", "account-manager", "secrets"} {
-		add("Secret/"+p.Stack+"-"+suffix+"/"+lkeImagePullSecretName(values), "foundation")
+		stage := "foundation"
+		if openBaoFirst && suffix != "secrets" {
+			stage = "foundation-services"
+		}
+		add("Secret/"+p.Stack+"-"+suffix+"/"+lkeImagePullSecretName(values), stage)
 	}
 	// Namespace creation precedes the native bootstrap. Kubernetes' namespace
 	// controller creates this API-defined account; it is not a secret producer
@@ -122,6 +130,10 @@ func bindEnvironmentCreateDependencyPublicTransport(env map[string]string, defin
 // Future keys/certificates, owner UIDs and provider endpoints are not invented:
 // their exact declared producer contracts satisfy only this static graph pass.
 func qualifyEnvironmentCreateDependencyContract(ctx context.Context, cfg deploymentConfig, release environmentRelease, store secretStore, operator map[string]string, p environmentCreateBootstrapPlan) (int, error) {
+	return qualifyEnvironmentCreateDependencyContractForOrder(ctx, cfg, release, store, operator, p, environmentCreateOpenBaoFirst(cfg))
+}
+
+func qualifyEnvironmentCreateDependencyContractForOrder(ctx context.Context, cfg deploymentConfig, release environmentRelease, store secretStore, operator map[string]string, p environmentCreateBootstrapPlan, openBaoFirst bool) (int, error) {
 	publicTLS, err := prepareEnvironmentCreatePublicTLS(ctx, cfg, store)
 	if err != nil {
 		return 0, err
@@ -166,7 +178,7 @@ func qualifyEnvironmentCreateDependencyContract(ctx context.Context, cfg deploym
 	values["CLOUD_ENV_NAME"] = cfg.Environment
 	allocations := 0
 	err = withEnvironmentRenderValues(store, release, snapshot, values, func(env map[string]string) error {
-		intent, err := environmentCreateDependencyOutputs(cfg, p, env)
+		intent, err := environmentCreateDependencyOutputsForOrder(cfg, p, env, openBaoFirst)
 		if err != nil {
 			return err
 		}

@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -70,16 +72,19 @@ func runEnvironmentCustodyPublicCRL(ctx context.Context, b environmentKubernetes
 
 // These are original generation facts, not a consumable preflight GO. No image
 // selection, identity creation or recovery-state substitution happens on a read.
-func readEnvironmentCustodyBootstrapBinding(cfg deploymentConfig, store secretStore, generation string) (*environmentCustodyBinding, error) {
+func readEnvironmentCustodyBootstrapBinding(cfg deploymentConfig, store secretStore, generation string, held ...*environmentCreateExecution) (*environmentCustodyBinding, error) {
 	bad := func() (*environmentCustodyBinding, error) {
 		return nil, environmentCreateBootstrapBlocker("original completed PKI bootstrap custody scope is unavailable or inconsistent")
 	}
-	if store.Environment != cfg.Environment || cfg.Values["PKI_STATE_BACKEND"] != "openbao" || !environmentPreflightDigest.MatchString(generation) {
+	if len(held) > 1 || store.Environment != cfg.Environment || cfg.Values["PKI_STATE_BACKEND"] != "openbao" || !environmentPreflightDigest.MatchString(generation) {
 		return bad()
 	}
 	path, err := store.safePath(filepath.Join("deployment", "create", generation, "bootstrap", "bindings.json"))
 	if err != nil {
 		return bad()
+	}
+	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+		return readInitializedCreateCustodyBinding(cfg, store, generation, held...)
 	}
 	raw, err := readBoundedEnvironmentFile(path, true)
 	var recorded environmentIdentityBindings
@@ -99,6 +104,10 @@ func readEnvironmentCustodyBootstrapBinding(cfg deploymentConfig, store secretSt
 }
 
 func (r *maintenanceRuntime) custodyPublicCRL(ctx context.Context, pod deploymentplan.Object, c crlMaintenanceConsumer, issuer environmentCreateRegisteredIssuer, record *createRootCRLRecord) (environmentCustodyCRLState, error) {
+	return r.custodyPublicCRLWithManagedRoot(ctx, pod, c, issuer, record, "")
+}
+
+func (r *maintenanceRuntime) custodyPublicCRLWithManagedRoot(ctx context.Context, pod deploymentplan.Object, c crlMaintenanceConsumer, issuer environmentCreateRegisteredIssuer, record *createRootCRLRecord, managedRoot string) (environmentCustodyCRLState, error) {
 	var empty environmentCustodyCRLState
 	if record != nil && r.lease == nil {
 		return empty, environmentCreateBootstrapBlocker("public CRL installation requires original environment execution ownership")
@@ -110,7 +119,7 @@ func (r *maintenanceRuntime) custodyPublicCRL(ctx context.Context, pod deploymen
 	if len(parts) != 3 || parts[0] != r.cfg.Environment || mqttFoundationEnv(source, "PKI_STATE_BACKEND") != "openbao" || deploymentplan.Map(pod["metadata"])["namespace"] != c.Namespace || deploymentplan.Map(pod["metadata"])["uid"] != c.PodUID {
 		return empty, environmentCreateBootstrapBlocker("original public CRL consumer scope changed")
 	}
-	binding, err := readEnvironmentCustodyBootstrapBinding(r.cfg, r.store, parts[1])
+	binding, err := readEnvironmentCustodyBootstrapBinding(r.cfg, r.store, parts[1], r.createExecution)
 	if err != nil {
 		return empty, err
 	}
@@ -154,7 +163,17 @@ func (r *maintenanceRuntime) custodyPublicCRL(ctx context.Context, pod deploymen
 	}
 	profile := deploymentplan.Clone(spec)
 	profile["containers"] = []any{source}
-	job, err := environmentCustodyPublicCRLJob(r.cfg, binding, ref, profile, r.image, "", record != nil)
+	snapshot, bootstrapRoot, err := readEnvironmentCustodyTransportState(r.cfg, r.store, binding.Generation)
+	if err != nil {
+		return empty, err
+	}
+	if managedRoot != "" && (!environmentPreflightDigest.MatchString(managedRoot) || snapshot.ManagedRootSHA256 != managedRoot || binding.OpenBaoRootSHA256 != managedRoot) {
+		return empty, environmentCreateBootstrapBlocker("native managed transport probe differs from the original OpenBao Root")
+	}
+	if snapshot.ManagedOnly || managedRoot != "" {
+		bootstrapRoot = ""
+	}
+	job, err := environmentCustodyPublicCRLJob(r.cfg, binding, ref, profile, r.image, bootstrapRoot, record != nil)
 	if err != nil {
 		return empty, err
 	}
@@ -183,6 +202,13 @@ func (r *maintenanceRuntime) custodyPublicCRL(ctx context.Context, pod deploymen
 	if r.lease != nil {
 		if err := r.lease.Check(ctx); err != nil {
 			return empty, err
+		}
+	}
+	if record == nil && maintenanceConsumerRunning(after, c.Container) {
+		raw, err := r.localConsumerCommand(ctx, c, after, nil, "cat", c.StatePath)
+		var projected environmentCustodyCRLState
+		if err != nil || json.Unmarshal(raw, &projected) != nil || deploymentplan.Digest(projected) != deploymentplan.Digest(result) {
+			return empty, environmentCreateBootstrapBlocker("running public CRL projection differs from its committed OpenBao state")
 		}
 	}
 	return result, nil

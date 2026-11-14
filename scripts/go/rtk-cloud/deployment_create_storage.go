@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -113,6 +114,13 @@ func activateEnvironmentCreateStorageWithChecker(ctx context.Context, cfg deploy
 		return err
 	}
 	allocation := environmentCreateStorageAllocation{Schema: "rtk-cloud.create-storage-allocation/v1", Environment: cfg.Environment, Stack: cfg.Values["CLOUD_STACK_NAME"], PlanSHA256: execution.Journal.PlanSHA256, Journal: filepath.ToSlash(relative)}
+	type verifiedBucket struct {
+		target       deploymentStorageTarget
+		s3           provisionObjectStore
+		nativeID     string
+		endpointType string
+	}
+	var verified []verifiedBucket
 	for _, target := range []deploymentStorageTarget{cfg.Storage.RuntimeMedia, cfg.Storage.OTAFirmware} {
 		key := "bucket-" + target.Purpose
 		var resource environmentCreateProviderResource
@@ -134,10 +142,8 @@ func activateEnvironmentCreateStorageWithChecker(ctx context.Context, cfg deploy
 		}
 		access, secret := environmentCreateStorageCredentials(operator, target.Purpose)
 		s3 := provisionObjectStore{bucket: target.Bucket, region: target.Region, endpoint: actual.S3Endpoint, accessKey: access, secretKey: secret}
-		// Private ACL and absence of public policy grants are proven before the
-		// deployment canary. No ACL/policy mutation or credential rotation occurs.
-		if err := checker.validateStoragePrivacy(s3); err != nil {
-			return createProviderBlocker("the newly allocated bucket cannot be verified private; public ACL or policy defaults cannot be accepted")
+		if err := checker.verifyCreateStorageAccess(operator["LINODE_TOKEN"], s3, target.Prefix); err != nil {
+			return createProviderBlocker(err.Error())
 		}
 		metadata, err := checker.resolveStorageBucket(operator["LINODE_TOKEN"], target)
 		if err != nil {
@@ -147,7 +153,12 @@ func activateEnvironmentCreateStorageWithChecker(ctx context.Context, cfg deploy
 		if err != nil || endpoint != actual.S3Endpoint {
 			return createProviderBlocker("storage endpoint changed during activation")
 		}
-		observation := environmentOTAStorageObservation{Version: 1, Environment: cfg.Environment, Provider: "linode", Bucket: target.Bucket, Region: target.Region, Prefix: target.Prefix, Endpoint: endpoint, EndpointType: metadata.EndpointType}
+		verified = append(verified, verifiedBucket{target: target, s3: s3, nativeID: actual.NativeID, endpointType: metadata.EndpointType})
+	}
+	// Both buckets must pass the read-only checks before either canary writes.
+	for _, bucket := range verified {
+		target, s3 := bucket.target, bucket.s3
+		observation := environmentOTAStorageObservation{Version: 1, Environment: cfg.Environment, Provider: "linode", Bucket: target.Bucket, Region: target.Region, Prefix: target.Prefix, Endpoint: s3.endpoint, EndpointType: bucket.endpointType}
 		observationPath := environmentMediaObservationPath
 		if target.Purpose == "ota-firmware" {
 			observationPath = environmentOTAObservationPath
@@ -162,13 +173,13 @@ func activateEnvironmentCreateStorageWithChecker(ctx context.Context, cfg deploy
 			return err
 		}
 		if err := runEnvironmentCreateStorageCanary(ctx, checker, s3, target, execution); err != nil {
-			return createProviderBlocker("fresh storage signed canary failed or its exact cleanup could not be verified")
+			return createProviderBlocker(fmt.Sprintf("bucket %s application read/write canary failed: %v", target.Bucket, err))
 		}
-		limited, err := checker.resolveAuthorizedStorageKey(operator["LINODE_TOKEN"], access, target)
+		limited, err := checker.resolveAuthorizedStorageKey(operator["LINODE_TOKEN"], s3.accessKey, target)
 		if err != nil {
 			return createProviderBlocker("selected storage key ownership changed during actual fresh activation")
 		}
-		item := environmentCreateStorageBucketAllocation{Key: key, NativeID: actual.NativeID, Bucket: target.Bucket, Region: target.Region, Prefix: target.Prefix, Endpoint: actual.S3Endpoint, EndpointType: metadata.EndpointType, LimitedKeyID: limited.ID, AccessSuffix: redactAccessKey(access), ValidatedAt: time.Now().UTC()}
+		item := environmentCreateStorageBucketAllocation{Key: "bucket-" + target.Purpose, NativeID: bucket.nativeID, Bucket: target.Bucket, Region: target.Region, Prefix: target.Prefix, Endpoint: s3.endpoint, EndpointType: bucket.endpointType, LimitedKeyID: limited.ID, AccessSuffix: redactAccessKey(s3.accessKey), ValidatedAt: time.Now().UTC()}
 		allocation.Buckets = append(allocation.Buckets, item)
 	}
 	body, _ := json.Marshal(allocation)
@@ -180,6 +191,27 @@ func activateEnvironmentCreateStorageWithChecker(ctx context.Context, cfg deploy
 		return err
 	}
 	return execution.CompleteEntry("activate-storage", time.Now().UTC())
+}
+
+func (c deploymentCredentialChecker) verifyCreateStorageAccess(token string, store provisionObjectStore, prefix string) error {
+	query := url.Values{"list-type": {"2"}, "max-keys": {"1"}, "prefix": {strings.Trim(prefix, "/") + "/"}}
+	_, listErr := provisionSignedObjectRequestWithClient(c.client, store, http.MethodGet, "", query, nil)
+	if listErr != nil {
+		listErr = fmt.Errorf("bucket %s application ListObjectsV2 failed: %w", store.bucket, createStorageCanaryError(listErr))
+	}
+	privacyErr := c.validateCreateStoragePrivacy(token, store)
+	if privacyErr != nil {
+		privacyErr = fmt.Errorf("bucket privacy check for %s: %w", store.bucket, privacyErr)
+	}
+	return errors.Join(listErr, privacyErr)
+}
+
+func createStorageCanaryError(err error) error {
+	var request *url.Error
+	if errors.As(err, &request) {
+		return sanitizedDeploymentRequestError(request)
+	}
+	return err
 }
 
 // An observation is public provider metadata, not a generation identity or a
@@ -212,9 +244,6 @@ func retainEnvironmentCreateStorageObservation(store secretStore, relative strin
 func runEnvironmentCreateStorageCanary(ctx context.Context, checker deploymentCredentialChecker, s3 provisionObjectStore, target deploymentStorageTarget, execution *environmentCreateExecution) (result error) {
 	object := strings.Trim(target.Prefix, "/") + "/__rtk_cloud_create_validation__/" + execution.Journal.PlanSHA256 + "/" + target.Purpose
 	body := []byte("rtk-cloud-create-storage-canary")
-	if _, err := provisionSignedObjectRequestWithClient(checker.client, s3, http.MethodGet, "", url.Values{"list-type": {"2"}, "max-keys": {"1"}, "prefix": {target.Prefix + "/"}}, nil); err != nil {
-		return err
-	}
 	_, err := provisionSignedObjectRequestWithClient(checker.client, s3, http.MethodGet, object, nil, nil)
 	var absent *provisionObjectStorageHTTPError
 	if !errors.As(err, &absent) || absent.StatusCode != http.StatusNotFound {
@@ -241,14 +270,17 @@ func runEnvironmentCreateStorageCanary(ctx context.Context, checker deploymentCr
 		}
 	}()
 	if _, err := provisionSignedObjectRequestWithClient(checker.client, s3, http.MethodPut, object, nil, body); err != nil {
-		return err
+		return fmt.Errorf("PutObject: %w", createStorageCanaryError(err))
 	}
 	actual, err := provisionSignedObjectRequestWithClient(checker.client, s3, http.MethodGet, object, nil, nil)
-	if err != nil || !bytes.Equal(actual, body) {
+	if err != nil {
+		return fmt.Errorf("GetObject: %w", createStorageCanaryError(err))
+	}
+	if !bytes.Equal(actual, body) {
 		return createProviderBlocker("fresh canary readback differs from its exact reserved object body")
 	}
 	if _, err := provisionSignedObjectRequestWithClient(checker.client, s3, http.MethodDelete, object, nil, nil); err != nil {
-		return err
+		return fmt.Errorf("DeleteObject: %w", createStorageCanaryError(err))
 	}
 	_, err = provisionSignedObjectRequestWithClient(checker.client, s3, http.MethodGet, object, nil, nil)
 	absent = nil

@@ -19,8 +19,9 @@ func loadOriginalReadyCreateRoot(ctx context.Context, cfg deploymentConfig, stor
 	}
 	var root environmentCreateRegisteredIssuer
 	var operation environmentCreateIssuerOperation
+	boundary := "original-request-and-ceremony"
 	bad := func() (environmentCreateRegisteredIssuer, environmentCreateIssuerOperation, error) {
-		return root, operation, createProviderRecoveryBlock("original ready Service Root lacks exact native registry, request, custody or completed ceremony evidence")
+		return root, operation, createProviderRecoveryBlock("original ready Service Root lacks exact native registry, request, custody or completed ceremony evidence; domain=" + domain + " boundary=" + boundary)
 	}
 	for _, entry := range e.Journal.Entries {
 		if entry.Key == "pki-reserve-"+domain+"-root" && entry.State == "completed" {
@@ -43,6 +44,7 @@ func loadOriginalReadyCreateRoot(ctx context.Context, cfg deploymentConfig, stor
 			return bad()
 		}
 	}
+	boundary = "original-ready-document"
 	base := filepath.Join("deployment/create", e.Journal.PlanSHA256, "bootstrap/"+domain+"/ready.json")
 	raw, err := readBoundedEnvironmentFile(filepath.Join(store.Root, base), true)
 	if err != nil {
@@ -57,6 +59,7 @@ func loadOriginalReadyCreateRoot(ctx context.Context, cfg deploymentConfig, stor
 		return bad()
 	}
 	p.Materials["original-"+domain+"-root-ready-document"] = environmentPreflightBytesSHA256(raw)
+	boundary = "original-custody"
 	manifestPath := filepath.Join("pki/custody/roots", root.ID, "manifest.json")
 	raw, err = readBoundedEnvironmentFile(filepath.Join(store.Root, manifestPath), true)
 	if err != nil {
@@ -88,10 +91,12 @@ func loadOriginalReadyCreateRoot(ctx context.Context, cfg deploymentConfig, stor
 		p.Materials["original-"+domain+"-root-custody-"+key] = manifest.Hashes[key]
 	}
 	p.Materials["original-"+domain+"-root-custody-manifest"] = environmentPreflightBytesSHA256(raw)
+	boundary = "original-operator-binding"
 	binding, _, err := resolveInitialOperatorBinding(ctx, cfg, store, e, b, operator)
 	if err != nil || binding.UserID != manifest.Operator {
 		return bad()
 	}
+	boundary = "native-account-transport"
 	origin, httpClient, err := newEnvironmentCreateAccountClient(ctx, cfg, b, e)
 	if err != nil {
 		return bad()
@@ -100,16 +105,22 @@ func loadOriginalReadyCreateRoot(ctx context.Context, cfg deploymentConfig, stor
 	if err != nil {
 		return bad()
 	}
+	boundary = "native-operator-authentication"
 	if _, err := client.Authenticate(ctx, operator["ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL"], operator["ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD"]); err != nil {
 		return bad()
 	}
-	actual, err := client.ReadIssuer(ctx, root.ID)
+	actual, err := readOriginalCreateIssuerDocument(ctx, cfg, e, b, root.ID)
+	if err != nil {
+		boundary = "native-issuer-read"
+		return bad()
+	}
 	expected := root.Document
 	wantCounts := "1|1"
 	if domain == "mqtt" {
 		wantCounts = "3|3"
 	}
 	if len(active) >= 1 && active[0] {
+		boundary = "original-activation-proof"
 		var activated map[string]any
 		if readExecutionJSON(filepath.Join(store.Root, "deployment/create", e.Journal.PlanSHA256, "bootstrap/"+domain+"/root-active.json"), &activated) != nil {
 			return bad()
@@ -137,8 +148,20 @@ func loadOriginalReadyCreateRoot(ctx context.Context, cfg deploymentConfig, stor
 	if p.Materials["accepted-service-core-device-order-source"] != "" {
 		wantCounts = "6|6"
 	}
-	if err != nil || deploymentplan.Digest(actual) != deploymentplan.Digest(expected) {
+	if p.Materials["device-custody-continuation"] != "" {
+		wantCounts = "7|7"
+	}
+	boundary = "native-issuer-document"
+	if deploymentplan.Digest(actual) != deploymentplan.Digest(expected) {
 		return bad()
+	}
+	// A completed transport successor can occur after additional native issuer
+	// ceremonies. The issuer itself and its custody were verified above; an
+	// earlier checkpoint's global row count cannot describe later ceremonies.
+	if _, completed, err := initialSuccessorContinuationEntry(store, e); err != nil {
+		return root, operation, err
+	} else if completed {
+		return root, operation, nil
 	}
 	if p.Materials["accepted-service-core-device-trust-source"] != "" {
 		if err := verifyDeviceTrustRegistry(ctx, cfg, store, e, b, p); err != nil {
@@ -146,12 +169,47 @@ func loadOriginalReadyCreateRoot(ctx context.Context, cfg deploymentConfig, stor
 		}
 		return root, operation, nil
 	}
+	boundary = "native-registry-counts"
 	script := "export PGPASSWORD=\"$POSTGRES_PASSWORD\"; psql -X -A -t -v ON_ERROR_STOP=1 -h 127.0.0.1 -U postgres -d video_cloud -c 'SELECT (SELECT count(*) FROM pki_issuers),(SELECT count(*) FROM pki_operations)'"
 	counts, err := b.command(ctx, nil, "--namespace", cfg.Values["CLOUD_STACK_NAME"]+"-platform", "exec", "postgresql-0", "--container", "postgres", "--", "/bin/sh", "-ec", script)
 	if err != nil || strings.TrimSpace(string(counts)) != wantCounts {
 		return bad()
 	}
 	return root, operation, nil
+}
+
+// Completed ceremonies are read from the original native registry. Requiring
+// their management proxy to work first would prevent qualification of a repair
+// for that proxy. New issuance and other writes retain ordinary authentication.
+func readOriginalCreateIssuerDocument(ctx context.Context, cfg deploymentConfig, e *environmentCreateExecution, b environmentKubernetesBackend, id string) (map[string]any, error) {
+	bad := func() (map[string]any, error) {
+		return nil, createProviderRecoveryBlock("original native issuer registry document is unavailable or inconsistent")
+	}
+	if !environmentBootstrapOwnerUUID.MatchString(id) {
+		return bad()
+	}
+	raw, err := readEnvironmentCreateRegistryJSON(ctx, cfg, environmentCreateBootstrapRuntime{Execution: e, Backend: b}, "SELECT json_agg(json_build_object('id',id,'environment',environment,'domain',domain,'kind',kind,'status',status,'document',document) ORDER BY id) FROM pki_issuers")
+	var rows []struct {
+		ID, Environment, Domain, Kind, Status string
+		Document                              map[string]any
+	}
+	if err != nil || json.Unmarshal(raw, &rows) != nil {
+		return bad()
+	}
+	var document map[string]any
+	for _, row := range rows {
+		if row.ID != id {
+			continue
+		}
+		if document != nil || row.Environment != cfg.Environment || row.Document["issuer_id"] != id || row.Document["environment"] != row.Environment || row.Document["trust_domain"] != row.Domain || row.Document["kind"] != row.Kind || row.Document["status"] != row.Status {
+			return bad()
+		}
+		document = row.Document
+	}
+	if document == nil {
+		return bad()
+	}
+	return document, e.Check(ctx)
 }
 
 func loadPartialServiceRootTrust(store secretStore, e *environmentCreateExecution, p *createFoundationRecoveryPlan) (*deploymentplan.Plan, deploymentplan.Journal, error) {

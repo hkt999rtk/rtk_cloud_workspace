@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -235,5 +236,64 @@ func TestCreateIngressCompletedCheckpointRefusesUnprovedReadback(t *testing.T) {
 				t.Fatal("unproved accepted434 checkpoint was reusable", mode)
 			}
 		})
+	}
+}
+
+func TestCreateIngressCompletedNewGenerationAfterLaterStages(t *testing.T) {
+	for _, mode := range []string{"original", "duplicate-controller", "changed-receipt"} {
+		t.Run(mode, func(t *testing.T) {
+			cfg, p, release, store, e, _, _ := createCompletedIngressFixture(t)
+			// Newer original generations do not have the historical 431-entry prefix.
+			e.Journal.Entries = append([]environmentCreateJournalEntry{}, e.Journal.Entries[132:]...)
+			at := time.Now().UTC()
+			e.Journal.Entries = append(e.Journal.Entries,
+				environmentCreateJournalEntry{Key: "public-tls/certificate", Phase: "public-tls", State: "completed", StartedAt: at, CompletedAt: at},
+				environmentCreateJournalEntry{Key: "kubernetes/public-tls", Phase: "public-tls", State: "completed", StartedAt: at, CompletedAt: at})
+			if mode == "duplicate-controller" {
+				e.Journal.Entries = append(e.Journal.Entries, e.Journal.Entries[301])
+			}
+			if mode == "changed-receipt" {
+				e.Journal.Entries[299].Receipt = []byte(`{"foreign_receipt":true}`)
+			}
+			if err := e.save(); err != nil {
+				t.Fatal(err)
+			}
+			before, _ := os.ReadFile(e.JournalPath)
+			_, _, err := loadEnvironmentCreateCompletedIngressAdmission(context.Background(), cfg, p, release, store, e)
+			if (err == nil) != (mode == "original") {
+				t.Fatal("original accepted ingress or later generation history", err)
+			}
+			after, _ := os.ReadFile(e.JournalPath)
+			if !bytes.Equal(before, after) {
+				t.Fatal("completed ingress observation changed journal")
+			}
+		})
+	}
+}
+
+func TestCreateIngressCompletedNewGenerationExecutesReadbackBeforeAnyApply(t *testing.T) {
+	cfg, p, release, store, e, _, _ := createCompletedIngressFixture(t)
+	e.Journal.Entries = append([]environmentCreateJournalEntry{}, e.Journal.Entries[132:]...)
+	at := time.Now().UTC()
+	e.Journal.Entries = append(e.Journal.Entries, environmentCreateJournalEntry{Key: "kubernetes/public-tls", Phase: "public-tls", State: "completed", StartedAt: at, CompletedAt: at})
+	if err := e.save(); err != nil {
+		t.Fatal(err)
+	}
+	kubeconfig := []byte("private-isolated-selected-kubeconfig")
+	if err := store.write("kube/kubeconfig.yaml", kubeconfig, false); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	kubectl := filepath.Join(dir, "kubectl")
+	writeTestFile(t, kubectl, "#!/bin/sh\nprintf '%s\\n' '{\"items\":[]}'\n")
+	if err := os.Chmod(kubectl, 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	runtime := environmentCreateBootstrapRuntime{Execution: e, ExecutionSHA256: e.Journal.PlanSHA256, Backend: environmentKubernetesBackend{Store: store, KubeconfigContent: kubeconfig}}
+	applies := 0
+	err := executeEnvironmentCreateIngressAdmission(context.Background(), cfg, p, release, store, runtime, func(context.Context, string, []deploymentplan.Definition) error { applies++; return nil })
+	if err == nil || !strings.Contains(err.Error(), "actual workload does not match") || applies != 0 {
+		t.Fatal("completed original must verify live owners without generating or applying ingress", err, applies)
 	}
 }

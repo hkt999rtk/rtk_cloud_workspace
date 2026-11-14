@@ -20,13 +20,40 @@ func (c deploymentCredentialChecker) validateStoragePrivacy(store provisionObjec
 	if err := validatePrivateStorageACL(body); err != nil {
 		return err
 	}
-	body, err = provisionSignedObjectRequestWithClient(c.client, store, http.MethodGet, "", url.Values{"policy": {""}}, nil)
+	return c.validateStoragePolicy(store)
+}
+
+func (c deploymentCredentialChecker) validateCreateStoragePrivacy(token string, store provisionObjectStore) error {
+	path := "/object-storage/buckets/" + url.PathEscape(store.region) + "/" + url.PathEscape(store.bucket) + "/access"
+	body, err := c.linodeAuthorizedRequest(token, http.MethodGet, path, nil)
+	if err != nil {
+		return fmt.Errorf("Linode bucket ACL read failed: %w", err)
+	}
+	var acl struct {
+		Mode string `json:"acl"`
+		XML  string `json:"acl_xml"`
+	}
+	if json.Unmarshal(body, &acl) != nil || acl.Mode != "private" && acl.Mode != "custom" {
+		return errors.New("Linode bucket ACL is public or could not be verified private")
+	}
+	if err := validatePrivateStorageACL([]byte(acl.XML)); err != nil {
+		return err
+	}
+	return c.validateStoragePolicy(store)
+}
+
+func (c deploymentCredentialChecker) validateStoragePolicy(store provisionObjectStore) error {
+	body, err := provisionSignedObjectRequestWithClient(c.client, store, http.MethodGet, "", url.Values{"policy": {""}}, nil)
 	if err != nil {
 		var response *provisionObjectStorageHTTPError
 		if errors.As(err, &response) && response.StatusCode == http.StatusNotFound {
 			return nil // No bucket policy; the ACL above still has to be private.
 		}
-		return fmt.Errorf("bucket privacy requires readable policy: %w", err)
+		var request *url.Error
+		if errors.As(err, &request) {
+			err = sanitizedDeploymentRequestError(err)
+		}
+		return fmt.Errorf("S3 GetBucketPolicy failed: %w", err)
 	}
 	return validatePrivateStoragePolicy(body)
 }

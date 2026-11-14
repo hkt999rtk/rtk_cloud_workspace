@@ -374,7 +374,7 @@ func renderEnvironmentDeploymentTarget(ctx context.Context, cfg deploymentConfig
 			return nil, &deploymentplan.Blocker{ID: "deployment.configuration.postgres-backup", Cause: "enabled PostgreSQL backup configuration or credentials are incomplete", Next: "restore the existing enabled backup component's maintained configuration and dedicated credentials; do not enable backups merely to run an ordinary update"}
 		}
 	}
-	backend, err := newEnvironmentKubernetesBackend(snapshot.Kubeconfig, cfg.Environment)
+	backend, err := newEnvironmentKubernetesBackendForConfig(snapshot.Kubeconfig, cfg)
 	if err != nil {
 		return nil, environmentCompilationError(err, "deployment.access.kubeconfig", "selected Kubernetes identity could not be initialized", "restore the selected environment's compatible embedded Kubernetes credentials, then repeat preflight")
 	}
@@ -460,7 +460,6 @@ func compileRenderedEnvironmentDeploymentTarget(ctx context.Context, cfg deploym
 	var err error
 	definitions, runtimeDependencies, live := rendered.Definitions, rendered.RuntimeDependencies, rendered.Live
 	bindings, backend, store := rendered.Bindings, rendered.Backend, rendered.Store
-	backend.SchemaWorkspace = cfg.Workspace
 	release := rendered.Release
 	if operation == "upgrade" {
 		release, err = bindEnvironmentRetainedDevImages(store, release, live)
@@ -516,7 +515,7 @@ func compileRenderedEnvironmentDeploymentTarget(ctx context.Context, cfg deploym
 	if err := bindFleetValkeyAllocations(definitions, live, bindings); err != nil {
 		return nil, err
 	}
-	if err := validateEnvironmentPKITransition(definitions, live); err != nil {
+	if err := validateConfiguredEnvironmentPKITransition(cfg, rendered.Snapshot.Operator, definitions, live); err != nil {
 		return nil, err
 	}
 	if err := validateEnvironmentDurableStorageTransition(definitions, live); err != nil {
@@ -547,7 +546,19 @@ func compileRenderedEnvironmentDeploymentTarget(ctx context.Context, cfg deploym
 	if err != nil {
 		return nil, environmentCompilationError(err, "deployment.plan.compile", "resource ordering or lifecycle plan compilation failed", "repair maintained resource phases, dependencies and lifecycle classifications, then repeat preflight")
 	}
-	if err := qualifyEnvironmentOnDeleteOpenBaoPlan(plan, definitions, live); err != nil {
+	var inplace []openBaoInPlaceOwner
+	if operation == "create" {
+		if runtime, ok := ctx.Value(environmentCreateBootstrapRuntimeKey{}).(environmentCreateBootstrapRuntime); ok && runtime.Execution != nil {
+			owner, found, err := optionalOpenBaoInPlaceReady(ctx, cfg, store, runtime.Execution, backend)
+			if err != nil {
+				return nil, err
+			}
+			if found {
+				inplace = append(inplace, owner)
+			}
+		}
+	}
+	if err := qualifyEnvironmentOnDeleteOpenBaoPlan(plan, definitions, live, inplace...); err != nil {
 		return nil, err
 	}
 	nextStep("deployment.storage.observation")

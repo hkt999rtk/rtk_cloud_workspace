@@ -109,6 +109,7 @@ type environmentCreateProductIdentityLifecycle struct {
 	Bootstrap                               environmentCreateBootstrapPlan
 	StorageClass, TransportCAPEM            string
 	RootCustodySHA256                       string
+	FreshResume                             *environmentFreshProductResumeBinding `json:",omitempty"`
 	source                                  environmentCreateJournal
 	runtime                                 environmentCreateBootstrapRuntime
 	operator                                map[string]string
@@ -373,7 +374,6 @@ func hydrateCreateNormalTailProducts(ctx context.Context, cfg deploymentConfig, 
 		return err
 	}
 	client.Execution = h.Execution
-	client.operatorCredentials = operator
 	root, err := client.ReadIssuer(ctx, l.Root.ID)
 	if err != nil || root["status"] != "active" || root["certificate_pem"] != l.Root.Certificate || root["certificate_fingerprint_sha256"] != l.Root.RootFingerprint {
 		return environmentCreateBootstrapBlocker("saved product program cannot replace its original active Service Root")

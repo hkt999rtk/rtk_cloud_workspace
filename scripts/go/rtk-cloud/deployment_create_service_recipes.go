@@ -46,8 +46,8 @@ func environmentCreateServiceOwnerClaim(role string) string {
 }
 
 func validateEnvironmentCreateServiceRecipe(cfg deploymentConfig, p environmentCreateBootstrapPlan, runtime environmentCreateBootstrapRuntime, root environmentCreateRegisteredIssuer) error {
-	if p.Environment != cfg.Environment || p.Stack != cfg.Values["CLOUD_STACK_NAME"] || p.Stack != "video-cloud-"+cfg.Environment || (cfg.Environment != "dev" && cfg.Environment != "staging") || !immutableEnvironmentImage.MatchString(p.Image) || !immutableEnvironmentImage.MatchString(p.AccountManagerImage) {
-		return environmentCreateBootstrapBlocker("Service recipe requires the exact qualified non-production target and immutable native images")
+	if !secretEnvironmentPattern.MatchString(cfg.Environment) || p.Environment != cfg.Environment || p.Stack == "" || p.Stack != cfg.Values["CLOUD_STACK_NAME"] || !immutableEnvironmentImage.MatchString(p.Image) || !immutableEnvironmentImage.MatchString(p.AccountManagerImage) {
+		return environmentCreateBootstrapBlocker("Service recipe requires the exact configured environment, stack and immutable native images")
 	}
 	if root.Environment != cfg.Environment || root.Domain != "service" || root.Kind != "root" || (root.Status != "ready" && root.Status != "active") || !environmentBootstrapOwnerUUID.MatchString(root.ID) || !environmentPreflightDigest.MatchString(root.RootFingerprint) || environmentPreflightBytesSHA256([]byte(root.ChainPEM)) != root.BundleVersion {
 		return environmentCreateBootstrapBlocker("Service recipe lacks original registered Root metadata")

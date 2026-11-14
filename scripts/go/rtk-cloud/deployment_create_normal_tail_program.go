@@ -203,7 +203,7 @@ func buildCreateNormalTailProgram(ctx context.Context, cfg deploymentConfig, h *
 	if err := bindOpenBaoAllocations(definitions, rendered.Live); err != nil {
 		return nil, err
 	}
-	if err := validateEnvironmentPKITransition(definitions, rendered.Live); err != nil {
+	if err := validateConfiguredEnvironmentPKITransition(cfg, rendered.Snapshot.Operator, definitions, rendered.Live); err != nil {
 		return nil, err
 	}
 	if err := validateEnvironmentDurableStorageTransition(definitions, rendered.Live); err != nil {

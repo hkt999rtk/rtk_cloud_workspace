@@ -10,11 +10,11 @@ import (
 // owned Pods still run an older revision. Select the existing explicit update
 // lifecycle before qualification; a retained dependency cannot grant a restart.
 // The input is the same captured inventory used by the ordinary compiler.
-func qualifyEnvironmentOnDeleteOpenBaoPlan(plan *deploymentplan.Plan, definitions []deploymentplan.Definition, live []deploymentplan.Object) error {
+func qualifyEnvironmentOnDeleteOpenBaoPlan(plan *deploymentplan.Plan, definitions []deploymentplan.Definition, live []deploymentplan.Object, approved ...openBaoInPlaceOwner) error {
 	bad := func(id, cause string) error {
 		return &deploymentplan.Blocker{ID: "deployment.compatibility.openbao-pod", Resource: id, Cause: cause, Next: "verify the original OpenBao controller and Pod owners; qualify its explicit controlled update with the existing storage, identity and unseal material"}
 	}
-	if plan == nil {
+	if plan == nil || len(approved) > 1 {
 		return bad("", "compiled OpenBao target is unavailable")
 	}
 	retained := map[string]bool{}
@@ -60,6 +60,13 @@ func qualifyEnvironmentOnDeleteOpenBaoPlan(plan *deploymentplan.Plan, definition
 				return bad(id, "original OpenBao Pod has no controller revision")
 			}
 			if actual != revision {
+				if len(approved) == 1 && approved[0].StatefulSetUID == deploymentplan.String(metadata["uid"]) && approved[0].PodUID == deploymentplan.String(deploymentplan.Map(pod["metadata"])["uid"]) && approved[0].PodName == deploymentplan.String(deploymentplan.Map(pod["metadata"])["name"]) && approved[0].Namespace == deploymentplan.String(metadata["namespace"]) && approved[0].ReleaseImage.Reference != "" {
+					host := managedNamedField(environmentPKIPod(resource.Desired)["containers"], "openbao-pki")
+					_, evidenceErr := validateOpenBaoInPlaceObservation(approved[0].qualification, approved[0].original, controller, pod, approved[0].ContainerID)
+					if host != nil && host["image"] == approved[0].ReleaseImage.Reference && evidenceErr == nil {
+						continue
+					}
+				}
 				older = true
 				continue
 			}

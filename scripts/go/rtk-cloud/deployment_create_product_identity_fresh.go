@@ -11,10 +11,14 @@ import (
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 )
 
-type environmentFreshProductBinding struct{ ParentSHA256, ScopeSHA256, SessionID, IssuerID string }
+type environmentFreshProductBinding struct {
+	ParentSHA256, ScopeSHA256, SessionID, IssuerID string
+	EnrollmentSessionID                            string `json:",omitempty"`
+}
 type environmentFreshProductProgram struct {
 	Lifecycle        createNormalTailProductLifecycle
 	SourceLeaseCount int
+	SelectedPlan     *environmentCreatePlan `json:",omitempty"`
 }
 
 func freshProductProgramPath(parent string) string {
@@ -27,11 +31,18 @@ func readFreshProductProgram(store secretStore, e *environmentCreateExecution) (
 		return nil, environmentCreateBootstrapBlocker("fresh product program has no original selected parent")
 	}
 	l := &saved.Lifecycle
-	var active environmentPreflightActive
-	var artifact environmentCreateArtifact
-	var original environmentCreatePlan
-	if readEnvironmentPreflightJSON(filepath.Join(store.Root, "deployment/create/preflight/active.json"), &active) != nil || active.PlanSHA256 != e.Journal.PlanSHA256 || !environmentPreflightArtifactName.MatchString(active.Artifact) || createOpenBaoACKCompletionRead(store, filepath.Join("deployment/create/preflight", active.Artifact, "artifact.json"), &artifact) != nil || artifact.PlanSHA256 != e.Journal.PlanSHA256 || deploymentplan.Digest(artifact) != e.Journal.ArtifactSHA256 || decodeEnvironmentJSON(artifact.Plan, &original) != nil || deploymentplan.Digest(l.Bootstrap) != deploymentplan.Digest(original.Bootstrap) || deploymentplan.Digest(l.Policy) != deploymentplan.Digest(findEnvironmentCreateDomainPolicy(original.Bootstrap, "service")) || len(l.Outputs) != len(original.Bootstrap.ProductIdentities) || len(l.Outputs) == 0 {
+	original, _, err := loadEnvironmentCreateAdmittedGeneration(store, e.Journal.PlanSHA256, e.Journal.ArtifactSHA256)
+	if err != nil {
+		return nil, err
+	}
+	if deploymentplan.Digest(l.Policy) != deploymentplan.Digest(findEnvironmentCreateDomainPolicy(original.Bootstrap, "service")) || len(l.Outputs) != len(original.Bootstrap.ProductIdentities) || len(l.Outputs) == 0 {
 		return nil, environmentCreateBootstrapBlocker("fresh products differ from the original fully qualified create plan")
+	}
+	if l.FreshResume == nil && deploymentplan.Digest(l.Bootstrap) != deploymentplan.Digest(original.Bootstrap) {
+		return nil, environmentCreateBootstrapBlocker("fresh bootstrap differs from its original qualified plan")
+	}
+	if err := authenticateFreshProductResume(store, e, original, &saved); err != nil {
+		return nil, err
 	}
 	for i, output := range l.Outputs {
 		expected := original.Bootstrap.ProductIdentities[i]
@@ -62,6 +73,10 @@ func readFreshProductProgram(store secretStore, e *environmentCreateExecution) (
 	prefix.Entries = slices.Clone(prefix.Entries[:index])
 	prefix.KubernetesLeases = slices.Clone(prefix.KubernetesLeases[:saved.SourceLeaseCount])
 	prefix.CompletedAt = time.Time{}
+	prefix, err = normalizeFreshProductSourcePrefix(store, e, &saved, prefix)
+	if err != nil {
+		return nil, err
+	}
 	if deploymentplan.Digest(prefix) != l.SourceSHA256 {
 		return nil, environmentCreateBootstrapBlocker("fresh product original source or lease prefix changed")
 	}
@@ -72,14 +87,15 @@ func executeEnvironmentCreateFreshProductIdentities(ctx context.Context, cfg dep
 	if len(p.ProductIdentities) == 0 {
 		return nil
 	}
-	if runtime.ServiceSessionRecovery != nil || runtime.Execution == nil || runtime.PKIClient == nil || runtime.Execution.Store != store || runtime.PKIClient.Execution != runtime.Execution || runtime.Execution.Check(ctx) != nil {
+	if runtime.Execution == nil || runtime.PKIClient == nil || runtime.Execution.Store != store || runtime.PKIClient.Execution != runtime.Execution || runtime.Execution.Check(ctx) != nil {
 		return environmentCreateBootstrapBlocker("fresh product producer requires its original new-generation ceremony")
 	}
 	subjects, err := environmentCreatePlannedServiceSubjects(cfg, p)
 	if err != nil {
 		return err
 	}
-	if len(subjects) != 9+len(p.ProductIdentities) {
+	coreSubjects, coreErr := environmentCreateBootstrapSubjects(cfg)
+	if coreErr != nil || len(subjects) != len(coreSubjects)+len(p.ProductIdentities) {
 		return environmentCreateBootstrapBlocker("fresh session does not declare every original and product owner")
 	}
 	var program *environmentFreshProductProgram
@@ -89,7 +105,11 @@ func executeEnvironmentCreateFreshProductIdentities(ctx context.Context, cfg dep
 			return err
 		}
 	} else {
-		l := createNormalTailProductLifecycle{ParentSHA256: runtime.ExecutionSHA256, SourceSHA256: deploymentplan.Digest(runtime.Execution.Journal), OwnerSHA256: deploymentplan.Digest(runtime.Execution.owner), Root: s.Root, Intermediate: s.Intermediate, Policy: findEnvironmentCreateDomainPolicy(p, "service"), Bootstrap: p, StorageClass: firstNonEmpty(cfg.Values["LKE_STORAGE_CLASS"], "linode-block-storage-retain"), TransportCAPEM: runtime.TransportCAPEM, Outputs: slices.Clone(p.ProductIdentities)}
+		resume, selected, err := qualifyFreshProductResume(ctx, cfg, p, release, store, runtime, s)
+		if err != nil {
+			return err
+		}
+		l := createNormalTailProductLifecycle{FreshResume: resume, ParentSHA256: runtime.ExecutionSHA256, SourceSHA256: deploymentplan.Digest(runtime.Execution.Journal), OwnerSHA256: deploymentplan.Digest(runtime.Execution.owner), Root: s.Root, Intermediate: s.Intermediate, Policy: findEnvironmentCreateDomainPolicy(p, "service"), Bootstrap: p, StorageClass: firstNonEmpty(cfg.Values["LKE_STORAGE_CLASS"], "linode-block-storage-retain"), TransportCAPEM: runtime.TransportCAPEM, Outputs: slices.Clone(p.ProductIdentities)}
 		l.SourceDefinitions, err = environmentFreshConnectivitySource(cfg, p)
 		if err != nil {
 			return err
@@ -97,7 +117,7 @@ func executeEnvironmentCreateFreshProductIdentities(ctx context.Context, cfg dep
 		for i := range l.Outputs {
 			l.Outputs[i].RootID, l.Outputs[i].RootSHA256, l.Outputs[i].IssuerID = s.Root.ID, s.Root.RootFingerprint, s.Intermediate.ID
 		}
-		program = &environmentFreshProductProgram{Lifecycle: l, SourceLeaseCount: len(runtime.Execution.Journal.KubernetesLeases)}
+		program = &environmentFreshProductProgram{Lifecycle: l, SourceLeaseCount: len(runtime.Execution.Journal.KubernetesLeases), SelectedPlan: selected}
 		if _, err = writeProductArtifact(store, freshProductProgramPath(l.ParentSHA256), program); err != nil {
 			return err
 		}
@@ -153,7 +173,7 @@ func executeEnvironmentCreateFreshProductIdentities(ctx context.Context, cfg dep
 	if err = verifyProductIdentityOutputs(ctx, cfg, runtime, l, installed); err != nil {
 		return err
 	}
-	closed, err := freshProductEnrollmentClosedDefinitions(store, runtime.Execution, p, s)
+	closed, err := freshProductEnrollmentClosedDefinitions(store, runtime.Execution, p, installed.Ceremony)
 	if err != nil {
 		return err
 	}
@@ -161,7 +181,7 @@ func executeEnvironmentCreateFreshProductIdentities(ctx context.Context, cfg dep
 }
 
 func freshProductEnrollmentClosedDefinitions(store secretStore, e *environmentCreateExecution, p environmentCreateBootstrapPlan, s environmentCreateServiceCeremony) ([]deploymentplan.Definition, error) {
-	plan, journal, err := acceptedCreateStage(store, e, "kubernetes/managed-complete-issuer")
+	plan, journal, err := acceptedCurrentCoreStage(store, e)
 	if err != nil {
 		return nil, err
 	}
@@ -203,7 +223,7 @@ func freshProductEnrollmentClosedDefinitions(store secretStore, e *environmentCr
 // permanent outputs. It must not revisit the seed ceremony after native cleanup.
 func restoreEnvironmentFreshProductBootstrap(ctx context.Context, cfg deploymentConfig, p environmentCreateBootstrapPlan, release environmentRelease, store secretStore, runtime environmentCreateBootstrapRuntime, apply ...environmentCreateBootstrapApply) (environmentIdentityBindings, bool, error) {
 	var empty environmentIdentityBindings
-	if len(p.ProductIdentities) == 0 || runtime.ServiceSessionRecovery != nil {
+	if len(p.ProductIdentities) == 0 {
 		return empty, false, nil
 	}
 	finalized := filepath.Join(environmentCreateCeremonyDirectory(runtime, "service"), "finalized.json")
@@ -221,14 +241,18 @@ func restoreEnvironmentFreshProductBootstrap(ctx context.Context, cfg deployment
 		return empty, false, err
 	}
 	l := &program.Lifecycle
-	installed, err := readProductInstalled(store, l)
+	sourceInstalled, err := readProductInstalled(store, l)
+	if err != nil {
+		return empty, false, err
+	}
+	installed, err := readEffectiveFreshProductInstalled(store, runtime.Execution, l)
 	if err != nil {
 		return empty, false, err
 	}
 	if deploymentplan.Digest(l.Bootstrap) != deploymentplan.Digest(p) {
 		return empty, false, environmentCreateBootstrapBlocker("fresh finalized bootstrap recipe changed")
 	}
-	if err = verifyProductIdentityOutputs(ctx, cfg, runtime, l, installed); err != nil {
+	if err = verifyProductIdentityOutputs(ctx, cfg, runtime, l, sourceInstalled); err != nil {
 		return empty, false, err
 	}
 	var saved struct {
@@ -239,7 +263,7 @@ func restoreEnvironmentFreshProductBootstrap(ctx context.Context, cfg deployment
 	if createOpenBaoACKCompletionRead(store, finalized, &saved) != nil {
 		return empty, false, environmentCreateBootstrapBlocker("fresh finalized bootstrap record is malformed")
 	}
-	entry := createOpenBaoACKCompletionEntry(runtime.Execution.Journal, "service-session-finalize")
+	entry := createOpenBaoACKCompletionEntry(runtime.Execution.Journal, environmentCreateServiceFinalizationKey(runtime))
 	if entry != nil && entry.State != "completed" {
 		if err = reconcileProductFinalization(ctx, cfg, runtime, l, installed, saved.Native); err != nil {
 			return empty, false, err
@@ -265,7 +289,7 @@ func restoreEnvironmentFreshProductBootstrap(ctx context.Context, cfg deployment
 	if err = completeFreshProductPreparations(ctx, cfg, store, runtime.Execution, l, installed, runtime.Backend, stageApply); err != nil {
 		return empty, false, err
 	}
-	retired, err := productPreparationDefinitions(cfg, store, runtime.Execution, l, installed, true, true)
+	retired, err := freshProductPreparationDefinitions(ctx, cfg, store, runtime.Execution, l, sourceInstalled, runtime.Backend, true)
 	if err != nil {
 		return empty, false, err
 	}
@@ -281,8 +305,12 @@ func restoreEnvironmentFreshProductBootstrap(ctx context.Context, cfg deployment
 	for _, o := range live {
 		current[deploymentplan.ID(o)] = o
 	}
+	cleanedCredentials, err := freshProductFinalizedCredentialOwners(ctx, cfg, store, runtime, installed.Ceremony)
+	if err != nil {
+		return empty, false, err
+	}
 	for id, uid := range original.Owners {
-		cleaned := retiredOwners[id] == uid && current[id] == nil
+		cleaned := (retiredOwners[id] == uid || cleanedCredentials[id] == uid) && current[id] == nil
 		for _, ns := range installed.Ceremony.BootstrapCredentialNamespaces {
 			if id == "Secret/"+ns+"/"+installed.Ceremony.BootstrapCredentialSecret && uid == installed.Ceremony.CredentialUIDs[ns] && current[id] == nil {
 				cleaned = true
@@ -295,7 +323,11 @@ func restoreEnvironmentFreshProductBootstrap(ctx context.Context, cfg deployment
 			return empty, false, environmentCreateBootstrapBlocker("fresh finalized bootstrap original owner changed")
 		}
 	}
-	b, err := observeEnvironmentBindings(cfg.Environment, release, live)
+	observationRelease, err := createRuntimeImageObservationRelease(ctx, store, runtime.Execution, runtime.Backend, release, live)
+	if err != nil {
+		return empty, false, err
+	}
+	b, err := observeEnvironmentBindings(cfg.Environment, observationRelease, live)
 	if err != nil {
 		return empty, false, err
 	}
@@ -313,7 +345,7 @@ func applyEnvironmentFreshProductBindings(ctx context.Context, cfg deploymentCon
 	if err != nil {
 		return err
 	}
-	installed, err := readProductInstalled(e.Store, &program.Lifecycle)
+	installed, err := readEffectiveFreshProductInstalled(e.Store, e, &program.Lifecycle)
 	if err != nil {
 		return err
 	}
@@ -322,7 +354,13 @@ func applyEnvironmentFreshProductBindings(ctx context.Context, cfg deploymentCon
 			return environmentCreateBootstrapBlocker("fresh product mirror differs from its original native UID")
 		}
 	}
-	b.ProductIdentities = &environmentFreshProductBinding{ParentSHA256: e.Journal.PlanSHA256, ScopeSHA256: productIdentityScope(&program.Lifecycle), SessionID: installed.Ceremony.BootstrapSessionID, IssuerID: installed.Ceremony.Intermediate.ID}
+	if binding, err := readFreshProductSessionSuccessor(e.Store, e, &program.Lifecycle); err != nil {
+		return err
+	} else if binding != nil {
+		cleanup := installed.Ceremony.CleanupBinding
+		b.BootstrapCleanup = &cleanup
+	}
+	b.ProductIdentities = &environmentFreshProductBinding{ParentSHA256: e.Journal.PlanSHA256, ScopeSHA256: productIdentityScope(&program.Lifecycle), SessionID: installed.Ceremony.BootstrapSessionID, IssuerID: installed.Ceremony.Intermediate.ID, EnrollmentSessionID: installed.EnrollmentSessionID}
 	return e.Check(ctx)
 }
 
@@ -340,11 +378,11 @@ func bindFreshProductTargetDefinitions(ctx context.Context, cfg deploymentConfig
 		return nil, err
 	}
 	l := &program.Lifecycle
-	installed, err := readProductInstalled(store, l)
+	installed, err := readEffectiveFreshProductInstalled(store, e, l)
 	if err != nil {
 		return nil, err
 	}
-	if b.ProductIdentities.ParentSHA256 != l.ParentSHA256 || b.ProductIdentities.ScopeSHA256 != productIdentityScope(l) || b.ProductIdentities.SessionID != installed.Ceremony.BootstrapSessionID || b.ProductIdentities.IssuerID != installed.Ceremony.Intermediate.ID {
+	if b.ProductIdentities.ParentSHA256 != l.ParentSHA256 || b.ProductIdentities.ScopeSHA256 != productIdentityScope(l) || b.ProductIdentities.SessionID != installed.Ceremony.BootstrapSessionID || b.ProductIdentities.IssuerID != installed.Ceremony.Intermediate.ID || b.ProductIdentities.EnrollmentSessionID != installed.EnrollmentSessionID {
 		return nil, environmentCreateBootstrapBlocker("fresh product binding changed its original installed outputs")
 	}
 	finalizer := createOpenBaoACKCompletionEntry(e.Journal, "service-session-finalize")
@@ -374,7 +412,7 @@ func bindFreshProductTargetDefinitions(ctx context.Context, cfg deploymentConfig
 			return nil, err
 		}
 	} else {
-		preparations, prepErr := productPreparationDefinitions(cfg, store, e, l, installed, false, true)
+		preparations, prepErr := freshProductPreparationDefinitions(ctx, cfg, store, e, l, installed, runtime.Backend, false)
 		if prepErr != nil {
 			return nil, prepErr
 		}
@@ -396,7 +434,11 @@ func bindFreshProductTargetDefinitions(ctx context.Context, cfg deploymentConfig
 		}
 		result = append(result, dependencies...)
 	}
-	if err := bindEnvironmentManagedMQTTConsumers(result, installed.Ceremony.BootstrapSessionID); err != nil {
+	placementSession := installed.Ceremony.BootstrapSessionID
+	if installed.EnrollmentSessionID != "" {
+		placementSession = installed.EnrollmentSessionID
+	}
+	if err := bindEnvironmentManagedMQTTConsumers(result, placementSession); err != nil {
 		return nil, err
 	}
 	return result, e.Check(ctx)
@@ -413,7 +455,7 @@ func finishEnvironmentCreateFreshProducts(ctx context.Context, cfg deploymentCon
 		return nil, err
 	}
 	l := &program.Lifecycle
-	installed, err := readProductInstalled(store, l)
+	installed, err := readEffectiveFreshProductInstalled(store, e, l)
 	if err != nil {
 		return nil, err
 	}
@@ -434,7 +476,10 @@ func finishEnvironmentCreateFreshProducts(ctx context.Context, cfg deploymentCon
 		return nil, err
 	}
 	client.Execution = e
-	runtime := environmentCreateBootstrapRuntime{Execution: e, ExecutionSHA256: e.Journal.PlanSHA256, Backend: c.Backend, PKIClient: client}
+	runtime, err := freshProductFinalizerRuntime(ctx, cfg, l, e, c.Backend, client, s)
+	if err != nil {
+		return nil, err
+	}
 	finalizedPath, err := store.safePath(filepath.Join(environmentCreateCeremonyDirectory(runtime, "service"), "finalized.json"))
 	if err != nil {
 		return nil, err
@@ -464,6 +509,9 @@ func finishEnvironmentCreateFreshProducts(ctx context.Context, cfg deploymentCon
 		if err = waitProductSessionInstallations(ctx, cfg, runtime, s, subjects); err != nil {
 			return nil, err
 		}
+		if err = prepareFreshExpiredBootstrapRevocation(ctx, cfg, runtime, s); err != nil {
+			return nil, err
+		}
 		if err = finalizeEnvironmentCreateServiceSession(ctx, client, cfg, plan.Bootstrap, store, runtime, s, operator); err != nil {
 			return nil, err
 		}
@@ -478,11 +526,21 @@ func finishEnvironmentCreateFreshProducts(ctx context.Context, cfg deploymentCon
 	if err = completeFreshProductPreparations(ctx, cfg, store, e, l, installed, c.Backend, apply); err != nil {
 		return nil, err
 	}
-	final, err := compileEnvironmentDeploymentWithImagesTarget(ctx, cfg, "create", plan.Release, nil)
+	final, err := compileFreshProductSteadyTarget(ctx, cfg, c, compileEnvironmentDeploymentWithImagesTarget)
 	if err != nil {
 		return nil, err
 	}
 	return final, e.Check(ctx)
+}
+
+// The workload compilation already resolved the selected environment release
+// and verified any completed OpenBao handoff. Preserve that exact release
+// when rendering the steady target after product finalization.
+func compileFreshProductSteadyTarget(ctx context.Context, cfg deploymentConfig, compiled *compiledEnvironmentDeployment, compile func(context.Context, deploymentConfig, string, environmentRelease, environmentReleaseCommand) (*compiledEnvironmentDeployment, error)) (*compiledEnvironmentDeployment, error) {
+	if compiled == nil || compile == nil {
+		return nil, environmentCreateBootstrapBlocker("fresh product workload release is unavailable")
+	}
+	return compile(ctx, cfg, "create", compiled.Release, nil)
 }
 
 // Both fresh completion and early finalized-bootstrap restoration use this
@@ -492,11 +550,15 @@ func completeFreshProductPreparations(ctx context.Context, cfg deploymentConfig,
 	if err != nil {
 		return err
 	}
-	input, err := readEnvironmentCreateStageInput(store, e, "workload")
+	stage := "workload"
+	if entry := createOpenBaoACKCompletionEntry(e.Journal, "kubernetes/workload"); entry != nil && workloadImageForwardReceiptMatches(entry.Receipt) {
+		stage = createWorkloadImageForwardStage
+	}
+	input, err := readEnvironmentCreateStageInput(store, e, stage)
 	if err != nil || input == nil || input.SHA256() != initial.SHA256() {
 		return environmentCreateBootstrapBlocker("fresh cleanup lost its original accepted workload input")
 	}
-	progress, exists, err := readEnvironmentCreateStageProgress(store, e, "workload", input)
+	progress, exists, err := readEnvironmentCreateStageProgress(store, e, stage, input)
 	if err != nil || !exists || !progress.Accepted || deploymentplan.Digest(progress) != deploymentplan.Digest(journal) {
 		return environmentCreateBootstrapBlocker("fresh cleanup lost its original accepted workload owners")
 	}
@@ -525,7 +587,7 @@ func completeFreshProductPreparations(ctx context.Context, cfg deploymentConfig,
 		}
 		deploymentplan.Map(changed[i].Object["metadata"])["uid"] = uid
 	}
-	retired, err := productPreparationDefinitions(cfg, store, e, l, installed, true, true)
+	retired, err := freshProductPreparationDefinitions(ctx, cfg, store, e, l, installed, backend, true)
 	if err != nil {
 		return err
 	}
@@ -590,5 +652,5 @@ func freshProductSteadyDefinitions(initial, final *deploymentplan.Plan, l *creat
 }
 
 func validFreshProductBinding(b *environmentFreshProductBinding) bool {
-	return b == nil || environmentPreflightDigest.MatchString(b.ParentSHA256) && environmentPreflightDigest.MatchString(b.ScopeSHA256) && environmentBootstrapOwnerUUID.MatchString(b.SessionID) && environmentBootstrapOwnerUUID.MatchString(b.IssuerID) && !strings.ContainsAny(b.ParentSHA256+b.ScopeSHA256, "\r\n")
+	return b == nil || environmentPreflightDigest.MatchString(b.ParentSHA256) && environmentPreflightDigest.MatchString(b.ScopeSHA256) && environmentBootstrapOwnerUUID.MatchString(b.SessionID) && environmentBootstrapOwnerUUID.MatchString(b.IssuerID) && (b.EnrollmentSessionID == "" || environmentBootstrapOwnerUUID.MatchString(b.EnrollmentSessionID)) && !strings.ContainsAny(b.ParentSHA256+b.ScopeSHA256, "\r\n")
 }

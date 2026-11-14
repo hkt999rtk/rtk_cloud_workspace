@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
+	"strings"
 )
 
 // A dev-only ordinary configuration override selects one existing sidecar.
@@ -20,18 +21,22 @@ func accountRegistrationCRLRefreshInputs(environment string, values map[string]s
 }
 
 func accountRegistrationCRLRefreshRelease(cfg deploymentConfig, original environmentRelease, operator map[string]string) (environmentRelease, error) {
+	selection, operator, err := selectedRegistrationCRLOperator(cfg.Environment, operator)
+	if err != nil {
+		return original, err
+	}
 	image, err := accountRegistrationCRLRefreshInputs(cfg.Environment, operator)
 	if err != nil {
 		return original, err
 	}
-	if _, exists := original.Images["LKE_PKI_MANAGEMENT_IMAGE"]; exists {
+	if _, exists := original.Images["LKE_PKI_MANAGEMENT_IMAGE"]; exists && selection.Images["LKE_PKI_MANAGEMENT_IMAGE"].Reference == "" {
 		return original, errors.New("management image role must come only from selected operator configuration")
 	}
 	controller := operator["PKI_CONTROLLER_IMAGE"]
-	if controller != "" && (cfg.Environment != "dev" || !immutableEnvironmentImage.MatchString(controller)) {
+	if controller != "" && (cfg.Environment != "dev" && selection.Images["LKE_PKI_CONTROLLER_IMAGE"].Reference == "" || !immutableEnvironmentImage.MatchString(controller)) {
 		return original, errors.New("controller override requires the qualified immutable dev native package")
 	}
-	if image == "" && controller == "" {
+	if image == "" && controller == "" && selection.Images["LKE_PKI_MANAGEMENT_IMAGE"].Reference == "" {
 		return original, nil
 	}
 	next := original
@@ -45,10 +50,36 @@ func accountRegistrationCRLRefreshRelease(cfg deploymentConfig, original environ
 	if controller != "" {
 		next.Images["LKE_PKI_CONTROLLER_IMAGE"] = environmentReleaseImage{Reference: controller}
 	}
+	for _, role := range []string{"LKE_PKI_MANAGEMENT_IMAGE", "LKE_PKI_CONTROLLER_IMAGE"} {
+		if selected, ok := selection.Images[role]; ok {
+			next.Images[role] = selected
+		}
+	}
 	return next, nil
 }
 
+// Work with a copy: canonical role selections outrank legacy aliases without
+// changing stored settings or enabling the optional registration-CRL profile.
+func selectedRegistrationCRLOperator(environment string, operator map[string]string) (environmentImageSelection, map[string]string, error) {
+	selection, err := parseEnvironmentImageSelection(environment, operator[environmentImagesKey])
+	if err != nil {
+		return selection, nil, err
+	}
+	selected := appendMap(operator, nil)
+	for role, image := range selection.Images {
+		selected[strings.TrimPrefix(role, "LKE_")] = image.Reference
+	}
+	if selected["ACCOUNT_MANAGER_SERVICE_REGISTRATION_CRL_REFRESH_PROFILE"] == "" && selection.Images["LKE_PKI_MANAGEMENT_IMAGE"].Reference != "" {
+		delete(selected, "PKI_MANAGEMENT_IMAGE")
+	}
+	return selection, selected, nil
+}
+
 func projectAccountRegistrationCRLRefreshInputs(environment string, operator, values map[string]string) error {
+	selection, operator, err := selectedRegistrationCRLOperator(environment, operator)
+	if err != nil {
+		return err
+	}
 	image, err := accountRegistrationCRLRefreshInputs(environment, operator)
 	if err != nil {
 		return err
@@ -63,7 +94,7 @@ func projectAccountRegistrationCRLRefreshInputs(environment string, operator, va
 		values["PKI_MANAGEMENT_IMAGE"] = image
 	}
 	if controller := operator["PKI_CONTROLLER_IMAGE"]; controller != "" {
-		if environment != "dev" || !immutableEnvironmentImage.MatchString(controller) {
+		if environment != "dev" && selection.Images["LKE_PKI_CONTROLLER_IMAGE"].Reference == "" || !immutableEnvironmentImage.MatchString(controller) {
 			return errors.New("controller override requires the qualified immutable dev native package")
 		}
 		values["PKI_CONTROLLER_IMAGE"] = controller

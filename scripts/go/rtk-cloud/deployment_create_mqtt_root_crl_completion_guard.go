@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"path/filepath"
 	"time"
 
@@ -82,7 +81,7 @@ func mqttRootCRLCompletionMembership(a createMQTTRootCRLArtifact, source, captur
 	index := len(source.Entries)
 	before, after := captured.Entries[index], current.Entries[index]
 	rank := map[string]int{"pending": 0, "allocated": 1, "completed": 2}
-	if rank[after.State] < rank[before.State] || before.State == "completed" && activeTransportJournalDigest(before) != activeTransportJournalDigest(after) || before.State != "pending" && !bytes.Equal(before.Receipt, after.Receipt) {
+	if rank[after.State] < rank[before.State] || before.State == "completed" && activeTransportJournalDigest(before) != activeTransportJournalDigest(after) || before.State != "pending" && !samePersistedJSONReceipt(before.Receipt, after.Receipt) {
 		return false
 	}
 	fixed := after

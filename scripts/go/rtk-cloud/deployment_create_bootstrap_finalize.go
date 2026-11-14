@@ -33,10 +33,25 @@ func removeEnvironmentCreateCredentialCopy(ctx context.Context, cfg deploymentCo
 			return err
 		}
 	}
+	if r := runtime.ServiceSessionRecovery; r != nil && r.SecondSession && len(expiredSource) == 1 && expiredSource[0] {
+		current, err := secondSessionBootstrapCleanupCurrent(runtime)
+		if err != nil {
+			return err
+		}
+		ancestors, _, err := secondSessionBootstrapCleanupAncestors(ctx, cfg, runtime.Execution.Store, runtime, current)
+		if err != nil {
+			return err
+		}
+		for _, ancestor := range ancestors {
+			if ancestor.Cleanup.SessionID == s.BootstrapSessionID && ancestor.UIDs[namespace] == uid {
+				allowSource = true
+			}
+		}
+	}
 	if namespace == s.BootstrapCredentialNamespace && !allowSource || !slices.Contains(s.BootstrapCredentialNamespaces, namespace) || !environmentBootstrapOwnerUUID.MatchString(uid) {
 		return environmentCreateBootstrapBlocker("only the recorded namespace copy may be retired by this bootstrap owner")
 	}
-	if completed, err := managedLateCompletedCredentialRetirement(ctx, cfg, runtime, s, namespace); err != nil {
+	if completed, err := completedRenewedBootstrapCredentialRetirement(ctx, cfg, runtime, s, namespace); err != nil {
 		return err
 	} else if completed {
 		return nil
@@ -53,7 +68,11 @@ func removeEnvironmentCreateCredentialCopy(ctx context.Context, cfg deploymentCo
 	}
 	key := "bootstrap-copy-retire-" + namespace + "-" + s.BootstrapSessionID
 	intent, _ := json.Marshal(deploymentplan.Object{"resource_id": id, "uid": uid, "session_id": s.BootstrapSessionID})
-	if err := runtime.Execution.BeginEntry(key, "bootstrap", intent, time.Now().UTC()); err != nil {
+	if existing := createOpenBaoACKCompletionEntry(runtime.Execution.Journal, key); existing != nil {
+		if existing.Phase != "bootstrap" || existing.State != "pending" || len(existing.Receipt) != 0 || !existing.CompletedAt.IsZero() || existing.IntentSHA256 != activeTransportJournalDigest(json.RawMessage(intent)) {
+			return environmentCreateBootstrapBlocker("original pending namespace retirement intent changed")
+		}
+	} else if err := runtime.Execution.BeginEntry(key, "bootstrap", intent, time.Now().UTC()); err != nil {
 		return err
 	}
 	body, _ := json.Marshal(deploymentplan.Object{"apiVersion": "v1", "kind": "DeleteOptions", "preconditions": deploymentplan.Object{"uid": uid, "resourceVersion": meta["resourceVersion"]}})
@@ -92,6 +111,10 @@ func finalizeEnvironmentCreateServiceSession(ctx context.Context, client *enviro
 	if managedLatePostNativeCleanupRequested(runtime) {
 		return finishManagedLatePostNativeCleanup(ctx, cfg, store, runtime, s)
 	}
+	finalized, resumeCleanup, err := resumeSecondSessionNativeCleanup(ctx, cfg, store, runtime, s)
+	if err != nil {
+		return err
+	}
 	key := environmentCreateServiceFinalizationKey(runtime)
 	intent, _ := json.Marshal(deploymentplan.Object{"session_id": s.BootstrapSessionID, "issuer_id": s.Intermediate.ID, "cleanup_binding": s.CleanupBinding})
 	if managedLateTerminalFinalizerRequested(runtime) {
@@ -102,6 +125,9 @@ func finalizeEnvironmentCreateServiceSession(ctx context.Context, client *enviro
 			return createOpenBaoACKBlock("terminal-finalizer-original-pending-intent")
 		}
 	} else {
+		if err := verifyEnvironmentCreateFinalizerInstallations(ctx, cfg, runtime, s); err != nil {
+			return err
+		}
 		if err := expireCompletedRenewedBootstrapSession(ctx, cfg, runtime, s); err != nil {
 			return err
 		}
@@ -112,18 +138,25 @@ func finalizeEnvironmentCreateServiceSession(ctx context.Context, client *enviro
 				}
 			}
 		}
-		if runtime.ProductIdentityScope != "" && createOpenBaoACKCompletionEntry(runtime.Execution.Journal, key) != nil {
+		if resumeCleanup {
+			// Exact native finalization and cleanup have already been observed.
+		} else if createOpenBaoACKCompletionEntry(runtime.Execution.Journal, key) != nil {
 			entry := createOpenBaoACKCompletionEntry(runtime.Execution.Journal, key)
+			if runtime.ProductIdentityScope == "" {
+				program, err := currentFreshFinalizerCeremony(store, runtime.Execution, s)
+				if err != nil || program == nil {
+					return environmentCreateBootstrapBlocker("pending global finalization requires its authenticated original fresh program")
+				}
+			}
 			sha, _ := environmentCreatePlanSHA256(intent)
-			if entry.Phase != "bootstrap" || entry.State != "pending" || len(entry.Receipt) != 0 || entry.IntentSHA256 != sha {
+			if entry.Phase != "bootstrap" || entry.State != "pending" || len(entry.Receipt) != 0 || entry.IntentSHA256 != sha || entry.StartedAt.IsZero() || !entry.CompletedAt.IsZero() {
 				return environmentCreateBootstrapBlocker("original product finalization intent changed or has an unreconciled receipt")
 			}
 		} else if err := runtime.Execution.BeginEntry(key, "bootstrap", intent, time.Now().UTC()); err != nil {
 			return err
 		}
 	}
-	var finalized environmentCreateBootstrapFinalization
-	for attempt := 0; ; attempt++ {
+	for attempt := 0; !resumeCleanup; attempt++ {
 		if err := refreshEnvironmentCreateAuthentication(ctx, client, operator); err != nil {
 			return err
 		}
@@ -214,6 +247,40 @@ func finalizeEnvironmentCreateServiceSession(ctx context.Context, client *enviro
 		}
 	}
 	return recordEnvironmentCreateServiceFinalization(ctx, cfg, store, runtime, s, finalized, marker)
+}
+
+// The active session's native roster must be complete before expiry,
+// namespace-copy retirement, or admission of the native finalizer can mutate it.
+// Sealed/expired continuation retains the existing separately checked protocol.
+func verifyEnvironmentCreateFinalizerInstallations(ctx context.Context, cfg deploymentConfig, runtime environmentCreateBootstrapRuntime, s environmentCreateServiceCeremony) error {
+	query := "SELECT json_build_object('session_id',session_id,'issuer_id',issuer_id,'root_sha256',root_sha256,'subjects',subjects,'installed',installed_subjects,'status',status,'expires_at',expires_at) FROM pki_deployment_bootstrap_sessions WHERE environment='" + cfg.Environment + "' AND session_id='" + s.BootstrapSessionID + "'"
+	raw, err := readEnvironmentCreateRegistryJSON(ctx, cfg, runtime, query)
+	var observed productSessionInstallations
+	if err != nil || decodeEnvironmentJSON(raw, &observed) != nil || observed.Session != s.BootstrapSessionID || observed.Issuer != s.Intermediate.ID || observed.Root != s.Root.RootFingerprint {
+		return environmentCreateBootstrapBlocker("native finalizer requires the actual current session installation roster")
+	}
+	if s.CleanupBinding.SessionID != s.BootstrapSessionID || s.CleanupBinding.SecretUID != s.CredentialUIDs[s.BootstrapCredentialNamespace] {
+		return environmentCreateBootstrapBlocker("native finalizer cleanup binding differs from its current credential owner")
+	}
+	if r := runtime.ServiceSessionRecovery; r != nil && r.SecondSession && (r.RenewedIntent.SessionID != s.BootstrapSessionID || !slices.Equal(observed.Subjects, r.RenewedIntent.Subjects)) {
+		return environmentCreateBootstrapBlocker("native finalizer differs from its admitted current session subjects")
+	}
+	if observed.Status != "active" && observed.Status != "sealed" && observed.Status != "expired" || len(observed.Subjects) == 0 {
+		return environmentCreateBootstrapBlocker("native finalizer requires the actual active session installation roster")
+	}
+	seen := map[string]bool{}
+	for _, subject := range observed.Installed {
+		if seen[subject] || !slices.Contains(observed.Subjects, subject) {
+			return environmentCreateBootstrapBlocker("native finalizer installation roster has unknown or duplicate subjects")
+		}
+		seen[subject] = true
+	}
+	for _, subject := range observed.Subjects {
+		if !seen[subject] {
+			return environmentCreateBootstrapBlocker("all current session subjects require native installation ACKs before cleanup")
+		}
+	}
+	return runtime.Execution.Check(ctx)
 }
 
 func managedLatePostNativeCleanupRequested(runtime environmentCreateBootstrapRuntime) bool {
@@ -336,4 +403,43 @@ func environmentCreatePolicyNames(runtime environmentCreateBootstrapRuntime, suf
 	}
 	slices.Sort(names)
 	return names
+}
+
+// An accepted current tombstone is stronger than a transport result from the
+// unlink request. Re-enter that exact pending finalization without another POST.
+func resumeSecondSessionNativeCleanup(ctx context.Context, cfg deploymentConfig, store secretStore, runtime environmentCreateBootstrapRuntime, s environmentCreateServiceCeremony) (environmentCreateBootstrapFinalization, bool, error) {
+	var empty environmentCreateBootstrapFinalization
+	if result, done, handled, err := observePendingFreshFinalizer(ctx, cfg, store, runtime, s); err != nil || handled {
+		return result, done, err
+	}
+	r, e := runtime.ServiceSessionRecovery, runtime.Execution
+	if r == nil || !r.SecondSession || !r.Renewal || e == nil {
+		return empty, false, nil
+	}
+	entry := createOpenBaoACKCompletionEntry(e.Journal, environmentCreateServiceFinalizationKey(runtime))
+	if entry == nil {
+		return empty, false, nil
+	}
+	bad := func() (environmentCreateBootstrapFinalization, bool, error) {
+		return empty, false, environmentCreateBootstrapBlocker("pending current finalization requires its exact native cleanup tombstone and accepted archive proof")
+	}
+	intent := deploymentplan.Object{"session_id": s.BootstrapSessionID, "issuer_id": s.Intermediate.ID, "cleanup_binding": s.CleanupBinding}
+	if e.Store != store || e.Check(ctx) != nil || entry.Phase != "bootstrap" || entry.State != "pending" || len(entry.Receipt) != 0 || !entry.CompletedAt.IsZero() || entry.StartedAt.IsZero() || entry.IntentSHA256 != activeTransportJournalDigest(intent) {
+		return bad()
+	}
+	marker, err := runtime.Backend.command(ctx, nil, "--namespace", s.BootstrapCredentialNamespace, "exec", "deployment/"+s.CustodyReader, "--container", "custody", "--", "cat", "/run/pki-bootstrap/bootstrap.finalized.json")
+	var tombstone managedLateCustodyTombstone
+	if err != nil || decodeEnvironmentJSON(marker, &tombstone) != nil || tombstone.Schema != "rtk-cloud.bootstrap-credentials/v1" || tombstone.Root != s.Root.RootFingerprint || tombstone.Finalization.Environment != cfg.Environment || tombstone.Finalization.SessionID != s.BootstrapSessionID || tombstone.Finalization.SessionID != r.RenewedIntent.SessionID || tombstone.Finalization.FinalizedAt.Before(entry.StartedAt) || !environmentPreflightDigest.MatchString(tombstone.Finalization.CRLSHA256) || !environmentPreflightDigest.MatchString(tombstone.Finalization.CleanupSHA256) {
+		return bad()
+	}
+	query := "SELECT json_build_object('environment',environment,'session_id',session_id,'bootstrap_leaf_sha256',bootstrap_fingerprint,'crl_sha256',finalized_crl_sha256,'cleanup_sha256',cleanup_sha256,'finalized_at',finalized_at) FROM pki_deployment_bootstrap_sessions WHERE environment='" + cfg.Environment + "' AND session_id='" + s.BootstrapSessionID + "' AND finalized_at IS NOT NULL AND status IN ('sealed','expired')"
+	raw, err := readEnvironmentCreateRegistryJSON(ctx, cfg, runtime, query)
+	var actual environmentCreateBootstrapFinalization
+	if err != nil || decodeEnvironmentJSON(raw, &actual) != nil || !managedLateFinalizationEqual(actual, tombstone.Finalization) {
+		return bad()
+	}
+	if err := prepareSecondSessionBootstrapCleanup(ctx, cfg, runtime, s, actual); err != nil {
+		return empty, false, err
+	}
+	return tombstone.Finalization, true, e.Check(ctx)
 }

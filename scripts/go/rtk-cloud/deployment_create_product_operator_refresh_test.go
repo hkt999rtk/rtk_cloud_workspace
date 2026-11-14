@@ -78,7 +78,8 @@ func newProductOperatorHTTP(t *testing.T) (*productOperatorHTTP, *environmentCre
 
 func TestProductOperatorRefreshAfterLongNativePhaseUsesOriginalIdentityOnce(t *testing.T) {
 	f, c, operator := newProductOperatorHTTP(t)
-	c.operatorCredentials = operator
+	// The real fresh producer receives this authenticated client directly; it
+	// must not need a separate product-hydration credential assignment.
 	oldToken := c.token
 	c.authenticatedAt = time.Now().Add(-16 * time.Minute)
 	f.expired = true
@@ -94,6 +95,10 @@ func TestProductOperatorRefreshAfterLongNativePhaseUsesOriginalIdentityOnce(t *t
 	if f.logins != 2 || f.mutations != 2 {
 		t.Fatal("fresh calls recursively reauthenticated")
 	}
+	if len(c.operatorCredentials) != 2 || c.operatorCredentials["ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL"] != operator["ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL"] || c.operatorCredentials["ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD"] != operator["ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD"] {
+		t.Fatal("authenticated client did not retain only its exact original login inputs")
+	}
+
 }
 
 func TestProductOperatorRefreshRefusesIdentitySubstitutionAndNeverRetriesMutation(t *testing.T) {

@@ -59,8 +59,9 @@ type deploymentHealthResource struct {
 }
 
 type deploymentHealthImage struct {
-	Name  string `json:"name"`
-	Image string `json:"image"`
+	Name          string `json:"name"`
+	Image         string `json:"image"`
+	RestartPolicy string `json:"restartPolicy"`
 }
 
 type deploymentHealthContainer struct {
@@ -199,7 +200,11 @@ func deploymentHealthOnDeleteImages(controller deploymentHealthResource, invento
 		expected["app/"+c.Name] = c.Image
 	}
 	for _, c := range controller.Spec.Template.Spec.InitContainers {
-		expected["init/"+c.Name] = c.Image
+		// Completed initialization is historical startup, not a running rollout.
+		// Full target acceptance authenticates its original owned revision and image.
+		if c.RestartPolicy == "Always" {
+			expected["init/"+c.Name] = c.Image
+		}
 	}
 	if len(controller.Spec.Template.Spec.Containers) == 0 {
 		return false

@@ -52,7 +52,7 @@ func loadCreateNormalTailExecution(ctx context.Context, cfg deploymentConfig, st
 	if err != nil {
 		return bad()
 	}
-	e := &environmentCreateExecution{Store: store, running: lock}
+	e := &environmentCreateExecution{versionState: &createOperatorVersionState{}, Store: store, running: lock}
 	loaded := false
 	defer func() {
 		if !loaded {

@@ -28,8 +28,11 @@ type environmentCreatePlan struct {
 	DNS                 genericDNSPlan                 `json:"dns"`
 	// New plans allocate foundation Redis durably from its first start. Omitted
 	// historical plans retain their exact original foundation recipe.
-	DurableFoundation bool                      `json:"durable_foundation,omitempty"`
-	PublicTLS         *environmentPublicTLSPlan `json:"public_tls,omitempty"`
+	DurableFoundation bool `json:"durable_foundation,omitempty"`
+	// Only newly qualified plans use the OpenBao-first foundation sequence.
+	// Omission preserves the wire bytes and execution order of prior plans.
+	OpenBaoFirst bool                      `json:"openbao_first,omitempty"`
+	PublicTLS    *environmentPublicTLSPlan `json:"public_tls,omitempty"`
 }
 
 type environmentCreateDependencies struct {
@@ -99,6 +102,10 @@ func readEnvironmentCreateOperator(cfg deploymentConfig) (secretStore, map[strin
 	return store, operator, nil
 }
 
+func environmentCreateOpenBaoFirst(cfg deploymentConfig) bool {
+	return cfg.Values["PKI_STATE_BACKEND"] == "openbao"
+}
+
 func buildEnvironmentCreatePlan(ctx context.Context, cfg deploymentConfig, release environmentRelease, store secretStore, operator map[string]string) (*environmentCreatePlan, error) {
 	provider, err := buildEnvironmentCreateProviderPlan(ctx, cfg, operator)
 	if err != nil {
@@ -112,11 +119,14 @@ func buildEnvironmentCreatePlan(ctx context.Context, cfg deploymentConfig, relea
 	if err != nil {
 		return nil, err
 	}
-	allocations, err := qualifyEnvironmentCreateDependencyContract(ctx, cfg, release, store, operator, bootstrap)
+	// Freeze the selected environment's custody order into this new plan.
+	// Retained generations continue to execute their recorded order.
+	openBaoFirst := environmentCreateOpenBaoFirst(cfg)
+	allocations, err := qualifyEnvironmentCreateDependencyContractForOrder(ctx, cfg, release, store, operator, bootstrap, openBaoFirst)
 	if err != nil {
 		return nil, err
 	}
-	plan := &environmentCreatePlan{Schema: "rtk-cloud.create-plan/v1", Environment: cfg.Environment, Stack: cfg.Values["CLOUD_STACK_NAME"], ConfigurationSHA256: deploymentplan.Digest(cfg), OperatorSHA256: deploymentplan.Digest(operator), Release: release, Provider: provider, Bootstrap: bootstrap, DNS: buildGenericDNSPlan(cfg), DurableFoundation: true, PublicTLS: publicTLS}
+	plan := &environmentCreatePlan{Schema: "rtk-cloud.create-plan/v1", Environment: cfg.Environment, Stack: cfg.Values["CLOUD_STACK_NAME"], ConfigurationSHA256: deploymentplan.Digest(cfg), OperatorSHA256: deploymentplan.Digest(operator), Release: release, Provider: provider, Bootstrap: bootstrap, DNS: buildGenericDNSPlan(cfg), DurableFoundation: true, PublicTLS: publicTLS, OpenBaoFirst: openBaoFirst}
 	registrarSHA, err := qualifyEnvironmentCreateDataPlaneArtifact(ctx, cfg, plan, store)
 	if err != nil {
 		return nil, err
@@ -331,6 +341,7 @@ func emitEnvironmentCreateFailure(out, diagnostics io.Writer, o unifiedDeploymen
 	var blocker *deploymentplan.Blocker
 	if errors.As(err, &blocker) {
 		row.ID, row.Cause, row.Next = blocker.ID, blocker.Cause, blocker.Next
+		row.Resource = safeDeploymentDiagnosticResource(blocker.Resource)
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		row.Cause = "deployment execution timeout exceeded; original stage evidence and ownership are retained"
@@ -345,7 +356,11 @@ func emitEnvironmentCreateFailure(out, diagnostics io.Writer, o unifiedDeploymen
 func executeEnvironmentCreatePlan(ctx context.Context, cfg deploymentConfig, plan *environmentCreatePlan, execution *environmentCreateExecution, store secretStore, operator map[string]string, out io.Writer) error {
 	// Live fences are narrower than full qualification. Never resolve CI images
 	// again, extend the saved TTL or silently compile another approved plan.
-	if err := validateEnvironmentCreatePlan(cfg, plan, operator); err != nil {
+	baseline, _, err := verifyCreateEnvironmentOperator(ctx, cfg, store, execution, operator, plan)
+	if err != nil {
+		return err
+	}
+	if err := validateEnvironmentCreatePlan(cfg, plan, baseline); err != nil {
 		return err
 	}
 	if err := qualifyEnvironmentCreateBootstrapLocalState(ctx, cfg, store, operator); err != nil {
@@ -472,15 +487,33 @@ func executeEnvironmentCreateWithRuntime(ctx context.Context, cfg deploymentConf
 		if err != nil {
 			return err
 		}
-		bindings, err = observeEnvironmentTargetBindings(bootstrapCtx, cfg, plan.Release, "create", live)
+		err = runEnvironmentProgress(bootstrapCtx, out, "deployment.create.bindings.observation", func(ctx context.Context) error {
+			var observationErr error
+			bindings, observationErr = observeEnvironmentCreateTargetBindings(ctx, cfg, plan.Release, operator, live)
+			return observationErr
+		})
 		if err != nil {
 			return err
 		}
 		bootstrapCtx = context.WithValue(bootstrapCtx, environmentCreatePublicTLSKey{}, plan.PublicTLS)
 	}
-	compiled, err := compileCreatedEnvironmentTarget(bootstrapCtx, cfg, plan, store, bindings, execution.Journal.PlanSHA256)
+	var compiled *compiledEnvironmentDeployment
+	err = runEnvironmentProgress(bootstrapCtx, out, "deployment.create.workload.compile", func(ctx context.Context) error {
+		var compileErr error
+		compiled, compileErr = compileCreatedEnvironmentTarget(ctx, cfg, plan, store, bindings, execution.Journal.PlanSHA256)
+		return compileErr
+	})
 	if err != nil {
 		return err
+	}
+	imageForward, imageForwardStage, err := selectedCreateWorkloadImageForward(bootstrapCtx, store, execution, runtime.Backend)
+	if err != nil {
+		return err
+	}
+	if imageForward != nil {
+		if execution.versionState == nil || execution.versionState.cache == nil || deploymentplan.Digest(execution.versionState.cache.RuntimeImages) != deploymentplan.Digest(imageForward.Images) {
+			return createProviderRecoveryBlock("workload image continuation differs from selected environment roles")
+		}
 	}
 	workload := createOpenBaoACKCompletionEntry(execution.Journal, "kubernetes/workload")
 	var originalWorkload *deploymentplan.Plan
@@ -499,14 +532,32 @@ func executeEnvironmentCreateWithRuntime(ctx context.Context, cfg deploymentConf
 		if readErr != nil {
 			return readErr
 		}
-		if workload.State == "completed" && (!exists || !journal.Accepted) {
+		if workload.State == "completed" && (!exists || !journal.Accepted && imageForward == nil) {
 			return environmentCreateBootstrapBlocker("original fresh workload has no accepted child")
 		}
 		// Finalization deliberately supersedes the initial ACK environment.
 		// Keep that original child as history; finish the declared steady stage.
 		compiled.Plan = originalWorkload
 	}
-	if workload == nil || workload.State != "completed" {
+	if imageForward != nil {
+		compiled.Plan = imageForward.Plan
+	}
+	if imageForward != nil && (workload == nil || workload.State != "completed" || imageForwardStage != createWorkloadImageForwardStage) {
+		if err := executeCompiledEnvironmentCreateStage(bootstrapCtx, cfg, store, plan, execution, imageForwardStage, imageForward.Plan, runtime.Backend, out); err != nil {
+			return err
+		}
+		if imageForwardStage == createWorkloadImageForwardStage {
+			if err := completeCreateWorkloadImageForward(bootstrapCtx, store, execution, imageForward); err != nil {
+				return err
+			}
+		}
+	} else if workload == nil || workload.State != "completed" {
+		if workload == nil {
+			if err := initializeCreateProductPublicCRLs(bootstrapCtx, cfg, plan, runtime, environmentCreateDefinitions(compiled.Plan), apply); err != nil {
+				return err
+			}
+		}
+		bootstrapCtx := context.WithValue(bootstrapCtx, environmentCreateQualifiedStageKey{}, environmentCreateQualifiedStage{execution, "workload", compiled.Plan})
 		if err := apply(bootstrapCtx, "workload", environmentCreateDefinitions(compiled.Plan)); err != nil {
 			return err
 		}

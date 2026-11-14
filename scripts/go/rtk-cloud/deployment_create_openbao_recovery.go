@@ -33,7 +33,7 @@ func loadInitializedCreateAudit(cfg deploymentConfig, store secretStore, sha str
 	if err != nil {
 		return bad("original executor is running")
 	}
-	e := &environmentCreateExecution{Store: store, running: lock}
+	e := &environmentCreateExecution{versionState: &createOperatorVersionState{}, Store: store, running: lock}
 	loaded := false
 	defer func() {
 		if !loaded {
@@ -1281,7 +1281,7 @@ func runEnvironmentCreateOpenBaoRecoveryContext(parentContext context.Context, a
 				if err := qualifyEnvironmentCreateManagedTransportCapabilities(ctx, cfg, store, e, backend, operator, &p, serviceSession); err != nil {
 					return err
 				}
-			} else if err := qualifyEnvironmentCreateBootstrapCapabilities(ctx, cfg, p.Plan.Bootstrap, store, operator, preserved...); err != nil {
+			} else if err := qualifyEnvironmentCreateBootstrapCapabilitiesWithPublications(ctx, cfg, p.Plan.Bootstrap, store, operator, nil, preserved...); err != nil {
 				return err
 			}
 			if *afterSecrets || *atAccount || *afterAccount {
@@ -2012,7 +2012,7 @@ func runEnvironmentCreateOpenBaoRecoveryContext(parentContext context.Context, a
 }
 
 func verifyOriginalMigrationCheckpoint(ctx context.Context, cfg deploymentConfig, store secretStore, backend environmentKubernetesBackend, original *deploymentplan.Plan, journal deploymentplan.Journal) error {
-	objects, err := backend.Inventory(ctx, cfg.Values["CLOUD_STACK_NAME"])
+	objects, err := backend.TargetWorkloadInventory(ctx, original)
 	if err != nil {
 		return err
 	}

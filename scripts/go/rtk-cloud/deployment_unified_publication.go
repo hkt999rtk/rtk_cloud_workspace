@@ -41,25 +41,56 @@ func verifyEnvironmentPublication(ctx context.Context, repo string, runID int64,
 	return hex.EncodeToString(digest[:]), nil
 }
 
+// Preserve only safe classified read failures. Arbitrary provider stderr stays
+// behind the existing sanitized publication diagnostic.
+func publicationReadFailure(message string, err error) error {
+	if isDeploymentCIReadError(err) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("%s: %w", message, err)
+	}
+	return errors.New(message)
+}
+
 func readEnvironmentPublication(ctx context.Context, repo string, runID int64, revision string, backup bool, run func(context.Context, string, ...string) ([]byte, error)) ([]byte, int, error) {
 	if runID <= 0 || !deploymentUpgradeSHA.MatchString(revision) || run == nil {
 		return nil, 0, errors.New("exact publication source and reader required")
 	}
 	raw, err := run(ctx, "gh", "api", fmt.Sprintf("repos/%s/actions/runs/%d", repo, runID))
+	if err != nil {
+		return nil, 0, publicationReadFailure(fmt.Sprintf("deployment.release.publication: exact publication run %d cannot be read", runID), err)
+	}
 	var source struct {
 		ID         int64  `json:"id"`
 		HeadSHA    string `json:"head_sha"`
 		HeadBranch string `json:"head_branch"`
+		Path       string `json:"path"`
 		Event      string `json:"event"`
 		Status     string `json:"status"`
 		Conclusion string `json:"conclusion"`
 		Attempt    int    `json:"run_attempt"`
 	}
-	if err != nil || json.Unmarshal(raw, &source) != nil || source.ID != runID || source.HeadSHA != revision || source.HeadBranch != "main" || (source.Event != "push" && source.Event != "workflow_dispatch") || source.Status != "completed" || source.Conclusion != "success" || source.Attempt < 1 {
-		return nil, 0, errors.New("deployment.release.publication: exact successful main publication attempt cannot be verified")
+	if json.Unmarshal(raw, &source) != nil || source.ID != runID || source.HeadSHA != revision || source.HeadBranch == "" || (source.Event != "push" && source.Event != "workflow_dispatch") || source.Status != "completed" || source.Conclusion != "success" || source.Attempt < 1 {
+		return nil, 0, errors.New("deployment.release.publication: exact successful publication attempt cannot be verified")
 	}
 	runRaw := append([]byte(nil), raw...)
+	// An explicitly selected repair publication is not a latest-main lookup.
+	// Keep the exact source/run/artifact checks and require canonical workflow
+	// dispatch plus successful CI on that same source and branch.
+	if source.HeadBranch != "main" {
+		if backup || source.Event != "workflow_dispatch" || source.Path != ".github/workflows/release.yml" {
+			return nil, 0, errors.New("deployment.release.publication: selected branch requires a formal Release workflow dispatch")
+		}
+		ci, err := run(ctx, "gh", "api", fmt.Sprintf("repos/%s/actions/workflows/ci.yml/runs?head_sha=%s&per_page=100", repo, revision))
+		if err != nil {
+			return nil, 0, publicationReadFailure("deployment.release.publication: selected source CI cannot be read", err)
+		}
+		if _, err := deploymentSuccessfulRunForBranch(ci, revision, source.HeadBranch); err != nil {
+			return nil, 0, errors.New("deployment.release.publication: selected formal branch lacks successful exact-source CI")
+		}
+	}
 	raw, err = run(ctx, "gh", "api", fmt.Sprintf("repos/%s/actions/runs/%d/artifacts?per_page=100", repo, runID))
+	if err != nil {
+		return nil, 0, publicationReadFailure(fmt.Sprintf("deployment.release.publication: exact publication inventory for run %d cannot be read", runID), err)
+	}
 	var listing struct {
 		Total     int `json:"total_count"`
 		Artifacts []struct {
@@ -69,7 +100,7 @@ func readEnvironmentPublication(ctx context.Context, repo string, runID int64, r
 			Size    int64  `json:"size_in_bytes"`
 		} `json:"artifacts"`
 	}
-	if err != nil || json.Unmarshal(raw, &listing) != nil || listing.Artifacts == nil || listing.Total != len(listing.Artifacts) {
+	if json.Unmarshal(raw, &listing) != nil || listing.Artifacts == nil || listing.Total != len(listing.Artifacts) {
 		return nil, 0, errors.New("deployment.release.publication: complete publication artifact inventory is unavailable")
 	}
 	inventoryRaw := append([]byte(nil), raw...)
@@ -92,7 +123,7 @@ func readEnvironmentPublication(ctx context.Context, repo string, runID int64, r
 	}
 	raw, err = run(ctx, "gh", "api", fmt.Sprintf("repos/%s/actions/artifacts/%d/zip", repo, id))
 	if err != nil {
-		return nil, 0, errors.New("deployment.release.publication: cannot retrieve the exact publication artifact")
+		return nil, 0, publicationReadFailure(fmt.Sprintf("deployment.release.publication: cannot retrieve the exact publication artifact %d for run %d", id, runID), err)
 	}
 	evidence, err := publicationJSON(raw, file)
 	if err != nil {

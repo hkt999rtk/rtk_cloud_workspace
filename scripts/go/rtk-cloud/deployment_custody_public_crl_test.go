@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -113,15 +114,18 @@ func TestCustodyPublicCRLExecutionUsesOriginalScopeAndCommittedNativeReadback(t 
 
 func TestCustodyMaintenanceInstallUsesCommittedKVWithoutReadingFaultedApplication(t *testing.T) {
 	_, _, _, original := createServiceRecipeFixture(t, "dev")
-	_, _, _, next := createServiceRecipeFixture(t, "dev")
+	transportItem, _, _ := maintenanceFixture(t, "dev", time.Now().UTC().Truncate(time.Second).Add(72*time.Hour))
+	transportItem.Issuer.ID = "99999999-9999-4999-8999-999999999999"
+	transportItem.Issuer.Document["issuer_id"] = transportItem.Issuer.ID
+	transportItem.Snapshot.Prior.IssuerID = transportItem.Issuer.ID
+	transportItem.Issuer.Domain, transportItem.Issuer.Status = "openbao_tls", "active"
+	transportItem.Issuer.Document["trust_domain"], transportItem.Issuer.Document["status"] = "openbao_tls", "active"
 	cfg, store, _, _ := createStateFixture(t, "dev")
 	cfg.Values["PKI_STATE_BACKEND"], cfg.Values["PKI_STATE_KV_MOUNT"], cfg.Values["PKI_STATE_LEASE_DURATION"] = "openbao", "identities", "30s"
 	cfg.Values["DEPLOYMENT_ROLLOUT_TIMEOUT_SECONDS"], cfg.Values["DEPLOYMENT_UPGRADE_WINDOW_SECONDS"] = "30", "300"
 	generation := strings.Repeat("a", 64)
 	ns := "video-cloud-dev-video-cloud"
-	managed := next.Root
-	managed.Domain = "openbao_tls"
-	managed.Status = "active"
+	managed := transportItem.Issuer
 	binding := &environmentCustodyBinding{Generation: generation, ServiceRootSHA256: original.Root.RootFingerprint, OpenBaoRootSHA256: managed.RootFingerprint, Owners: []environmentCustodyOwnerBinding{{ID: "api", Namespace: ns, ServiceAccount: "api", StorageAliases: []string{"api-state", "registration-state"}, Clients: []environmentCustodyClientBinding{{Subject: "service:video-cloud-api", StatePath: "/identity/private/client.json"}, {Subject: "service:logger", StatePath: "/registration/private/client.json"}}}}}
 	trust, err := renderEnvironmentCustodyTrust(cfg, generation, original.Root.Certificate, &managed, true)
 	if err != nil {
@@ -138,7 +142,13 @@ func TestCustodyMaintenanceInstallUsesCommittedKVWithoutReadingFaultedApplicatio
 	if err := store.write(filepath.Join("deployment", "create", generation, "bootstrap", "bindings.json"), raw, false); err != nil {
 		t.Fatal(err)
 	}
-	item, _, _ := maintenanceFixture(t, "dev", time.Now().UTC().Truncate(time.Second).Add(72*time.Hour))
+	item, key, now := maintenanceFixture(t, "dev", time.Now().UTC().Truncate(time.Second).Add(72*time.Hour))
+	previous := item.Snapshot.Prior
+	request, err := buildMaintenanceCRLRequest("dev", item, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item.Snapshot.Prior = maintenanceSign(t, item.Issuer, key, request)
 	c := deploymentplan.Object{"name": "app", "env": environmentCreateEnv(map[string]string{
 		"TEST_CLIENT_IDENTITY_STATE":              "/identity/private/client.json",
 		"TEST_SERVICE_CLIENT_PUBLIC_CRL_BUNDLE":   "/export/client.crl",
@@ -154,12 +164,20 @@ func TestCustodyMaintenanceInstallUsesCommittedKVWithoutReadingFaultedApplicatio
 	parent = createRecipeObject(t, projected, deploymentplan.ID(parent))
 	pod := deploymentplan.Object{"apiVersion": "v1", "kind": "Pod", "metadata": deploymentplan.Object{"namespace": ns, "name": "faulted-api", "uid": "original-pod", "ownerReferences": []any{deploymentplan.Object{"kind": "Deployment", "name": "api", "uid": "original-api", "controller": true}}}, "spec": environmentPKIPod(parent), "status": deploymentplan.Object{"phase": "Running"}}
 	fixture := t.TempDir()
-	installCustodyInspectionProcessFixture(t, fixture, "public-success")
+	installCustodyInspectionProcessFixture(t, fixture, "public-pooled")
 	public, _ := json.Marshal(map[string]any{"issuer_fingerprint": deploymentplan.String(item.Issuer.Document["certificate_fingerprint_sha256"]), "crl": item.Snapshot.Prior})
 	if err := os.WriteFile(filepath.Join(fixture, "public.json"), public, 0600); err != nil {
 		t.Fatal(err)
 	}
 	r := maintenanceRuntime{cfg: cfg, store: store, backend: environmentKubernetesBackend{Store: store, KubeconfigContent: []byte("isolated-inspection-kubeconfig"), RolloutTimeout: time.Minute}, image: "ghcr.io/fixture/native@sha256:" + strings.Repeat("d", 64), lease: maintenanceTestLease{}}
+	r.backend.custodyJobs = &environmentCustodyJobPool{}
+	t.Cleanup(func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := r.backend.custodyJobs.Close(cleanup); err != nil {
+			t.Error(err)
+		}
+	})
 	manifest := environmentCreateServiceCRLManifest(item.Issuer, "/identity/crl/root.json")
 	r.readOverride = func(_ context.Context, id string) (deploymentplan.Object, error) {
 		if id == "Pod/"+ns+"/faulted-api" {
@@ -172,14 +190,38 @@ func TestCustodyMaintenanceInstallUsesCommittedKVWithoutReadingFaultedApplicatio
 			return deploymentplan.Object{"metadata": deploymentplan.Object{"uid": "original-manifest"}, "data": deploymentplan.Object{"crls.json": manifest}}, nil
 		}
 		if id == "Deployment/"+ns+"/pki-controller" {
-			return deploymentplan.Object{"spec": deploymentplan.Object{"template": deploymentplan.Object{"spec": deploymentplan.Object{"containers": []any{deploymentplan.Object{"name": "pki-controller", "env": environmentCreateEnv(map[string]string{"PKI_REQUIRED_CONSUMERS_SERVICE": "video-cloud-api"})}}}}}}, nil
+			return deploymentplan.Object{"spec": deploymentplan.Object{"template": deploymentplan.Object{"spec": deploymentplan.Object{"containers": []any{deploymentplan.Object{"name": "pki-controller", "env": environmentCreateEnv(map[string]string{"PKI_REQUIRED_CONSUMERS_SERVICE": "video-cloud-api", "PKI_REQUIRED_CONSUMERS_OPENBAO_TLS": "video-cloud-api"})}}}}}}, nil
 		}
 		t.Fatal("unexpected original owner read", id)
 		return nil, nil
 	}
 	ackChecks, exportReads := 0, 0
 	publicReady := false
-	r.commandOverride = func(_ context.Context, _ []byte, args ...string) ([]byte, error) {
+	projectedCRL := append([]byte(nil), public...)
+	projectionInstalls := 0
+	r.trustBinary = []byte("synthetic pinned native installer")
+	r.commandOverride = func(_ context.Context, input []byte, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		if strings.HasSuffix(joined, "cat /identity/crl/root.json") {
+			return projectedCRL, nil
+		}
+		if strings.Contains(joined, "crl-writer-access") {
+			return []byte("10001 10001 700 10001 10001 yes 10001\n"), nil
+		}
+		if strings.Contains(joined, `"$directory/pkitrust" apply-crl`) {
+			lines := strings.Split(string(input), "\n")
+			if len(lines) != 4 {
+				t.Fatal("public projection installer lost its bounded native input")
+			}
+			raw, decodeErr := base64.StdEncoding.DecodeString(lines[2])
+			var record createRootCRLRecord
+			if decodeErr != nil || json.Unmarshal(raw, &record) != nil || record.Digest != item.Snapshot.Prior.Digest {
+				t.Fatal("public projection installer changed the committed signed CRL")
+			}
+			projectedCRL = append([]byte(nil), public...)
+			projectionInstalls++
+			return []byte("installed"), nil
+		}
 		if len(args) >= 2 && args[0] == "get" && args[1] == "pods" {
 			return json.Marshal(deploymentplan.Object{"items": []any{pod}})
 		}
@@ -193,9 +235,12 @@ func TestCustodyMaintenanceInstallUsesCommittedKVWithoutReadingFaultedApplicatio
 		if len(args) >= 2 && args[len(args)-2] == "crl-maintenance-read" {
 			query := args[len(args)-1]
 			if strings.Contains(query, "json_agg(document") {
-				return json.Marshal([]any{item.Issuer.Document})
+				return json.Marshal([]any{item.Issuer.Document, transportItem.Issuer.Document})
 			}
 			if strings.Contains(query, "json_build_object('prior'") {
+				if strings.Contains(query, transportItem.Issuer.ID) {
+					return json.Marshal(transportItem.Snapshot)
+				}
 				return json.Marshal(item.Snapshot)
 			}
 			if strings.Contains(query, "pki_crl_acknowledgments") {
@@ -314,7 +359,7 @@ func TestCustodyMaintenanceInstallUsesCommittedKVWithoutReadingFaultedApplicatio
 		t.Fatal("ambiguous native public CRL producer manifest accepted")
 	}
 	manifest = originalManifest
-	records := map[string]createRootCRLRecord{item.Issuer.ID: item.Snapshot.Prior}
+	records := map[string]createRootCRLRecord{item.Issuer.ID: item.Snapshot.Prior, transportItem.Issuer.ID: transportItem.Snapshot.Prior}
 	if err := r.verifyPublicCRLs(t.Context(), []maintenancePublicCRL{projection}, records); err == nil {
 		t.Fatal("missing public reload accepted")
 	}
@@ -339,15 +384,59 @@ func TestCustodyMaintenanceInstallUsesCommittedKVWithoutReadingFaultedApplicatio
 		t.Fatal(err)
 	}
 	consumer := crlMaintenanceConsumer{Namespace: ns, Pod: "faulted-api", PodUID: "original-pod", Container: "app", StatePath: "/identity/crl/root.json", IssuerID: item.Issuer.ID}
+	projectedCRL, _ = json.Marshal(environmentCustodyCRLState{IssuerSHA256: item.Issuer.RootFingerprint, CRL: previous})
+	if _, err := r.installedCRL(t.Context(), consumer, item.Issuer); err == nil {
+		t.Fatal("committed KV successor hid the running consumer's previous public CRL")
+	}
 	if err := r.install(t.Context(), consumer, item.Issuer, item.Snapshot.Prior); err != nil {
 		t.Fatal("actual remote maintenance path", err)
 	}
+	if projectionInstalls != 1 || !maintenanceInstalledMatches(cfg.Environment, projectedCRL, item.Issuer, item.Snapshot.Prior) {
+		t.Fatal("remote CRL publication did not repair its running public projection")
+	}
 	consumer.Custody, consumer.ConsumerID = true, identity
-	if err := r.converge(t.Context(), observedInventory, map[string]createRootCRLRecord{item.Issuer.ID: item.Snapshot.Prior}); err != nil {
+	if err := r.converge(t.Context(), observedInventory, records); err != nil {
 		t.Fatal("actual remote maintenance convergence", err)
 	}
 	if ackChecks != 1 {
 		t.Fatal("committed KV proof replaced native runtime ACK")
+	}
+	if len(r.registryTransports) != 1 {
+		t.Fatal("fileless managed transport lacks its distinct native verification evidence")
+	}
+	created, err := os.ReadFile(filepath.Join(fixture, "creates"))
+	if err != nil || string(created) != "2" {
+		t.Fatalf("read/write maintenance scopes were recreated across native operations: %s %v", created, err)
+	}
+	recipes, err := os.ReadFile(filepath.Join(fixture, "created-recipes.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	strict := 0
+	for _, line := range strings.Split(strings.TrimSpace(string(recipes)), "\n") {
+		var job deploymentplan.Object
+		if json.Unmarshal([]byte(line), &job) != nil {
+			t.Fatal("invalid recorded native recipe")
+		}
+		helper := deploymentplan.Map(certIssuerObjectList(environmentPKIPod(job)["containers"])[0])
+		if mqttFoundationEnv(helper, "PKI_STATE_BOOTSTRAP_ROOT_SHA256") == "" {
+			if mqttFoundationEnv(helper, "PKI_STATE_OPENBAO_SERVER_PKI_ROOT_SHA256") != managed.RootFingerprint || mqttFoundationEnv(helper, "PKI_STATE_TRANSPORT_TRUST") != "" {
+				t.Fatal("managed-only probe lost its original independent Root pin")
+			}
+			strict++
+		}
+	}
+	if strict == 0 {
+		t.Fatal("native managed transport verification did not use its independently pinned Root")
+	}
+	issuerMap := map[string]environmentCreateRegisteredIssuer{item.Issuer.ID: item.Issuer, transportItem.Issuer.ID: transportItem.Issuer}
+	cached := observedInventory
+	cached.Consumers = append(append([]crlMaintenanceConsumer(nil), observedInventory.Consumers...), crlMaintenanceConsumer{Namespace: ns, Pod: consumer.Pod, PodUID: consumer.PodUID, Container: consumer.Container, StatePath: "/identity/crl/openbao.json", IssuerID: managed.ID, ConsumerID: identity, Custody: true})
+	if verified, err := r.verifyRegistryTransportConsumer(t.Context(), cached, issuerMap, records, managed, identity); err != nil || verified {
+		t.Fatal("transport proof replaced an explicitly declared OpenBao TLS file cache", err)
+	}
+	if verified, err := r.verifyRegistryTransportConsumer(t.Context(), observedInventory, issuerMap, records, managed, "unregistered-consumer"); err != nil || verified {
+		t.Fatal("unregistered consumer inherited another owner's transport proof", err)
 	}
 	// The ordinary readiness reader must use the same committed proof and
 	// expected subject. A stopped application's private cat is forbidden.

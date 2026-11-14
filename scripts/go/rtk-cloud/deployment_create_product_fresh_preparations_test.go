@@ -13,10 +13,15 @@ import (
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 )
 
+type freshProductWorkloadTestOptions struct {
+	Definitions []deploymentplan.Definition
+	Execute     func(context.Context, environmentCreateBootstrapApply, []deploymentplan.Definition) error
+}
+
 // The native session/issuance/finalizer are the same real HTTP/crypto fixture
 // as the full product protocol. Kubernetes is an isolated boundary adapter;
 // every ordinary child plan, lease, write journal and parent receipt is real.
-func prepareFreshProductWorkload(t *testing.T, f *productProtocolFixture, l *createNormalTailProductLifecycle, installed *environmentProductIdentitySession, bindings environmentIdentityBindings) environmentCreateBootstrapApply {
+func prepareFreshProductWorkload(t *testing.T, f *productProtocolFixture, l *createNormalTailProductLifecycle, installed *environmentProductIdentitySession, bindings environmentIdentityBindings, options ...freshProductWorkloadTestOptions) environmentCreateBootstrapApply {
 	t.Helper()
 	backend := &productOuterTargetBackend{productProtocolBackend: f.b}
 	apply := func(ctx context.Context, stage string, defs []deploymentplan.Definition) error {
@@ -75,13 +80,23 @@ func prepareFreshProductWorkload(t *testing.T, f *productProtocolFixture, l *cre
 	if retained != 6 {
 		t.Fatal("fresh target has no exact six preparation owners", retained)
 	}
-	if err = apply(ctx, "workload", bound); err != nil {
+	var option freshProductWorkloadTestOptions
+	if len(options) > 0 {
+		option = options[0]
+	}
+	bound = append(bound, option.Definitions...)
+	if option.Execute == nil {
+		err = apply(ctx, "workload", bound)
+	} else {
+		err = option.Execute(ctx, apply, bound)
+	}
+	if err != nil {
 		t.Fatal("fresh original workload", err)
 	}
 	return apply
 }
 
-func newFreshProductPreparationFixture(t *testing.T) (*productProtocolFixture, *createNormalTailProductLifecycle, *environmentProductIdentitySession, environmentIdentityBindings, environmentCreateBootstrapApply) {
+func newFreshProductPreparationFixture(t *testing.T, extra ...func(*productProtocolFixture) freshProductWorkloadTestOptions) (*productProtocolFixture, *createNormalTailProductLifecycle, *environmentProductIdentitySession, environmentIdentityBindings, environmentCreateBootstrapApply) {
 	t.Helper()
 	f := newProductProtocolFixture(t, false)
 	f.unscoped = true
@@ -129,7 +144,11 @@ func newFreshProductPreparationFixture(t *testing.T) (*productProtocolFixture, *
 	if _, err = writeProductArtifact(f.store, filepath.Join("deployment/create", f.e.Journal.PlanSHA256, "bootstrap/bindings.json"), bindings); err != nil {
 		t.Fatal(err)
 	}
-	apply := prepareFreshProductWorkload(t, f, l, installed, bindings)
+	var options []freshProductWorkloadTestOptions
+	for _, add := range extra {
+		options = append(options, add(f))
+	}
+	apply := prepareFreshProductWorkload(t, f, l, installed, bindings, options...)
 	f.installed = slices.Clone(f.subjects)
 	if err = finalizeEnvironmentCreateServiceSession(t.Context(), f.runtime.PKIClient, f.cfg, f.p, f.store, f.runtime, s, nil); err != nil {
 		t.Fatal("genuine fresh native finalization", err)

@@ -13,18 +13,22 @@ import (
 )
 
 type maintenanceRuntime struct {
-	cfg             deploymentConfig
-	store           secretStore
-	backend         environmentKubernetesBackend
-	helper          *crlMaintenanceHelper
-	image           string
-	kubeconfig      string
-	lease           deploymentplan.ExecutionLease
-	commandOverride func(context.Context, []byte, ...string) ([]byte, error)
-	readOverride    func(context.Context, string) (deploymentplan.Object, error)
-	ensureImage     func(context.Context) (string, error)
-	trustBinary     []byte
-	deferredWriters map[string]maintenanceWriterRepair
+	cfg                 deploymentConfig
+	store               secretStore
+	backend             environmentKubernetesBackend
+	helper              *crlMaintenanceHelper
+	image               string
+	kubeconfig          string
+	sourceKubeconfigSHA string
+	lease               deploymentplan.ExecutionLease
+	commandOverride     func(context.Context, []byte, ...string) ([]byte, error)
+	readOverride        func(context.Context, string) (deploymentplan.Object, error)
+	ensureImage         func(context.Context) (string, error)
+	trustBinary         []byte
+	deferredWriters     map[string]maintenanceWriterRepair
+	localRecovery       map[string]*maintenanceLocalRecovery
+	createExecution     *environmentCreateExecution
+	registryTransports  map[string]maintenanceRegistryTransportProof
 }
 
 func (r *maintenanceRuntime) query(ctx context.Context, query string) ([]byte, error) {
@@ -87,6 +91,13 @@ func (r *maintenanceRuntime) observe(ctx context.Context) (crlMaintenanceInvento
 			continue
 		}
 		name, uid := deploymentplan.String(meta["name"]), deploymentplan.String(meta["uid"])
+		ownedHelper := false
+		for _, helper := range r.localRecovery {
+			ownedHelper = ownedHelper || helper != nil && helper.consumer.Namespace == ns && helper.name == name && helper.uid == uid
+		}
+		if ownedHelper {
+			continue
+		}
 		// Adapt the actual Pod spec to the shared mount resolver; no historical
 		// create checkpoint or rendered Deployment serves as consumer inventory.
 		adapted := deploymentplan.Object{"metadata": meta, "spec": deploymentplan.Object{"template": deploymentplan.Object{"spec": pod["spec"]}}}
@@ -131,7 +142,7 @@ func (r *maintenanceRuntime) observe(ctx context.Context) (crlMaintenanceInvento
 				for _, entry := range entries {
 					issuer, ok := known[entry.Issuer.ID]
 					if !ok || entry.Issuer.Environment != r.cfg.Environment || entry.Issuer.Certificate != issuer.Certificate || entry.Issuer.Fingerprint != deploymentplan.String(issuer.Document["certificate_fingerprint_sha256"]) || !livePKIStateOnStorage(typed, container, entry.StatePath) {
-						return out, errors.New("mounted CRL authority or durable state differs from selected registry")
+						return out, fmt.Errorf("mounted CRL authority or durable state differs from selected registry for %s/%s/%s setting=%s issuer=%s", ns, name, container, setting, entry.Issuer.ID)
 					}
 					id := ns + "/" + uid + "/" + container + "/" + entry.StatePath
 					if seen[id] {
@@ -241,11 +252,18 @@ func (r *maintenanceRuntime) install(ctx context.Context, c crlMaintenanceConsum
 		return errors.New("original CRL consumer Pod changed; rediscover before retry")
 	}
 	if source := managedNamedField(deploymentplan.Map(pod["spec"])["containers"], c.Container); mqttFoundationEnv(source, "PKI_STATE_BACKEND") == "openbao" {
-		_, err := r.custodyPublicCRL(ctx, pod, c, issuer, &record)
-		return err
+		if _, err := r.custodyPublicCRL(ctx, pod, c, issuer, &record); err != nil {
+			return err
+		}
+		// KV is the durable authority, but an existing process still verifies
+		// its memory projection. Repair that public cache with the same native
+		// atomic installer; a stopped container restores it from KV at startup.
+		if !maintenanceConsumerRunning(pod, c.Container) {
+			return nil
+		}
 	}
 	// Identical valid native state needs no binary transfer or image lookup.
-	state, readErr := r.command(ctx, nil, "--namespace", c.Namespace, "exec", "pod/"+c.Pod, "--container", c.Container, "--", "cat", c.StatePath)
+	state, readErr := r.localConsumerCommand(ctx, c, pod, nil, "cat", c.StatePath)
 	if readErr == nil && maintenanceInstalledMatches(r.cfg.Environment, state, issuer, record) {
 		return nil
 	}
@@ -279,15 +297,15 @@ func (r *maintenanceRuntime) install(ctx context.Context, c crlMaintenanceConsum
 	issuerRaw, _ := json.Marshal(issuer.Document)
 	recordRaw, _ := json.Marshal(record)
 	input := []byte(base64.StdEncoding.EncodeToString(tool) + "\n" + base64.StdEncoding.EncodeToString(issuerRaw) + "\n" + base64.StdEncoding.EncodeToString(recordRaw) + "\n")
-	_, err = r.command(ctx, input, "--namespace", c.Namespace, "exec", "-i", "pod/"+c.Pod, "--container", c.Container, "--", "/bin/sh", "-ec", maintenanceInstallScript, "crl-maintenance", c.StatePath, environmentPreflightBytesSHA256(tool))
+	_, err = r.localConsumerCommand(ctx, c, pod, input, "/bin/sh", "-ec", maintenanceInstallScript, "crl-maintenance", c.StatePath, environmentPreflightBytesSHA256(tool))
 	if err != nil {
 		return fmt.Errorf("native CRL installation failed for %s/%s/%s", c.Namespace, c.Pod, c.Container)
 	}
 	return nil
 }
 
-// Remote health is committed native readback, not an application's temporary
-// mirror. The caller still checks the selected record, freshness and actual ACK.
+// Remote health requires committed native readback and, when running, its
+// matching public projection. The caller still checks freshness and actual ACK.
 func (r *maintenanceRuntime) installedCRL(ctx context.Context, c crlMaintenanceConsumer, issuer environmentCreateRegisteredIssuer) (environmentCustodyCRLState, error) {
 	var result environmentCustodyCRLState
 	pod, err := r.read(ctx, "Pod/"+c.Namespace+"/"+c.Pod)
@@ -301,7 +319,7 @@ func (r *maintenanceRuntime) installedCRL(ctx context.Context, c crlMaintenanceC
 	if c.Custody {
 		return result, errors.New("original CRL consumer storage backend changed")
 	}
-	raw, err := r.command(ctx, nil, "--namespace", c.Namespace, "exec", "pod/"+c.Pod, "--container", c.Container, "--", "cat", c.StatePath)
+	raw, err := r.localConsumerCommand(ctx, c, pod, nil, "cat", c.StatePath)
 	if err != nil {
 		return result, err
 	}
@@ -309,6 +327,11 @@ func (r *maintenanceRuntime) installedCRL(ctx context.Context, c crlMaintenanceC
 		return result, errors.New("native CRL cache is invalid")
 	}
 	return result, nil
+}
+
+func maintenanceConsumerRunning(pod deploymentplan.Object, container string) bool {
+	status := managedNamedField(deploymentplan.Map(pod["status"])["containerStatuses"], container)
+	return status["ready"] == true || deploymentplan.Map(status["state"])["running"] != nil
 }
 
 func (r *maintenanceRuntime) converge(ctx context.Context, inventory crlMaintenanceInventory, records map[string]createRootCRLRecord) error {
@@ -329,6 +352,9 @@ func (r *maintenanceRuntime) converge(ctx context.Context, inventory crlMaintena
 	}
 	if len(inventory.Consumers) == 0 {
 		return errors.New("no actual native CRL consumers discovered")
+	}
+	if err := r.refreshOpenBaoStartup(ctx, inventory); err != nil {
+		return err
 	}
 	if err := r.recoverOnline(ctx, inventory, records); err != nil {
 		return err
@@ -356,6 +382,7 @@ func (r *maintenanceRuntime) converge(ctx context.Context, inventory crlMaintena
 		if err := r.lease.Check(ctx); err != nil {
 			return err
 		}
+		r.registryTransports = map[string]maintenanceRegistryTransportProof{}
 		complete := true
 		var pending []string
 		var pendingConsumers []crlMaintenanceConsumer
@@ -412,6 +439,13 @@ func (r *maintenanceRuntime) converge(ctx context.Context, inventory crlMaintena
 					}
 				}
 				if !found {
+					verified, err := r.verifyRegistryTransportConsumer(ctx, inventory, issuers, records, issuer, consumer)
+					if err != nil {
+						return err
+					}
+					if verified {
+						continue
+					}
 					return fmt.Errorf("required %s consumer %s has no current mounted CRL state for issuer %s", issuer.Domain, consumer, id)
 				}
 			}

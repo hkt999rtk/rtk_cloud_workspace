@@ -32,7 +32,7 @@ func environmentDeviceMQTTCallbackClientName(object, container deploymentplan.Ob
 			continue
 		}
 		command := certIssuerObjectList(initializer["command"])
-		if len(command) == 3 && command[0] == "/bin/sh" && command[1] == "-ec" && len(certIssuerObjectList(initializer["args"])) == 0 && deviceTrustStatePath.MatchString(state) && normalizedDevicePreparation(deploymentplan.String(command[2])) == normalizedDevicePreparation(deviceNativeTrustPreparation(state)) {
+		if len(command) == 3 && command[0] == "/bin/sh" && command[1] == "-ec" && len(certIssuerObjectList(initializer["args"])) == 0 && deviceTrustStatePath.MatchString(state) && isDeviceNativeTrustPreparation(deploymentplan.String(command[2]), state) {
 			if native {
 				return "", mqttCallbackBlocker(object, "native callback trust initialization is ambiguous")
 			}

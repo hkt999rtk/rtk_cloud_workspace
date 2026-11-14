@@ -103,6 +103,30 @@ func readEnvironmentCreateStageProgress(store secretStore, e *environmentCreateE
 		return j, false, environmentCreateBootstrapBlocker("original child journal has no recorded native lease")
 	}
 	if entry.State != "pending" {
+		if stage == productPublicCRLStage && productCRLForwardReceiptMatches(entry.Receipt) {
+			if err := validateProductCRLForwardReceipt(store, e, p, j, entry.Receipt); err != nil {
+				return j, false, err
+			}
+			return j, true, nil
+		}
+		if stage == "workload" && workloadImageForwardReceiptMatches(entry.Receipt) {
+			if err := validateWorkloadImageForwardReceipt(store, e, p, j, entry.Receipt); err != nil {
+				return j, false, err
+			}
+			return j, true, nil // Preserve the literal source failure; its successor is separately accepted.
+		}
+		if stage == "managed-complete-issuer" && currentCoreForwardReceiptMatches(entry.Receipt) {
+			if err := validateCurrentCoreForwardReceipt(store, e, stage, p, j, entry.Receipt); err != nil {
+				return j, false, err
+			}
+			return j, true, nil // The original failed child remains literal; the receipt names its accepted successor.
+		}
+		if originalStageSupersessionReceiptMatches(entry.Receipt) {
+			if err := validateOriginalStageSupersession(store, e, stage, p, j, entry.Receipt); err != nil {
+				return j, false, err
+			}
+			return j, true, nil // Truthfully return the original FAILED child.
+		}
 		var receipt struct {
 			Plan   string            `json:"plan_sha256"`
 			Owners map[string]string `json:"owners"`
@@ -116,7 +140,7 @@ func readEnvironmentCreateStageProgress(store secretStore, e *environmentCreateE
 
 // Shared fresh-create stages keep the original compiled input and child write
 // journal across admission, readiness, acceptance and parent receipt failures.
-func executeEnvironmentCreateStagePlan(ctx context.Context, store secretStore, e *environmentCreateExecution, stage string, p *deploymentplan.Plan, backend deploymentplan.Backend, qualify, fence, accept func(context.Context, *deploymentplan.Plan) error, capture func(context.Context) error, out io.Writer) error {
+func executeEnvironmentCreateStagePlan(ctx context.Context, store secretStore, e *environmentCreateExecution, stage string, p *deploymentplan.Plan, backend deploymentplan.Backend, qualify, fence, accept func(context.Context, *deploymentplan.Plan) error, capture func(context.Context) error, out io.Writer, phaseFences ...deploymentplan.PhaseFence) error {
 	if e == nil || p == nil || backend == nil || qualify == nil || fence == nil || accept == nil || capture == nil {
 		return environmentCreateBootstrapBlocker("original stage execution adapters unavailable")
 	}
@@ -131,13 +155,31 @@ func executeEnvironmentCreateStagePlan(ctx context.Context, store secretStore, e
 		return err
 	}
 	key := "kubernetes/" + stage
+	if entry := createOpenBaoACKCompletionEntry(e.Journal, key); entry != nil && entry.State == "completed" {
+		// A completed child is historical evidence. Later admitted children may
+		// have updated the same UID. Observe that exact recorded history through
+		// the preflight verifier; never re-admit or replay its superseded body.
+		return runEnvironmentProgress(ctx, out, "deployment.create.kubernetes."+stage, func(ctx context.Context) error {
+			if err := fence(ctx, p); err != nil {
+				return err
+			}
+			original, err := verifyAcceptedStageAfterRecordedHistory(ctx, store, e, backend, key)
+			if err != nil {
+				return err
+			}
+			if original.SHA256() != p.SHA256() {
+				return environmentCreateBootstrapBlocker("completed stage differs from its original accepted input")
+			}
+			return e.Check(ctx)
+		})
+	}
 	if createOpenBaoACKCompletionEntry(e.Journal, key) == nil {
 		if err := e.BeginEntry(key, stage, intent, time.Now().UTC()); err != nil {
 			return err
 		}
 	}
 	if err := runEnvironmentProgress(ctx, out, "deployment.create.kubernetes."+stage, func(ctx context.Context) error {
-		return p.ExecuteResumable(ctx, backend, p.SHA256(), store.Root, qualify, fence, accept)
+		return p.ExecuteResumable(ctx, backend, p.SHA256(), store.Root, qualify, fence, accept, phaseFences...)
 	}); err != nil {
 		return err
 	}

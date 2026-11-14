@@ -61,6 +61,38 @@ func TestManagedExpiredSeedRequiresOriginalNativeAllowlist(t *testing.T) {
 	}
 }
 
+func TestPartialManagedSeedUsesOriginalSessionSubjects(t *testing.T) {
+	cfg := deploymentConfig{Environment: "dev", Values: map[string]string{"CLOUD_STACK_NAME": "video-cloud-dev"}}
+	original := []string{"service:account-manager", "service:certissuer", "service:mqtt", "service:ota", "service:video-cloud-api"}
+	plan := environmentCreateBootstrapPlan{Domains: []environmentCreateIssuerPolicy{{Domain: "service", ServiceClientIDs: append(slices.Clone(original), "service:deployment-bootstrap")}}}
+	r := &createServiceSessionRecovery{Intent: createServiceSessionIntent{Subjects: original}, ManagedTransportRecovery: &createManagedTransportRecovery{PartialSessionRenewal: true}}
+	got, err := managedSeedSubjects(cfg, plan, r)
+	if err != nil || !slices.Equal(got, original) {
+		t.Fatal("original deployment subjects not preserved", err)
+	}
+	r.Intent.Subjects = append(slices.Clone(original), "service:foreign")
+	if _, err := managedSeedSubjects(cfg, plan, r); err == nil {
+		t.Fatal("subject outside issuer policy was accepted")
+	}
+	r.Intent.Subjects = append(slices.Clone(original), original[0])
+	if _, err := managedSeedSubjects(cfg, plan, r); err == nil {
+		t.Fatal("duplicate original subject was accepted")
+	}
+}
+
+func TestPartialManagedSeedUsesQualifiedBootstrapImage(t *testing.T) {
+	image := environmentReleaseImage{Reference: "ghcr.io/example/api@sha256:" + strings.Repeat("a", 64)}
+	plan := environmentCreatePlan{Bootstrap: environmentCreateBootstrapPlan{Image: image.Reference}, Release: environmentRelease{Images: map[string]environmentReleaseImage{"LKE_VIDEO_CLOUD_IMAGE": image}}}
+	got, digest, err := selectedPartialSeedImage(plan)
+	if err != nil || got.Reference != image.Reference || digest != deploymentplan.Digest(image) {
+		t.Fatal("qualified bootstrap image not preserved", err)
+	}
+	plan.Bootstrap.Image = "ghcr.io/example/api@sha256:" + strings.Repeat("b", 64)
+	if _, _, err := selectedPartialSeedImage(plan); err == nil {
+		t.Fatal("different bootstrap image accepted")
+	}
+}
+
 func TestManagedSeedRenewalKeepsOriginalKeyCSRClaimAndBoundTTL(t *testing.T) {
 	parent, binding := strings.Repeat("a", 64), strings.Repeat("b", 64)
 	old, newSession := "33333333-3333-4333-8333-333333333333", "44444444-4444-4444-8444-444444444444"
@@ -98,6 +130,44 @@ func TestManagedSeedRenewalKeepsOriginalKeyCSRClaimAndBoundTTL(t *testing.T) {
 				t.Fatal("unqualified renewal recipe accepted")
 			}
 		})
+	}
+}
+
+func TestPartialSeedRenewalUsesManagedOpenBaoTrust(t *testing.T) {
+	digest := strings.Repeat("a", 64)
+	image := environmentReleaseImage{Reference: "ghcr.io/example/api@sha256:" + digest}
+	env := map[string]string{"PKI_BOOTSTRAP_KEY_PATH": "/run/pki-bootstrap/bootstrap.key", "PKI_BOOTSTRAP_CSR_PATH": "/run/pki-bootstrap/bootstrap.csr", "PKI_BOOTSTRAP_CERT_PATH": "/run/pki-bootstrap/bootstrap.crt", "OPENBAO_ADDR": "https://openbao.video-cloud-dev-secrets.svc:8200", "OPENBAO_CACERT": "/run/openbao-ca/ca.crt"}
+	object := deploymentplan.Object{"apiVersion": "batch/v1", "kind": "Job", "metadata": deploymentplan.Object{"name": "original", "namespace": "video-cloud-dev-video-cloud"}, "spec": deploymentplan.Object{"template": deploymentplan.Object{"spec": deploymentplan.Object{"containers": []any{deploymentplan.Object{"name": "bootstrap", "image": image.Reference, "env": environmentCreateEnv(env), "volumeMounts": []any{deploymentplan.Object{"name": "openbao-ca", "mountPath": "/run/openbao-ca", "readOnly": true}}}}, "initContainers": []any{deploymentplan.Object{"name": "permissions"}}, "volumes": []any{deploymentplan.Object{"name": "openbao-ca", "configMap": deploymentplan.Object{"name": "pki-openbao-transport-ca"}}}}}}}
+	before := deploymentplan.Digest(object)
+	d, err := managedSessionRenewalDefinition(object, digest, digest, "33333333-3333-4333-8333-333333333333", image, "video-cloud-dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	volumes, err := environmentPKINamedFields(environmentPKIPod(d.Object)["volumes"])
+	if err != nil || deploymentplan.Map(volumes["openbao-ca"]["configMap"])["name"] != "pki-create-openbao-tls-consumer-trust" || deploymentplan.Digest(object) != before {
+		t.Fatal("managed trust was not bound without changing the original")
+	}
+}
+
+func TestManagedSessionSourceJobSupportsOriginalStageWithoutReplacingOwners(t *testing.T) {
+	job := deploymentplan.Resource{ID: "Job/ns/original", Desired: deploymentplan.Object{"kind": "Job"}}
+	claim := deploymentplan.Resource{ID: "PersistentVolumeClaim/ns/original", Desired: deploymentplan.Object{"kind": "PersistentVolumeClaim"}}
+	account := deploymentplan.Resource{ID: "ServiceAccount/ns/original", Desired: deploymentplan.Object{"kind": "ServiceAccount"}}
+	journal := deploymentplan.Journal{Accepted: true, Owners: map[string]string{job.ID: "33333333-3333-4333-8333-333333333333", claim.ID: "44444444-4444-4444-8444-444444444444", account.ID: "55555555-5555-4555-8555-555555555555"}}
+	for _, resources := range [][]deploymentplan.Resource{{job}, {claim, account, job}} {
+		got, ok := managedSessionSourceJob(&deploymentplan.Plan{Resources: resources}, journal)
+		if !ok || got.ID != job.ID {
+			t.Fatal("accepted source Job not selected")
+		}
+	}
+	for _, plan := range []*deploymentplan.Plan{nil, {Resources: []deploymentplan.Resource{claim}}, {Resources: []deploymentplan.Resource{job, job, claim}}} {
+		if _, ok := managedSessionSourceJob(plan, journal); ok {
+			t.Fatal("ambiguous or missing source Job accepted")
+		}
+	}
+	journal.Owners[job.ID] = "foreign"
+	if _, ok := managedSessionSourceJob(&deploymentplan.Plan{Resources: []deploymentplan.Resource{job}}, journal); ok {
+		t.Fatal("invalid source owner accepted")
 	}
 }
 
@@ -197,6 +267,59 @@ func TestManagedClientContinuityAllowsNaturalExpiryAfterAdmission(t *testing.T) 
 	changed[0].CSR = changed[1].CSR
 	if validateManagedSessionClientsPreserved(changed, service, subjects) {
 		t.Fatal("continuation accepted changed client key custody")
+	}
+}
+
+func TestManagedPartialClientInventoryPreservesIssuedAndInstalled(t *testing.T) {
+	service, subjects, rows, now := managedSessionClientFixture(t)
+	// Issuance can precede installation, and some declared subjects may not
+	// have reached issuance at all when the original session expires.
+	partial := slices.Clone(rows[:len(rows)-1])
+	partial = slices.DeleteFunc(partial, func(row managedSessionClient) bool { return row.Subject == "service:openbao" })
+	installed := []string{"service:account-manager", "service:certissuer"}
+	if !validatePartialManagedSessionClients(partial, service, subjects, installed, now) {
+		t.Fatal("valid partially issued inventory rejected")
+	}
+	for _, mode := range []string{"unissued-installed", "foreign-installed", "duplicate-installed", "foreign-issuer", "duplicate-issuance", "changed-csr"} {
+		t.Run(mode, func(t *testing.T) {
+			clients, ack := slices.Clone(partial), slices.Clone(installed)
+			switch mode {
+			case "unissued-installed":
+				ack = append(ack, "service:openbao")
+			case "foreign-installed":
+				ack = append(ack, "service:foreign")
+			case "duplicate-installed":
+				ack = append(ack, ack[0])
+			case "foreign-issuer":
+				clients[0].Issuer = "foreign"
+			case "duplicate-issuance":
+				clients = append(clients, clients[0])
+			case "changed-csr":
+				clients[0].CSR = clients[1].CSR
+			}
+			if validatePartialManagedSessionClients(clients, service, subjects, ack, now) {
+				t.Fatal("unsafe partial inventory accepted", mode)
+			}
+		})
+	}
+}
+
+func TestPartialSessionPreservesOriginalClientsWhileAllowingLaterIssuance(t *testing.T) {
+	service, subjects, rows, now := managedSessionClientFixture(t)
+	original := slices.Clone(rows[:len(rows)-2])
+	state := managedSessionState{Installed: []string{"service:account-manager", "service:certissuer"}}
+	proof := &createManagedSessionRecovery{PartialInventory: true, OriginalClientDigests: partialSessionClientDigests(original)}
+	if !partialSessionClientsPreserved(rows, service, subjects, state, proof, now) {
+		t.Fatal("later valid issuance was rejected")
+	}
+	missing := slices.DeleteFunc(slices.Clone(rows), func(row managedSessionClient) bool { return row.Fingerprint == original[0].Fingerprint })
+	if partialSessionClientsPreserved(missing, service, subjects, state, proof, now) {
+		t.Fatal("replacement or loss of original client was accepted")
+	}
+	changed := slices.Clone(rows)
+	changed[0].Revoked = &now
+	if partialSessionClientsPreserved(changed, service, subjects, state, proof, now) {
+		t.Fatal("revoked original client was accepted")
 	}
 }
 

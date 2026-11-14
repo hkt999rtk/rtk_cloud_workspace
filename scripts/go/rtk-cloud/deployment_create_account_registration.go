@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
@@ -155,4 +156,22 @@ func environmentCreateAccountRegistrationStage(p environmentCreateBootstrapPlan,
 		out = append(out, definition)
 	}
 	return out, nil
+}
+
+func renderEnvironmentCreateCurrentAccountRegistration(ctx context.Context, cfg deploymentConfig, p environmentCreateBootstrapPlan, runtime environmentCreateBootstrapRuntime, service environmentCreateServiceCeremony, certificate, key string, core []deploymentplan.Definition) ([]deploymentplan.Definition, error) {
+	if cfg.Values["ACCOUNT_MANAGER_SERVICE_REGISTRATION_ENABLED"] != "true" {
+		return core, nil
+	}
+	root, err := readProductCurrentCRL(ctx, runtime.PKIClient, service.Root)
+	if err != nil {
+		return nil, err
+	}
+	// The stored ceremony remains historical evidence. Only this render uses
+	// the current native signed public revocation material for its same issuer.
+	service.RootCRLPEM = root
+	intermediate, err := readProductCurrentCRL(ctx, runtime.PKIClient, service.Intermediate)
+	if err != nil {
+		return nil, err
+	}
+	return renderEnvironmentCreateAccountRegistration(cfg, p, service, certificate, key, intermediate, core)
 }

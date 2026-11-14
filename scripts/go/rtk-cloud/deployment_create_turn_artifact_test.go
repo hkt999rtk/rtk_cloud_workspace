@@ -11,7 +11,7 @@ import (
 )
 
 func TestCreateTURNArtifactUsesExactImagePathWithoutExecutingItsEntrypoint(t *testing.T) {
-	for _, mode := range []string{"amd64", "missing", "arm64"} {
+	for _, mode := range []string{"amd64", "api-forwarded", "missing", "arm64"} {
 		t.Run(mode, func(t *testing.T) {
 			cfg, _ := createProviderTestFixture(t, "dev")
 			store, err := newSecretStore("", cfg.Environment)
@@ -42,6 +42,12 @@ func TestCreateTURNArtifactUsesExactImagePathWithoutExecutingItsEntrypoint(t *te
 			if err := os.WriteFile(artifact, header, 0600); err != nil {
 				t.Fatal(err)
 			}
+			if mode == "api-forwarded" {
+				// API/PKI image recovery does not replace the separately frozen
+				// provider package or its original qualified binary checksum.
+				plan.Release.Images["LKE_VIDEO_CLOUD_IMAGE"] = environmentReleaseImage{Reference: "ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api@sha256:" + strings.Repeat("e", 64)}
+				plan.Provider.TurnRegistrarSHA256 = environmentPreflightBytesSHA256(header)
+			}
 			log := filepath.Join(fixture, "docker-arguments")
 			docker := filepath.Join(fixture, "docker")
 			writeTestFile(t, docker, `#!/bin/sh
@@ -62,9 +68,14 @@ esac
 			t.Setenv("RTK_TURN_ARTIFACT_ARGUMENTS", log)
 			t.Setenv("RTK_TURN_ARTIFACT_MODE", mode)
 			t.Setenv("RTK_TURN_ARTIFACT_FIXTURE", artifact)
+			if mode == "api-forwarded" {
+				if err := qualifyEnvironmentCreateFrozenDataPlaneArtifact(t.Context(), cfg, &plan, store); err != nil {
+					t.Fatal("recovery preflight rejected the independently frozen TURN package", err)
+				}
+			}
 			path, err := extractEnvironmentCreateTURNRegistrar(context.Background(), cfg, &plan, store)
 			switch mode {
-			case "amd64":
+			case "amd64", "api-forwarded":
 				if err != nil {
 					t.Fatal(err)
 				}

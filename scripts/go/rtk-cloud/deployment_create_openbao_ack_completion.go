@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -484,7 +483,7 @@ func createOpenBaoACKCompletionMembership(before, current environmentCreateJourn
 	}
 	for i, old := range before.Entries {
 		entry := current.Entries[i]
-		if old.Key != entry.Key || old.Phase != entry.Phase || old.IntentSHA256 != entry.IntentSHA256 || !old.StartedAt.Equal(entry.StartedAt) || old.State == "completed" && (entry.State != "completed" || !old.CompletedAt.Equal(entry.CompletedAt) || !bytes.Equal(old.Receipt, entry.Receipt)) || old.State != "completed" && (old.State != "pending" || entry.State != "pending" && entry.State != "completed") {
+		if old.Key != entry.Key || old.Phase != entry.Phase || old.IntentSHA256 != entry.IntentSHA256 || !old.StartedAt.Equal(entry.StartedAt) || old.State == "completed" && (entry.State != "completed" || !old.CompletedAt.Equal(entry.CompletedAt) || !samePersistedJSONReceipt(old.Receipt, entry.Receipt)) || old.State != "completed" && (old.State != "pending" || entry.State != "pending" && entry.State != "completed") {
 			return false
 		}
 	}

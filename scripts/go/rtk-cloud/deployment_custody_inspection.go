@@ -143,6 +143,13 @@ func runEnvironmentCustodyInspection(ctx context.Context, b environmentKubernete
 // Both one-shot observers and streamed public maintenance retain the same exact
 // Job/Pod ownership, bounded output and UID-preconditioned cleanup contract.
 func runEnvironmentCustodyJob(ctx context.Context, b environmentKubernetesBackend, job deploymentplan.Object, namespace string, arguments []string, input []byte) (result []byte, resultErr error) {
+	if b.custodyJobs != nil && len(arguments) > 0 {
+		return b.custodyJobs.run(ctx, b, job, namespace, arguments, input)
+	}
+	return runEnvironmentCustodyJobOnce(ctx, b, job, namespace, arguments, input, nil)
+}
+
+func runEnvironmentCustodyJobOnce(ctx context.Context, b environmentKubernetesBackend, job deploymentplan.Object, namespace string, arguments []string, input []byte, retain func(*environmentCustodyJobHandle)) (result []byte, resultErr error) {
 	blocked := func(cause string) error {
 		return &deploymentplan.Blocker{ID: "deployment.pki.custody-inspection", Cause: cause, Next: "verify original selected OpenBao scope, registry admission and public transport; preserve identities and repeat qualification"}
 	}
@@ -179,9 +186,7 @@ func runEnvironmentCustodyJob(ctx context.Context, b environmentKubernetesBacken
 	if uid == "" || !deploymentplan.Matches(job, actual) {
 		return nil, blocked("created custody helper differs from its exact requested scope")
 	}
-	defer func() {
-		cleanup, stop := context.WithTimeout(context.Background(), 30*time.Second)
-		defer stop()
+	cleanupJob := func(cleanup context.Context) error {
 		request, _ := json.Marshal(deploymentplan.Object{"apiVersion": "v1", "kind": "DeleteOptions", "preconditions": deploymentplan.Object{"uid": uid}, "gracePeriodSeconds": float64(0), "propagationPolicy": "Foreground"})
 		endpoint := "/apis/batch/v1/namespaces/" + url.PathEscape(namespace) + "/jobs/" + url.PathEscape(name)
 		_, cleanupErr := b.command(cleanup, request, "delete", "--raw", endpoint, "-f", "-")
@@ -194,18 +199,30 @@ func runEnvironmentCustodyJob(ctx context.Context, b environmentKubernetesBacken
 			_, cleanupErr = b.command(cleanup, nil, "--namespace", namespace, "wait", "--for=delete", "Job/"+name, "--timeout=30s")
 		}
 		if cleanupErr != nil {
+			return blocked("original custody helper cleanup could not be verified; replacement owners are protected")
+		}
+		return nil
+	}
+	retained := false
+	defer func() {
+		if retained {
+			return
+		}
+		cleanup, stop := context.WithTimeout(context.Background(), 30*time.Second)
+		defer stop()
+		if err := cleanupJob(cleanup); err != nil {
 			result = nil
-			resultErr = errors.Join(resultErr, blocked("original custody helper cleanup could not be verified; replacement owners are protected"))
+			resultErr = errors.Join(resultErr, err)
 		}
 	}()
-	verifyJob := func() error {
-		observed, err := b.Read(bounded, id)
+	verifyJob := func(checkCtx context.Context) error {
+		observed, err := b.Read(checkCtx, id)
 		if err != nil || observed == nil || deploymentplan.Map(observed["metadata"])["uid"] != uid || deploymentplan.Map(observed["metadata"])["deletionTimestamp"] != nil || !deploymentplan.Matches(job, observed) {
 			return blocked("original custody helper Job changed")
 		}
 		return nil
 	}
-	if err := verifyJob(); err != nil {
+	if err := verifyJob(bounded); err != nil {
 		return nil, err
 	}
 	if !interactive {
@@ -227,7 +244,7 @@ func runEnvironmentCustodyJob(ctx context.Context, b environmentKubernetesBacken
 		if !interactive {
 			return nil, blocked("native custody inspection has no unique original Pod")
 		}
-		if err := verifyJob(); err != nil {
+		if err := verifyJob(bounded); err != nil {
 			return nil, err
 		}
 		select {
@@ -263,24 +280,52 @@ func runEnvironmentCustodyJob(ctx context.Context, b environmentKubernetesBacken
 	if err := verifyPod(pod); err != nil {
 		return nil, err
 	}
-	if err := verifyJob(); err != nil {
+	if interactive {
+		invoke := func(callCtx context.Context, callArgs []string, callInput []byte) ([]byte, error) {
+			if err := verifyJob(callCtx); err != nil {
+				return nil, err
+			}
+			current, err := b.Read(callCtx, "Pod/"+namespace+"/"+podName)
+			if err != nil || verifyPod(current) != nil {
+				return nil, blocked("original public custody helper Pod changed before native operation")
+			}
+			command := []string{"--namespace", namespace, "exec"}
+			if len(callInput) > 0 {
+				command = append(command, "-i")
+			}
+			command = append(command, "Pod/"+podName, "--container", "inspect", "--", "/app/serviceidentity-bootstrap")
+			command = append(command, callArgs...)
+			output, err := b.command(callCtx, callInput, command...)
+			if err != nil || len(output) > 2<<20 {
+				return nil, blocked("native custody helper returned no bounded public proof")
+			}
+			if err := verifyJob(callCtx); err != nil {
+				return nil, err
+			}
+			current, err = b.Read(callCtx, "Pod/"+namespace+"/"+podName)
+			if err != nil || verifyPod(current) != nil {
+				return nil, blocked("original public custody helper Pod changed during native operation")
+			}
+			return output, nil
+		}
+		result, err = invoke(bounded, arguments, input)
+		if err != nil {
+			return nil, err
+		}
+		if retain != nil {
+			retain(&environmentCustodyJobHandle{invoke: invoke, cleanup: cleanupJob})
+			retained = true
+		}
+		return result, nil
+	}
+	if err := verifyJob(bounded); err != nil {
 		return nil, err
 	}
-	if interactive {
-		command := []string{"--namespace", namespace, "exec"}
-		if len(input) > 0 {
-			command = append(command, "-i")
-		}
-		command = append(command, "Pod/"+podName, "--container", "inspect", "--", "/app/serviceidentity-bootstrap")
-		command = append(command, arguments...)
-		result, err = b.command(bounded, input, command...)
-	} else {
-		result, err = b.command(bounded, nil, "--namespace", namespace, "logs", "Pod/"+podName, "--container", "inspect", "--limit-bytes=65536")
-	}
+	result, err = b.command(bounded, nil, "--namespace", namespace, "logs", "Pod/"+podName, "--container", "inspect", "--limit-bytes=65536")
 	if err != nil || len(result) > 2<<20 {
 		return nil, blocked("native custody helper returned no bounded public proof")
 	}
-	if err := verifyJob(); err != nil {
+	if err := verifyJob(bounded); err != nil {
 		return nil, err
 	}
 	pod, err = b.Read(bounded, "Pod/"+namespace+"/"+podName)

@@ -22,6 +22,15 @@ func deviceTrustPreparation(file string) string {
 func deviceNativeTrustPreparation(file string) string {
 	return fmt.Sprintf("umask 077; mkdir -p /run/pki-state; chmod 700 /run/pki-state; if [ -e %s ]; then chmod 600 %s; fi", file, file)
 }
+
+// Memory-backed mounts are created by Kubernetes and can be owned by root.
+// Only restrict an existing state file; never chmod the mounted directory.
+func deviceMemoryTrustPreparation(file string) string {
+	return fmt.Sprintf("umask 077; test -d /run/pki-state; if [ -e %s ]; then chmod 600 %s; fi", file, file)
+}
+func isDeviceNativeTrustPreparation(script, file string) bool {
+	return normalizedDevicePreparation(script) == normalizedDevicePreparation(deviceNativeTrustPreparation(file)) || normalizedDevicePreparation(script) == normalizedDevicePreparation(deviceMemoryTrustPreparation(file)) || normalizedDevicePreparation(script) == normalizedDevicePreparation(devicePrivateMemoryTrustPreparation(file))
+}
 func normalizedDevicePreparation(script string) string {
 	script = strings.ReplaceAll(strings.ReplaceAll(script, "\"", ""), "'", "")
 	return strings.Join(strings.Fields(strings.ReplaceAll(script, ";", " ; ")), " ")
@@ -43,7 +52,7 @@ func observeDeviceInitializer(binding *environmentPodBindings, c map[string]any,
 				return deviceInitializerBlocker(id, "trust initializer references multiple state files")
 			}
 		}
-		if normalizedDevicePreparation(script) == normalizedDevicePreparation(deviceNativeTrustPreparation(paths[0])) {
+		if isDeviceNativeTrustPreparation(script, paths[0]) {
 			binding.NativeTrustInitialization = true
 		} else if normalizedDevicePreparation(script) != normalizedDevicePreparation(deviceTrustPreparation(paths[0])) {
 			return deviceInitializerBlocker(id, "trust initializer differs from preserve-on-retry recipe")
@@ -78,4 +87,48 @@ func maintainedDeviceInitializer(name, file string) (map[string]any, error) {
 		return nil, deviceInitializerBlocker(name, "unknown Device API initializer name")
 	}
 	return map[string]any{"name": name, "command": []any{"/bin/sh", "-ec", script}, "volumeMounts": mounts, "resources": map[string]any{"requests": map[string]any{"cpu": "10m", "memory": "16Mi"}, "limits": map[string]any{"memory": "64Mi"}}, "securityContext": map[string]any{"runAsNonRoot": true, "runAsUser": float64(10001), "runAsGroup": float64(10001), "allowPrivilegeEscalation": false, "readOnlyRootFilesystem": true, "capabilities": map[string]any{"drop": []any{"ALL"}}}}, nil
+}
+
+// projectDeviceMemoryTrustInitializer changes only the known native command
+// when its original writable state mount is explicitly memory-backed. Caller
+// controls ownership of object (use a clone for immutable source evidence).
+func projectDeviceMemoryTrustInitializer(object deploymentplan.Object) bool {
+	pod := environmentPKIPod(object)
+	if pod == nil {
+		return false
+	}
+	memory := map[string]bool{}
+	for _, raw := range certIssuerObjectList(pod["volumes"]) {
+		v := deploymentplan.Map(raw)
+		if deploymentplan.Map(v["emptyDir"])["medium"] == "Memory" {
+			memory[deploymentplan.String(v["name"])] = true
+		}
+	}
+	changed := false
+	for _, raw := range certIssuerObjectList(pod["initContainers"]) {
+		init := deploymentplan.Map(raw)
+		if init["name"] != "initialize-trust-state" || len(certIssuerObjectList(init["args"])) != 0 {
+			continue
+		}
+		command := certIssuerObjectList(init["command"])
+		if len(command) != 3 || command[0] != "/bin/sh" || command[1] != "-ec" {
+			continue
+		}
+		mounts := 0
+		for _, item := range certIssuerObjectList(init["volumeMounts"]) {
+			m := deploymentplan.Map(item)
+			if m["mountPath"] == "/run/pki-state" && memory[deploymentplan.String(m["name"])] && m["readOnly"] != true {
+				mounts++
+			}
+		}
+		paths := deviceTrustPathInRecipe.FindAllString(deploymentplan.String(command[2]), -1)
+		if mounts != 1 || len(paths) == 0 || !deviceTrustStatePath.MatchString(paths[0]) {
+			continue
+		}
+		if normalizedDevicePreparation(deploymentplan.String(command[2])) == normalizedDevicePreparation(deviceNativeTrustPreparation(paths[0])) {
+			init["command"] = []any{"/bin/sh", "-ec", deviceMemoryTrustPreparation(paths[0])}
+			changed = true
+		}
+	}
+	return changed
 }

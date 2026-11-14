@@ -30,9 +30,14 @@ type environmentKubernetesBackend struct {
 	RolloutTimeout          time.Duration
 	SchemaWorkspace         string
 	OpenBaoReplacementReady func(context.Context, deploymentplan.Object, deploymentplan.Object) error
+	custodyJobs             *environmentCustodyJobPool
 }
 
 const environmentDeploymentCheckConcurrency = deploymentplan.MaxCheckConcurrency
+
+func (b environmentKubernetesBackend) nativeEnvironmentBackend() environmentKubernetesBackend {
+	return b
+}
 
 // Independent, non-persisting checks share one bounded concurrency limit.
 // Deployment mutations retain the plan's dependency and phase ordering.
@@ -412,7 +417,14 @@ func (b environmentKubernetesBackend) command(ctx context.Context, input []byte,
 		if readOnlyGet && stdout.exceeded {
 			failure = &deploymentRuntimeError{"KUBE_INVALID_RESPONSE", "inventory response exceeds the native output bound"}
 		} else if err != nil {
-			failure = classifyDeploymentRuntimeError(commandContext, stderr.buffer.Bytes(), err, false)
+			if dry {
+				failure = classifyDeploymentAdmissionError(commandContext, stderr.buffer.Bytes(), err)
+			} else {
+				failure = classifyOpenBaoStartupCommandError(args, stderr.buffer.Bytes())
+				if failure == nil {
+					failure = classifyDeploymentRuntimeError(commandContext, stderr.buffer.Bytes(), err, false)
+				}
+			}
 		}
 		cancel()
 		if failure == nil {
@@ -423,7 +435,7 @@ func (b environmentKubernetesBackend) command(ctx context.Context, input []byte,
 			return nil, ctx.Err()
 		}
 		if !readOnlyGet || !transientDeploymentReadError(failure) || attempt+1 >= deploymentReadMaxAttempts {
-			if failure.code != "KUBE_COMMAND_FAILED" {
+			if dry || failure.code != "KUBE_COMMAND_FAILED" {
 				return nil, failure
 			}
 			return nil, errors.New("selected Kubernetes API operation failed; inspect sanitized admission events with environment-local access")

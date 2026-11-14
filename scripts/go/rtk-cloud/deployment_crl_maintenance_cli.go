@@ -108,7 +108,7 @@ func runCRLMaintenanceCLI(parent context.Context, args []string, out, diagnostic
 	confirm := fs.String("confirm", "", "exact selected stack required for execution")
 	image := fs.String("image", "", "optional exact formal CI helper image digest")
 	helperRevision := fs.String("helper-revision", "", "pinned native helper source commit, independent of checkout updates")
-	timeout := fs.Duration("timeout", 15*time.Minute, "bounded operation deadline (maximum 30m)")
+	timeout := fs.Duration("timeout", 15*time.Minute, "one bounded caller deadline for inspection, recovery and verification")
 	fs.Bool("status", false, "read-only current inventory and renewal status (default)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -119,8 +119,8 @@ func runCRLMaintenanceCLI(parent context.Context, args []string, out, diagnostic
 	if fs.NArg() != 0 || (*environment != "dev" && *environment != "staging" && *environment != "prod") {
 		return errors.New("--environment dev|staging|prod is required; positional arguments are not accepted")
 	}
-	if *timeout <= 0 || *timeout > 30*time.Minute {
-		return errors.New("--timeout must be positive and at most 30m")
+	if *timeout <= 0 {
+		return errors.New("--timeout must be positive")
 	}
 	if !*execute && *confirm != "" {
 		return errors.New("--confirm requires --execute")
@@ -154,11 +154,15 @@ func runCRLMaintenanceCLI(parent context.Context, args []string, out, diagnostic
 	defer stop()
 	ctx, cancel := context.WithTimeout(signals, *timeout)
 	defer cancel()
-	r := &maintenanceRuntime{cfg: cfg, store: store, backend: backend, kubeconfig: path}
+	r := &maintenanceRuntime{cfg: cfg, store: store, backend: backend, kubeconfig: path, sourceKubeconfigSHA: environmentPreflightBytesSHA256(kube)}
+	r.backend.custodyJobs = &environmentCustodyJobPool{}
 	// Register host-lock release first so it remains held through cleanup and
 	// the final persisted/emitted status, including every early-return path.
 	var hostLock *os.File
 	defer func() {
+		if r.createExecution != nil {
+			_ = r.createExecution.Close()
+		}
 		if hostLock != nil {
 			_ = hostLock.Close()
 		}
@@ -167,8 +171,17 @@ func runCRLMaintenanceCLI(parent context.Context, args []string, out, diagnostic
 	var previousStatus crlMaintenanceStatus
 	_ = maintenanceRead(store, crlMaintenanceBase+"/status.json", &previousStatus)
 	defer func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		resultErr = errors.Join(resultErr, r.backend.custodyJobs.Close(cleanup))
+		if err := r.closeLocalRecovery(cleanup); resultErr == nil && err != nil {
+			resultErr = err
+		}
 		if finalStatus == nil {
 			return
+		}
+		for _, proof := range r.registryTransports {
+			finalStatus.RegistryTransports = append(finalStatus.RegistryTransports, proof)
 		}
 		if resultErr != nil {
 			finalStatus.Completed = false
@@ -202,11 +215,7 @@ func runCRLMaintenanceCLI(parent context.Context, args []string, out, diagnostic
 		}
 		hostLock = lock
 		plan := rootCRLLeasePlan(cfg, environmentPreflightBytesSHA256(backend.KubeconfigContent))
-		if err := checkEnvironmentExecutionOccupancy(ctx, backend, plan, store.Root); err != nil {
-			return err
-		}
-		r.lease, err = backend.AcquireExecution(ctx, plan)
-		if err != nil {
+		if err := r.acquireMaintenanceExecution(ctx, plan); err != nil {
 			return err
 		}
 		frozen, removeFrozen, frozenErr := backend.privateKubeconfig()
@@ -221,6 +230,10 @@ func runCRLMaintenanceCLI(parent context.Context, args []string, out, diagnostic
 		defer func() {
 			cleanup, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
+			resultErr = errors.Join(resultErr, r.backend.custodyJobs.Close(cleanup))
+			if e := r.closeLocalRecovery(cleanup); resultErr == nil && e != nil {
+				resultErr = e
+			}
 			if r.helper != nil {
 				if e := r.helper.Close(cleanup); resultErr == nil && e != nil {
 					resultErr = e
@@ -234,7 +247,21 @@ func runCRLMaintenanceCLI(parent context.Context, args []string, out, diagnostic
 	}
 	r.ensureImage = func(ctx context.Context) (string, error) { return maintenanceImage(ctx, cfg, *image, *helperRevision) }
 	options := crlMaintenanceOptions{Environment: *environment, Execute: *execute, Recover: *recoverExpired, ClusterSHA: environmentPreflightBytesSHA256(backend.KubeconfigContent), Now: time.Now}
-	deps := crlMaintenanceDependencies{Observe: r.observe, Prepare: r.prepare, Sign: func(ctx context.Context, item crlMaintenanceIssuer, request createRootCRLRequest, candidate string) (createRootCRLRecord, error) {
+	deps := crlMaintenanceDependencies{Observe: func(ctx context.Context) (inventory crlMaintenanceInventory, result error) {
+		result = runEnvironmentProgress(ctx, diagnostics, "deployment.crl.inspect", func(ctx context.Context) error {
+			var err error
+			inventory, err = r.observe(ctx)
+			return err
+		})
+		return
+	}, Prepare: func(ctx context.Context, item crlMaintenanceIssuer) (prepared crlMaintenanceIssuer, result error) {
+		result = runEnvironmentProgress(ctx, diagnostics, "deployment.crl.prepare", func(ctx context.Context) error {
+			var err error
+			prepared, err = r.prepare(ctx, item)
+			return err
+		})
+		return
+	}, Sign: func(ctx context.Context, item crlMaintenanceIssuer, request createRootCRLRequest, candidate string) (createRootCRLRecord, error) {
 		if err := r.lease.Check(ctx); err != nil {
 			return createRootCRLRecord{}, err
 		}
@@ -248,9 +275,24 @@ func runCRLMaintenanceCLI(parent context.Context, args []string, out, diagnostic
 		if _, err := r.nativeTrustBinary(ctx); err != nil {
 			return createRootCRLRecord{}, err
 		}
-		return signMaintenanceCRL(ctx, store, r.image, item, request, candidate)
-	}, Import: r.publish, Converge: r.converge}
+		var record createRootCRLRecord
+		err := runEnvironmentProgress(ctx, diagnostics, "deployment.crl.sign", func(ctx context.Context) error {
+			var err error
+			record, err = signMaintenanceCRL(ctx, store, r.image, item, request, candidate)
+			return err
+		})
+		return record, err
+	}, Import: func(ctx context.Context, item crlMaintenanceIssuer, request createRootCRLRequest, signed createRootCRLRecord) error {
+		return runEnvironmentProgress(ctx, diagnostics, "deployment.crl.publish", func(ctx context.Context) error { return r.publish(ctx, item, request, signed) })
+	}, Converge: func(ctx context.Context, inventory crlMaintenanceInventory, records map[string]createRootCRLRecord) error {
+		return runEnvironmentProgress(ctx, diagnostics, "deployment.crl.converge", func(ctx context.Context) error { return r.converge(ctx, inventory, records) })
+	}}
 	status, err := executeCRLMaintenance(ctx, store, options, deps)
+	if err != nil && ctx.Err() != nil {
+		// A resource read stopped by the caller deadline is not evidence that
+		// the original resource disappeared. Keep the actual cancellation cause.
+		err = fmt.Errorf("CRL maintenance stopped before complete consumer verification: %w", ctx.Err())
+	}
 	finalStatus = &status
 	if err != nil {
 		fmt.Fprintln(diagnostics, "CRL maintenance incomplete; preserve canonical evidence and original custody")

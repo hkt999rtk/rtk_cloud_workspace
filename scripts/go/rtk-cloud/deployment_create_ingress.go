@@ -220,6 +220,25 @@ func environmentCreateIngressAdmissionOwner(execution *environmentCreateExecutio
 	return "", ingressAdmissionBlocker(execution.Journal.Stack, "native admission readback lacks its original accepted parent stage owner")
 }
 
+// Find the original admission and its two adjacent native stages without
+// depending on the number of earlier steps in a particular generation.
+func completedIngressJournalPositions(j environmentCreateJournal) (int, int, int, bool) {
+	indices := map[string]int{}
+	for i, entry := range j.Entries {
+		switch entry.Key {
+		case environmentCreateIngressAdmissionEntry, "kubernetes/ingress-admission-identity", "kubernetes/ingress-controller":
+			if _, duplicate := indices[entry.Key]; duplicate {
+				return 0, 0, 0, false
+			}
+			indices[entry.Key] = i
+		}
+	}
+	a, aok := indices[environmentCreateIngressAdmissionEntry]
+	i, iok := indices["kubernetes/ingress-admission-identity"]
+	c, cok := indices["kubernetes/ingress-controller"]
+	return a, i, c, aok && iok && cok && i == a+1 && c == i+1
+}
+
 // The normal tail may finish this sole pending admission only from its exact
 // accepted identity child. Reading that original material grants no generation
 // or identity-stage authority.
@@ -242,10 +261,21 @@ func loadEnvironmentCreateIngressAdmissionSource(ctx context.Context, cfg deploy
 		}
 		count = 437
 	}
-	if execution == nil || execution.Store != store || execution.Check(ctx) != nil || len(execution.Journal.Entries) != count || !execution.Journal.CompletedAt.IsZero() || validateEnvironmentCreateIngressAdmissionRecipe(cfg, p, release) != nil {
+	if execution == nil || execution.Store != store || execution.Check(ctx) != nil || !execution.Journal.CompletedAt.IsZero() || validateEnvironmentCreateIngressAdmissionRecipe(cfg, p, release) != nil {
 		return bad()
 	}
-	entry, identity := execution.Journal.Entries[431], execution.Journal.Entries[432]
+	entryIndex, identityIndex := 431, 432
+	closedEntry := createOpenBaoACKCompletionEntry(execution.Journal, environmentCreateIngressAdmissionEntry)
+	if completed && closedEntry != nil && closedEntry.State == "completed" {
+		var ok bool
+		entryIndex, identityIndex, _, ok = completedIngressJournalPositions(execution.Journal)
+		if !ok {
+			return bad()
+		}
+	} else if len(execution.Journal.Entries) != count {
+		return bad()
+	}
+	entry, identity := execution.Journal.Entries[entryIndex], execution.Journal.Entries[identityIndex]
 	if entry.Key != environmentCreateIngressAdmissionEntry || entry.Phase != "ingress-admission" || entry.StartedAt.IsZero() || entry.IntentSHA256 != activeTransportJournalDigest(environmentCreateIngressAdmissionIntent(p)) || identity.Key != "kubernetes/ingress-admission-identity" || identity.State != "completed" || identity.CompletedAt.IsZero() || identity.CompletedAt.Before(identity.StartedAt) || identity.CompletedAt.After(time.Now()) {
 		return bad()
 	}
@@ -287,8 +317,12 @@ func loadEnvironmentCreateCompletedIngressAdmission(ctx context.Context, cfg dep
 	bad := func() (environmentCreateIngressAdmissionMaterial, []deploymentplan.Definition, error) {
 		return m, nil, ingressAdmissionBlocker(p.Stack, "completed ingress requires its exact accepted controller and native transport receipt")
 	}
-	controllerEntry := execution.Journal.Entries[433]
-	if controllerEntry.Key != "kubernetes/ingress-controller" || controllerEntry.State != "completed" || controllerEntry.StartedAt.Before(execution.Journal.Entries[432].CompletedAt) || controllerEntry.CompletedAt.IsZero() || controllerEntry.CompletedAt.Before(controllerEntry.StartedAt) || controllerEntry.CompletedAt.After(time.Now()) || execution.Journal.Entries[431].State == "completed" && execution.Journal.Entries[431].CompletedAt.Before(controllerEntry.CompletedAt) {
+	entryIndex, identityIndex, controllerIndex, ok := completedIngressJournalPositions(execution.Journal)
+	if !ok {
+		return bad()
+	}
+	entry, identityEntry, controllerEntry := execution.Journal.Entries[entryIndex], execution.Journal.Entries[identityIndex], execution.Journal.Entries[controllerIndex]
+	if controllerEntry.Key != "kubernetes/ingress-controller" || controllerEntry.State != "completed" || controllerEntry.StartedAt.Before(identityEntry.CompletedAt) || controllerEntry.CompletedAt.IsZero() || controllerEntry.CompletedAt.Before(controllerEntry.StartedAt) || controllerEntry.CompletedAt.After(time.Now()) || entry.State == "completed" && entry.CompletedAt.Before(controllerEntry.CompletedAt) {
 		return bad()
 	}
 	identity, identityJournal, err := managedTransportPostAcceptedStage(store, execution, "kubernetes/ingress-admission-identity")
@@ -321,7 +355,7 @@ func loadEnvironmentCreateCompletedIngressAdmission(ctx context.Context, cfg dep
 			return bad()
 		}
 	}
-	if execution.Journal.Entries[431].State == "pending" {
+	if entry.State == "pending" {
 		return m, definitions, execution.Check(ctx)
 	}
 	var receipt struct {
@@ -336,7 +370,7 @@ func loadEnvironmentCreateCompletedIngressAdmission(ctx context.Context, cfg dep
 		Material    string `json:"material_sha256"`
 	}
 	raw, err := readBoundedEnvironmentFile(filepath.Join(store.Root, environmentCreateIngressAdmissionMaterialPath(execution.Journal.PlanSHA256)), true)
-	if err != nil || decodeEnvironmentJSON(execution.Journal.Entries[431].Receipt, &receipt) != nil || receipt.Profile != p.IngressAdmissionProfile || receipt.Image != p.Images["LKE_INGRESS_IMAGE"] || receipt.Secret != identityJournal.Owners[secretID] || receipt.Controller != journal.Owners["Deployment/"+p.Stack+"-ingress/ingress-nginx-controller"] || receipt.Webhook != journal.Owners["ValidatingWebhookConfiguration//"+p.Stack+"-ingress-admission"] || receipt.CA != environmentPreflightBytesSHA256([]byte(m.CAPEM)) || receipt.Certificate != environmentPreflightBytesSHA256([]byte(m.CertificatePEM)) || receipt.Key != environmentPreflightBytesSHA256([]byte(m.PrivateKeyPEM)) || receipt.Material != environmentPreflightBytesSHA256(raw) {
+	if err != nil || decodeEnvironmentJSON(entry.Receipt, &receipt) != nil || receipt.Profile != p.IngressAdmissionProfile || receipt.Image != p.Images["LKE_INGRESS_IMAGE"] || receipt.Secret != identityJournal.Owners[secretID] || receipt.Controller != journal.Owners["Deployment/"+p.Stack+"-ingress/ingress-nginx-controller"] || receipt.Webhook != journal.Owners["ValidatingWebhookConfiguration//"+p.Stack+"-ingress-admission"] || receipt.CA != environmentPreflightBytesSHA256([]byte(m.CAPEM)) || receipt.Certificate != environmentPreflightBytesSHA256([]byte(m.CertificatePEM)) || receipt.Key != environmentPreflightBytesSHA256([]byte(m.PrivateKeyPEM)) || receipt.Material != environmentPreflightBytesSHA256(raw) {
 		return bad()
 	}
 	return m, definitions, execution.Check(ctx)
@@ -445,6 +479,11 @@ func executeEnvironmentCreateIngressAdmission(ctx context.Context, cfg deploymen
 	}
 	if err := validateEnvironmentCreateIngressAdmissionRecipe(cfg, p, release); err != nil {
 		return err
+	}
+	// A completed original admission is a checkpoint, not a fresh create.
+	// Authenticate its original plan and current owners before reusing it.
+	if entry := createOpenBaoACKCompletionEntry(runtime.Execution.Journal, environmentCreateIngressAdmissionEntry); entry != nil && entry.State == "completed" {
+		return verifyEnvironmentCreateCompletedIngressAdmission(ctx, cfg, p, release, store, runtime.Execution, runtime.Backend)
 	}
 	resume := runtime.ServiceSessionRecovery != nil && runtime.ServiceSessionRecovery.normalTail != nil
 	if resume {

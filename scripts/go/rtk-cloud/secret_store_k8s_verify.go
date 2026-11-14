@@ -176,10 +176,13 @@ type liveDeployment struct {
 		Replicas *int32 `json:"replicas"`
 		Template struct {
 			Spec struct {
-				ServiceAccountName string `json:"serviceAccountName"`
+				ServiceAccountName string                  `json:"serviceAccountName"`
+				SecurityContext    deploymentplan.Object   `json:"securityContext,omitempty"`
+				InitContainers     []deploymentplan.Object `json:"initContainers,omitempty"`
 				Containers         []struct {
-					Name string `json:"name"`
-					Env  []struct {
+					Name            string                `json:"name"`
+					SecurityContext deploymentplan.Object `json:"securityContext,omitempty"`
+					Env             []struct {
 						Name      string `json:"name"`
 						Value     string `json:"value"`
 						ValueFrom any    `json:"valueFrom"`

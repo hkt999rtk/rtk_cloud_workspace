@@ -102,11 +102,23 @@ func (c deploymentCredentialChecker) checkRolloutImage(environment string, value
 	return check
 }
 
-type deploymentImagePullError struct{ code, detail string }
+type deploymentImagePullError struct {
+	code, detail string
+	attempts     int
+	cause        error
+}
 
 func (e *deploymentImagePullError) Error() string { return e.detail }
+func (e *deploymentImagePullError) Unwrap() error { return e.cause }
 
 func pullRolloutImageContext(parent context.Context, environment, username, token, image string) error {
+	return pullRolloutImageContextWithRetry(parent, environment, username, token, image, waitDeploymentPullRetry)
+}
+
+func pullRolloutImageContextWithRetry(parent context.Context, environment, username, token, image string, wait func(context.Context, int) error) error {
+	if parent == nil || wait == nil {
+		return errors.New("selected image pull context is unavailable")
+	}
 	// Credentials belong to the explicitly selected environment even during a
 	// read-only pull check. Do not use the system temp directory or CWD.
 	path, err := privateDeploymentStatePath(environment, "deployment/tmp/.image-pull-path-check")
@@ -136,31 +148,47 @@ func pullRolloutImageContext(parent context.Context, environment, username, toke
 	}
 	ctx, cancel := context.WithTimeout(parent, 5*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "docker", "--config", dir, "pull", "--platform", "linux/amd64", image)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error {
-		if cmd.Process == nil {
-			return os.ErrProcessDone
+	for attempt := 1; attempt <= 3; attempt++ {
+		cmd := exec.CommandContext(ctx, "docker", "--config", dir, "pull", "--platform", "linux/amd64", image)
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		cmd.Cancel = func() error {
+			if cmd.Process == nil {
+				return os.ErrProcessDone
+			}
+			err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			if errors.Is(err, syscall.ESRCH) {
+				return os.ErrProcessDone
+			}
+			return err
 		}
-		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		if errors.Is(err, syscall.ESRCH) {
-			return os.ErrProcessDone
+		cmd.WaitDelay = time.Second
+		var diagnostic deploymentPullDiagnostic
+		cmd.Stderr = &diagnostic
+		err := cmd.Run()
+		if err == nil && ctx.Err() == nil {
+			return nil
 		}
-		return err
-	}
-	cmd.WaitDelay = time.Second
-	// Never return raw tool output: registry/helper diagnostics can contain secrets.
-	if err := cmd.Run(); err != nil {
 		if ctx.Err() != nil {
-			return &deploymentImagePullError{code: deploymentRequestCode(ctx.Err()), detail: fmt.Sprintf("linux/amd64 pull canceled or timed out (%s)", deploymentRequestCode(ctx.Err()))}
+			return &deploymentImagePullError{code: deploymentRequestCode(ctx.Err()), detail: fmt.Sprintf("linux/amd64 pull canceled or timed out (%s)", deploymentRequestCode(ctx.Err())), attempts: attempt, cause: ctx.Err()}
 		}
 		var missing *exec.Error
 		if errors.As(err, &missing) {
-			return &deploymentImagePullError{code: "EXECUTABLE_MISSING", detail: "Docker executable unavailable; install Docker before full image qualification"}
+			return &deploymentImagePullError{code: "EXECUTABLE_MISSING", detail: "Docker executable unavailable; install Docker before full image qualification", attempts: attempt}
 		}
-		return errors.New("linux/amd64 pull failed; check Docker daemon, digest availability and package access")
+		code, transient := classifyDeploymentPullDiagnostic(diagnostic.data)
+		if !transient || attempt == 3 {
+			return &deploymentImagePullError{code: code, detail: fmt.Sprintf("linux/amd64 pull failed (%s; attempts=%d)", code, attempt), attempts: attempt}
+		}
+		reportDeploymentPullRetry(ctx, code, attempt)
+		if err := wait(ctx, attempt); err != nil {
+			if ctx.Err() != nil {
+				err = ctx.Err()
+			}
+			code := deploymentRequestCode(err)
+			return &deploymentImagePullError{code: code, detail: fmt.Sprintf("linux/amd64 pull canceled or timed out (%s)", code), attempts: attempt, cause: err}
+		}
 	}
-	return nil
+	return errors.New("linux/amd64 pull failed")
 }
 
 func checkRolloutTLS(options rolloutTLSOptions) deploymentCredentialCheck {

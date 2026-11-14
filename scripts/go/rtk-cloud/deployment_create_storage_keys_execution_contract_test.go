@@ -34,6 +34,7 @@ type providerStorageExecutionContract struct {
 	posts, puts, deletes int
 	mode                 string
 	injected             bool
+	otaListQualified     bool
 }
 
 func newProviderStorageExecutionContract(t *testing.T, mode string, prepares ...func(*deploymentConfig, *environmentCreatePlan) []environmentReleasePublicationProof) *providerStorageExecutionContract {
@@ -190,6 +191,10 @@ func newProviderStorageExecutionContract(t *testing.T, mode string, prepares ...
 			if resource.Kind == "bucket" {
 				item["s3_endpoint"] = server.URL
 				exact = resource.Path + "/" + resource.Region + "/" + resource.Name
+				if r.Method == http.MethodGet && r.URL.Path == exact+"/access" {
+					emit(map[string]string{"acl": "private", "acl_xml": privateStorageACLForTest})
+					return
+				}
 			}
 			if r.URL.Path == exact {
 				if mode == "changed-provider" {
@@ -299,10 +304,19 @@ func (f *providerStorageExecutionContract) s3(t *testing.T, w http.ResponseWrite
 	}
 	switch {
 	case r.URL.Query().Has("acl"):
-		io.WriteString(w, privateStorageACLForTest)
+		t.Error("application key was used to read the ACL")
+		w.WriteHeader(http.StatusForbidden)
 	case r.URL.Query().Has("policy"):
 		io.WriteString(w, `{"Statement":[]}`)
 	case r.URL.Query().Get("list-type") == "2":
+		if f.mode == "complete" && purpose == "ota" {
+			if !f.injected || f.otaListQualified {
+				f.injected = true
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			f.otaListQualified = true
+		}
 		io.WriteString(w, `<ListBucketResult/>`)
 	default:
 		if !strings.HasPrefix(r.URL.Path, "/"+bucket+"/dev/__rtk_cloud_validation__/") {
@@ -312,6 +326,12 @@ func (f *providerStorageExecutionContract) s3(t *testing.T, w http.ResponseWrite
 		}
 		switch r.Method {
 		case http.MethodPut:
+			if f.mode == "complete" && purpose == "ota" {
+				if !f.otaListQualified {
+					t.Error("OTA canary started before a successful scoped list")
+				}
+				f.otaListQualified = false
+			}
 			f.puts++
 			f.objects[r.URL.Path] = append([]byte(nil), body...)
 		case http.MethodGet:

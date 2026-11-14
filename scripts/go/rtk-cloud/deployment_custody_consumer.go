@@ -18,7 +18,7 @@ func (r *maintenanceRuntime) custodyConsumerID(ctx context.Context, ns, name, co
 	if len(parts) != 3 || parts[0] != r.cfg.Environment || mqttFoundationEnv(source, "PKI_STATE_KV_MOUNT") != r.cfg.Values["PKI_STATE_KV_MOUNT"] || mqttFoundationEnv(source, "PKI_STATE_OPENBAO_ROLE") != environmentCustodyRoleName(strings.Join(parts, "/")) || mqttFoundationEnv(source, "PKI_ENVIRONMENT") != r.cfg.Environment {
 		return bad()
 	}
-	binding, err := readEnvironmentCustodyBootstrapBinding(r.cfg, r.store, parts[1])
+	binding, err := readEnvironmentCustodyBootstrapBinding(r.cfg, r.store, parts[1], r.createExecution)
 	if err != nil {
 		return "", err
 	}

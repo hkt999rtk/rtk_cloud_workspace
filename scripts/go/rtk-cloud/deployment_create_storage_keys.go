@@ -171,8 +171,15 @@ func establishProviderRecoveryStorageKeys(ctx context.Context, cfg deploymentCon
 		if err != nil || key.ID != created.ID {
 			return createProviderRecoveryBlock("new key does not have the exact single-bucket read_write grant")
 		}
-		if err := checker.validateNewStorageKey(provisionObjectStore{bucket: item.target.Bucket, region: item.target.Region, endpoint: endpoint, accessKey: created.Access, secretKey: created.Secret}, item.target.Prefix); err != nil {
-			return createProviderRecoveryBlock("new storage key private ACL/policy or read/write/delete validation failed; preserved credentials allow revalidation")
+		s3 := provisionObjectStore{bucket: item.target.Bucket, region: item.target.Region, endpoint: endpoint, accessKey: created.Access, secretKey: created.Secret}
+		if err := checker.waitForNewStorageKey(func() error {
+			return checker.verifyCreateStorageAccess(operator["LINODE_TOKEN"], s3, item.target.Prefix)
+		}); err != nil {
+			return createProviderRecoveryBlock(fmt.Sprintf("new %s storage key qualification failed: %v", item.purpose, err))
+		}
+		// The scoped list already passed in the bounded read-only qualification.
+		if err := checker.validateStorageObjectCanary(s3, item.target.Prefix); err != nil {
+			return createProviderRecoveryBlock(fmt.Sprintf("bucket %s new application key read/write canary failed: %v", s3.bucket, createStorageCanaryError(err)))
 		}
 		replacements[len(replacements)-2].next = []byte(created.Access + "\n")
 		replacements[len(replacements)-1].next = []byte(created.Secret + "\n")

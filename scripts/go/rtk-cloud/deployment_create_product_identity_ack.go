@@ -21,7 +21,9 @@ func productInstallationsComplete(ack productSessionInstallations, s environment
 	slices.Sort(expected)
 	installed := slices.Clone(ack.Installed)
 	slices.Sort(installed)
-	if ack.Session != s.BootstrapSessionID || ack.Issuer != s.Intermediate.ID || ack.Root != s.Root.RootFingerprint || !slices.Equal(ack.Subjects, expected) || ack.Status != "active" && ack.Status != "sealed" && ack.Status != "expired" || (!ack.Expires.After(now) || ack.Status == "expired") && !((ack.Status == "sealed" || ack.Status == "expired") && slices.Equal(installed, expected)) || len(expected) == 0 {
+	// Complete native ACK facts remain valid after clock expiry; the native
+	// finalizer owns the expiry transition. This grants no enrollment lifetime.
+	if ack.Session != s.BootstrapSessionID || ack.Issuer != s.Intermediate.ID || ack.Root != s.Root.RootFingerprint || !slices.Equal(ack.Subjects, expected) || ack.Status != "active" && ack.Status != "sealed" && ack.Status != "expired" || ack.Status == "active" && ack.Expires.IsZero() || (!ack.Expires.After(now) || ack.Status == "expired") && !slices.Equal(installed, expected) || len(expected) == 0 {
 		return false, environmentCreateBootstrapBlocker("product installation ACK belongs to another session, issuer, expiry or subject policy")
 	}
 	for i, subject := range expected {

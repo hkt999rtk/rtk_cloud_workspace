@@ -248,7 +248,7 @@ func readActiveTransportRenewal(store secretStore, parent string, old map[string
 		return bad()
 	}
 	repairJournal.Entries = repairJournal.Entries[:repairEnd]
-	if !found || !activeTransportNativeSourceCheckpoint(store, &environmentCreateExecution{Store: store, owner: owner, Journal: repairJournal}) {
+	if !found || !activeTransportNativeSourceCheckpoint(store, &environmentCreateExecution{versionState: &createOperatorVersionState{}, Store: store, owner: owner, Journal: repairJournal}) {
 		return bad()
 	}
 	if len(artifact.Plan.Resources) != 13 || len(proof.Material) != len(artifact.Plan.Material)-activeTransportEvidenceCount(artifact.Plan.Material)+4 {
@@ -316,22 +316,31 @@ func readActiveTransportRenewal(store secretStore, parent string, old map[string
 var activeTransportQualificationGates = []string{"deployment.active-transport.target", "deployment.active-transport.issuers", "deployment.active-transport.material", "deployment.active-transport.owners", "deployment.active-transport.dry-run"}
 
 func loadActiveTransportExecution(cfg deploymentConfig, store secretStore, parent string) (*environmentCreateExecution, environmentCreateProviderRecoveryArtifact, error) {
-	var artifact environmentCreateProviderRecoveryArtifact
-	bad := func() (*environmentCreateExecution, environmentCreateProviderRecoveryArtifact, error) {
-		return nil, artifact, activeTransportError()
+	if cfg.Environment != "dev" || cfg.Values["DEPLOYMENT_PROTECTION_PROFILE"] != "standard" {
+		return nil, environmentCreateProviderRecoveryArtifact{}, activeTransportError()
 	}
-	if cfg.Environment != "dev" || cfg.Values["DEPLOYMENT_PROTECTION_PROFILE"] != "standard" || !environmentPreflightDigest.MatchString(parent) {
-		return bad()
+	return loadCreateRecoveryExecutionOwner(cfg, store, parent)
+}
+
+// This common owner loader preserves all original fence, journal,
+// qualification and selected-configuration checks without selecting a profile.
+func loadCreateRecoveryExecutionOwner(cfg deploymentConfig, store secretStore, parent string) (*environmentCreateExecution, environmentCreateProviderRecoveryArtifact, error) {
+	var artifact environmentCreateProviderRecoveryArtifact
+	bad := func(boundary string) (*environmentCreateExecution, environmentCreateProviderRecoveryArtifact, error) {
+		return nil, artifact, createProviderRecoveryBlock("same-key temporary TLS repair requires the exact original completed generation, managed ACTIVE issuers, owners, material and qualified proof; original create owner verification failed at " + boundary)
+	}
+	if !environmentPreflightDigest.MatchString(parent) {
+		return bad("parent digest")
 	}
 	fence := filepath.Join(store.Root, "deployment/.execution-active")
 	if validateEnvironmentPreflightDirectories(store, fence) != nil {
-		return bad()
+		return bad("canonical private fence")
 	}
 	lock, err := deploymentplan.LockExecutionOwner(fence, false)
 	if err != nil {
-		return bad()
+		return bad("process lock")
 	}
-	e := &environmentCreateExecution{Store: store, running: lock}
+	e := &environmentCreateExecution{versionState: &createOperatorVersionState{}, Store: store, running: lock}
 	loaded := false
 	defer func() {
 		if !loaded {
@@ -340,34 +349,49 @@ func loadActiveTransportExecution(cfg deploymentConfig, store secretStore, paren
 	}()
 	e.ownerInfo, err = os.Lstat(fence)
 	if err != nil {
-		return bad()
+		return bad("fence identity")
 	}
 	e.runningInfo, err = lock.Stat()
 	if err != nil {
-		return bad()
+		return bad("process lock identity")
 	}
 	if readEnvironmentPreflightJSON(filepath.Join(fence, "owner.json"), &e.owner) != nil || e.owner.Schema != environmentCreateOwnerSchema || e.owner.PlanSHA256 != parent || e.owner.Environment != cfg.Environment || e.owner.Stack != cfg.Values["CLOUD_STACK_NAME"] || filepath.Clean(e.owner.Journal) != e.owner.Journal || !strings.HasPrefix(e.owner.Journal, "deployment/create/executions/"+parent+"/execution-") {
-		return bad()
+		return bad("recorded owner")
 	}
 	e.JournalPath, err = privateDeploymentStatePath(cfg.Environment, e.owner.Journal)
 	if err != nil {
-		return bad()
+		return bad("canonical journal path")
 	}
 	e.Directory = filepath.Dir(e.JournalPath)
 	if readEnvironmentPreflightJSON(e.JournalPath, &e.Journal) != nil || e.Journal.OwnerToken != e.owner.OwnerToken || e.Journal.PlanSHA256 != parent || !e.Journal.CompletedAt.IsZero() || len(e.Journal.Entries) == 0 {
-		return bad()
+		return bad("recorded journal")
 	}
-	if readEnvironmentPreflightJSON(filepath.Join(store.Root, "deployment/create/recovery", parent, "qualification.json"), &artifact) != nil || artifact.Schema != "rtk-cloud.provider-create-recovery-artifact/v1" || deploymentplan.Digest(artifact.Plan) != parent || deploymentplan.Digest(artifact) != e.Journal.ArtifactSHA256 || artifact.Qualification.Decision != "GO" || deploymentplan.Digest(cfg) != artifact.Plan.Plan.ConfigurationSHA256 {
-		return bad()
+	if readEnvironmentPreflightJSON(filepath.Join(store.Root, "deployment/create/recovery", parent, "qualification.json"), &artifact) != nil || artifact.Schema != "rtk-cloud.provider-create-recovery-artifact/v1" || deploymentplan.Digest(artifact.Plan) != parent || deploymentplan.Digest(artifact) != e.Journal.ArtifactSHA256 || artifact.Qualification.Decision != "GO" {
+		return bad("admitted qualification")
+	}
+	if deploymentplan.Digest(cfg) != artifact.Plan.Plan.ConfigurationSHA256 {
+		return bad("configuration")
 	}
 	if e.Check(context.Background()) != nil {
-		return bad()
+		return bad("durable owner consistency")
 	}
+	e.originalPlanSHA = deploymentplan.Digest(artifact.Plan.Plan)
+	e.versionState = &createOperatorVersionState{}
 	loaded = true
 	return e, artifact, nil
 }
 
 func activeTransportOriginalIdentity(ctx context.Context, cfg deploymentConfig, store secretStore, e *environmentCreateExecution, b environmentKubernetesBackend) (string, string, error) {
+	foundationKey := ""
+	for _, entry := range e.Journal.Entries {
+		if strings.HasPrefix(entry.Key, "kubernetes/foundation-recovery-") && entry.State == "completed" {
+			foundationKey = entry.Key
+		}
+	}
+	return originalCreateOpenBaoFoundationIdentity(ctx, cfg, store, e, b, foundationKey)
+}
+
+func originalCreateOpenBaoFoundationIdentity(ctx context.Context, cfg deploymentConfig, store secretStore, e *environmentCreateExecution, b environmentKubernetesBackend, foundationKey string) (string, string, error) {
 	raw, err := readBoundedEnvironmentFile(filepath.Join(store.Root, "openbao/init.json"), true)
 	if err != nil {
 		return "", "", err
@@ -401,30 +425,104 @@ func activeTransportOriginalIdentity(ctx context.Context, cfg deploymentConfig, 
 		return "", "", err
 	}
 	pod, err := b.Read(ctx, "Pod/"+ns+"/openbao-0")
-	if err != nil || proof.InitSHA != environmentPreflightBytesSHA256(raw) || proof.RootRef != "openbao/root-token" || proof.UnsealRef != "openbao/unseal-key" || deploymentplan.String(deploymentplan.Map(set["metadata"])["uid"]) != proof.SetUID || deploymentplan.String(deploymentplan.Map(pod["metadata"])["uid"]) != proof.PodUID || validateOpenBaoPodOwner(set, pod) != nil {
+	if err != nil || proof.InitSHA != environmentPreflightBytesSHA256(raw) || proof.RootRef != "openbao/root-token" || proof.UnsealRef != "openbao/unseal-key" || deploymentplan.String(deploymentplan.Map(set["metadata"])["uid"]) != proof.SetUID || validateOpenBaoPodOwner(set, pod) != nil {
 		return "", "", activeTransportError()
+	}
+	currentPodUID := deploymentplan.String(deploymentplan.Map(pod["metadata"])["uid"])
+	receipt, hasInPlace, err := completedOpenBaoInPlaceReceipt(ctx, store, e)
+	if err != nil {
+		return "", "", err
+	}
+	if currentPodUID != proof.PodUID {
+		writes, err := completedManagedAllocationWrites(store, e)
+		if err != nil {
+			return "", "", activeTransportError()
+		}
+		requiredRevision := deploymentplan.String(deploymentplan.Map(set["status"])["updateRevision"])
+		if hasInPlace {
+			history, err := verifyOpenBaoInPlaceHistory(ctx, cfg, store, e, receipt)
+			if err != nil || history.uid != proof.SetUID {
+				return "", "", activeTransportError()
+			}
+			history, err = currentOpenBaoInPlaceHistory(ctx, store, e, b, receipt, history)
+			if err != nil {
+				return "", "", err
+			}
+			if currentPodUID == history.qualification.PodUID {
+				// This replacement/unseal preceded the accepted same-Pod image
+				// handoff. OnDelete retains its revision and completed installer;
+				// authenticate the unchanged provider and exact guarded image
+				// transition before checking that original unseal receipt.
+				if _, err := validateOpenBaoInPlaceObservation(history.qualification, history.original, set, pod, receipt.HostContainerID, history.desired); err != nil {
+					return "", "", err
+				}
+				requiredRevision = deploymentplan.String(deploymentplan.Map(deploymentplan.Map(pod["metadata"])["labels"])["controller-revision-hash"])
+			} else if !openBaoInPlaceReplacementMatches(history, set, pod) {
+				return "", "", activeTransportError()
+			}
+			// The image child may follow the managed host write. Fold it using
+			// the shared accepted-journal, UID and baseline verifier.
+			for _, write := range writes {
+				if write.ID == deploymentplan.ID(set) && !deploymentplan.Matches(write.Desired, history.desired) {
+					writes, err = foldCompletedRecordedSuccessors(writes, []completedRecordedSuccessorStage{{Plan: history.child, Journal: history.journal}})
+					if err != nil {
+						return "", "", activeTransportError()
+					}
+					break
+				}
+			}
+			for i, write := range writes {
+				if write.ID == deploymentplan.ID(set) && write.UID == history.uid && deploymentplan.Matches(history.child.Resources[0].Desired, write.Desired) {
+					writes[i].Desired = deploymentplan.Clone(history.desired)
+				}
+			}
+		}
+		if !recordedManagedOpenBaoReplacementAtRevision(e.Journal, writes, set, pod, proof.InitSHA, unseal, requiredRevision) {
+			return "", "", activeTransportError()
+		}
+		return currentPodUID, proof.SetUID, e.Check(ctx)
 	}
 	// The original foundation remains the workload authority before transport
 	// cutover; bind its exact StatefulSet body and immutable Pod container image.
-	foundationKey := ""
-	for _, entry := range e.Journal.Entries {
-		if strings.HasPrefix(entry.Key, "kubernetes/foundation-recovery-") && entry.State == "completed" {
-			foundationKey = entry.Key
-		}
-	}
 	foundation, journal, err := acceptedCreateStage(store, e, foundationKey)
 	if err != nil {
 		return "", "", err
+	}
+	var inPlace openBaoInPlaceOwner
+	if hasInPlace {
+		inPlace, err = verifyOpenBaoInPlaceReceipt(ctx, cfg, store, e, b, receipt)
+		if err != nil {
+			return "", "", err
+		}
 	}
 	matched := false
 	for _, r := range foundation.Resources {
 		if r.ID != "StatefulSet/"+ns+"/openbao" {
 			continue
 		}
-		if journal.Owners[r.ID] != proof.SetUID || !deploymentplan.Matches(r.Desired, set) {
+		target := r.Desired
+		if hasInPlace {
+			// Only the accepted in-place successor may change the host image.
+			// Its source must still extend this original foundation owner.
+			if inPlace.StatefulSetUID != proof.SetUID || inPlace.PodUID != proof.PodUID || !deploymentplan.Matches(r.Desired, inPlace.original) {
+				return "", "", activeTransportError()
+			}
+			target = deploymentplan.Clone(r.Desired)
+			pod := environmentPKIPod(target)
+			host := managedNamedField(pod["containers"], "openbao-pki")
+			init := managedNamedField(pod["initContainers"], "openbao-pki-install")
+			if host == nil || init == nil || inPlace.ReleaseImage.Reference == "" {
+				return "", "", activeTransportError()
+			}
+			host["image"], init["image"] = inPlace.ReleaseImage.Reference, inPlace.ReleaseImage.Reference
+			if inPlace.desired != nil {
+				target = deploymentplan.Clone(inPlace.desired)
+			}
+		}
+		if journal.Owners[r.ID] != proof.SetUID || !deploymentplan.Matches(target, set) {
 			return "", "", activeTransportError()
 		}
-		wanted := certIssuerObjectList(environmentPKIPod(r.Desired)["containers"])
+		wanted := certIssuerObjectList(environmentPKIPod(target)["containers"])
 		actual := certIssuerObjectList(deploymentplan.Map(pod["spec"])["containers"])
 		if len(wanted) != len(actual) {
 			return "", "", activeTransportError()
@@ -442,6 +540,36 @@ func activeTransportOriginalIdentity(ctx context.Context, cfg deploymentConfig, 
 	// Exact mounted original material is checked through the authenticated
 	// Kubernetes channel. An expired API certificate never authorizes a TLS bypass.
 	return proof.PodUID, proof.SetUID, e.Check(ctx)
+}
+
+func recordedManagedOpenBaoReplacement(j environmentCreateJournal, writes []activeTransportRenewalResource, set, pod deploymentplan.Object, initSHA, unseal string) bool {
+	return recordedManagedOpenBaoReplacementAtRevision(j, writes, set, pod, initSHA, unseal, deploymentplan.String(deploymentplan.Map(set["status"])["updateRevision"]))
+}
+
+// The caller authenticates whether this Pod was replaced before or after the
+// accepted in-place handoff. Both paths retain exact native unseal evidence.
+func recordedManagedOpenBaoReplacementAtRevision(j environmentCreateJournal, writes []activeTransportRenewalResource, set, pod deploymentplan.Object, initSHA, unseal, requiredRevision string) bool {
+	setUID := deploymentplan.String(deploymentplan.Map(set["metadata"])["uid"])
+	meta := deploymentplan.Map(pod["metadata"])
+	podUID := deploymentplan.String(meta["uid"])
+	revision := deploymentplan.String(deploymentplan.Map(meta["labels"])["controller-revision-hash"])
+	if setUID == "" || podUID == "" || revision == "" || revision != requiredRevision {
+		return false
+	}
+	bound := false
+	for _, write := range writes {
+		if write.ID == deploymentplan.ID(set) && write.UID == setUID && deploymentplan.Matches(write.Desired, set) {
+			bound = true
+		}
+	}
+	intent := deploymentplan.Object{"pod_uid": podUID, "controller_uid": setUID, "revision": revision, "original_init_sha256": initSHA, "unseal_sha256": environmentPreflightBytesSHA256([]byte(unseal))}
+	receipt := deploymentplan.Object{"pod_uid": podUID, "initialized": true, "sealed": false, "revision": revision}
+	for _, entry := range j.Entries {
+		if entry.Key == "openbao-managed-unseal-"+podUID && entry.Phase == "openbao-unseal" && entry.State == "completed" && !entry.CompletedAt.IsZero() && entry.IntentSHA256 == deploymentplan.Digest(intent) && deploymentplan.Digest(jsonRawObject(entry.Receipt)) == deploymentplan.Digest(receipt) {
+			return bound
+		}
+	}
+	return false
 }
 
 func activeTransportOwners(ctx context.Context, cfg deploymentConfig, store secretStore, e *environmentCreateExecution, b environmentKubernetesBackend, old, current map[string]environmentCreateTransport) ([]activeTransportRenewalResource, error) {

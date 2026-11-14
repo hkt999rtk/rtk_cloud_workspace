@@ -38,7 +38,7 @@ func lateNativeCommandContractBackend(t *testing.T, store secretStore, replies m
 	return environmentKubernetesBackend{Store: store, KubeconfigContent: []byte("isolated-registry-kubeconfig"), RolloutTimeout: time.Second}, calls
 }
 func lateRegistryContractCommand(stack, query string) string {
-	return strings.Join([]string{"--namespace", stack + "-platform", "exec", "postgresql-0", "--container", "postgres", "--", "env", "PGOPTIONS=-c default_transaction_read_only=on", "/bin/sh", "-ec", `PGPASSWORD="$POSTGRES_PASSWORD" psql -U postgres -d video_cloud -v ON_ERROR_STOP=1 -At -c "$1"`, "registry-read", query}, " ")
+	return strings.Join([]string{"--namespace", stack + "-platform", "exec", "postgresql-0", "--container", "postgres", "--", "env", "PGOPTIONS=-c default_transaction_read_only=on", "/bin/sh", "-ec", `PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U postgres -d video_cloud -v ON_ERROR_STOP=1 -At -c "$1"`, "registry-read", query}, " ")
 }
 
 func TestManagedLateNativeRegistryCRLsExecutionContract(t *testing.T) {

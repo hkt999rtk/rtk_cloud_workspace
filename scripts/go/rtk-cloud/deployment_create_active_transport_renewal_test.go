@@ -467,3 +467,45 @@ func TestActiveTransportCandidatePathStoredRelativeExecutionAndAbsoluteQualifica
 		}
 	}
 }
+
+func TestActiveTransportReceiptCanonicalReloadRejectsChangedEvidence(t *testing.T) {
+	_, e, _, _ := freshStageFixture(t)
+	proof := activeTransportRenewalProof{Schema: activeTransportRenewalSchema, Parent: e.Journal.PlanSHA256, Review: deploymentplan.Digest("review"), Material: map[string]string{"original": "same"}, Owners: map[string]string{"one": "uid"}, Completed: true}
+	key := "active-transport-receipt-fixture"
+	now := time.Now().UTC()
+	if err := e.BeginEntry(key, "recovery", mustProviderRecoveryJSON(deploymentplan.Object{"review": proof.Review}), now); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.RecordReceipt(key, mustProviderRecoveryJSON(proof)); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.CompleteEntry(key, now); err != nil {
+		t.Fatal(err)
+	}
+	var saved environmentCreateJournal
+	if err := readExecutionJSON(e.JournalPath, &saved); err != nil {
+		t.Fatal(err)
+	}
+	entry := createOpenBaoACKCompletionEntry(saved, key)
+	if entry == nil || deploymentplan.Digest(json.RawMessage(entry.Receipt)) != activeTransportJournalDigest(proof) {
+		t.Fatal("genuine saved and reloaded receipt rejected")
+	}
+	// RecordReceipt canonicalized the original struct encoding's key order.
+	original := json.RawMessage(mustProviderRecoveryJSON(proof))
+	if string(original) == string(entry.Receipt) {
+		t.Fatal("fixture did not exercise reordered JSON object keys")
+	}
+	changed := proof
+	changed.Owners = map[string]string{"one": "different"}
+	if deploymentplan.Digest(json.RawMessage(entry.Receipt)) == activeTransportJournalDigest(changed) {
+		t.Fatal("changed receipt accepted")
+	}
+	var altered map[string]any
+	if err := json.Unmarshal(entry.Receipt, &altered); err != nil {
+		t.Fatal(err)
+	}
+	altered["completed"] = "true"
+	if deploymentplan.Digest(json.RawMessage(mustProviderRecoveryJSON(altered))) == activeTransportJournalDigest(proof) {
+		t.Fatal("changed JSON type accepted")
+	}
+}

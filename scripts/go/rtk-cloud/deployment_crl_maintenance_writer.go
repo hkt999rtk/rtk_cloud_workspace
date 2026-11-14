@@ -65,7 +65,7 @@ func parseMaintenanceWriterAccess(raw []byte) (maintenanceWriterAccess, error) {
 }
 
 func (r *maintenanceRuntime) writerAccess(ctx context.Context, c crlMaintenanceConsumer) (maintenanceWriterAccess, error) {
-	raw, err := r.command(ctx, nil, "--namespace", c.Namespace, "exec", "pod/"+c.Pod, "--container", c.Container, "--", "/bin/sh", "-ec", maintenanceWriterAccessScript, "crl-writer-access", c.StatePath)
+	raw, err := r.localConsumerCommand(ctx, c, nil, nil, "/bin/sh", "-ec", maintenanceWriterAccessScript, "crl-writer-access", c.StatePath)
 	if err != nil {
 		return maintenanceWriterAccess{}, fmt.Errorf("original CRL writer directory unavailable for %s/%s/%s", c.Namespace, c.Pod, c.Container)
 	}

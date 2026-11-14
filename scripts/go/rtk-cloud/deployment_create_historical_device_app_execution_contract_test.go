@@ -184,7 +184,11 @@ func TestHistoricalCompleteAuthorityContinuationPreservesReadyIdentity(t *testin
 	f.installHistoricalAuthorityProtocol(t)
 	keys := map[string]*ecdsa.PrivateKey{}
 	ready := f.trustAuthority(t, "mqtt", 21, false, keys)
+	// A fenced management client must not prevent read-only verification of
+	// already completed native issuer ceremonies needed to repair that client.
+	f.protocol["issuer_read_unavailable"] = true
 	f.publish(t)
+	installHistoricalActiveIssuerRegistry(t, f)
 	p.Materials = map[string]string{}
 	actual, _, err := loadOriginalReadyCreateRoot(context.Background(), f.cfg, f.store, f.e, f.backend, f.operator, &p, "mqtt")
 	if err != nil || actual.ID != ready.ID {
@@ -199,6 +203,15 @@ func TestHistoricalCompleteAuthorityContinuationPreservesReadyIdentity(t *testin
 	if err != nil || originalReady.Certificate != loaded.Certificate {
 		t.Fatal("original READY intermediate", err)
 	}
+	before = createBootstrapStateSnapshot(t, f.store.Root)
+	changed := deploymentplan.Clone(deploymentplan.Map(f.protocol["issuers"].(map[string]any)[intermediate.ID]))
+	changed["status"] = "retiring"
+	f.protocol["issuers"].(map[string]any)[intermediate.ID] = changed
+	f.publish(t)
+	if _, err := loadOriginalActiveCreateIntermediate(context.Background(), f.cfg, f.store, f.e, f.backend, f.operator, root, findEnvironmentCreateDomainPolicy(f.p.Plan.Bootstrap, "mqtt")); err == nil {
+		t.Fatal("native issuer drift was replaced with the expected local document")
+	}
+	assertRecoveryContractReadOnly(t, f.store, before)
 }
 
 // A real Kubernetes admission rejection of the historical underscore name. The

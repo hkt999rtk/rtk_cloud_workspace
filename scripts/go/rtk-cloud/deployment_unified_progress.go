@@ -185,6 +185,11 @@ func environmentProgressStageTask(stage string) string {
 		"deployment.dependencies": "Resolve retained resource dependencies", "deployment.plan.compile": "Order the exact resource plan",
 		"deployment.release.resolve": "Resolve pinned images and CI artifacts", "deployment.release.sources": "Check source revision pins",
 		"deployment.release.sources.recheck": "Recheck source revisions after CI artifact selection",
+		"deployment.crl.inspect":             "Inspect original CRL issuers and consumer storage",
+		"deployment.crl.prepare":             "Verify original custody and current revocations",
+		"deployment.crl.sign":                "Sign the successor CRL with the original Root",
+		"deployment.crl.publish":             "Publish and verify the signed successor CRL",
+		"deployment.crl.converge":            "Restore provider trust, install CRLs and verify actual acknowledgments",
 	}[stage]; task != "" {
 		return task
 	}

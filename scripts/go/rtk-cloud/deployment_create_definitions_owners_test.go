@@ -1,12 +1,84 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
 
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 )
+
+func compileEnvironmentCreateStagePlan(ctx context.Context, e *environmentCreateExecution, stage string, in deploymentplan.Inputs, definitions []deploymentplan.Definition, live []deploymentplan.Object) (*deploymentplan.Plan, error) {
+	owners, err := environmentCreateQualifiedStageOwners(ctx, e, stage, definitions)
+	if err != nil {
+		return nil, err
+	}
+	return deploymentplan.Compile(in, definitions, live, owners)
+}
+
+func TestCreateWorkloadPreservesQualifiedUnlabeledClaimOwner(t *testing.T) {
+	full, live := createDefinitionOwnersFixture(t)
+	definitions := environmentCreateDefinitions(full)
+	owners := map[string]string{}
+	for _, object := range live {
+		if object["kind"] == "PersistentVolumeClaim" {
+			delete(deploymentplan.Map(object["metadata"]), "labels")
+			owners[deploymentplan.ID(object)] = deploymentplan.String(deploymentplan.Map(object["metadata"])["uid"])
+		}
+	}
+	for _, d := range definitions {
+		if d.Object["kind"] == "PersistentVolumeClaim" {
+			delete(deploymentplan.Map(d.Object["metadata"]), "labels")
+		}
+	}
+	full, err := deploymentplan.Compile(full.Inputs, definitions, live, owners)
+	if err != nil {
+		t.Fatal("qualified full plan", err)
+	}
+	e := &environmentCreateExecution{}
+	in := full.Inputs
+	in.Operation = "scoped"
+	before := deploymentplan.Digest(full)
+	ctx := context.WithValue(t.Context(), environmentCreateQualifiedStageKey{}, environmentCreateQualifiedStage{e, "workload", full})
+	child, err := compileEnvironmentCreateStagePlan(ctx, e, "workload", in, environmentCreateDefinitions(full), live)
+	if err != nil {
+		t.Fatal("original unlabeled claim lost qualified ownership in child", err)
+	}
+	for _, r := range child.Resources {
+		if r.Desired["kind"] == "PersistentVolumeClaim" && (r.UID != owners[r.ID] || r.Action != "retain") {
+			t.Fatal("claim identity or action changed")
+		}
+	}
+	if deploymentplan.Digest(full) != before {
+		t.Fatal("qualified full plan changed")
+	}
+	for _, mode := range []string{"missing-authority", "foreign-execution", "foreign-stage", "changed-definitions", "replaced-claim"} {
+		t.Run(mode, func(t *testing.T) {
+			use, defs, objects := ctx, environmentCreateDefinitions(full), append([]deploymentplan.Object(nil), live...)
+			switch mode {
+			case "missing-authority":
+				use = t.Context()
+			case "foreign-execution":
+				use = context.WithValue(t.Context(), environmentCreateQualifiedStageKey{}, environmentCreateQualifiedStage{&environmentCreateExecution{}, "workload", full})
+			case "foreign-stage":
+				use = context.WithValue(t.Context(), environmentCreateQualifiedStageKey{}, environmentCreateQualifiedStage{e, "other", full})
+			case "changed-definitions":
+				deploymentplan.Map(defs[0].Object["metadata"])["name"] = "another"
+			case "replaced-claim":
+				for i, o := range objects {
+					if o["kind"] == "PersistentVolumeClaim" {
+						objects[i] = deploymentplan.Clone(o)
+						deploymentplan.Map(objects[i]["metadata"])["uid"] = "99999999-9999-4999-8999-999999999999"
+					}
+				}
+			}
+			if _, err := compileEnvironmentCreateStagePlan(use, e, "workload", in, defs, objects); err == nil {
+				t.Fatal("unqualified owner or changed source accepted")
+			}
+		})
+	}
+}
 
 func createDefinitionOwnersFixture(t *testing.T) (*deploymentplan.Plan, []deploymentplan.Object) {
 	t.Helper()

@@ -169,6 +169,11 @@ func TestManagedLateAppCompletionNegativeMembershipFreezesImportLeaseAndOldStart
 	if !managedLateAppCompletionMembership(a, source, captured, captured, evidence) || !managedLateAppCompletionMembership(a, source, captured, final, evidence) {
 		t.Fatal("genuine monotonic API/Broker/top closure refused")
 	}
+	formatted := cloneAppCompletionNegativeJournal(t, final)
+	formatted.Entries[len(source.Entries)+2].Receipt = append(formatted.Entries[len(source.Entries)+2].Receipt, '\n')
+	if !managedLateAppCompletionMembership(a, source, final, formatted, evidence) {
+		t.Fatal("equivalent formatted API receipt rejected")
+	}
 	for _, mode := range []string{"changed-import-start", "changed-import-completion", "changed-import-raw-order", "changed-API-start", "changed-API-phase", "changed-API-intent", "changed-top-phase", "changed-top-start", "added-parent-admission", "added-lease", "changed-lease-UID", "changed-metadata", "changed-source", "missing-native-root-ACK", "missing-native-ICA-ACK", "missing-cache", "wrong-owner-evidence", "extra-native-evidence", "changed-completed-API", "regressed-completion", "missing-final-broker", "wrong-broker-receipt", "wrong-top-receipt"} {
 		t.Run(mode, func(t *testing.T) {
 			before := cloneAppCompletionNegativeJournal(t, captured)

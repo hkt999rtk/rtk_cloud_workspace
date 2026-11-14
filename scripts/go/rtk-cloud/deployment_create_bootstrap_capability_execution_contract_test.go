@@ -12,7 +12,7 @@ import (
 )
 
 func TestBootstrapCapabilityExecutionContractChecksImmutableImagesBeforeAllocation(t *testing.T) {
-	for _, mode := range []string{"original", "kv-supported", "kv-missing-inspection", "kv-missing-public-crl", "kv-missing-initial-crl", "wrong-environment", "mutable-image", "missing-operator", "changed-operator", "changed-template", "existing-authority", "missing-binary", "wrong-service", "missing-feature", "malformed", "oversized", "command-failed"} {
+	for _, mode := range []string{"original", "kv-supported", "kv-final-controller-old", "kv-final-management-old", "kv-final-explicit-compatible", "kv-missing-inspection", "kv-missing-public-crl", "kv-missing-initial-crl", "kv-missing-app-crl", "kv-missing-openbao-crl", "kv-recovery-no-app-crl", "wrong-environment", "mutable-image", "missing-operator", "changed-operator", "changed-template", "existing-authority", "missing-binary", "wrong-service", "missing-feature", "malformed", "oversized", "command-failed"} {
 		t.Run(mode, func(t *testing.T) {
 			cfg, store, _, operator, plan := createDependencyContractFixture(t)
 			cfg.Values["PKI_REQUIRE_USER_MFA"] = "false"
@@ -25,16 +25,37 @@ func TestBootstrapCapabilityExecutionContractChecksImmutableImagesBeforeAllocati
 					t.Fatal(err)
 				}
 			}
+			if mode == "kv-final-controller-old" || mode == "kv-final-management-old" || mode == "kv-final-explicit-compatible" {
+				role := "LKE_PKI_CONTROLLER_IMAGE"
+				if mode == "kv-final-management-old" {
+					role = "LKE_PKI_MANAGEMENT_IMAGE"
+				}
+				plan.Images[role] = "ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api@sha256:" + strings.Repeat("f", 64)
+				if mode == "kv-final-explicit-compatible" {
+					raw := mustProviderRecoveryJSON(environmentImageSelection{Environment: cfg.Environment, Images: map[string]environmentReleaseImage{role: {Reference: plan.Image}}})
+					operator[environmentImagesKey] = string(raw)
+					if err := store.write("operator/env/"+environmentImagesKey, raw, false); err != nil {
+						t.Fatal(err)
+					}
+				}
+
+			}
 			bin := t.TempDir()
 			log := filepath.Join(bin, "calls")
 			features := []string{"deployment-bootstrap-finalize-v1", "first-trust-v1", "create-service-enrollment-v1", "registry-only-issuance-v1", "fresh-bootstrap-trust-v1", "mqtt-bundle-bootstrap-v1", "owned-server-export-v1", "managed-callback-export-v1", "managed-test-lab-callback-v1", "service-registration-bootstrap-ack-v1"}
-			if mode == "kv-supported" || mode == "kv-missing-public-crl" || mode == "kv-missing-initial-crl" {
+			if strings.HasPrefix(mode, "kv-") && mode != "kv-missing-inspection" {
 				features = append(features, "committed-identity-inspection-v1", "committed-identity-batch-admission-v1")
 				if mode != "kv-missing-public-crl" {
 					features = append(features, "committed-public-crl-maintenance-v1")
 				}
 				if mode != "kv-missing-initial-crl" {
 					features = append(features, "initial-service-crl-custody-v1")
+				}
+				if mode != "kv-missing-app-crl" && mode != "kv-recovery-no-app-crl" {
+					features = append(features, "initial-public-crl-custody-v2")
+				}
+				if mode != "kv-missing-openbao-crl" && mode != "kv-recovery-no-app-crl" {
+					features = append(features, "initial-openbao-public-crl-custody-v1")
 				}
 			}
 			for _, service := range []string{"rtk-account-manager", "pkimanagement", "certissuer", "api", "logingester", "pkibroker", "serviceidentity-bootstrap", "emqxpkihost", "mqttfoundation", "shadowworker", "otaservice", "videostorage", "webrtcservice", "cloudlogger"} {
@@ -64,13 +85,18 @@ set -eu
 printf '%s\n' "$*" >> "$RTK_BOOTSTRAP_CAPABILITY_CALLS"
 entrypoint=
 while [ "$#" -gt 0 ]; do
-  if [ "$1" = --entrypoint ]; then shift; entrypoint="$1"; break; fi
+  if [ "$1" = --entrypoint ]; then shift; entrypoint="$1"; shift; image="$1"; break; fi
   shift
 done
 if [ "$entrypoint" = /bin/sh ]; then
   test "$RTK_BOOTSTRAP_CAPABILITY_MODE" != missing-binary
   exit
 fi
+case "$image" in
+  *ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff)
+    printf '%s\n' '{"schema":"rtk-cloud.deployment-capabilities/v1","service":"serviceidentity-bootstrap","features":["owned-server-export-v1"]}'
+    exit;;
+esac
 test "$RTK_BOOTSTRAP_CAPABILITY_MODE" != command-failed
 cat "$RTK_BOOTSTRAP_CAPABILITY_DIRECTORY/${entrypoint##*/}.json"
 `
@@ -103,15 +129,20 @@ cat "$RTK_BOOTSTRAP_CAPABILITY_DIRECTORY/${entrypoint##*/}.json"
 				}
 			}
 			before := createBootstrapStateSnapshot(t, store.Root)
-			err := qualifyEnvironmentCreateBootstrapCapabilities(context.Background(), cfg, plan, store, operator)
-			if (err == nil) != (mode == "original" || mode == "kv-supported") {
+			var err error
+			if mode == "kv-recovery-no-app-crl" {
+				err = qualifyEnvironmentCreateBootstrapCapabilitiesWithPublications(context.Background(), cfg, plan, store, operator, nil)
+			} else {
+				err = qualifyEnvironmentCreateBootstrapCapabilities(context.Background(), cfg, plan, store, operator)
+			}
+			if (err == nil) != (mode == "original" || mode == "kv-supported" || mode == "kv-recovery-no-app-crl" || mode == "kv-final-explicit-compatible") {
 				t.Fatal("unexpected immutable bootstrap capability qualification", err)
 			}
 			if !reflect.DeepEqual(before, createBootstrapStateSnapshot(t, store.Root)) {
 				t.Fatal("capability qualification generated identity, allocation or admission evidence")
 			}
 			calls, readErr := os.ReadFile(log)
-			if mode == "original" || mode == "kv-supported" {
+			if mode == "original" || mode == "kv-supported" || mode == "kv-recovery-no-app-crl" || mode == "kv-final-explicit-compatible" {
 				if readErr != nil || len(strings.Split(strings.TrimSpace(string(calls)), "\n")) != 14 {
 					t.Fatal("capability qualification omitted an enabled service", readErr, string(calls))
 				}
