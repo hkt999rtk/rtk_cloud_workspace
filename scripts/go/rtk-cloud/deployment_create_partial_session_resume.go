@@ -65,9 +65,8 @@ func partialSessionEntryAdvances(original, current environmentCreateJournalEntry
 	return true
 }
 
-// RawMessage is compacted by the same JSON encoder when a journal snapshot is
-// saved. Compare that exact representation, preserving field order and values,
-// rather than rejecting identical receipts solely due to whitespace.
+// Compare the canonical representation persisted by RecordReceipt, preserving
+// values while accepting changes in whitespace and JSON object field order.
 func samePersistedJSONReceipt(first, second json.RawMessage) bool {
 	if len(first) == 0 || len(second) == 0 {
 		return false

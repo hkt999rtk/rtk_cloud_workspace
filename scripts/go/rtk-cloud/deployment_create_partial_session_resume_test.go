@@ -73,11 +73,22 @@ func TestPartialSessionReceiptFormattingSurvivesJournalRoundTrip(t *testing.T) {
 		if err = json.Unmarshal(raw, &reloaded); err != nil || !partialSessionEntryAdvances(original, reloaded) {
 			t.Fatal("formatted original receipt rejected after JSON persistence", err)
 		}
-		for _, bad := range []json.RawMessage{json.RawMessage(`{"key":"<value>","owner":"replacement"}`), json.RawMessage(`{"owner":"original","key":"<value>"}`), json.RawMessage(`{"key":`)} {
-			reloaded.Receipt = bad
-			if partialSessionEntryAdvances(original, reloaded) {
-				t.Fatal("changed, reordered or invalid receipt accepted")
-			}
+		for _, tc := range []struct {
+			name    string
+			receipt string
+			want    bool
+		}{
+			{"reordered-fields", `{"owner":"original","key":"<value>"}`, true},
+			{"changed-owner", `{"key":"<value>","owner":"replacement"}`, false},
+			{"missing-field", `{"key":"<value>"}`, false},
+			{"invalid-json", `{"key":`, false},
+		} {
+			t.Run(state+"/"+tc.name, func(t *testing.T) {
+				reloaded.Receipt = json.RawMessage(tc.receipt)
+				if got := partialSessionEntryAdvances(original, reloaded); got != tc.want {
+					t.Fatalf("receipt preserved: got %v, want %v", got, tc.want)
+				}
+			})
 		}
 	}
 }
