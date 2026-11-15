@@ -1,14 +1,26 @@
 """Behavior checks for initialized-catalog extraction and schema comparison."""
 import json
 import sqlite3
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import database_schema_catalog as catalog
 
 
 class CatalogTest(unittest.TestCase):
+    def test_postgres_readiness_tolerates_slow_initialization(self):
+        outcomes = [subprocess.TimeoutExpired('docker', 10),
+                    subprocess.CompletedProcess([], 1),
+                    subprocess.CompletedProcess([], 0)]
+        with mock.patch.object(catalog.subprocess, 'run', side_effect=outcomes) as probe, \
+             mock.patch.object(catalog.time, 'monotonic', side_effect=[0, 1, 25, 26]), \
+             mock.patch.object(catalog.time, 'sleep'):
+            catalog._wait_for_postgres('isolated-schema-postgres')
+        self.assertEqual(3, probe.call_count)
+
     def test_sqlite_capture_reads_keys_indexes_and_metadata_without_writing(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'schema.sqlite'

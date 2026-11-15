@@ -303,10 +303,12 @@ jobs:
         ports:
           - 5432/tcp
         options: >-
-          --health-cmd "pg_isready"
+          --health-cmd "pg_isready -h 127.0.0.1"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+          --health-start-period 180s
+          --tmpfs /var/lib/postgresql/data:rw,size=2g
     steps:
       - uses: actions/checkout@v6
         with:
@@ -378,10 +380,12 @@ jobs:
         ports:
           - 5432/tcp
         options: >-
-          --health-cmd "pg_isready"
+          --health-cmd "pg_isready -h 127.0.0.1"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+          --health-start-period 180s
+          --tmpfs /var/lib/postgresql/data:rw,size=2g
     steps:
       - uses: actions/checkout@v6
         with:
@@ -428,10 +432,12 @@ jobs:
         ports:
           - 5432/tcp
         options: >-
-          --health-cmd "pg_isready"
+          --health-cmd "pg_isready -h 127.0.0.1"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+          --health-start-period 180s
+          --tmpfs /var/lib/postgresql/data:rw,size=2g
     steps:
       - uses: actions/checkout@v6
         with:

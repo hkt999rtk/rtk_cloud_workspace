@@ -351,25 +351,33 @@ def _run(args, *, cwd=ROOT, env=None):
     subprocess.run(args, cwd=cwd, env=env, check=True)
 
 
+def _wait_for_postgres(container):
+    deadline = time.monotonic() + 180
+    while time.monotonic() < deadline:
+        try:
+            ready = subprocess.run(['docker', 'exec', container, 'pg_isready',
+                                    '-h', '127.0.0.1', '-U', 'postgres', '-d', 'postgres'],
+                                   capture_output=True, timeout=10).returncode == 0
+            if ready:
+                return
+        except subprocess.TimeoutExpired:
+            pass
+        time.sleep(.5)
+    raise RuntimeError('Temporary PostgreSQL did not become ready')
+
+
 def generate(*, check=False):
     """Run production schema initializers against isolated databases."""
     with tempfile.TemporaryDirectory(prefix='rtk-er-schema-') as directory:
         scratch = Path(directory)
         container = 'rtk-er-schema-' + digest(str(scratch))[:12]
         _run(['docker', 'run', '--detach', '--rm', '--name', container,
-              '--label', 'rtk.local-test=er-schema', '-e', 'POSTGRES_USER=postgres',
+              '--label', 'rtk.local-test=er-schema', '--tmpfs', '/var/lib/postgresql/data:rw,size=2g',
+              '-e', 'POSTGRES_USER=postgres',
               '-e', 'POSTGRES_PASSWORD=local_test_only', '-e', 'POSTGRES_DB=postgres',
               '-p', '127.0.0.1::5432', 'postgres:16-alpine'])
         try:
-            for _ in range(40):
-                ready = subprocess.run(['docker', 'exec', container, 'pg_isready',
-                                        '-h', '127.0.0.1', '-U', 'postgres', '-d', 'postgres'],
-                                       capture_output=True).returncode == 0
-                if ready:
-                    break
-                time.sleep(.5)
-            else:
-                raise RuntimeError('Temporary PostgreSQL did not become ready')
+            _wait_for_postgres(container)
             port_line = subprocess.check_output(['docker', 'port', container, '5432/tcp'], text=True)
             port = int(port_line.strip().rsplit(':', 1)[1])
             stores = []

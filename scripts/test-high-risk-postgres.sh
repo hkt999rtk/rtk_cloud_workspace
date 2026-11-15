@@ -18,6 +18,7 @@ trap cleanup EXIT INT TERM
 docker run --detach --rm \
   --name "$container_name" \
   --label rtk.local-test=high-risk-postgres \
+  --tmpfs /var/lib/postgresql/data:rw,size=2g \
   --env POSTGRES_USER=postgres \
   --env POSTGRES_PASSWORD=local_test_only \
   --env POSTGRES_DB=postgres \
@@ -25,7 +26,7 @@ docker run --detach --rm \
   "$image" >/dev/null
 
 port=""
-for attempt in $(seq 1 30); do
+for attempt in $(seq 1 180); do
   port="$(docker port "$container_name" 5432/tcp | sed 's/.*://')"
   if docker exec "$container_name" pg_isready -h 127.0.0.1 -U postgres -d postgres >/dev/null 2>&1; then
     break
