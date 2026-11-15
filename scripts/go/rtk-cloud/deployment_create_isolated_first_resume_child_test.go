@@ -42,7 +42,7 @@ func runIsolatedOpenBaoFirstResumeSubprocess(t *testing.T, env []string, profile
 		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	}
 	cmd.WaitDelay = 5 * time.Second
-	log, err := os.CreateTemp("/private/tmp", "rtk-isolated-first-resume-*.log")
+	log, err := os.CreateTemp("", "rtk-isolated-first-resume-*.log")
 	if err != nil {
 		return errors.New("isolated resume log unavailable")
 	}

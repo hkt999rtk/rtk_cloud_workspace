@@ -78,7 +78,11 @@ func runIsolatedMigrationJob(ctx context.Context, docker, root, network, owner s
 	// container. Use its verified amd64 child without replacing that container
 	// or changing the original Kubernetes image selection.
 	if image == "docker.io/library/postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685" {
-		index, err := os.ReadFile("/private/tmp/rtk-postgres-index-cf78-20261111.json")
+		inputDir := strings.TrimSpace(os.Getenv("RTK_TEST_FOUNDATION_OCI_INPUT_DIR"))
+		if inputDir == "" {
+			return bad()
+		}
+		index, err := os.ReadFile(filepath.Join(inputDir, "cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685.json"))
 		var manifest struct {
 			Manifests []struct {
 				Digest   string                            `json:"digest"`

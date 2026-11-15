@@ -139,7 +139,7 @@ func runIsolatedFreshCreateAfterGO(t *testing.T, store secretStore, cfg deployme
 		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	}
 	cmd.WaitDelay = 5 * time.Second
-	log, err := os.CreateTemp("/private/tmp", "rtk-isolated-fresh-create-*.log")
+	log, err := os.CreateTemp("", "rtk-isolated-fresh-create-*.log")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +199,7 @@ func retainIsolatedFreshFailure(t *testing.T, store secretStore, kubeDir string)
 	if !isolatedScriptTempPath(store.Root) || !isolatedScriptTempPath(kubeDir) {
 		t.Fatal("refusing to retain non-isolated state")
 	}
-	destination, err := os.MkdirTemp("/private/tmp", "rtk-isolated-create-evidence-")
+	destination, err := os.MkdirTemp("", "rtk-isolated-create-evidence-")
 	if err != nil {
 		t.Fatal("cannot retain isolated evidence", err)
 	}
@@ -314,6 +314,7 @@ func retainIsolatedFreshFailure(t *testing.T, store secretStore, kubeDir string)
 }
 
 func TestRetainIsolatedFreshFailureKeepsPrivateEvidence(t *testing.T) {
+	t.Setenv("TMPDIR", filepath.Dir(t.TempDir()))
 	store := makeIsolatedTestSecretStore(t, "dev")
 	if err := store.write("deployment/create/executions/test/journal.json", []byte(`{"entries":[{"key":"stage","state":"pending","receipt":{"key":"PRIVATE_SENTINEL"}}],"owner_token":"PRIVATE_SENTINEL"}`), false); err != nil {
 		t.Fatal(err)
@@ -327,6 +328,9 @@ func TestRetainIsolatedFreshFailureKeepsPrivateEvidence(t *testing.T) {
 	}
 	retained := retainIsolatedFreshFailure(t, store, kubeDir)
 	t.Cleanup(func() { _ = os.RemoveAll(retained) })
+	if !isolatedScriptTempPath(retained) {
+		t.Fatal("retained synthetic evidence must use the selected temporary root")
+	}
 	info, err := os.Stat(retained)
 	if err != nil || info.Mode().Perm() != 0700 {
 		t.Fatal("retained synthetic root must be private", err)

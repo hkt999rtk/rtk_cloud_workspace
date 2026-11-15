@@ -40,7 +40,7 @@ func TestIsolatedRealOpenBaoFormalInitialization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err := os.MkdirTemp("/private/tmp", "rtk-real-openbao-init-")
+	root, err := os.MkdirTemp("", "rtk-real-openbao-init-")
 	if err != nil {
 		t.Fatal(err)
 	}

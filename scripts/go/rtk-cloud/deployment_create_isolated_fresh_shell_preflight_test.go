@@ -569,6 +569,10 @@ os.execv("/usr/bin/curl", ["curl"] + args)
 	if !filepath.IsAbs(moduleCache) {
 		t.Fatal("test main did not preserve absolute offline module cache")
 	}
+	buildCache := os.Getenv("GOCACHE")
+	if !filepath.IsAbs(buildCache) {
+		buildCache = t.TempDir()
+	}
 	for _, p := range []string{filepath.Join(account.HomeDir, ".config/rtk_cloud"), filepath.Join(account.HomeDir, ".aws"), filepath.Join(account.HomeDir, ".ssh"), filepath.Join(account.HomeDir, ".env")} {
 		profile += fmt.Sprintf("(deny file-read* file-write* (subpath %q))", p)
 	}
@@ -584,7 +588,7 @@ os.execv("/usr/bin/curl", ["curl"] + args)
 		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	}
 	cmd.WaitDelay = 5 * time.Second
-	cmd.Env = []string{"PATH=" + bin + ":/usr/bin:/bin:/usr/sbin:/sbin", "RTK_CLOUD_TEST_MODE=1", "RTK_CLOUD_CONFIG_ROOT=" + store.ConfigRoot, "RTK_CLOUD_LINODE_API_ROOT=" + provider.server.URL, "RTK_CLOUD_GODADDY_API_ROOT=" + ci.dns.URL, "RTK_ISOLATED_CI_DIR=" + ci.ciDir, "RTK_CLOUD_KUBECTL=" + filepath.Join(bin, "kubectl"), "GOPROXY=off", "GOTOOLCHAIN=local", "GOENV=off", "GOMODCACHE=" + moduleCache, "GOCACHE=/Volumes/RTKGoBuild/cache", "TMPDIR=" + os.TempDir(), "RTK_TEST_ACME_ROOT_CA=" + acmeCA}
+	cmd.Env = []string{"PATH=" + bin + ":/usr/bin:/bin:/usr/sbin:/sbin", "RTK_CLOUD_TEST_MODE=1", "RTK_CLOUD_CONFIG_ROOT=" + store.ConfigRoot, "RTK_CLOUD_LINODE_API_ROOT=" + provider.server.URL, "RTK_CLOUD_GODADDY_API_ROOT=" + ci.dns.URL, "RTK_ISOLATED_CI_DIR=" + ci.ciDir, "RTK_CLOUD_KUBECTL=" + filepath.Join(bin, "kubectl"), "GOPROXY=off", "GOTOOLCHAIN=local", "GOENV=off", "GOMODCACHE=" + moduleCache, "GOCACHE=" + buildCache, "TMPDIR=" + os.TempDir(), "RTK_TEST_ACME_ROOT_CA=" + acmeCA}
 	if os.Getenv(isolatedCustodyStopEnv) == "1" {
 		cmd.Env = append(cmd.Env, isolatedCustodyStopEnv+"=1")
 	}
@@ -595,7 +599,7 @@ os.execv("/usr/bin/curl", ["curl"] + args)
 		cmd.Env = append(cmd.Env, "RTK_TEST_REGISTRAR_BRIDGE="+registrarBridge.server.URL, "RTK_TEST_REGISTRAR_TOKEN="+registrarBridge.token)
 	}
 	output, runErr := cmd.CombinedOutput()
-	log, err := os.CreateTemp("/private/tmp", "rtk-isolated-fresh-preflight-*.log")
+	log, err := os.CreateTemp("", "rtk-isolated-fresh-preflight-*.log")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -649,7 +653,7 @@ os.execv("/usr/bin/curl", ["curl"] + args)
 		}
 		diag.WaitDelay = 5 * time.Second
 		diagnostic, diagErr := diag.CombinedOutput()
-		diagLog, err := os.CreateTemp("/private/tmp", "rtk-isolated-fresh-diagnosis-*.log")
+		diagLog, err := os.CreateTemp("", "rtk-isolated-fresh-diagnosis-*.log")
 		if err != nil {
 			t.Fatal(err)
 		}

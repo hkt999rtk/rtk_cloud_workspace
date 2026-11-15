@@ -106,7 +106,9 @@ s.close()
 				t.Fatal(err)
 			}
 			defer denied.Close()
-			unixDir, err := os.MkdirTemp("/private/tmp", "rtk-sandbox-")
+			// A short POSIX temporary path keeps the Unix socket within its
+			// platform length limit, including on macOS with a long TMPDIR.
+			unixDir, err := os.MkdirTemp("/tmp", "rtk-sandbox-")
 			if err != nil {
 				t.Fatal(err)
 			}
