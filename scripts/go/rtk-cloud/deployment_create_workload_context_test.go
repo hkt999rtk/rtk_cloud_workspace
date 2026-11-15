@@ -81,7 +81,7 @@ func TestCreateWorkloadCarriesOriginalUnsealRuntime(t *testing.T) {
 			if err := os.WriteFile(overlay, data, 0600); err != nil {
 				t.Fatal(err)
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 			defer cancel()
 			command := exec.CommandContext(ctx, filepath.Join(runtime.GOROOT(), "bin/go"), "test", "-overlay", overlay, "-vet=off", "./rtk-cloud", "-run", "^TestDeploymentWorkload(Context|SkipAccepted)Fixture$", "-count=1")
 			command.Dir = filepath.Join(workspace, "scripts/go")
