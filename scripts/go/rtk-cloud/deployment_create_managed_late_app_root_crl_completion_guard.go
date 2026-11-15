@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"path/filepath"
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 	"slices"
@@ -69,7 +68,7 @@ func managedLateAppCompletionMembership(a createAppRootCRLArtifact, source, capt
 			continue
 		}
 		old := captured.Entries[i]
-		if rank[entry.State] < rank[old.State] || old.State == "completed" && deploymentplan.Digest(entry) != deploymentplan.Digest(old) || old.State != "pending" && !bytes.Equal(old.Receipt, entry.Receipt) {
+		if rank[entry.State] < rank[old.State] || old.State == "completed" && deploymentplan.Digest(entry) != deploymentplan.Digest(old) || old.State != "pending" && !samePersistedJSONReceipt(old.Receipt, entry.Receipt) {
 			return false
 		}
 		fixed := entry

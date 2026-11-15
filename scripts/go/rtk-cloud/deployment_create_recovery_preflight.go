@@ -19,12 +19,52 @@ type createRecoveryCheckpoint struct {
 	Owner         environmentCreateOwner
 	Journal       environmentCreateJournal
 	Profile, Flag string
+	IssuerLease   issuerLeaseEnrollmentRecovery
+}
+
+// The existing recovery entry point supports dev only. New profiles must not
+// silently claim staging or production support through checkpoint selection.
+func openBaoFirstRecoverySupportedEnvironment(environment string) bool {
+	return environment == "dev"
+}
+
+// This selects an early new-generation route only. It grants no admission:
+// the original fence, stage journals and native identities are revalidated by
+// the recovery checker before any resumed execution.
+func isOpenBaoFirstEarlyCheckpoint(j environmentCreateJournal) bool {
+	allowed := map[string]bool{
+		"openbao-transport-material": true, "kubernetes/foundation": true,
+		"openbao-initialize": true, "openbao-unseal": true,
+		"openbao-audit-enable": true, "openbao-auth-enable": true,
+		"openbao-auth-config": true, "management-transport-material": true,
+		"account-signer-material": true, "kubernetes/foundation-services": true,
+	}
+	seen, started := map[string]bool{}, false
+	for _, entry := range j.Entries {
+		if entry.Key == "openbao-transport-material" {
+			started = true
+		}
+		if !started {
+			if entry.Phase != "provider" && entry.Phase != "storage" && entry.Phase != "namespace" {
+				return false
+			}
+			continue
+		}
+		if !allowed[entry.Key] || seen[entry.Key] {
+			return false
+		}
+		seen[entry.Key] = true
+	}
+	return started
 }
 
 // These selectors describe existing qualified recovery profiles. Local journal
 // inspection only selects one; the original engine still verifies all native
 // ownership, signing outcomes, identity material and six required gates.
 func createRecoveryCheckpointProfile(j environmentCreateJournal) (string, string) {
+	if _, ok := deviceCustodyContinuationEntry(j); ok {
+		return issuerDeviceCustodyProfile, ""
+	}
 	if len(j.Entries) > 374 && managedLateExpiredRenewalReview(j) != "" {
 		return "managed-late-expired-unused-renewal", "--after-application-enrollment-trust"
 	}
@@ -150,6 +190,18 @@ func createRecoveryCheckpointProfile(j environmentCreateJournal) (string, string
 	if len(pending) == 0 && len(j.Entries) > 0 && j.Entries[len(j.Entries)-1].Key == "kubernetes/service-core-enrollment" {
 		return "accepted-service-core", "--after-service-core-enrollment"
 	}
+	if len(pending) == 0 && len(j.Entries) > 0 && j.Entries[len(j.Entries)-1].Key == "kubernetes/service-issuer-server-enrollment" {
+		return acceptedIssuerEnrollmentProfile, ""
+	}
+	if entry, ok := issuerCoreContinuationEntry(j); ok && len(pending) == 1 && pending[entry.Key] {
+		return acceptedIssuerCoreCRLsProfile, ""
+	}
+	if entry, ok := issuerMQTTCustodyCheckpoint(j); ok && len(pending) == 2 && pending[entry.Key] && pending["kubernetes/mqtt-root-trust"] {
+		return issuerMQTTCustodyCAProfile, ""
+	}
+	if entry, ok := issuerMQTTLogTrustCheckpoint(j); ok && len(pending) == 3 && pending[entry.Key] && pending["kubernetes/mqtt-root-trust"] && pending["kubernetes/"+mqttCustodyCAStage] {
+		return issuerMQTTLogTrustProfile, ""
+	}
 	if len(pending) == 1 && pending["kubernetes/service-issuer-server-enrollment"] {
 		return "expired-bootstrap-enrollment", "--at-certissuer-server-enrollment"
 	}
@@ -189,6 +241,38 @@ func inspectCreateRecoveryCheckpoint(cfg deploymentConfig, store secretStore) (c
 		return bad()
 	}
 	checkpoint.Profile, checkpoint.Flag = createRecoveryCheckpointProfile(j)
+	partialSession := false
+	for _, entry := range j.Entries {
+		if strings.HasPrefix(entry.Key, "partial-session-renewal-") {
+			partialSession = true
+		}
+	}
+	if checkpoint.Profile == "" || checkpoint.Profile == "managed-late-seed-trust-forward" && partialSession {
+		execution := &environmentCreateExecution{Store: store, Journal: j, owner: o}
+		if _, ok, err := initialSuccessorContinuationEntry(store, execution); err != nil {
+			return bad()
+		} else if ok {
+			checkpoint.Profile, checkpoint.Flag = "initial-transport-successor-continuation", ""
+		}
+	}
+	if checkpoint.Profile == "" && openBaoFirstRecoverySupportedEnvironment(cfg.Environment) && isOpenBaoFirstEarlyCheckpoint(j) {
+		plan, configSHA, err := loadEnvironmentCreateAdmittedGeneration(store, j.PlanSHA256, j.ArtifactSHA256)
+		if err == nil && plan.OpenBaoFirst && plan.Environment == cfg.Environment && plan.Stack == o.Stack && configSHA == plan.ConfigurationSHA256 && configSHA == deploymentplan.Digest(cfg) {
+			checkpoint.Profile = "openbao-first-foundation"
+		}
+	}
+	if checkpoint.Profile == "expired-bootstrap-enrollment" {
+		last := j.Entries[len(j.Entries)-1]
+		if last.Key == "kubernetes/service-issuer-server-enrollment" {
+			execution := &environmentCreateExecution{Store: store, Journal: j, owner: o}
+			p, nativeJournal, _ := originalCreateChildAtIntent(store, execution, last)
+			recovery := issuerLeaseEnrollmentRecovery{plan: p, journal: nativeJournal}
+			if recovery.isCandidate() {
+				checkpoint.Profile, checkpoint.Flag = issuerLeaseEnrollmentProfile, ""
+				checkpoint.IssuerLease = recovery
+			}
+		}
+	}
 	if checkpoint.Profile == "managed-late-post-mint-continuation" {
 		selected, selectErr := managedLateExpiredRenewalSelected(store, &environmentCreateExecution{Store: store, Journal: j, owner: o})
 		if selectErr != nil {
@@ -338,6 +422,44 @@ func runCreateRecoveryPreflightWithRunner(ctx context.Context, cfg deploymentCon
 	c, err := inspectCreateRecoveryCheckpoint(cfg, store)
 	if err != nil {
 		return blocked("original create owner and private journal cannot be safely inspected", "retain the fence and inspect original canonical ownership")
+	}
+	if c.Profile == "initial-transport-successor-continuation" {
+		return blocked("the original temporary TLS successor is complete, but its issuer continuation is not yet supported", "preserve the existing owner and identity; repair and test the continuation before retrying")
+	}
+	if c.Profile == issuerLeaseEnrollmentProfile || c.Profile == acceptedIssuerEnrollmentProfile {
+		raw, err := readBoundedEnvironmentFile(store.KubeconfigPath(), true)
+		if err != nil {
+			return blocked("original CertIssuer enrollment kubeconfig cannot be read", "restore access to the canonical kubeconfig and retain the original execution")
+		}
+		backend, err := newEnvironmentKubernetesBackendForConfig(string(raw), cfg)
+		if err != nil {
+			return blocked("original CertIssuer enrollment kubeconfig is invalid", "verify the selected canonical cluster identity")
+		}
+		backend.RolloutTimeout, err = environmentRolloutTimeout(cfg.Values)
+		if err != nil {
+			return blocked(err.Error(), "verify the environment's maintained rollout configuration")
+		}
+		if c.Profile == acceptedIssuerEnrollmentProfile {
+			e, original, err := loadActiveTransportExecution(cfg, store, c.Owner.PlanSHA256)
+			if err != nil {
+				return blocked(err.Error(), "verify the original stopped owner and provider qualification")
+			}
+			defer e.Close()
+			if deploymentplan.Digest(e.Journal) != deploymentplan.Digest(c.Journal) || environmentPreflightBytesSHA256(raw) != original.Plan.KubeconfigSHA256 {
+				return blocked("original enrollment checkpoint or selected Kubernetes identity changed", "inspect the selected canonical checkpoint")
+			}
+			if err := verifyAcceptedIssuerEnrollmentContinuation(ctx, cfg, store, e, backend, false); err != nil {
+				return blocked(err.Error(), "resolve the exact retained enrollment and Service session evidence")
+			}
+			if _, _, err := loadCreateVideoRepairImage(ctx, cfg, store, e.Journal.PlanSHA256, issuerLeaseMetadataRepair, issuerLeaseMetadataRepairSchema); err != nil {
+				return blocked(err.Error(), "record the exact formal Lease metadata repair publication for the original generation")
+			}
+			return blocked("original CertIssuer enrollment, active Service session and formal Lease metadata repair image verified", "qualify the remaining stages under the original deployment owner")
+		}
+		if err := c.IssuerLease.checkLabelPatch(ctx, backend); err != nil {
+			return blocked(err.Error(), "resolve the original enrollment evidence before any Lease correction")
+		}
+		return blocked("server dry-run accepted the Lease label correction and the original enrollment journal passed resume admission without replaying any writes", "qualify a forward recovery that restores the original Lease labels and accepts the existing enrollment")
 	}
 	if c.Flag == "" {
 		return blocked("unfinished or uncertain checkpoint has no supported recovery preflight profile", "inspect the original private journal; unknown or partial native outcomes require separately qualified recovery")

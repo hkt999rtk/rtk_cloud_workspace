@@ -178,7 +178,7 @@ func applyCreateNormalTailStageWithCapture(ctx context.Context, cfg deploymentCo
 	if err != nil {
 		return err
 	}
-	native, err := newEnvironmentKubernetesBackend(string(raw), cfg.Environment)
+	native, err := newEnvironmentKubernetesBackendForConfig(string(raw), cfg)
 	if err != nil {
 		return err
 	}
@@ -255,7 +255,7 @@ func applyCreateNormalTailStageWithCapture(ctx context.Context, cfg deploymentCo
 		return nil
 	}
 	accept := func(ctx context.Context, p *deploymentplan.Plan) error {
-		objects, err := native.Inventory(ctx, p.Stack)
+		objects, err := native.TargetWorkloadInventory(ctx, p)
 		if err != nil {
 			return err
 		}

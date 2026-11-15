@@ -71,7 +71,7 @@ func projectEnvironmentCreateCustodyStage(ctx context.Context, cfg deploymentCon
 	if runtime.Custody != nil && (runtime.Custody.Generation != generation || deploymentplan.Digest(runtime.Custody.Owners) != deploymentplan.Digest(expected.Owners)) {
 		return nil, environmentCreateBootstrapBlocker("runtime custody binding differs from its original recorded owner inventory")
 	}
-	caPath, err := store.safePath(filepath.Join("deployment", "create", "material", generation, "openbao-transport", "ca.crt"))
+	caPath, _, err := initialTransportAuthorityPath(store, generation, "openbao")
 	if err != nil || runtime.OpenBao.CACertPath != caPath {
 		return nil, environmentCreateBootstrapBlocker("custody stage requires its original OpenBao foundation authority")
 	}

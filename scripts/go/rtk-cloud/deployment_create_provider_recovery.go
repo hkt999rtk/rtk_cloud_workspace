@@ -17,6 +17,8 @@ import (
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/deploymentplan"
 )
 
+var environmentCreateProviderRecoveryRequiredGates = []string{"deployment.recovery.target", "deployment.recovery.release", "deployment.recovery.storage", "deployment.recovery.bootstrap", "deployment.recovery.network", "deployment.recovery.inputs"}
+
 // This intentionally narrow recovery is valid only before any Kubernetes
 // bootstrap/runtime mutation. It preserves the failed journal and all allocated
 // identities, separately qualifies live state, then starts a new journal.
@@ -124,7 +126,7 @@ func loadStoppedProviderCreate(cfg deploymentConfig, store secretStore, original
 	if err != nil {
 		return nil, plan, createProviderRecoveryBlock("original executor is running or its process lock cannot be verified")
 	}
-	e := &environmentCreateExecution{Store: store, running: file}
+	e := &environmentCreateExecution{versionState: &createOperatorVersionState{}, Store: store, running: file}
 	ok := false
 	defer func() {
 		if !ok {
@@ -323,8 +325,8 @@ func qualifyProviderRecoveryStorage(ctx context.Context, cfg deploymentConfig, o
 		}
 		access, secret := environmentCreateStorageCredentials(operator, target.Purpose)
 		s3 := provisionObjectStore{bucket: target.Bucket, region: target.Region, endpoint: endpoint, accessKey: access, secretKey: secret}
-		if err := checker.validateStoragePrivacy(s3); err != nil {
-			return createProviderRecoveryBlock("configured storage key lacks genuine private ACL/policy readback; repair its exact bucket grant before recovery")
+		if err := checker.verifyCreateStorageAccess(operator["LINODE_TOKEN"], s3, target.Prefix); err != nil {
+			return createProviderRecoveryBlock(err.Error())
 		}
 	}
 	return nil
@@ -348,7 +350,7 @@ func qualifyProviderRecoveryBootstrap(ctx context.Context, cfg deploymentConfig,
 	if err != nil && !errors.Is(err, os.ErrNotExist) || len(entries) > 0 {
 		return createProviderRecoveryBlock("original runtime state has already been initialized")
 	}
-	return qualifyEnvironmentCreateBootstrap(ctx, cfg, plan, store, operator)
+	return qualifyEnvironmentCreateBootstrapForRecovery(ctx, cfg, plan, store, operator)
 }
 
 func runEnvironmentCreateProviderRecovery(args []string) error {
@@ -433,7 +435,12 @@ func runEnvironmentCreateProviderRecovery(args []string) error {
 			run func() error
 		}{
 			{"deployment.recovery.target", func() error { return verifyProviderRecoveryBaseline(ctx, cfg, store, p, operator) }},
-			{"deployment.recovery.release", func() error { return verifyEnvironmentRelease(ctx, cfg, plan.Release) }},
+			{"deployment.recovery.release", func() error {
+				if err := verifyEnvironmentRelease(ctx, cfg, plan.Release); err != nil {
+					return err
+				}
+				return qualifyEnvironmentCreateFrozenDataPlaneArtifact(ctx, cfg, &plan, store)
+			}},
 			{"deployment.recovery.storage", func() error {
 				if err := qualifyProviderRecoveryStorage(ctx, cfg, operator); err != nil {
 					return err
@@ -517,7 +524,7 @@ func runEnvironmentCreateProviderRecovery(args []string) error {
 	if artifact.Schema != "rtk-cloud.provider-create-recovery-artifact/v1" || deploymentplan.Digest(artifact.Plan) != sha || artifact.Qualification.PlanSHA256 != sha || artifact.Qualification.Decision != "GO" || len(artifact.Qualification.Gates) != 6 || !artifact.ValidUntil.Equal(artifact.QualifiedAt.Add(time.Hour)) || artifact.QualifiedAt.After(time.Now().UTC()) || !time.Now().Before(artifact.ValidUntil) {
 		return createProviderRecoveryBlock("fresh complete recovery qualification is required")
 	}
-	required := []string{"deployment.recovery.target", "deployment.recovery.release", "deployment.recovery.storage", "deployment.recovery.bootstrap", "deployment.recovery.network", "deployment.recovery.inputs"}
+	required := environmentCreateProviderRecoveryRequiredGates
 	for index, g := range artifact.Qualification.Gates {
 		if !g.Required || g.Status != "PASS" || g.ID != required[index] || g.EvidenceSHA256 != sha {
 			return createProviderRecoveryBlock("recovery gate is not qualified")
@@ -608,7 +615,7 @@ func forkProviderCreateRecovery(old *environmentCreateExecution, p environmentCr
 	}
 	now := time.Now().UTC()
 	token := fmt.Sprintf("%x", nonce[:])
-	e := &environmentCreateExecution{Store: old.Store, Directory: directory, JournalPath: filepath.Join(directory, "journal.json")}
+	e := &environmentCreateExecution{versionState: &createOperatorVersionState{}, Store: old.Store, Directory: directory, JournalPath: filepath.Join(directory, "journal.json")}
 	relative, _ := filepath.Rel(e.Store.Root, e.JournalPath)
 	e.owner = environmentCreateOwner{Schema: environmentCreateOwnerSchema, Environment: "dev", Stack: old.owner.Stack, PlanSHA256: sha, OwnerToken: token, Journal: filepath.ToSlash(relative), StartedAt: now}
 	e.Journal = environmentCreateJournal{Schema: environmentCreateJournalSchema, Environment: "dev", Stack: old.owner.Stack, PlanSHA256: sha, ArtifactSHA256: artifactSHA, OwnerToken: token, AdmittedAt: now, Entries: entries, OriginalJournal: p.OriginalJournal, OriginalJournalSHA256: p.OriginalJournalSHA256, ProviderMaterialPlanSHA256: environmentCreateHostMaterialPlan(old)}

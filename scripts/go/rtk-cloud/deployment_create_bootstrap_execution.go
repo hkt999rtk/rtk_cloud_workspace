@@ -49,7 +49,23 @@ func executeEnvironmentCreateBootstrap(ctx context.Context, cfg deploymentConfig
 	if bindings, restored, err := restoreEnvironmentFreshProductBootstrap(ctx, cfg, plan, release, store, runtime, apply); err != nil || restored {
 		return bindings, err
 	}
-	service, err := executeEnvironmentCreateServiceBootstrap(ctx, cfg, plan, store, operator, runtime, apply)
+	var service environmentCreateServiceCeremony
+	var err error
+	if runtime.AcceptedIssuerEnrollment != nil {
+		service = *runtime.AcceptedIssuerEnrollment
+		if r := runtime.ServiceSessionRecovery; r != nil && r.ManagedTransportRecovery != nil && r.ManagedTransportRecovery.PartialSessionRenewal {
+			service, err = executeManagedSessionRecovery(ctx, cfg, plan, store, runtime, apply)
+			if err != nil {
+				return empty, err
+			}
+			if err := completePartialSessionAdmission(ctx, cfg, store, runtime, service); err != nil {
+				return empty, err
+			}
+		}
+		err = executeEnvironmentCreateServiceStages(ctx, cfg, plan, runtime, service, apply, true)
+	} else {
+		service, err = executeEnvironmentCreateServiceBootstrap(ctx, cfg, plan, store, operator, runtime, apply)
+	}
 	if err != nil {
 		return empty, err
 	}
@@ -81,6 +97,12 @@ func executeEnvironmentCreateIssuerLineage(ctx context.Context, cfg deploymentCo
 		rootDocument, err = client.ReadIssuer(ctx, rootOperation.IssuerID)
 		if err == nil && deploymentplan.Digest(rootDocument) != deploymentplan.Digest(r.AppTrustRecovery.Root.Document) {
 			err = environmentCreateBootstrapBlocker("original READY App Root changed before trust continuation")
+		}
+	} else if policy.Domain == "mqtt" && runtime.AcceptedMQTTRoot != nil && runtime.AcceptedMQTTRootOperation != nil {
+		rootOperation = *runtime.AcceptedMQTTRootOperation
+		rootDocument, err = client.ReadIssuer(ctx, rootOperation.IssuerID)
+		if err == nil && deploymentplan.Digest(rootDocument) != deploymentplan.Digest(runtime.AcceptedMQTTRoot.Document) {
+			err = environmentCreateBootstrapBlocker("original ready MQTT Root changed before custody CA recovery")
 		}
 	} else if r := runtime.ServiceSessionRecovery; r != nil && r.PostServiceResume && policy.Domain == "mqtt" && r.MQTTRoot != nil && r.MQTTOperation != nil {
 		rootOperation = *r.MQTTOperation
@@ -387,6 +409,10 @@ func executeEnvironmentCreateServiceBootstrap(ctx context.Context, cfg deploymen
 			return s, err
 		}
 	}
+	return s, executeEnvironmentCreateServiceStages(ctx, cfg, p, runtime, s, apply, false)
+}
+
+func executeEnvironmentCreateServiceStages(ctx context.Context, cfg deploymentConfig, p environmentCreateBootstrapPlan, runtime environmentCreateBootstrapRuntime, s environmentCreateServiceCeremony, apply environmentCreateBootstrapApply, issuerEnrolled bool) error {
 	for _, stage := range []struct {
 		name   string
 		render func(context.Context, deploymentConfig, environmentCreateBootstrapPlan, environmentCreateBootstrapRuntime, environmentCreateServiceCeremony) ([]deploymentplan.Definition, error)
@@ -398,12 +424,21 @@ func executeEnvironmentCreateServiceBootstrap(ctx context.Context, cfg deploymen
 		{"service-core-initial-crls", renderEnvironmentCreateCoreCRLInitialization},
 		{"service-managed-core", renderEnvironmentCreateManagedServiceDefinitions},
 	} {
+		if issuerEnrolled && (stage.name == "service-enrollment-issuer" || stage.name == "service-issuer-server-enrollment") {
+			continue
+		}
+		if issuerEnrolled && runtime.AcceptedServiceCoreCRLs && stage.name != "service-managed-core" {
+			continue
+		}
+		if issuerEnrolled && runtime.AcceptedMQTTRoot != nil {
+			continue
+		}
 		if err := runtime.Execution.Check(ctx); err != nil {
-			return s, err
+			return err
 		}
 		definitions, err := stage.render(ctx, cfg, p, runtime, s)
 		if err != nil {
-			return s, err
+			return err
 		}
 		if stage.name == "service-core-initial-crls" && len(definitions) == 0 {
 			continue
@@ -413,16 +448,16 @@ func executeEnvironmentCreateServiceBootstrap(ctx context.Context, cfg deploymen
 			name = renewalStage(runtime, name)
 		}
 		if err := apply(ctx, name, definitions); err != nil {
-			return s, err
+			return err
 		}
 		if stage.name == "service-issuer-server-enrollment" && runtime.ServiceSessionRecovery != nil && runtime.ServiceSessionRecovery.Renewal {
 			if err := runtime.Execution.RecordReceipt("kubernetes/service-issuer-server-enrollment", mustProviderRecoveryJSON(map[string]string{"actual_qualified_forward_stage": "kubernetes/" + name, "original_failed_plan_sha256": runtime.ServiceSessionRecovery.Original.SHA256(), "renewed_session_id": s.BootstrapSessionID})); err != nil {
-				return s, err
+				return err
 			}
 			if err := runtime.Execution.CompleteEntry("kubernetes/service-issuer-server-enrollment", time.Now().UTC()); err != nil {
-				return s, err
+				return err
 			}
 		}
 	}
-	return s, nil
+	return nil
 }

@@ -114,6 +114,24 @@ func verifyFailedOriginalKeyRenewal(ctx context.Context, cfg deploymentConfig, b
 }
 
 func acceptedCreateStage(store secretStore, e *environmentCreateExecution, key string) (*deploymentplan.Plan, deploymentplan.Journal, error) {
+	if key == "kubernetes/workload" {
+		entry := createOpenBaoACKCompletionEntry(e.Journal, key)
+		if entry != nil && entry.State == "completed" && workloadImageForwardReceiptMatches(entry.Receipt) {
+			original, err := readEnvironmentCreateStageInput(store, e, "workload")
+			if err != nil || original == nil {
+				return nil, deploymentplan.Journal{}, createProviderRecoveryBlock("original workload input unavailable")
+			}
+			j, exists, err := original.ReadExecution(store.Root)
+			if err != nil || !exists {
+				return nil, j, createProviderRecoveryBlock("original workload journal unavailable")
+			}
+			if err = validateWorkloadImageForwardReceipt(store, e, original, j, entry.Receipt); err != nil {
+				return nil, j, err
+			}
+			return acceptedCreateStage(store, e, "kubernetes/"+createWorkloadImageForwardStage)
+		}
+	}
+
 	var receipt struct {
 		Plan string `json:"plan_sha256"`
 	}
@@ -501,6 +519,9 @@ func prepareRenewedBootstrapCleanup(ctx context.Context, cfg deploymentConfig, r
 	if r == nil || !r.Renewal {
 		return nil
 	}
+	if r.SecondSession {
+		return prepareSecondSessionBootstrapCleanup(ctx, cfg, runtime, s, finalized)
+	}
 	if finalized.SessionID != r.RenewedIntent.SessionID || finalized.SessionID != s.BootstrapSessionID || finalized.Environment != cfg.Environment || finalized.FinalizedAt.IsZero() || !environmentPreflightDigest.MatchString(finalized.LeafSHA256) || !environmentBootstrapOwnerUUID.MatchString(r.Intent.SessionID) {
 		return environmentCreateBootstrapBlocker("actual renewed session finalization required before custody cleanup")
 	}
@@ -560,16 +581,25 @@ func retireExpiredServiceBootstrapCopies(ctx context.Context, cfg deploymentConf
 		return nil
 	}
 	var original createServiceSessionObserved
-	if readExecutionJSON(filepath.Join(store.Root, "deployment/create", runtime.ExecutionSHA256, "bootstrap/service/session-observed.json"), &original) != nil || original.Cleanup.SessionID != r.Intent.SessionID {
-		return environmentCreateBootstrapBlocker("original expired credential owners unavailable")
+	var expired []createServiceSessionObserved
+	if r.SecondSession {
+		ancestors, _, err := secondSessionBootstrapCleanupAncestors(ctx, cfg, store, runtime, current)
+		if err != nil {
+			return err
+		}
+		expired = ancestors
+	} else {
+		if readExecutionJSON(filepath.Join(store.Root, "deployment/create", runtime.ExecutionSHA256, "bootstrap/service/session-observed.json"), &original) != nil || original.Cleanup.SessionID != r.Intent.SessionID {
+			return environmentCreateBootstrapBlocker("original expired credential owners unavailable")
+		}
+		expired = []createServiceSessionObserved{original}
 	}
-	expired := []createServiceSessionObserved{original}
-	if len(r.StaleSeeds) > 0 {
+	if !r.SecondSession && len(r.StaleSeeds) > 0 {
 		expired = append(expired, r.StaleSeeds...)
-	} else if r.StaleRenewal != nil {
+	} else if !r.SecondSession && r.StaleRenewal != nil {
 		expired = append(expired, *r.StaleRenewal)
 	}
-	if r.ManagedLateSession != nil {
+	if !r.SecondSession && r.ManagedLateSession != nil {
 		if err := prepareManagedLateOriginalSeedRetirement(store, runtime.Execution, r, r.ManagedLateSession); err != nil {
 			return err
 		}
@@ -589,8 +619,10 @@ func retireExpiredServiceBootstrapCopies(ctx context.Context, cfg deploymentConf
 		if err != nil || decodeEnvironmentJSON(raw, &session) != nil || session.Status != "expired" || session.Issuer != current.Intermediate.ID || session.Root != current.Root.RootFingerprint {
 			return environmentCreateBootstrapBlocker("only original expired unused bootstrap copies may be archived and retired")
 		}
-		known := len(session.Installed) == 0
-		if r.ApplicationForward {
+		// Second-session ancestors were checked against their exact admitted
+		// native snapshots, including installed subjects, before any mutation.
+		known := r.SecondSession || len(session.Installed) == 0
+		if !r.SecondSession && r.ApplicationForward {
 			known = true
 			for _, subject := range session.Installed {
 				allowed := []string{"service:account-manager", "service:certissuer", "service:pki-controller"}
@@ -614,8 +646,9 @@ func retireExpiredServiceBootstrapCopies(ctx context.Context, cfg deploymentConf
 		}
 		old := current
 		old.BootstrapSessionID, old.BootstrapCredentialSecret, old.CredentialUIDs = sessionID, "service-bootstrap-"+sessionID, observed.UIDs
+		old.CleanupBinding = observed.Cleanup
 		for _, namespace := range r.Intent.Namespaces {
-			if completed, err := managedLateCompletedCredentialRetirement(ctx, cfg, runtime, old, namespace); err != nil {
+			if completed, err := completedRenewedBootstrapCredentialRetirement(ctx, cfg, runtime, old, namespace); err != nil {
 				return err
 			} else if completed {
 				continue
@@ -624,7 +657,31 @@ func retireExpiredServiceBootstrapCopies(ctx context.Context, cfg deploymentConf
 			if err != nil || secret == nil || deploymentplan.Map(secret["metadata"])["uid"] != old.CredentialUIDs[namespace] {
 				return environmentCreateBootstrapBlocker("original expired namespace copy owner changed")
 			}
-			if _, err := writeEnvironmentCreateExpiredCredentialArchive(ctx, cfg, store, runtime, old, namespace, secret); err != nil {
+			if r.SecondSession {
+				data := deploymentplan.Map(secret["data"])
+				key, keyErr := base64.StdEncoding.DecodeString(deploymentplan.String(data["tls.key"]))
+				certificate, certErr := base64.StdEncoding.DecodeString(deploymentplan.String(data["tls.crt"]))
+				root, rootErr := base64.StdEncoding.DecodeString(deploymentplan.String(data["ca.crt"]))
+				leaf, leafErr := parseFirstCertificatePEM(certificate)
+				var saved managedSessionState
+				if keyErr != nil || certErr != nil || rootErr != nil || leafErr != nil || decodeEnvironmentJSON(observed.Session, &saved) != nil || environmentPreflightBytesSHA256(key) != r.OriginalKeySHA || environmentPreflightBytesSHA256(leaf.Raw) != saved.Fingerprint || string(root) != current.Root.Certificate {
+					return environmentCreateBootstrapBlocker("expired ancestor credential differs from its original same-key observation")
+				}
+				relative := filepath.Join("deployment/create", runtime.ExecutionSHA256, "bootstrap/service/session-renewal", r.Review, "expired-credential-copies", sessionID, namespace+".json")
+				path, pathErr := store.safePath(relative)
+				if pathErr != nil {
+					return pathErr
+				}
+				if _, err := os.Lstat(path); err == nil {
+					if _, err := reuseManagedLateExpiredCredentialArchive(store, relative, secret); err != nil {
+						return err
+					}
+				} else if !os.IsNotExist(err) {
+					return err
+				} else if _, err := writeEnvironmentCreateExpiredCredentialArchive(ctx, cfg, store, runtime, old, namespace, secret); err != nil {
+					return err
+				}
+			} else if _, err := writeEnvironmentCreateExpiredCredentialArchive(ctx, cfg, store, runtime, old, namespace, secret); err != nil {
 				return err
 			}
 			if err := removeEnvironmentCreateCredentialCopy(ctx, cfg, runtime, old, namespace, true); err != nil {
@@ -696,4 +753,371 @@ func expireCompletedRenewedBootstrapSession(ctx context.Context, cfg deploymentC
 		return err
 	}
 	return runtime.Execution.CompleteEntry(key, time.Now().UTC())
+}
+
+// Each expired copy belongs to an authenticated predecessor of the completed
+// current session. Its observation and UID map are independent of the latest
+// runtime's Intent, which names only the immediate predecessor.
+func secondSessionBootstrapCleanupAncestors(ctx context.Context, cfg deploymentConfig, store secretStore, runtime environmentCreateBootstrapRuntime, current environmentCreateServiceCeremony) ([]createServiceSessionObserved, string, error) {
+	bad := func() ([]createServiceSessionObserved, string, error) {
+		return nil, "", environmentCreateBootstrapBlocker("bootstrap cleanup requires its completed current session and authenticated original ancestor owners")
+	}
+	e, r := runtime.Execution, runtime.ServiceSessionRecovery
+	if e == nil || r == nil || !r.Renewal || !r.SecondSession || e.Store != store || runtime.ExecutionSHA256 != e.Journal.PlanSHA256 || current.BootstrapSessionID != r.RenewedIntent.SessionID || e.Check(ctx) != nil {
+		return bad()
+	}
+	head, review, err := sessionLineageHead(store, e)
+	if err != nil || head == nil || review != r.Review || head.Renewal.RenewedIntent.SessionID != current.BootstrapSessionID || deploymentplan.Digest(r.Intent) != deploymentplan.Digest(head.Renewal.Intent) || deploymentplan.Digest(r.RenewedIntent) != deploymentplan.Digest(head.Renewal.RenewedIntent) || current.CleanupBinding.SessionID != current.BootstrapSessionID || current.CleanupBinding.SecretUID != current.CredentialUIDs[current.BootstrapCredentialNamespace] || head.Renewal.KeySHA != r.OriginalKeySHA || head.Renewal.CSRSHA != r.OriginalCSRSHA || head.Renewal.Intent.IssuerID != current.Intermediate.ID || head.Renewal.Intent.RootSHA != current.Root.RootFingerprint || !slices.Equal(head.Renewal.Intent.Namespaces, current.BootstrapCredentialNamespaces) {
+		return bad()
+	}
+	complete, err := completedServiceSessionBatch(store, e, *head, review)
+	if err != nil || !complete {
+		return bad()
+	}
+	first, firstReview, exists, err := loadPartialSessionAdmission(store, e)
+	if err != nil || !exists || first.PartialSession == nil || firstReview != head.Renewal.OriginalReview {
+		return bad()
+	}
+	original := first.PartialSession
+	currentPlan, currentJournal, err := acceptedCreateStage(store, e, "kubernetes/service-credential-secrets-renewal-"+review)
+	if err != nil || currentPlan == nil || r.RenewedCertPath != "/run/pki-bootstrap/renew-"+head.Renewal.BindingSHA[:12]+"/bootstrap.crt" {
+		return bad()
+	}
+	for _, ns := range current.BootstrapCredentialNamespaces {
+		if currentJournal.Owners["Secret/"+ns+"/service-bootstrap-"+current.BootstrapSessionID] != current.CredentialUIDs[ns] {
+			return bad()
+		}
+	}
+	if original.KeySHA != r.OriginalKeySHA || original.CSRSHA != r.OriginalCSRSHA || original.Recovery.OriginalState == nil || !slices.Equal(original.Intent.Namespaces, current.BootstrapCredentialNamespaces) || !partialSessionOriginalStatePreserved(*original.Recovery.OriginalState, head.Renewal.OriginalState, time.Now().UTC()) {
+		return bad()
+	}
+	originalPlan, originalJournal, err := acceptedCreateStage(store, e, "kubernetes/service-credential-secrets")
+	originalEntry := createOpenBaoACKCompletionEntry(original.SourceJournal, "kubernetes/service-credential-secrets")
+	currentEntry := createOpenBaoACKCompletionEntry(e.Journal, "kubernetes/service-credential-secrets")
+	if err != nil || originalPlan == nil || originalEntry == nil || currentEntry == nil || deploymentplan.Digest(*originalEntry) != deploymentplan.Digest(*currentEntry) {
+		return bad()
+	}
+	originalUIDs := map[string]string{}
+	for _, ns := range original.Intent.Namespaces {
+		originalUIDs[ns] = originalJournal.Owners["Secret/"+ns+"/service-bootstrap-"+original.Intent.SessionID]
+	}
+	type source struct {
+		path  string
+		state managedSessionState
+		uids  map[string]string
+	}
+	base := filepath.Join(store.Root, "deployment/create", e.Journal.PlanSHA256, "bootstrap/service")
+	sources := []source{{filepath.Join(base, "session-observed.json"), head.Renewal.OriginalState, originalUIDs}}
+	var previous []source
+	cursor := *head
+	seen := map[string]bool{}
+	for {
+		prior := cursor.Renewal.PreviousReview
+		if seen[prior] {
+			return bad()
+		}
+		seen[prior] = true
+		credentialPlan, credentialJournal, err := acceptedCreateStage(store, e, "kubernetes/service-credential-secrets-renewal-"+prior)
+		if err != nil || credentialPlan == nil || credentialPlan.SHA256() != cursor.Renewal.PreviousCredentialPlanSHA || deploymentplan.Digest(credentialJournal) != cursor.Renewal.PreviousCredentialJournalSHA {
+			return bad()
+		}
+		for _, ns := range original.Intent.Namespaces {
+			if credentialJournal.Owners["Secret/"+ns+"/service-bootstrap-"+cursor.Renewal.Intent.SessionID] != cursor.Renewal.PreviousCredentialUIDs[ns] {
+				return bad()
+			}
+		}
+		previous = append(previous, source{filepath.Join(base, "session-renewal", prior, "observed.json"), cursor.Renewal.PreviousState, cursor.Renewal.PreviousCredentialUIDs})
+		if prior == firstReview {
+			break
+		}
+		cursor, err = loadSecondSessionAdmission(store, e, prior)
+		if err != nil {
+			return bad()
+		}
+		// A superseded ancestor batch can remain pending. Its admitted mint
+		// observation/credential source is authority; only the current batch
+		// must have completed all of the recorded consumer transitions.
+	}
+	for i := len(previous) - 1; i >= 0; i-- {
+		sources = append(sources, previous[i])
+	}
+	var result []createServiceSessionObserved
+	sessions := map[string]bool{}
+	for _, source := range sources {
+		var observed createServiceSessionObserved
+		var saved managedSessionState
+		if readExecutionJSON(source.path, &observed) != nil || decodeEnvironmentJSON(observed.Session, &saved) != nil || source.state.Session == current.BootstrapSessionID || sessions[source.state.Session] || observed.Cleanup.SessionID != source.state.Session || saved.Session != source.state.Session || saved.Issuer != current.Intermediate.ID || saved.Root != current.Root.RootFingerprint || saved.Fingerprint != source.state.Fingerprint || !saved.Expires.Equal(source.state.Expires) || !slices.Equal(saved.Subjects, source.state.Subjects) || observed.Reader != current.CustodyReader || validateEnvironmentBootstrapCleanupBinding(&observed.Cleanup, cfg.Environment) != nil || observed.Cleanup.NamespaceUID != current.CleanupBinding.NamespaceUID || observed.Cleanup.KubernetesCA != current.CleanupBinding.KubernetesCA || deploymentplan.Digest(observed.UIDs) != deploymentplan.Digest(source.uids) || len(source.uids) != len(original.Intent.Namespaces) {
+			return bad()
+		}
+		for _, ns := range original.Intent.Namespaces {
+			if !environmentBootstrapOwnerUUID.MatchString(source.uids[ns]) || source.uids[ns] == current.CredentialUIDs[ns] {
+				return bad()
+			}
+		}
+		if observed.Cleanup.SecretUID != source.uids[current.BootstrapCredentialNamespace] {
+			return bad()
+		}
+		actual, _, err := readManagedSessionState(ctx, cfg, runtime, source.state.Session)
+		expected := source.state
+		actual.OtherActive, expected.OtherActive = 0, 0
+		if err != nil || actual.Status != "expired" || !partialSessionOriginalStatePreserved(expected, actual, time.Now().UTC()) {
+			return bad()
+		}
+		sessions[source.state.Session] = true
+		result = append(result, observed)
+	}
+	return result, original.Recovery.OriginalCertificateSHA256, e.Check(ctx)
+}
+
+func completedRenewedBootstrapCredentialRetirement(ctx context.Context, cfg deploymentConfig, runtime environmentCreateBootstrapRuntime, s environmentCreateServiceCeremony, namespace string) (bool, error) {
+	if done, handled, err := reconcileFreshCredentialRetirement(ctx, cfg, runtime, s, namespace); err != nil || handled {
+		return done, err
+	}
+	r := runtime.ServiceSessionRecovery
+	if r == nil || !r.SecondSession {
+		return managedLateCompletedCredentialRetirement(ctx, cfg, runtime, s, namespace)
+	}
+	e := runtime.Execution
+	if e == nil || e.Check(ctx) != nil {
+		return false, environmentCreateBootstrapBlocker("original credential retirement owner unavailable")
+	}
+	key := "bootstrap-copy-retire-" + namespace + "-" + s.BootstrapSessionID
+	entry := createOpenBaoACKCompletionEntry(e.Journal, key)
+	if entry == nil {
+		return false, nil
+	}
+	id := "Secret/" + namespace + "/" + s.BootstrapCredentialSecret
+	intent := deploymentplan.Object{"resource_id": id, "uid": s.CredentialUIDs[namespace], "session_id": s.BootstrapSessionID}
+	receipt := deploymentplan.Object{"resource_id": id, "uid": s.CredentialUIDs[namespace], "absent": true}
+	if entry.Phase != "bootstrap" || entry.StartedAt.IsZero() || entry.IntentSHA256 != activeTransportJournalDigest(intent) {
+		return false, environmentCreateBootstrapBlocker("original credential retirement intent changed")
+	}
+	switch entry.State {
+	case "pending":
+		if len(entry.Receipt) != 0 || !entry.CompletedAt.IsZero() {
+			return false, environmentCreateBootstrapBlocker("original pending credential retirement changed")
+		}
+	case "allocated", "completed":
+		if activeTransportJournalDigest(jsonRawObject(entry.Receipt)) != activeTransportJournalDigest(receipt) || (entry.State == "allocated") != entry.CompletedAt.IsZero() || entry.State == "completed" && entry.CompletedAt.Before(entry.StartedAt) {
+			return false, environmentCreateBootstrapBlocker("original credential retirement receipt changed")
+		}
+	default:
+		return false, environmentCreateBootstrapBlocker("original credential retirement state changed")
+	}
+	actual, err := runtime.Backend.Read(ctx, id)
+	if err != nil {
+		return false, environmentCreateBootstrapBlocker("retired credential native outcome is unavailable")
+	}
+	if entry.State == "pending" {
+		current, err := secondSessionBootstrapCleanupCurrent(runtime)
+		if err != nil {
+			return false, err
+		}
+		_, resumed, err := resumeSecondSessionNativeCleanup(ctx, cfg, e.Store, runtime, current)
+		if err != nil || !resumed {
+			return false, environmentCreateBootstrapBlocker("pending retirement requires the exact current native cleanup proof")
+		}
+		if actual != nil {
+			meta := deploymentplan.Map(actual["metadata"])
+			if meta["uid"] != s.CredentialUIDs[namespace] || deploymentplan.String(meta["resourceVersion"]) == "" {
+				return false, environmentCreateBootstrapBlocker("pending retirement has a replacement credential owner")
+			}
+			// The retained archive is checked below before this original DELETE may continue.
+		}
+	} else if actual != nil {
+		return false, environmentCreateBootstrapBlocker("retired credential has a replacement native owner")
+	}
+	if s.BootstrapSessionID != r.RenewedIntent.SessionID {
+		path := filepath.Join(e.Store.Root, "deployment/create", e.Journal.PlanSHA256, "bootstrap/service/session-renewal", r.Review, "expired-credential-copies", s.BootstrapSessionID, namespace+".json")
+		var archived deploymentplan.Object
+		if readExecutionJSON(path, &archived) != nil || deploymentplan.ID(archived) != id || deploymentplan.Map(archived["metadata"])["uid"] != s.CredentialUIDs[namespace] {
+			return false, environmentCreateBootstrapBlocker("retired ancestor credential requires its retained original archive")
+		}
+		data := deploymentplan.Map(archived["data"])
+		key, keyErr := base64.StdEncoding.DecodeString(deploymentplan.String(data["tls.key"]))
+		certificate, certErr := base64.StdEncoding.DecodeString(deploymentplan.String(data["tls.crt"]))
+		root, rootErr := base64.StdEncoding.DecodeString(deploymentplan.String(data["ca.crt"]))
+		leaf, leafErr := parseFirstCertificatePEM(certificate)
+		state, _, stateErr := readManagedSessionState(ctx, cfg, runtime, s.BootstrapSessionID)
+		if keyErr != nil || certErr != nil || rootErr != nil || leafErr != nil || stateErr != nil || state.Session != s.BootstrapSessionID || state.Status != "expired" || state.Issuer != s.Intermediate.ID || state.Root != s.Root.RootFingerprint || environmentPreflightBytesSHA256(key) != r.OriginalKeySHA || environmentPreflightBytesSHA256(leaf.Raw) != state.Fingerprint || string(root) != s.Root.Certificate {
+			return false, environmentCreateBootstrapBlocker("retired ancestor archive differs from its native same-key lineage")
+		}
+	}
+	if entry.State == "pending" && actual != nil {
+		return false, nil
+	}
+	if entry.State == "pending" {
+		// Absence is now observed under the original UID intent, preserved
+		// same-key archive and current native tombstone; record that truth.
+		if err := e.RecordReceipt(key, mustProviderRecoveryJSON(receipt)); err != nil {
+			return false, err
+		}
+		if err := e.CompleteEntry(key, time.Now().UTC()); err != nil {
+			return false, err
+		}
+	} else if entry.State == "allocated" {
+		if err := e.CompleteEntry(key, time.Now().UTC()); err != nil {
+			return false, err
+		}
+	}
+	return true, e.Check(ctx)
+}
+
+// Recover the already-recorded current observation without changing the
+// recovery pointer or confusing its predecessor Intent with the current seed.
+func secondSessionBootstrapCleanupCurrent(runtime environmentCreateBootstrapRuntime) (environmentCreateServiceCeremony, error) {
+	r, e := runtime.ServiceSessionRecovery, runtime.Execution
+	if e == nil || r == nil || !r.SecondSession {
+		return environmentCreateServiceCeremony{}, environmentCreateBootstrapBlocker("current cleanup observation unavailable")
+	}
+	var observed createServiceSessionObserved
+	if readExecutionJSON(filepath.Join(e.Store.Root, "deployment/create", e.Journal.PlanSHA256, "bootstrap/service/session-renewal", r.Review, "observed.json"), &observed) != nil || observed.Cleanup.SessionID != r.RenewedIntent.SessionID || observed.Reader != r.Ceremony.CustodyReader {
+		return environmentCreateServiceCeremony{}, environmentCreateBootstrapBlocker("current cleanup observation changed")
+	}
+	current := r.Ceremony
+	current.BootstrapSessionID, current.BootstrapCredentialSecret = r.RenewedIntent.SessionID, "service-bootstrap-"+r.RenewedIntent.SessionID
+	current.BootstrapCredentialNamespaces = slices.Clone(r.RenewedIntent.Namespaces)
+	current.CredentialUIDs, current.CleanupBinding = observed.UIDs, observed.Cleanup
+	entry := createOpenBaoACKCompletionEntry(e.Journal, environmentCreateServiceFinalizationKey(runtime))
+	if entry == nil {
+		return current, nil
+	}
+	intentSHA := func() string {
+		return activeTransportJournalDigest(deploymentplan.Object{"session_id": current.BootstrapSessionID, "issuer_id": current.Intermediate.ID, "cleanup_binding": current.CleanupBinding})
+	}
+	if entry.Phase == "bootstrap" && entry.IntentSHA256 == intentSHA() {
+		return current, nil
+	}
+	// Fresh continuation can scope the legacy binding in memory without
+	// rewriting its immutable observation. Recover only that exact accepted
+	// finalization intent; an older pending legacy intent keeps its binding.
+	if observed.Cleanup.ConfigMapName == "" && environmentBootstrapOwnerUUID.MatchString(current.BootstrapSessionID) {
+		current.CleanupBinding.ConfigMapName = "pki-bootstrap-cleanup-binding-" + current.BootstrapSessionID[:12]
+		if entry.Phase == "bootstrap" && entry.IntentSHA256 == intentSHA() {
+			return current, nil
+		}
+	}
+	return environmentCreateServiceCeremony{}, environmentCreateBootstrapBlocker("current cleanup binding differs from its original finalization intent")
+}
+
+func prepareSecondSessionBootstrapCleanup(ctx context.Context, cfg deploymentConfig, runtime environmentCreateBootstrapRuntime, s environmentCreateServiceCeremony, finalized environmentCreateBootstrapFinalization) error {
+	r := runtime.ServiceSessionRecovery
+	if runtime.Execution == nil || finalized.Environment != cfg.Environment || finalized.SessionID != s.BootstrapSessionID || finalized.SessionID != r.RenewedIntent.SessionID || finalized.FinalizedAt.IsZero() || !environmentPreflightDigest.MatchString(finalized.LeafSHA256) {
+		return environmentCreateBootstrapBlocker("actual current session finalization required before ancestor custody cleanup")
+	}
+	ancestors, originalSHA, err := secondSessionBootstrapCleanupAncestors(ctx, cfg, runtime.Execution.Store, runtime, s)
+	if err != nil {
+		return err
+	}
+	if len(ancestors) == 0 {
+		return environmentCreateBootstrapBlocker("original cleanup ancestor unavailable")
+	}
+	base := "/run/pki-bootstrap/"
+	archive := base + "expired-" + ancestors[0].Cleanup.SessionID
+	read := func(path string) ([]byte, error) {
+		return runtime.Backend.command(ctx, nil, "--namespace", s.BootstrapCredentialNamespace, "exec", "deployment/"+s.CustodyReader, "--container", "custody", "--", "cat", path)
+	}
+	// Native cleanup can erase the canonical files before ancestor retirement
+	// and the local finalization record complete. Its accepted proof and
+	// retained public certificates must authorize re-entry before key reads.
+	marker, markerErr := read(base + "bootstrap.finalized.json")
+	if markerErr == nil && len(bytes.TrimSpace(marker)) > 0 {
+		var tombstone managedLateCustodyTombstone
+		renewed, renewedErr := read(r.RenewedCertPath)
+		expired, expiredErr := read(archive + "/bootstrap.crt")
+		var chain [][]byte
+		for rest := bytes.TrimSpace(renewed); len(rest) > 0; {
+			block, tail := pem.Decode(rest)
+			if block == nil || block.Type != "CERTIFICATE" {
+				return environmentCreateBootstrapBlocker("retained finalized public certificate chain changed")
+			}
+			chain = append(chain, block.Bytes)
+			rest = bytes.TrimSpace(tail)
+		}
+		old, oldErr := parseFirstCertificatePEM(expired)
+		leaf, leafErr := parseFirstCertificatePEM(renewed)
+		proof := deploymentplan.Object{"session_id": s.BootstrapSessionID, "original_session_id": ancestors[0].Cleanup.SessionID, "expired_certificate_sha256": originalSHA, "renewed_certificate_sha256": environmentPreflightBytesSHA256(renewed), "archive_path": archive + "/bootstrap.crt", "key_sha256": r.OriginalKeySHA, "csr_sha256": r.OriginalCSRSHA}
+		accepted := createOpenBaoACKCompletionEntry(runtime.Execution.Journal, "bootstrap-renewed-cleanup-custody-"+r.Review)
+		if decodeEnvironmentJSON(marker, &tombstone) != nil || tombstone.Schema != "rtk-cloud.bootstrap-credentials/v1" || !managedLateFinalizationEqual(tombstone.Finalization, finalized) || tombstone.Root != s.Root.RootFingerprint || len(tombstone.Files) != 3 || tombstone.Files["bootstrap.key"] != r.OriginalKeySHA || tombstone.Files["bootstrap.csr"] != r.OriginalCSRSHA || tombstone.Files["bootstrap.crt"] != environmentPreflightBytesSHA256(renewed) || renewedErr != nil || expiredErr != nil || !managedLateBootstrapChainMatches(chain, s) || oldErr != nil || leafErr != nil || environmentPreflightBytesSHA256(leaf.Raw) != finalized.LeafSHA256 || environmentPreflightBytesSHA256(expired) != originalSHA || !bytes.Equal(old.RawSubjectPublicKeyInfo, leaf.RawSubjectPublicKeyInfo) || accepted == nil || accepted.Phase != "bootstrap" || accepted.State != "completed" || accepted.StartedAt.IsZero() || accepted.CompletedAt.Before(accepted.StartedAt) || accepted.IntentSHA256 != activeTransportJournalDigest(proof) || !samePersistedJSONReceipt(accepted.Receipt, mustProviderRecoveryJSON(proof)) {
+			return environmentCreateBootstrapBlocker("native cleanup tombstone differs from its accepted current same-key proof and original archive")
+		}
+		return runtime.Execution.Check(ctx)
+	}
+	key, keyErr := read(base + "bootstrap.key")
+	csr, csrErr := read(base + "bootstrap.csr")
+	renewed, renewedErr := read(r.RenewedCertPath)
+	if keyErr != nil || csrErr != nil || renewedErr != nil || environmentPreflightBytesSHA256(key) != r.OriginalKeySHA || environmentPreflightBytesSHA256(csr) != r.OriginalCSRSHA {
+		return environmentCreateBootstrapBlocker("original same-key custody changed before current session cleanup")
+	}
+	identity, err := tls.X509KeyPair(renewed, key)
+	if err != nil || len(identity.Certificate) < 2 || environmentPreflightBytesSHA256(identity.Certificate[0]) != finalized.LeafSHA256 || environmentPreflightBytesSHA256(identity.Certificate[len(identity.Certificate)-1]) != s.Root.RootFingerprint {
+		return environmentCreateBootstrapBlocker("current finalized certificate differs from original same-key lineage")
+	}
+	leaf, err := x509.ParseCertificate(identity.Certificate[0])
+	if err != nil {
+		return environmentCreateBootstrapBlocker("current finalized bootstrap leaf malformed")
+	}
+	expired, readErr := read(base + "bootstrap.crt")
+	if readErr != nil || environmentPreflightBytesSHA256(expired) != originalSHA {
+		// Only an existing exact parent request can account for a prior link or
+		// unlink interruption. No different expired certificate may replace it.
+		if createOpenBaoACKCompletionEntry(runtime.Execution.Journal, "bootstrap-renewed-cleanup-custody-"+r.Review) == nil {
+			return environmentCreateBootstrapBlocker("original certificate slot changed before cleanup admission")
+		}
+		expired, readErr = read(archive + "/bootstrap.crt")
+	}
+	old, parseErr := parseFirstCertificatePEM(expired)
+	if readErr != nil || parseErr != nil || environmentPreflightBytesSHA256(expired) != originalSHA || old.Subject.CommonName != "service:deployment-bootstrap" || old.NotAfter.After(time.Now().UTC()) || !bytes.Equal(old.RawSubjectPublicKeyInfo, leaf.RawSubjectPublicKeyInfo) {
+		return environmentCreateBootstrapBlocker("original archived certificate differs from authenticated same-key session")
+	}
+	proof := deploymentplan.Object{"session_id": s.BootstrapSessionID, "original_session_id": ancestors[0].Cleanup.SessionID, "expired_certificate_sha256": originalSHA, "renewed_certificate_sha256": environmentPreflightBytesSHA256(renewed), "archive_path": archive + "/bootstrap.crt", "key_sha256": r.OriginalKeySHA, "csr_sha256": r.OriginalCSRSHA}
+	entry := "bootstrap-renewed-cleanup-custody-" + r.Review
+	recorded := createOpenBaoACKCompletionEntry(runtime.Execution.Journal, entry)
+	if recorded == nil {
+		if err := runtime.Execution.BeginEntry(entry, "bootstrap", mustProviderRecoveryJSON(proof), time.Now().UTC()); err != nil {
+			return err
+		}
+	} else {
+		if recorded.Phase != "bootstrap" || recorded.IntentSHA256 != activeTransportJournalDigest(proof) || recorded.StartedAt.IsZero() {
+			return environmentCreateBootstrapBlocker("original cleanup archive intent changed")
+		}
+		switch recorded.State {
+		case "pending":
+			if len(recorded.Receipt) != 0 || !recorded.CompletedAt.IsZero() {
+				return environmentCreateBootstrapBlocker("original cleanup archive has an unknown pending outcome")
+			}
+		case "allocated", "completed":
+			if !samePersistedJSONReceipt(recorded.Receipt, mustProviderRecoveryJSON(proof)) || (recorded.State == "allocated") != recorded.CompletedAt.IsZero() {
+				return environmentCreateBootstrapBlocker("original cleanup archive receipt changed")
+			}
+		default:
+			return environmentCreateBootstrapBlocker("original cleanup archive state changed")
+		}
+	}
+	check := func(sha, path string) string {
+		return "printf '%s  %s\\n' '" + sha + "' '" + path + "' | sha256sum -c - >/dev/null"
+	}
+	originalCheck := check(originalSHA, base+"bootstrap.crt")
+	renewedCheck := check(environmentPreflightBytesSHA256(renewed), base+"bootstrap.crt")
+	script := "test ! -L /run/pki-bootstrap && test ! -L " + r.RenewedCertPath + " && " + check(r.OriginalKeySHA, base+"bootstrap.key") + " && " + check(r.OriginalCSRSHA, base+"bootstrap.csr") + " && " + check(environmentPreflightBytesSHA256(renewed), r.RenewedCertPath) + " && if test -e " + archive + "; then test -d " + archive + " && test ! -L " + archive + "; else mkdir " + archive + " && chmod 0700 " + archive + "; fi && if test -e " + archive + "/bootstrap.crt; then test ! -L " + archive + "/bootstrap.crt && " + check(originalSHA, archive+"/bootstrap.crt") + "; else test ! -L /run/pki-bootstrap/bootstrap.crt && " + originalCheck + " && ln /run/pki-bootstrap/bootstrap.crt " + archive + "/bootstrap.crt; fi && if test -e /run/pki-bootstrap/bootstrap.crt; then test ! -L /run/pki-bootstrap/bootstrap.crt && if " + renewedCheck + "; then :; else " + originalCheck + " && rm /run/pki-bootstrap/bootstrap.crt && ln " + r.RenewedCertPath + " /run/pki-bootstrap/bootstrap.crt; fi; else ln " + r.RenewedCertPath + " /run/pki-bootstrap/bootstrap.crt; fi"
+	if recorded == nil || recorded.State == "pending" {
+		if _, err := runtime.Backend.command(ctx, nil, "--namespace", s.BootstrapCredentialNamespace, "exec", "deployment/"+s.CustodyReader, "--container", "custody", "--", "/bin/sh", "-ec", script); err != nil {
+			return environmentCreateBootstrapBlocker("current certificate archive/link is partial; preserve its original cleanup intent")
+		}
+	}
+	for path, want := range map[string][]byte{archive + "/bootstrap.crt": expired, base + "bootstrap.crt": renewed} {
+		actual, err := read(path)
+		if err != nil || !bytes.Equal(actual, want) {
+			return environmentCreateBootstrapBlocker("actual original archive and current cleanup certificate differ")
+		}
+	}
+	if recorded != nil && recorded.State == "completed" {
+		return runtime.Execution.Check(ctx)
+	}
+	if recorded == nil || recorded.State == "pending" {
+		if err := runtime.Execution.RecordReceipt(entry, mustProviderRecoveryJSON(proof)); err != nil {
+			return err
+		}
+	}
+	return runtime.Execution.CompleteEntry(entry, time.Now().UTC())
 }

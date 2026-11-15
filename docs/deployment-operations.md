@@ -50,6 +50,15 @@ upgrade`. Fresh bootstrap, Production activation, scoped `image-upgrade` and
 business E2E/data acceptance have separate procedures. The workflow below does
 not establish that any environment has passed its live checks.
 
+For `PKI_STATE_BACKEND=openbao`, use the shared
+[OpenBao dependency order](cloud-deployment-architecture.md#openbao-workload-identity-custody-target-2026-11-08)
+for creation and unfinished-create continuation. OpenBao starts independently,
+then KV/auth/policies and public trust caches are prepared before PKI consumers.
+Fresh preflight qualifies those producers without requiring their future runtime
+UIDs, stored identities or ACKs. Existing upgrades authenticate current original
+state and completed evidence before dependent checks. Preflight does not start
+OpenBao or generate permanent identities.
+
 | Entry | Dispatch and responsibility |
 | --- | --- |
 | [`check-deployment-preflight.sh`](../scripts/check-deployment-preflight.sh) | Calls [`check-deployment-credentials.sh`](../scripts/check-deployment-credentials.sh) with fixed `pre-deploy`/read-only settings. `deployment check` dispatches the complete update to the shared v2 `preflight` CLI. Qualifies one exact plan and publishes immutable proof plus an atomic GO/NO-GO pointer. |
@@ -568,6 +577,36 @@ completed client enrollment. An expired incomplete bootstrap session is renewed
 only with its original key/CSR and qualified native repair image; all existing
 workload client certificate/CSR hashes are verified before and after. Subsequent
 runtime owners submit their own genuine installation ACKs.
+
+Fresh product issuance and installation are separate phases. A saved five-output
+program may already contain every original certificate while only the existing
+nine services have acknowledged installation. If its temporary session expires
+there, retain the original program, installed receipt, private keys, public
+mirrors and producer birth IDs. The ordinary create flow qualifies a same-key/CSR
+native successor; it does not enroll those five permanent identities again.
+After genuine native batch completion, its continuation publishes the separate
+[fresh successor binding](cloud-deployment-architecture.md#openbao-workload-identity-custody-target-2026-11-08).
+Workload ACKs and finalization use that admitted effective session, while source
+verification and preparation retirement keep the original identity history.
+
+A completed temporary enrollment Deployment can stop being Ready after its
+permanent service acquires the identity lease. Do not restart enrollment or
+replace its identity to repair that readiness. The ordinary create executor
+verifies its accepted enrollment, native closure, permanent output and original
+UID/body, then treats it as retained producer history during workload readiness.
+The following normal finalization/retirement stages still remove that producer;
+permanent workload acceptance and the standard full health check remain required.
+
+A reported `scope=original-generation-service-session-continuation` GO qualifies
+only that recovery step. Execute the ordinary create command with its exact
+reported plan SHA and the original shared total timeout. Its scoped result does
+not close the environment. Then repeat the same full create preflight, review
+its exact remaining-generation plan SHA, and use the ordinary create command to
+finish that original deployment. Run the standard full environment health check
+after original closure. Retried recovery does not reset the original execution
+clock. A completed batch interrupted before linkage publication resumes that
+same idempotent linkage producer; missing proof never permits rewriting the
+original product program or claiming unobserved installation ACKs.
 
 A later owned MQTT rollout interruption selects
 `managed-transports-partial-rollout` through the same complete public create
@@ -1414,7 +1453,12 @@ automatically or expose it in reports. These are operator inputs for a future
 bootstrap, not evidence that the account or PKI identity has been created.
 
 Select `--operation create` explicitly and rerun complete preflight against the
-new active state. Preflight produces no OpenBao keys, CA or Service identity.
+new active state. After verifying target absence, preflight can validate the
+dependency plan without an active `runtime/` directory or `inventory.json`.
+It checks the declared producers of automatically initialized runtime secrets
+and still requires credentials that must be provided by the operator. An active
+inventory with a missing runtime directory blocks qualification.
+Preflight produces no OpenBao keys, CA or Service identity.
 Only a separately admitted deployment executor establishes the new generation's
 identities through the qualified native bootstrap ceremonies. Expiring preflight
 GO does not itself authorize deployment. See [secrets governance](deployment-secrets-governance.md#deployment-generation-identity-boundary).
@@ -1470,6 +1514,12 @@ credentials; establishing new generation-specific bucket keys is an explicit
 credential lifecycle choice, independent of the OpenBao/PKI identity exception.
 Do not disable privacy checks or use an unrelated environment's key.
 
+Create and provider-only recovery verify bucket privacy with a read of the
+Linode management ACL and a signed S3 bucket policy read. The application key's
+signed object list is checked separately, and activation tests write, read and
+delete with a canary only after both buckets pass the read-only checks. Failures
+identify the bucket, the failed check and the HTTP status when available.
+
 When the operator explicitly chooses new bucket credentials for this brand-new
 generation, prepare them separately before recovery qualification:
 
@@ -1485,7 +1535,9 @@ before creating two distinct keys, each limited to its exact bucket with
 `read_write` permission. Durable creation intents and private one-time native
 responses prevent uncertain retries from issuing duplicate keys. Both keys must
 pass actual private ACL/policy and list/write/read/delete checks before promotion;
-old cloud keys remain active. Interrupted promotion can resume only against the
+the read-only checks allow a bounded wait for the provider grant. Each successful
+list is followed by the object canary without repeating the list or retrying the
+canary. Old cloud keys remain active. Interrupted promotion can resume only against the
 preserved exact old/new bytes. This operation does not deploy workloads or
 generate OpenBao/PKI identities.
 
@@ -1570,6 +1622,32 @@ The supported dev profiles remain the unstarted Service bootstrap Job, the
 expired unused bootstrap before CertIssuer server enrollment, or that enrollment
 plus its known failed original-key renewal.
 
+When CertIssuer server enrollment succeeded but its workload custody Lease lost
+the deployment ownership labels, create preflight checks the original child
+journal and live owner UIDs. It tests the label-only correction with the native
+API and checks that the recorded child can resume acceptance with its completed
+write set. This evidence alone keeps the full deployment at NO-GO until a
+forward recovery is qualified.
+
+The scoped command `scripts/deploy-environment.sh recover-create-issuer-lease
+--environment dev --parent-plan-sha256 <parent>` qualifies the exact Lease
+correction. With `--execute --confirm video-cloud-dev --review-sha256 <review>`
+it persists the reviewed intent, patches only the original Lease's labels, reads
+back the result, then re-enters native acceptance for the original child journal.
+The original failed journal is preserved alongside the repair receipt under
+`deployment/create/issuer-lease-repair/<parent>/<review>/`. This command
+accepts that enrollment stage. Full deployment and health require the
+subsequent continuation.
+
+Once that original enrollment stage is accepted, the ordinary create preflight
+can qualify its remaining bootstrap, workloads, routing and acceptance. It
+retains the original Service session and provider owners. The exact formal
+Video Cloud repair manifest is selected under
+`deployment/repairs/issuer-lease-metadata/` for this parent generation. The
+forward plan changes only the published Video Cloud image roles used by
+remaining stages. To execute, use the ordinary create script with the reported
+plan SHA-256. The original generation remains the execution owner.
+
 An additional supported boundary is an actually accepted renewed
 `kubernetes/service-core-enrollment` with no subsequent or pending writes.
 Its `--after-service-core-enrollment` native profile binds the original successful
@@ -1610,6 +1688,12 @@ either. Deployment uses that image to grant CertIssuer read access to root
 distrust state, expire the old leaf's authentic session and sign a new seed from
 the original key/CSR. New seeds use `PKI_BOOTSTRAP_TTL`, bounded to five minutes
 through eight hours (default eight hours), and session expiry never exceeds leaf expiry.
+The selected environment may optionally set `PKI_BOOTSTRAP_TTL` in its
+`cloud_env/<environment>/environment.env`. The second Service-session
+continuation candidate passes that value to the native bootstrap command; if it
+is absent, the native command chooses its own default. This setting does not
+extend the separate deployment execution deadline. The actual session may expire
+earlier than requested when the signer issues a shorter-lived certificate.
 PKI Controller completes deferred Service installation acknowledgment before
 OpenBao transport configuration. Managed hosts retain their existing keys;
 Factory enrollment must reuse its pending request in the original retained PVC.
@@ -1728,6 +1812,47 @@ report before qualification and never reuses stale or partial GO. Historical
 qualification and original execution evidence remain preserved. The script
 builds once and qualifies with that exact executable; rebuilding or changing
 checker versions requires fresh qualification.
+
+### Original create OpenBao host image handoff
+
+When an interrupted create generation needs a formally published OpenBao PKI
+host image, select `LKE_OPENBAO_PKI_IMAGE` in the environment using the normal
+environment version update procedure first. The selected immutable digest and
+its successful CI publication are the authority; this operation does not pick
+or change a version. The existing in-place recovery loader currently supports
+only the `dev` standard-protection create recovery path.
+
+Run the formal script without `--execute` to qualify the exact original
+StatefulSet, Pod, selected image and native server dry run:
+
+```sh
+./scripts/deploy-environment.sh recover-create-openbao-inplace --environment dev
+```
+
+After its scoped GO, run the same command with `--execute --plan-sha256
+<plan-sha256>` using the reported digest. It updates the original OnDelete
+StatefulSet template first, then updates only the host sidecar image in the
+same Pod with UID and resource-version preconditions. It verifies that the
+original provider container did not restart and that the selected host image
+is running and ready. The original provider data and identities are preserved;
+an interrupted execution resumes its recorded template and Pod handoff.
+
+If a managed Pod replacement and its original-share unseal completed before
+this same-Pod image handoff, their original receipt remains authoritative.
+The continuation verifies the accepted image child and baseline chain, the
+unchanged provider container ID, Pod/StatefulSet UIDs, and the original unseal
+intent against that Pod's recorded ControllerRevision. An OnDelete template
+update may advance the StatefulSet update revision while the retained Pod and
+its completed installer keep their earlier revision/image. A later replacement
+instead must match the new accepted template, including its installer image,
+and have its own original-share unseal evidence. Neither order permits a new
+initialization, identity, key, or fabricated completion receipt.
+
+This scoped result is not full create preflight, deployment completion, a
+Service mTLS check, or a bootstrap ACK. Resume the original create flow and
+verify the real host ACK and full environment health separately. A missing
+formal image publication, different environment selection or changed original
+owner blocks the operation.
 
 ### Initialized dev OpenBao audit checkpoint
 
@@ -1905,6 +2030,87 @@ and saved privately as `service-root-trust-plan.json` beneath its reviewed recov
 directory. Execution uses a separately named trust stage; only actual accepted
 installation completes the original pending trust step before native activation.
 Root reservation, key generation, signing and import are never replayed.
+
+Recovery reconstructs completed Root and intermediate ceremonies through the
+selected generation's native read-only PostgreSQL registry inspection. It
+compares the actual issuer row and public document with the original completed
+journal, operator binding, certificate chain and encrypted custody evidence.
+The management proxy's own failed identity Lease must not be a prerequisite
+for verifying those completed facts. Missing rows, changed issuer status or
+changed documents still block recovery. Operator authentication and all native
+write authorization remain required; this read path neither signs certificates
+nor creates acknowledgments, replacement keys or completion receipts.
+
+Completed recovery history can contain a forward alias instead of an ordinary
+Kubernetes acceptance receipt. The common owner-history reader authenticates
+that alias against the original immutable stage input and its intent, the
+recorded source journal/Lease, and the actual accepted forward child. It folds
+only recorded source writes followed by the child's ordinary receipt, retaining
+continuous original UIDs and baselines. An unstarted source may have no journal
+only when it also has no recorded native execution Lease. An alias never makes
+an interrupted source accepted or substitutes for an unknown write outcome.
+The three original bootstrap custody files are fixed read-only inspections.
+They use the existing bounded transient-read policy and retain the caller's
+deadline; authorization failures and actual digest mismatches fail immediately.
+Read transport errors retain their sanitized classification instead of being
+reported as changed key/CSR/certificate material. The fixed registry `SELECT`
+inspector uses the same bounded transient-read policy with PostgreSQL enforcing
+read-only transactions. Session inspection retains sanitized transport failure
+codes and distinguishes malformed data; permission, SQL and identity failures
+are not retried. Other exec operations retain their existing retry rules.
+
+A session-only continuation may join original owners from separately approved
+image releases. Each source remains bound to its own native plan/journal and
+the same environment, stack and configuration; its release stamp need not equal
+another source's stamp. The candidate preserves each recorded image and all
+identity settings while changing only the selected session literal. Native Pods
+and ReplicaSets inherit their authenticated controller's session reference.
+This ownership remains valid when the recorded controller's newer template has
+retired that reference but its older native children have not yet rolled over;
+write selection does not discard authenticated controller ownership.
+The standard owner resolver checks namespace, API version and every UID in that
+lineage; standalone, foreign or unrecorded workload owners remain blockers.
+The original trust-forward admission can also identify its exact retired failed
+bootstrap Job and Pod. Their original UIDs, desired Job body and native terminal
+state are retained; they do not receive another session or become a retry target.
+This observation is neither successful Job acceptance nor a new installation ACK.
+An active or foreign Pod is never exempted by that historical failure.
+
+The shared admitted-generation reader validates the artifact's own gate family:
+fresh create uses `deployment.create.*`, while provider recovery uses its
+original `deployment.recovery.*` evidence. It does not reinterpret an admitted
+recovery as a new create qualification. Session preflight and execution bind
+the same selected repair plan, release and configuration; mint observation never
+reloads an earlier base release or selects another version. Both use the same
+effective admitted deadline, including any recorded timeout supplement.
+A recorded native batch intent can prove admission when a process stopped before
+its later lineage marker. The reader authenticates that exact qualification,
+parent, intent and start window and deduplicates its later marker. It neither
+replays a signing Job nor turns intent into native completion or an ACK.
+The native mint adapter executes the already qualified renewal child directly;
+its execution journal stage name does not recompile or replace the child's
+bindings hash. Fresh qualification still requires actual target absence.
+Admitted re-observation compares the full original recipe and fresh prerequisites,
+then checks real inventory against the saved input and original child/Lease UID.
+A known unchanged Job resumes through `AdmitResumable`; foreign owners, changed
+bodies and unknown writes are refused. The actual native Mint regression covers
+Job write/wait interruption, same-Job retry and UID replacement rejection. It
+stops at Job wait; full signing/publication and final health require the real
+program's own completion receipts and acceptance.
+
+The older Controller template-restoration producer has its own completed
+native receipt. The reader reconstructs only that exact same-UID template write
+from the bound source plan and both template digests; it does not manufacture
+an accepted child journal. Retained declarations are compared as a subset of
+the recorded native state, preserving Kubernetes defaults and original values.
+
+A managed OpenBao client qualifies its explicitly pinned current Root and the
+original trust ConfigMap owner. The retained bundle may also contain an expired
+bootstrap CA from the completed handoff. That historical certificate does not
+require renewal for the managed connection. Every bundle entry must remain a
+validly formed self-signed CA, and the selected managed Root must be currently
+valid. Native TLS chain verification still rejects any connection that relies
+on an expired CA; the recovery check does not replace or modify the bundle.
 
 `--at-service-root-trust-rollout` qualifies the known partial trust rollout when
 the original Account Manager Deployment was written but could not start its PKI
@@ -3482,6 +3688,13 @@ Execute in this order:
    database is a producer prerequisite, not evidence that migrations already ran.
    Existing Account Manager and populated database histories remain subject to
    their selected-release compatibility checks; completed bootstrap is not replayed.
+
+   Larger accepted-stage history checks use one fresh native inventory per observation
+   and verify original UIDs, expected bodies and authenticated cleanup history.
+   They do not rerun admission or wait for historical enrollment Pods to become
+   ready again. Current target readiness, schema/storage contracts, immediate
+   pre-write owner reads and post-deploy acceptance retain their normal checks.
+   The inventory is observation-local and is never reused across a write.
 5. Observe successful native registration and a ready heartbeat from each product.
    Its bootstrap ACK uses the same mTLS identity that completed that heartbeat.
    Finalize the native session, verify its tombstone and credential erasure, then
@@ -3495,6 +3708,69 @@ Execute in this order:
 6. Complete external data planes, DNS and TURN, run full runtime acceptance,
    capture genuine volume allocations and close the original execution. Run the
    independent full health check after closure.
+
+A fully installed fresh bootstrap session can reach finalization after its
+original leaf has expired. Do not renew that completed enrollment or extend its
+validity. The executor verifies the registered original leaf, issuer, complete
+ACK roster and original OpenBao ownership, then reconciles only that issuer's
+`allow_expired_cert_revocation` compatibility field before native finalization.
+OpenBao otherwise returns an expired-certificate warning without a revocation
+time or CRL entry, which cannot satisfy the existing finalization contract.
+The executor saves the full original CRL configuration before this single-field
+write and verifies that every other field is unchanged. The original parent
+journal and exact readback reconcile a lost response without replaying a known
+write. This permits revocation publication only; it grants no issuance or extra
+certificate lifetime. Native signed CRL coverage, real consumer ACKs, credential
+erasure and original deployment closure remain required.
+
+Secondary credential-copy deletion precedes the native finalizer. If the
+finalizer stops, accepted-stage revalidation must recognize those exact completed
+deletions through the original parent journal's session/UID-bound intent and
+absence receipt, followed by a current native absence check. Do not recreate
+the copies or require them to remain present. An unrecorded absence, pending
+deletion, changed intent or replacement UID still blocks recovery. Historical
+source plans and accepted resource journals remain unchanged.
+
+A pending fresh finalizer is resumed under the same original intent and start
+time. Observe the authenticated current session and complete installation roster
+first: if native finalization has not committed, continue that idempotent native
+operation; if it has committed, skip the POST and continue custody cleanup. The
+later custody tombstone is not a prerequisite for the earlier native finalizer.
+A committed native finalization can prove deletion of its exact original primary
+Secret when the response was lost; this observation does not write a local
+completion receipt. Secondary-copy DELETE producers reconcile their own exact
+pending UID-bound absence before native finalization, while preflight consumes
+completed deletion receipts only. Replacement owners or missing native proof
+remain blockers.
+
+The TURN registrar image and binary checksum are frozen independently in the
+original create plan. Forwarding API/PKI images does not replace that provider
+package. Recovery preflight and deployment inspect the same frozen immutable
+image, native Linux amd64 binary and qualified checksum; neither selects another
+version, builds locally or changes the environment's version settings.
+
+Health and rollout acceptance use the same environment image-selection
+projection as create/upgrade: an explicit `DEPLOYMENT_IMAGES` role takes
+precedence over the neutral `PKI_CONTROLLER_IMAGE` setting, with the original
+legacy key retained only for compatibility. Invalid or foreign-environment
+selections fail instead of falling back. This initializes the selected native
+custody/CRL inspector; it neither searches for another version nor changes the
+environment settings.
+
+A pending external data-plane intent may have failed before its first native
+write. The original executor can continue that same intent only after matching
+its exact request, revalidating the allocated VM and pinned SSH identity, and
+observing every managed configuration file absent (including symlinks). It keeps
+the original intent/start time and retained credentials. Existing or partial
+configuration without a native receipt remains blocked; installation is never
+inferred complete from absence. Only actual installation and readback produce
+the completion receipt. This applies to both edge and TURN configuration.
+
+After the complete PKI lifecycle is committed, repeat preflight/recovery uses
+native finalization plus its original local receipt, permanent identity outputs
+and UID-bound retirement evidence. The historical enrollment credential Secrets
+and custody Deployment must remain retired. Recovery never recreates them or
+requires their old short-lived keys to authenticate a completed lifecycle.
 
 If complete acceptance discovers a runtime defect after product finalization,
 resume the same admitted program with the tested correction. The finite
@@ -3572,9 +3848,12 @@ subject, key pair and original Secret owner. It preserves the original bytes;
 permanent product identity exports retain their canonical three-certificate contract.
 
 The operator access JWT has a separate lifetime from the bootstrap session and
-execution budget. Product API calls refresh the same operator authentication
-before use after a long native wait, using the existing refresh interval. A
-refresh never changes the operator identity or retries an uncertain mutation.
+execution budget. Successful native authentication retains only that verified
+operator's login inputs in the in-memory client. Fresh creation and restored
+continuation therefore use the same pre-request refresh after a long native
+wait, including before the remaining-product policy read. This does not persist
+an additional credential, change the operator identity or retry an uncertain
+mutation.
 
 Regression coverage must execute the native bootstrap program against real TLS
 and an isolated registry database, including failed login, original key/CSR reuse,
@@ -3666,6 +3945,14 @@ Use the canonical CI helper image for the selected release; a mutable tag does
 not establish the protected native execution provenance. The environment and
 stack are explicit, including for production. This maintenance does not replay
 initial bootstrap, regenerate identity, or depend on an old dev checkpoint.
+`--timeout` selects one positive caller window (default `15m`), covering
+inspection, repair, reload and verification without restarting that clock.
+For a larger environment an operator may explicitly select, for example,
+`--timeout 60m`; the script does not impose a separate hard-coded 30-minute cap.
+The parent context can shorten this window, and original deployment admission
+history is retained. UID-bound helper cleanup remains separately bounded.
+If the window expires during a resource read, the final error identifies the
+caller deadline rather than implying that the original resource is missing.
 
 Offline Root CRLs use a six-day validity and become due 48 hours before expiry,
 within the existing seven-day verifier ceiling. The original encrypted Root
@@ -3684,6 +3971,36 @@ an interrupted rotation, and never repeats a successful rotation just because
 its publication response was lost. The temporary online helper receives only
 the original database reference, public CA projection and audience-restricted
 Kubernetes authentication token; offline Root keys remain on the operator host.
+
+An unfinished original create may need CRL maintenance before final
+`bootstrap/bindings.json` exists. In that case the reader acquires the original
+create execution fence and verifies the admitted plan, exact initialized
+`custody/owners.json`, completed native custody initialization and original Root
+activation readbacks. It reads those existing facts without writing final
+bindings or declaring deployment complete. Missing or changed original evidence,
+or a corrupt existing final binding, remains a failure.
+Execution holds that original create owner through maintenance and final status,
+and records its genuine scoped Kubernetes Lease in the original journal. It does
+not release or replace the original deployment fence or mark create complete.
+Discovery shares the held owner instead of trying to acquire its own lock again.
+An active original executor or a different kubeconfig remains blocked.
+Session continuation reconstructs original listener templates from their retained
+initial transport authorities. Those certificates are historical inputs after
+managed TLS activation; their expiry does not renew them or select them as live
+trust. The reader retains the exact original CA bytes and validates their shape
+and signature. Native session admission still checks the current managed Root,
+original trust owner and current TLS/CRL evidence independently. Expired actual
+serving certificates remain failures.
+If a PVC-backed consumer is faulted, the script inspects its original claims
+through a bounded helper on the original node. Inspection is read-only; execution
+uses the maintenance fence and retains original keys and ownership. OpenBao's
+signed startup trust is refreshed after local Root installation and before any
+online signer or KV cache is used. The original Pod and provider process must
+remain in place. The helper is removed with its original UID before completion.
+An executing original OpenBao container uses the native host executable from
+its retained Pod command. The separate CI helper uses its own packaged native
+executable; these image layouts must not be assumed identical. Startup failures
+retain a fixed diagnostic category without exposing private process output.
 
 If an interrupted successor expires before convergence, maintenance preserves
 the exact incomplete journal in immutable history, validates its authority and
@@ -3708,6 +4025,19 @@ consumer reload/ACK remains an explicit failure. Normal pre-expiry renewal
 uses native reloads without a blanket rollout.
 Public PEM files produced by a native sidecar are observed through their original
 shared volume and durable CRL state; the sidecar remains their sole writer.
+For OpenBao owners, successful durable publication alone does not refresh every
+running public cache. Maintenance also updates the original running container's
+CRL cache atomically with the verified native installer. Readback requires both
+the committed KV record and that running projection to agree; genuine runtime
+ACKs remain separate. A stopped consumer is inspected through original KV and
+restores its memory projection when it starts, without generating an identity.
+Some OpenBao TLS consumers verify revocation directly through the native
+registry and have no CRL cache file. For those original running consumers,
+renewal verifies a scoped read using the independently recorded managed Root
+with bootstrap trust omitted, and reports `registry_transports` evidence in the
+private maintenance status. Every declared consumer is still required. Existing
+file-cache installation/ACK checks and native revocation/finalization receipts
+remain in force.
 Older images need not contain `pkitrust`: maintenance extracts the static tool
 from the verified helper image and checks its digest before temporary execution
 beside the consumer's original CRL state. This also supports containers with a
@@ -3767,3 +4097,153 @@ and rotated by the operator. A failure must be investigated before the renewal
 lead is exhausted. After recovery, repeat the maintenance command to establish
 idempotence and run `scripts/check-deployment-health.sh --environment <name>`;
 CRL maintenance alone does not establish whole-environment health.
+
+### Observe an already replaced bootstrap identity Pod
+
+For an admitted original-generation Pod restart whose original deadline has
+expired, use the retained review with the formal facade:
+
+```sh
+./scripts/deploy-environment.sh recover-create-stale-identity-pod \
+  --environment <environment> --reconcile-observed \
+  --review-sha256 <original-review> --confirm <selected-stack>
+```
+
+This mode performs native reads and records an observed reconciliation in the
+original local journal. It verifies the old Pod UID is absent, the original
+Deployment UID and accepted current body, its Ready replacement descendant, and
+all original identity Lease UIDs/holders. It does not restart or delete a Pod,
+acquire a child execution Lease, or change the original deletion deadline.
+The receipt records the current observation time and preserves that old deadline;
+it does not assert that the original restart completed within its expired window.
+
+
+### Initialize original OpenBao consumer public CRLs
+
+Fresh creation runs the admitted native public-cache producer before enabling
+OpenBao CRL manifests in Controller and CertIssuer. Preflight checks the selected
+helper's `initial-public-crl-custody-v2` and
+`initial-openbao-public-crl-custody-v1` capabilities before allocation; the real
+original Root and intermediate IDs are bound after their normal creation.
+Missing future public caches are planned producer outputs, not installation ACKs.
+
+For an interrupted original generation whose core consumer stage stopped before
+this producer existed, first record an explicitly selected, formally released
+helper with the required capability. This selection is independent of the
+maintained runtime images:
+
+```sh
+./scripts/deploy-environment.sh record-create-repair-publication \
+  --environment <environment> --pull-request <merged-helper-pull-request> \
+  --purpose openbao-public-crl
+./scripts/deploy-environment.sh recover-create-openbao-public-crl \
+  --environment <environment> --action preflight
+./scripts/deploy-environment.sh recover-create-openbao-public-crl \
+  --environment <environment> --action create \
+  --plan-sha256 <exact-preflight-plan-sha256> --confirm <selected-stack>
+```
+
+The preflight binds the original failed core plan and journal, original owner UIDs,
+custody scope, exact Root/intermediate purpose paths, current signed registry CRLs,
+and the selected helper publication. It reads the registry directly, so CertIssuer
+need not be running. The create action executes that same admitted native Job plan.
+The helper applies the existing signed monotonic CRL cache contract: first creation
+uses CAS0, an exact current retry writes nothing, and rollback is refused. It does
+not enroll private identities, replace keys, acquire private identity leases,
+change runtime image selections, or acknowledge future subjects. The original
+failed child remains truthful until its real ordinary stage resumes.
+
+The environment store retains
+`deployment/create/<parent>/repair-evidence/openbao-public-crl-v1.json`,
+`deployment/create/<parent>/openbao-public-crl/<review>/qualification.json`, and
+`deployment/create/<parent>/openbao-public-crl/selected.json`. Directories use
+`0700` and files use `0600`. Expired qualifications, a changed checker, or a changed
+current signed CRL require another preflight; it retains prior immutable evidence
+and requalifies the same helper and native plan. A known pending Job keeps its
+recorded UID/body and may qualify before it is ready; execution still waits for
+and verifies its real success. An accepted producer is subsequently observed
+through authenticated native history, including after the original temporary
+seed expires or the original core child completes. Then use the ordinary full
+preflight and create flow for remaining work; newly required subjects still need
+the qualified same-key session lifecycle.
+
+
+### Interrupted fresh workload with incompatible PKI packages
+
+When bootstrap already uses OpenBao custody but an explicitly selected final
+Controller or Management package supports only file state, fix the selected
+packages through the official command below. Choose the reviewed immutable
+package and its exact formal publication; this operation never looks up a
+latest version.
+
+```sh
+bash scripts/deploy-environment.sh prepare-create-runtime-images \
+  --environment NAME --parent-plan-sha256 ORIGINAL_PARENT \
+  --image REVIEWED_IMMUTABLE_API_IMAGE --source-revision EXACT_SOURCE \
+  --run-id EXACT_RELEASE_RUN --run-attempt EXACT_ATTEMPT \
+  --manifest-sha256 EXACT_MANIFEST_SHA --confirm video-cloud-NAME
+```
+
+Preview verifies the original known prefix, exact image capabilities and native
+successor dry-run. Review its source/qualification/successor hashes before
+adding `--apply`. Apply updates only the explicit Controller/Management
+environment selection and private continuation records; it performs no cloud
+writes. Then run the complete `check-deployment-preflight.sh --environment NAME
+--operation create` and use its new GO plan with the ordinary create script.
+Known migration Jobs and all unrelated resources retain their original owners;
+the original failed journal is preserved. Completion still requires the
+original create to close and the standard full health check to pass.
+
+If this direct fresh generation has already accepted its workload, finalized
+its original Service session, completed its steady transition and retired its
+preparers, an explicit later Controller/Management role selection uses the same
+full preflight and ordinary create commands. Use the same
+`prepare-create-runtime-images` command with `--role LKE_PKI_MANAGEMENT_IMAGE`
+(or `LKE_PKI_CONTROLLER_IMAGE`) to select only that existing role; omitting
+`--role` preserves the original two-role behavior. For a completed direct-fresh
+lifecycle the command verifies the candidate publication/capabilities and native
+image-only dry-run, then `--apply` commits only the normal version receipt and
+`DEPLOYMENT_IMAGES`. It leaves the original image-forward artifact unchanged.
+A candidate that repairs a missing declared export capability is checked before
+authenticating the old package; the old receipt/CI/backend checks still run,
+and this updater-only admission cannot satisfy ordinary current-package checks.
+The updater receipts must chain exactly to the original operator inputs; the selected final
+packages must have their exact formal CI and native capabilities. Preflight
+binds a new `workload-image-forward-<selection-sha256>` ordinary child, derived
+only from the original accepted owner bodies and their recorded same-UID writes.
+It preserves the original failed child, accepted image artifact, completion
+alias and cleanup journals. Only changed selected-role container images are
+written. A retry consumes the same saved child and native journal, including
+a known write still waiting for acceptance, without repeating identity, cleanup
+or migration effects. The old GO does not authorize the new role selection.
+Public CRL export convergence remains strict post-rollout/full-health acceptance;
+an exporter repair does not require its old image to have produced the repaired
+public file before rollout.
+
+When the installed session expired before all new consumers ACKed, preflight
+first returns `scope=original-generation-runtime-host-templates`. Execute that
+exact GO with the ordinary create command. It installs the reviewed Controller
+and Management templates without waiting for dependent application readiness.
+Repeat full preflight and create for the original same-key session and remaining
+deployment; consumer readiness and actual ACKs remain required. The effective
+workload continuation preserves those recorded package/session updates. A
+scoped PASS remains `completed=false` until the original create and full health
+acceptance finish.
+
+If an old projected JWT is unreadable by the actual image-default user, the
+same script can first qualify `scope=original-generation-custody-token-access`.
+Run its exact GO through ordinary create, then repeat preflight and resume the
+same live session. This compatibility uses the recorded runtime group and adds
+only the missing Pod volume group; it does not require another session or
+changes to maintained environment intent. New create and upgrade rendering use
+native Kubernetes token projection behavior for Pods without explicit groups.
+
+If an unfinished OpenBao-backed create reports a missing MQTT public-state
+record for a registered product, ordinary preflight may return
+`scope=original-generation-product-public-crls`. Execute its exact GO with the
+same create script. The child initializes only each original product owner's
+signed public cache, using its recorded ConfigMap, registry issuer and native
+custody scope. It reuses native child journals on retry and never creates a
+replacement private identity. Continue the still-valid original session, then
+complete full create and the standard health check; this scope alone remains
+`completed=false`.

@@ -22,6 +22,8 @@ type createServiceSessionIntent struct {
 }
 
 type createServiceSessionRecovery struct {
+	currentCore                  *currentCoreForwardQualification // exact separately reviewed current-core successor; runtime only
+	qualifiedPlan                *environmentCreatePlan           // exact preflight-selected plan; runtime only
 	redisDurable                 *createManagedLateRedisDurable
 	normalTail                   *createManagedLateNormalTail
 	normalSupplement             *createManagedLateNormalTailSupplement
@@ -39,6 +41,7 @@ type createServiceSessionRecovery struct {
 	AppTrustRecovery             *createAppTrustRecovery                  `json:"AppTrustRecovery,omitempty"`
 	DeviceTrustRecovery          *createDeviceTrustRecovery               `json:"DeviceTrustRecovery,omitempty"`
 	CoreAccepted                 bool
+	SecondSession                bool `json:",omitempty"`
 	OrderForward                 bool
 	PartialCore                  *deploymentplan.Plan
 	PartialCoreJournal           deploymentplan.Journal

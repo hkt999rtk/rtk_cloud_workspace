@@ -731,6 +731,12 @@ before mutation rather than rebuilding identities through deleted templates.
 
 ## CI image selection
 
+An explicit environment image selection may name a formal repair-branch Release
+dispatch. It requires the canonical `release.yml`, successful `ci.yml` for that
+exact source and branch, and the same immutable run/attempt/manifest/digest
+verification. This does not select a different or newer version. Latest-main
+lookup and backup publication policies remain separate and unchanged.
+
 Preflight reads formal service `image-manifest.json` artifacts directly for the
 selected workspace HEAD and its pinned service revisions; the selection is held in
 memory and included in the plan digest. Complete preflight saves that selection

@@ -471,3 +471,43 @@ func TestAppTrustExecutionContractQualifiesAndExecutesOriginalIdentity(t *testin
 		t.Fatal("App forward omitted native broker enforcement")
 	}
 }
+
+func TestActivatedDeviceEvidenceUsesOriginalNativeRegistryDuringControllerTransition(t *testing.T) {
+	f := newDeviceTrustExecutionContract(t)
+	device, err := f.prepare(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.executeDevice(t, device)
+	active := f.activateDevice(t)
+	issuers := f.protocol["issuers"].(map[string]any)
+	original := deploymentplan.Clone(active.Document)
+	f.protocol["issuer_read_unavailable"] = true
+	for _, mode := range []string{"controller-route-unavailable", "changed-document", "inactive", "foreign-environment", "missing"} {
+		t.Run(mode, func(t *testing.T) {
+			current := deploymentplan.Clone(original)
+			switch mode {
+			case "changed-document":
+				current["signer_reference"] = "unrecorded-authority"
+			case "inactive":
+				current["status"] = "ready"
+			case "foreign-environment":
+				current["environment"] = "other"
+			}
+			issuers[active.ID] = current
+			if mode == "missing" {
+				delete(issuers, active.ID)
+			}
+			f.publishTrust(t)
+			before := createBootstrapStateSnapshot(t, f.store.Root)
+			_, observed, err := loadActivatedDeviceForAppTrust(t.Context(), f.cfg, f.store, f.e, f.backend, f.operator, &f.p)
+			if (err == nil) != (mode == "controller-route-unavailable") {
+				t.Fatalf("mode=%s error=%v", mode, err)
+			}
+			if err == nil && observed.ID != active.ID {
+				t.Fatal("native proof selected another issuer")
+			}
+			assertRecoveryContractReadOnly(t, f.store, before)
+		})
+	}
+}

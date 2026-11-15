@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -223,7 +224,53 @@ func renewInitialTransportMaterial(old environmentCreateTransport, now time.Time
 	if err != nil {
 		return out, nil, err
 	}
-	return out, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: private}), nil
+	encoded := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: private})
+	if err := verifyInitialTransportSuccessor(old, out, encoded, now); err != nil {
+		return environmentCreateTransport{}, nil, err
+	}
+	return out, encoded, nil
+}
+
+// A new temporary CA is needed when the original authority key was discarded.
+// Every serving key and certificate subject remains bound to the prior owner.
+func verifyInitialTransportSuccessor(old, next environmentCreateTransport, caKey []byte, now time.Time) error {
+	bad := func() error {
+		return createProviderRecoveryBlock("temporary transport successor differs from the original serving identity")
+	}
+	before, err := parseFirstCertificatePEM([]byte(old.CACert))
+	if err != nil || before == nil || !before.IsCA || before.CheckSignatureFrom(before) != nil || len(old.Identities) == 0 {
+		return bad()
+	}
+	after, err := parseFirstCertificatePEM([]byte(next.CACert))
+	if err != nil || after == nil || !after.IsCA || after.CheckSignatureFrom(after) != nil || before.Subject.String() != after.Subject.String() || after.NotBefore.After(now) || !after.NotAfter.After(now.Add(2*time.Hour)) || after.NotAfter.Sub(after.NotBefore) > 24*time.Hour+time.Minute || len(old.Identities) != len(next.Identities) {
+		return bad()
+	}
+	if _, err := temporaryTransportSigningKey(caKey, after); err != nil {
+		return bad()
+	}
+	for name, original := range old.Identities {
+		successor, ok := next.Identities[name]
+		if !ok || successor.Key != original.Key {
+			return bad()
+		}
+		first, err := parseFirstCertificatePEM([]byte(original.Certificate))
+		if err != nil || first == nil || first.CheckSignatureFrom(before) != nil {
+			return bad()
+		}
+		second, err := parseFirstCertificatePEM([]byte(successor.Certificate))
+		if err != nil || second == nil || second.CheckSignatureFrom(after) != nil || first.Subject.String() != second.Subject.String() || deploymentplan.Digest(first.DNSNames) != deploymentplan.Digest(second.DNSNames) || deploymentplan.Digest(first.IPAddresses) != deploymentplan.Digest(second.IPAddresses) || first.KeyUsage != second.KeyUsage || deploymentplan.Digest(first.ExtKeyUsage) != deploymentplan.Digest(second.ExtKeyUsage) || !second.NotBefore.Equal(after.NotBefore) || !second.NotAfter.Equal(after.NotAfter) {
+			return bad()
+		}
+		if _, err := temporaryTransportSigningKey([]byte(successor.Key), second); err != nil {
+			return bad()
+		}
+		firstKey, err := x509.MarshalPKIXPublicKey(first.PublicKey)
+		secondKey, secondErr := x509.MarshalPKIXPublicKey(second.PublicKey)
+		if err != nil || secondErr != nil || !bytes.Equal(firstKey, secondKey) {
+			return bad()
+		}
+	}
+	return nil
 }
 
 func initialTransportOverride(original deploymentplan.Object, transports map[string]environmentCreateTransport) (deploymentplan.Object, bool) {

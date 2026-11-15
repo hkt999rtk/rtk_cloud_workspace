@@ -22,9 +22,19 @@ import (
 // rendering and the original scoped executor run against an isolated store.
 // This proves the bootstrap producer, not provider cutover or public preflight.
 func TestFreshFoundationProducerPreservesOriginalRuntimeAndOwnedNamespaces(t *testing.T) {
+	runFreshFoundationProducerOrder(t, false)
+}
+
+func TestFreshFoundationProducerStartsOpenBaoBeforeOtherWorkloads(t *testing.T) {
+	runFreshFoundationProducerOrder(t, true)
+}
+
+func runFreshFoundationProducerOrder(t *testing.T, openBaoFirst bool) {
+	t.Helper()
 	f := newProviderStorageExecutionContract(t, "complete", func(_ *deploymentConfig, plan *environmentCreatePlan) []environmentReleasePublicationProof {
 		// Select the synthetic immutable provider role before the original
 		// artifact and its publication proof are frozen; never retrofit it.
+		plan.OpenBaoFirst = openBaoFirst
 		plan.Release.Images["LKE_OPENBAO_IMAGE"] = environmentReleaseImage{Reference: "docker.io/openbao/openbao@sha256:" + strings.Repeat("1", 64)}
 		return coreContractPublicationProofs(t, &plan.Release)
 	})
@@ -104,6 +114,75 @@ print(json.dumps(v))
 			t.Fatal("fresh foundation escaped its original stage", stage, ctx.Err())
 		}
 		calls++
+		if openBaoFirst {
+			entry := createOpenBaoACKCompletionEntry(f.e.Journal, "openbao-transport-material")
+			if entry == nil || entry.Phase != "bootstrap" || entry.State != "completed" || len(entry.Receipt) == 0 {
+				t.Error("OpenBao transport has no completed original parent intent and material receipt")
+			} else {
+				var receipt map[string]string
+				path := filepath.Join(f.store.Root, "deployment", "create", "material", f.e.Journal.PlanSHA256, "openbao-transport")
+				material, materialErr := os.ReadFile(filepath.Join(path, "identities.json"))
+				ca, caErr := os.ReadFile(filepath.Join(path, "ca.crt"))
+				intentSHA, intentErr := environmentCreatePlanSHA256(openBaoFirstTransportIntent(f.cfg))
+				if json.Unmarshal(entry.Receipt, &receipt) != nil || materialErr != nil || caErr != nil || intentErr != nil || entry.IntentSHA256 != intentSHA || receipt["identities_sha256"] != environmentPreflightBytesSHA256(material) || receipt["ca_sha256"] != environmentPreflightBytesSHA256(ca) {
+					t.Error("OpenBao parent checkpoint does not bind the exact selected transport")
+				}
+				if _, exists, missing, err := readOpenBaoFirstRetainedTransport(ctx, f.cfg, f.store, f.e, nil); err != nil || !exists || missing {
+					t.Error("actual producer checkpoint cannot be read through the same parent", err)
+				}
+			}
+			bao, err := renderEnvironmentCreateOpenBaoFoundation(f.cfg, f.plan.Release, "openbao-transport-tls", "pki-openbao-transport-ca")
+			if err != nil {
+				t.Fatal("cannot render selected OpenBao", err)
+			}
+			expected := map[string]bool{
+				"Secret/" + f.plan.Stack + "-secrets/openbao-transport-tls":                                             true,
+				"Secret/" + f.plan.Stack + "-secrets/" + lkeImagePullSecretName(environmentCreateProviderValues(f.cfg)): true,
+			}
+			for _, d := range bao {
+				expected[deploymentplan.ID(d.Object)] = true
+			}
+			for _, d := range defs {
+				id := deploymentplan.ID(d.Object)
+				if !expected[id] {
+					t.Errorf("OpenBao first stage included unrelated resource %s", id)
+				}
+				delete(expected, id)
+			}
+			if len(expected) != 0 {
+				t.Errorf("OpenBao first stage omitted dependencies: %v", expected)
+			}
+			raw, err := readBoundedEnvironmentFile(f.store.KubeconfigPath(), true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// These inert values only exercise the shared renderer; no synthetic
+			// key or certificate is admitted, written, or treated as an identity.
+			management := environmentCreateTransport{CACert: "fixture-ca", Identities: map[string]environmentCreateTransportIdentity{}}
+			for _, name := range []string{"account-manager", "pki-controller", "certissuer", "video-cloud-api", "video-cloud-api-app-pki"} {
+				management.Identities[name] = environmentCreateTransportIdentity{Certificate: "fixture-cert-" + name, Key: "fixture-key-" + name}
+			}
+			services, err := renderEnvironmentCreateFoundationServices(f.cfg, &f.plan, f.store, f.operator, raw, management, environmentCreateTransport{CACert: "fixture-ca"}, map[string]string{"access.pub": "fixture-public"})
+			if err != nil {
+				t.Fatal("original services renderer", err)
+			}
+			seen := map[string]bool{}
+			for _, d := range services {
+				seen[deploymentplan.ID(d.Object)] = true
+			}
+			pullName := lkeImagePullSecretName(environmentCreateProviderValues(f.cfg))
+			if seen["Secret/"+f.plan.Stack+"-secrets/"+pullName] || seen["StatefulSet/"+f.plan.Stack+"-secrets/openbao"] || !seen["Secret/"+f.plan.Stack+"-video-cloud/"+pullName] || !seen["Secret/"+f.plan.Stack+"-account-manager/"+pullName] {
+				t.Error("services renderer did not preserve the first-stage pull secret and workload boundary")
+			}
+			originalBinding := environmentCreateStageBindingsSHA("foundation-services", services)
+			for attempt := 0; attempt < 32; attempt++ {
+				repeated, err := renderEnvironmentCreateFoundationServices(f.cfg, &f.plan, f.store, f.operator, raw, management, environmentCreateTransport{CACert: "fixture-ca"}, map[string]string{"access.pub": "fixture-public"})
+				if err != nil || environmentCreateStageBindingsSHA("foundation-services", repeated) != originalBinding {
+					t.Fatal("unchanged foundation settings and original material produced different stage bindings", attempt, err)
+				}
+			}
+			return stop
+		}
 		var observed struct {
 			Objects map[string]deploymentplan.Object `json:"objects"`
 			Writes  int                              `json:"writes"`
@@ -121,6 +200,9 @@ print(json.dumps(v))
 	defer cleanup()
 	if !errors.Is(err, stop) || calls != 1 || runtime.Execution != f.e || len(runtime.Backend.KubeconfigContent) == 0 {
 		t.Fatal("fresh producer did not reach its actual accepted foundation boundary", err, calls)
+	}
+	if openBaoFirst {
+		return
 	}
 	plan, journal, err := acceptedCreateStage(f.store, f.e, "kubernetes/foundation")
 	if err != nil || !journal.Accepted || len(plan.Resources) == 0 || len(journal.Owners) != len(plan.Resources) {

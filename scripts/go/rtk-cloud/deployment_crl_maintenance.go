@@ -43,15 +43,16 @@ type crlMaintenanceDependencies struct {
 	Converge func(context.Context, crlMaintenanceInventory, map[string]createRootCRLRecord) error
 }
 type crlMaintenanceStatus struct {
-	Environment string    `json:"environment"`
-	CheckedAt   time.Time `json:"checked_at"`
-	NextExpiry  time.Time `json:"next_expiry"`
-	LastSuccess time.Time `json:"last_success,omitempty"`
-	Due         bool      `json:"due"`
-	Completed   bool      `json:"completed"`
-	Issuers     int       `json:"issuers"`
-	Consumers   int       `json:"consumers"`
-	Failure     string    `json:"failure,omitempty"`
+	Environment        string                              `json:"environment"`
+	CheckedAt          time.Time                           `json:"checked_at"`
+	NextExpiry         time.Time                           `json:"next_expiry"`
+	LastSuccess        time.Time                           `json:"last_success,omitempty"`
+	Due                bool                                `json:"due"`
+	Completed          bool                                `json:"completed"`
+	Issuers            int                                 `json:"issuers"`
+	Consumers          int                                 `json:"consumers"`
+	Failure            string                              `json:"failure,omitempty"`
+	RegistryTransports []maintenanceRegistryTransportProof `json:"registry_transports,omitempty"`
 }
 type crlMaintenanceJournal struct {
 	Schema      string               `json:"schema"`

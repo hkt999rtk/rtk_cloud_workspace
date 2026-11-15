@@ -14,6 +14,9 @@ import (
 // This profile resumes only after all native CA ceremonies and public issuer
 // publication. It never repeats enrollment, activation or custody creation.
 type createManagedTransportRecovery struct {
+	PartialSessionRenewal                                               bool                                   `json:"PartialSessionRenewal,omitempty"`
+	PartialTrustForward                                                 *createManagedLateSeedForward          `json:"PartialTrustForward,omitempty"`
+	PartialTrustForwardReview                                           string                                 `json:"PartialTrustForwardReview,omitempty"`
 	Partial                                                             *createManagedTransportPartialRecovery `json:"Partial,omitempty"`
 	SessionRenewal                                                      *createManagedSessionRecovery          `json:"SessionRenewal,omitempty"`
 	SourceReview                                                        string
@@ -143,7 +146,7 @@ func verifyEnvironmentCreateRegisteredIssuers(store secretStore, roots, intermed
 	return nil
 }
 
-func prepareManagedTransportRecovery(ctx context.Context, cfg deploymentConfig, store secretStore, e *environmentCreateExecution, b environmentKubernetesBackend, operator map[string]string, p *createFoundationRecoveryPlan, r *createServiceSessionRecovery) error {
+func prepareManagedTransportRecovery(ctx context.Context, cfg deploymentConfig, store secretStore, e *environmentCreateExecution, b environmentKubernetesBackend, operator map[string]string, p *createFoundationRecoveryPlan, r *createServiceSessionRecovery, continuation ...environmentCreateBootstrapRuntime) error {
 	d := r.ManagedTransportRecovery
 	if d == nil || r.AppTrustRecovery == nil || r.DeviceTrustRecovery == nil {
 		return createProviderRecoveryBlock("managed transport continuation requires its qualified original ACTIVE lineages and original bootstrap custody")
@@ -183,12 +186,12 @@ func prepareManagedTransportRecovery(ctx context.Context, cfg deploymentConfig, 
 	if err = verifyEnvironmentCreateRegisteredIssuers(store, roots, intermediates, p.Materials); err != nil {
 		return err
 	}
-	if r.PostServiceRenewal {
+	if r.PostServiceRenewal && (!d.PartialSessionRenewal || d.SessionRenewal == nil) {
 		if err := prepareManagedSessionRecovery(ctx, cfg, store, e, b, p, r); err != nil {
 			return err
 		}
 	}
-	_, management, err := foundationRecoveryMaterials(store, e.Journal.PlanSHA256, createRecoveryTransportMinimumLife(ctx, 0, true))
+	_, management, err := recoveryTransportTemplateMaterials(ctx, cfg, store, e, r, createRecoveryTransportMinimumLife(ctx, 0, true))
 	if err != nil {
 		return err
 	}
@@ -204,17 +207,35 @@ func prepareManagedTransportRecovery(ctx context.Context, cfg deploymentConfig, 
 	if renewal != nil {
 		caPath = filepath.Join(store.Root, "deployment/create/transport-renewal", renewal.Review, "openbao-transport/ca.crt")
 	}
+	if _, ready, err := readCompletedInitialTransportSuccessor(store, e.Journal.PlanSHA256); err != nil {
+		return err
+	} else if ready {
+		if renewal != nil {
+			return createProviderRecoveryBlock("temporary transport has conflicting renewal proofs")
+		}
+		caPath, _, err = initialTransportAuthorityPath(store, e.Journal.PlanSHA256, "openbao")
+		if err != nil {
+			return err
+		}
+	}
 	runtime := environmentCreateBootstrapRuntime{ExecutionSHA256: e.Journal.PlanSHA256, Execution: e, Backend: b, ServiceSessionRecovery: r, TransportCAPEM: management.CACert, TransportRootSHA256: environmentPreflightBytesSHA256(ca.Raw), TransportTrustConfigMap: "pki-create-transport-trust", TransportSecrets: map[string]string{"account-manager": "pki-create-account-manager-transport", "pki-controller": "pki-create-pki-controller-transport", "certissuer": "pki-create-certissuer-transport"}, OpenBao: environmentCreateOpenBaoBootstrap{CACertPath: caPath}}
-	listeners, _, err := loadInitialListenerCheckpoint(store, e, p, true)
-	if err != nil {
-		return err
-	}
-	for _, v := range listeners.Resources {
-		runtime.InitialListeners = append(runtime.InitialListeners, deploymentplan.Definition{Phase: v.Phase, Object: deploymentplan.Clone(v.Desired)})
-	}
-	runtime.InitialListeners, _, err = initialCertIssuerAuthDefinitions(cfg, runtime.InitialListeners)
-	if err != nil {
-		return err
+	if len(continuation) > 0 {
+		if len(continuation) != 1 || continuation[0].Execution != e || continuation[0].ExecutionSHA256 != e.Journal.PlanSHA256 || len(continuation[0].InitialListeners) == 0 {
+			return createProviderRecoveryBlock("original successor listener continuation is unavailable")
+		}
+		runtime = continuation[0]
+	} else {
+		listeners, _, err := loadInitialListenerCheckpoint(store, e, p, true)
+		if err != nil {
+			return err
+		}
+		for _, v := range listeners.Resources {
+			runtime.InitialListeners = append(runtime.InitialListeners, deploymentplan.Definition{Phase: v.Phase, Object: deploymentplan.Clone(v.Desired)})
+		}
+		runtime.InitialListeners, _, err = initialCertIssuerAuthDefinitions(cfg, runtime.InitialListeners)
+		if err != nil {
+			return err
+		}
 	}
 	runtime.InitialListeners, err = configureCreateBrokerServiceConsumer(p.Plan.Bootstrap, runtime.InitialListeners)
 	if err != nil {
@@ -231,6 +252,14 @@ func prepareManagedTransportRecovery(ctx context.Context, cfg deploymentConfig, 
 	definitions, err := renderEnvironmentCreateTransportEnrollmentIssuer(ctx, cfg, p.Plan.Bootstrap, runtime, prospectiveService, roots, intermediates)
 	if err != nil {
 		return err
+	}
+	if len(continuation) != 0 {
+		runtime.ServiceCeremony = &prospectiveService
+		ctx = withEnvironmentCreateBootstrapRuntime(ctx, runtime)
+		definitions, err = projectEnvironmentCreateCustodyStage(ctx, cfg, store, &p.Plan, e, definitions, nil)
+		if err != nil {
+			return err
+		}
 	}
 	live, err := b.Inventory(ctx, p.Plan.Stack)
 	if err != nil {
@@ -509,6 +538,12 @@ func qualifyEnvironmentCreateManagedTransportCapabilities(ctx context.Context, c
 			return createProviderRecoveryBlock("accepted App routing publication changed after exact stopped-core qualification")
 		}
 		routingSHA = proof.FileSHA
+	} else {
+		var err error
+		routingSHA, err = readCompletedOriginalAppRouting(ctx, store, e, b)
+		if err != nil {
+			return err
+		}
 	}
 	return qualifyEnvironmentCreateBootstrapCapabilitiesWithRouting(ctx, cfg, p.Plan.Bootstrap, store, operator, publications, routingSHA, roots["service"].ID, roots["mqtt"].ID, roots["openbao_tls"].ID, roots["app"].ID)
 }

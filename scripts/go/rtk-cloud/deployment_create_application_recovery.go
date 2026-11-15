@@ -67,6 +67,15 @@ func originalPendingApplicationPlan(store secretStore, e *environmentCreateExecu
 }
 
 func loadServiceTrustRepairImage(ctx context.Context, cfg deploymentConfig, store secretStore, parent string) (environmentReleaseImage, string, error) {
+	return loadCreateVideoRepairImage(ctx, cfg, store, parent, "service-bootstrap", "rtk-cloud.create-service-trust-repair-selection/v1")
+}
+
+func loadCreateVideoRepairImage(ctx context.Context, cfg deploymentConfig, store secretStore, parent, repair, schema string) (environmentReleaseImage, string, error) {
+	images, sha, err := loadCreateVideoRepairImages(ctx, cfg, store, parent, repair, schema, "video-cloud-api")
+	return images["video-cloud-api"], sha, err
+}
+
+func loadCreateVideoRepairImages(ctx context.Context, cfg deploymentConfig, store secretStore, parent, repair, schema string, names ...string) (map[string]environmentReleaseImage, string, error) {
 	var selection struct {
 		Schema      string `json:"schema"`
 		Parent      string `json:"parent_plan_sha256"`
@@ -75,22 +84,30 @@ func loadServiceTrustRepairImage(ctx context.Context, cfg deploymentConfig, stor
 		Attempt     int    `json:"run_attempt"`
 		ManifestSHA string `json:"manifest_sha256"`
 	}
-	path := filepath.Join(store.Root, "deployment/repairs/service-bootstrap/selection.json")
+	base := filepath.Join(store.Root, "deployment", "repairs", repair)
+	path := filepath.Join(base, "selection.json")
 	raw, err := readBoundedEnvironmentFile(path, true)
-	if err != nil || json.Unmarshal(raw, &selection) != nil || selection.Schema != "rtk-cloud.create-service-trust-repair-selection/v1" || selection.Parent != parent || !deploymentUpgradeSHA.MatchString(selection.Revision) || selection.RunID <= 0 || selection.Attempt <= 0 || !environmentPreflightDigest.MatchString(selection.ManifestSHA) {
-		return environmentReleaseImage{}, "", createProviderRecoveryBlock("exact selected-generation formal CI Service trust repair publication is required")
+	if err != nil || json.Unmarshal(raw, &selection) != nil || selection.Schema != schema || selection.Parent != parent || !deploymentUpgradeSHA.MatchString(selection.Revision) || selection.RunID <= 0 || selection.Attempt <= 0 || !environmentPreflightDigest.MatchString(selection.ManifestSHA) {
+		return nil, "", createProviderRecoveryBlock("exact selected-generation formal CI repair publication is required: " + repair)
 	}
-	manifest, err := readBoundedEnvironmentFile(filepath.Join(store.Root, "deployment/repairs/service-bootstrap", selection.Revision, "image-manifest.json"), true)
+	manifest, err := readBoundedEnvironmentFile(filepath.Join(base, selection.Revision, "image-manifest.json"), true)
 	if err != nil || environmentPreflightBytesSHA256(manifest) != selection.ManifestSHA {
-		return environmentReleaseImage{}, "", createProviderRecoveryBlock("recorded repair manifest bytes changed")
+		return nil, "", createProviderRecoveryBlock("recorded repair manifest bytes changed")
 	}
 	repo := "hkt999rtk/rtk_video_cloud"
 	fresh, attempt, err := readEnvironmentPublication(ctx, repo, selection.RunID, selection.Revision, false, environmentCIImageCommand(cfg))
 	if err != nil || attempt != selection.Attempt || environmentPreflightBytesSHA256(fresh) != selection.ManifestSHA {
-		return environmentReleaseImage{}, "", createProviderRecoveryBlock("repair publication lacks exact current successful formal CI provenance")
+		return nil, "", createProviderRecoveryBlock("repair publication lacks exact current successful formal CI provenance")
 	}
-	image, err := selectEnvironmentPublishedImage(manifest, repo, selection.RunID, selection.Attempt, selection.Revision, "ghcr.io/"+repo+"/video-cloud-api", false)
-	return image, environmentPreflightBytesSHA256(raw), err
+	images := make(map[string]environmentReleaseImage, len(names))
+	for _, name := range names {
+		image, err := selectEnvironmentPublishedImage(manifest, repo, selection.RunID, selection.Attempt, selection.Revision, "ghcr.io/"+repo+"/"+name, false)
+		if err != nil {
+			return nil, "", err
+		}
+		images[name] = image
+	}
+	return images, environmentPreflightBytesSHA256(raw), nil
 }
 
 func prepareApplicationTrustRecovery(ctx context.Context, cfg deploymentConfig, store secretStore, e *environmentCreateExecution, b environmentKubernetesBackend, p *createFoundationRecoveryPlan, r *createServiceSessionRecovery) error {

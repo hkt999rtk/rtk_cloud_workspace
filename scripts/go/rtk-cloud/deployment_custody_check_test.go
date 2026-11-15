@@ -161,3 +161,68 @@ func TestCustodyAccountRegistrationHealthUsesCommittedCachesAndActualPublicReloa
 		t.Fatal("public bytes accepted without original committed CRL cache")
 	}
 }
+
+func TestCustodyHealthContextProjectsSelectedEnvironmentImage(t *testing.T) {
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		for _, mode := range []string{"neutral", "selection", "foreign-selection", "invalid-selection"} {
+			t.Run(environment+"/"+mode, func(t *testing.T) {
+				cfg, store, _, _ := createStateFixture(t, environment)
+				cfg.Values["PKI_STATE_BACKEND"] = "openbao"
+				image := "ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api@sha256:" + strings.Repeat("a", 64)
+				legacy := "ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api@sha256:" + strings.Repeat("b", 64)
+				if err := store.write("operator/env/PKI_CONTROLLER_IMAGE", []byte(image), true); err != nil {
+					t.Fatal(err)
+				}
+				if mode != "neutral" {
+					for _, key := range []string{"PKI_CONTROLLER_IMAGE", "LKE_PKI_CONTROLLER_IMAGE"} {
+						if err := store.write("operator/env/"+key, []byte(legacy), true); err != nil {
+							t.Fatal(err)
+						}
+					}
+					selection := environmentImageSelection{Environment: environment, Images: map[string]environmentReleaseImage{"LKE_PKI_CONTROLLER_IMAGE": {Reference: image}}}
+					raw := mustProviderRecoveryJSON(selection)
+					if mode == "foreign-selection" {
+						selection.Environment = "foreign"
+						raw = mustProviderRecoveryJSON(selection)
+					}
+					if mode == "invalid-selection" {
+						raw = []byte("invalid-private-selection-canary")
+					}
+					if err := store.write("operator/env/"+environmentImagesKey, raw, true); err != nil {
+						t.Fatal(err)
+					}
+				}
+				kube, err := yaml.Marshal(frozenKubernetesFixture(t))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := store.write("kube/kubeconfig.yaml", kube, true); err != nil {
+					t.Fatal(err)
+				}
+				snapshot := func() string {
+					files := map[string][]byte{}
+					for _, key := range []string{"PKI_CONTROLLER_IMAGE", "LKE_PKI_CONTROLLER_IMAGE", environmentImagesKey} {
+						raw, err := os.ReadFile(filepath.Join(store.Root, "operator/env", key))
+						if err != nil && !os.IsNotExist(err) {
+							t.Fatal(err)
+						}
+						files[key] = raw
+					}
+					return deploymentplan.Digest(files)
+				}
+				before := snapshot()
+				runtime := newEnvironmentCheckRuntime(t.Context(), cfg, store, nil, "")
+				if strings.HasSuffix(mode, "-selection") {
+					if runtime.custodyError == nil || runtime.custodyReader != nil {
+						t.Fatal("invalid selected environment fell back to an unrelated image")
+					}
+				} else if runtime.custodyError != nil || runtime.custodyReader == nil || runtime.custodyReader.image != image {
+					t.Fatal("health ignored selected environment image precedence", runtime.custodyError)
+				}
+				if before != snapshot() {
+					t.Fatal("health changed environment settings")
+				}
+			})
+		}
+	}
+}

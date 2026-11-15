@@ -24,6 +24,12 @@ type Backend interface {
 	Wait(context.Context, Resource) error
 }
 
+// A read-only guard runs before the durable in-flight marker. Rejection here
+// is a known unstarted request, unlike a failed native Write response.
+type BeforeWriteBackend interface {
+	BeforeWrite(context.Context, string, Object) error
+}
+
 // PhaseFence supplies fresh observations for one stage's dependency checks.
 // Individual conditional writes still read their current owner independently.
 type PhaseFence func(context.Context, *Plan) (map[string]Object, error)
@@ -113,6 +119,7 @@ func admissionProjections(body, admitted Object) (Object, Object, bool) {
 	if !normalizeDaemonSetAdmissionGeneration(body, admitted, have) {
 		return want, have, false
 	}
+	matchEmptyInitContainers(want, have)
 	for _, object := range []Object{want, have} {
 		metadata := Map(object["metadata"])
 		annotations := Map(metadata["annotations"])
@@ -199,7 +206,7 @@ func admitResource(ctx context.Context, backend Backend, resource Resource) erro
 	}
 	admitted, err := backend.Write(ctx, resource.Action, body, true)
 	if err != nil {
-		return blocked("deployment.admission", resource.ID, "server dry-run rejected the exact desired body", "resolve write permission, immutable fields, admission, quota and namespace prerequisites")
+		return admissionWriteBlocker(resource.ID, err)
 	}
 	if admitted == nil || ID(admitted) != resource.ID || !matchesAdmission(body, admitted) {
 		return blocked("deployment.admission", resource.ID, admissionMismatchCause("server admission changed the approved resource or consumer configuration", body, admitted), "declare and qualify the admission mutation or repair the policy; never deploy a different image, identity or workload body")
@@ -292,13 +299,14 @@ func preserveReadBlocker(err, fallback error) error {
 }
 
 type Journal struct {
-	PlanSHA256        string            `json:"plan_sha256"`
-	Completed         []string          `json:"completed"`
-	Failed            string            `json:"failed,omitempty"`
-	InFlight          string            `json:"in_flight,omitempty"`
-	Owners            map[string]string `json:"owners"`
-	Accepted          bool              `json:"accepted"`
-	AcceptanceStarted bool              `json:"acceptance_started,omitempty"`
+	PlanSHA256        string                         `json:"plan_sha256"`
+	Completed         []string                       `json:"completed"`
+	Failed            string                         `json:"failed,omitempty"`
+	InFlight          string                         `json:"in_flight,omitempty"`
+	Owners            map[string]string              `json:"owners"`
+	Accepted          bool                           `json:"accepted"`
+	AcceptanceStarted bool                           `json:"acceptance_started,omitempty"`
+	RejectedCreates   []RejectedCreateReconciliation `json:"rejected_creates,omitempty"`
 }
 
 // Execute requires the current plan, real qualification and a private rollback
@@ -490,7 +498,12 @@ func (p *Plan) execute(ctx context.Context, backend Backend, expectedDigest, pri
 	}
 	lock := filepath.Join(directory, ".active")
 	if err := os.Mkdir(lock, 0700); err != nil {
-		return blocked("deployment.execution", "", "another execution or an interrupted execution owns the private journal", "inspect the recorded outcome and requalify recovery before releasing the environment-local execution lock")
+		if !errors.Is(err, os.ErrExist) || !resumable || !hasParent || prior == nil || recoverFullyWrittenChildLock(ctx, p, parent, lease, privateRoot, lock, prior) != nil {
+			return blocked("deployment.execution", "", "another execution or an interrupted execution owns the private journal", "inspect the recorded outcome and requalify recovery before releasing the environment-local execution lock")
+		}
+		if err := os.Mkdir(lock, 0700); err != nil {
+			return blocked("deployment.execution", "", "the recovered child execution lock cannot be acquired", "preserve the archived lock and inspect concurrent execution")
+		}
 	}
 	defer os.Remove(lock)
 	_, journalErr := os.Lstat(filepath.Join(directory, "journal.json"))
@@ -787,6 +800,20 @@ func (p *Plan) execute(ctx context.Context, backend Backend, expectedDigest, pri
 				}
 				if err == nil {
 					err = emitResourceProgress(index, resource, "apply")
+				}
+				if err == nil {
+					if guarded, ok := backend.(BeforeWriteBackend); ok {
+						err = guarded.BeforeWrite(ctx, resource.Action, body)
+						if err == nil {
+							err = ctx.Err()
+						}
+						if err == nil && p.SHA256() != expectedDigest {
+							err = errors.New("plan changed during pre-write guard")
+						}
+						if err == nil {
+							err = lease.Check(ctx)
+						}
+					}
 				}
 				if err == nil {
 					journal.InFlight = resource.ID

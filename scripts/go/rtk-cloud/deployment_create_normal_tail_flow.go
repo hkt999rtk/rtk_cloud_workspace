@@ -191,7 +191,7 @@ func hydrateCreateNormalTailTarget(ctx context.Context, cfg deploymentConfig, st
 		if err != nil {
 			return "", environmentKubernetesBackend{}, preflightExecutionProofBlocker("canonical target inputs changed since this original workload plan was frozen")
 		}
-		backend, err := newEnvironmentKubernetesBackend(snapshot.Kubeconfig, cfg.Environment)
+		backend, err := newEnvironmentKubernetesBackendForConfig(snapshot.Kubeconfig, cfg)
 		if err != nil {
 			return "", backend, err
 		}

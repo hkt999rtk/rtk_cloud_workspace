@@ -2127,13 +2127,17 @@ spec:
 }
 
 func lkeSupportDependencySecretManifests(env map[string]string) ([]string, error) {
+	return lkeSupportDependencySecretManifestsWithFuture(env, false)
+}
+
+func lkeSupportDependencySecretManifestsWithFuture(env map[string]string, futureRuntime bool) ([]string, error) {
 	manifests := make([]string, 0, 2)
 	for _, credential := range []struct{ id, secret, key string }{
 		{"zammad-postgres-password", "zammad-postgres-password", "postgres-password"},
 		{"zammad-redis-password", "zammad-redis-password", "redis-password"},
 	} {
 		value := lkeRuntimeSecretValue(credential.id)
-		if strings.TrimSpace(value) == "" {
+		if !futureRuntime && strings.TrimSpace(value) == "" {
 			return nil, fmt.Errorf("Zammad credential %s is unavailable", credential.id)
 		}
 		manifests = append(manifests, fmt.Sprintf(`apiVersion: v1
@@ -2146,7 +2150,7 @@ stringData:
   %s: %q
 `, credential.secret, lkeNamespaceName(env, "support"), credential.key, value))
 	}
-	if strings.TrimSpace(lkeRuntimeSecretValue("zammad-integration-token")) == "" {
+	if !futureRuntime && strings.TrimSpace(lkeRuntimeSecretValue("zammad-integration-token")) == "" {
 		return nil, errors.New("Zammad integration token is unavailable")
 	}
 	return manifests, nil

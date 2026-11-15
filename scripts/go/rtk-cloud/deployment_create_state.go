@@ -279,7 +279,7 @@ func loadEnvironmentCreateAdmittedGeneration(store secretStore, parent, artifact
 	recoveryPath := filepath.Join(store.Root, "deployment/create/recovery", parent, "qualification.json")
 	if _, err := os.Lstat(recoveryPath); err == nil {
 		var artifact environmentCreateProviderRecoveryArtifact
-		if readExecutionJSON(recoveryPath, &artifact) != nil || artifact.Schema != "rtk-cloud.provider-create-recovery-artifact/v1" || deploymentplan.Digest(artifact.Plan) != parent || deploymentplan.Digest(artifact) != artifactSHA || artifact.Qualification.PlanSHA256 != parent || artifact.Qualification.Decision != "GO" || !environmentCreateQualificationGatesValid(artifact.Qualification) {
+		if readExecutionJSON(recoveryPath, &artifact) != nil || artifact.Schema != "rtk-cloud.provider-create-recovery-artifact/v1" || deploymentplan.Digest(artifact.Plan) != parent || deploymentplan.Digest(artifact) != artifactSHA || artifact.Qualification.PlanSHA256 != parent || artifact.Qualification.Decision != "GO" || !environmentCreateQualificationGatesValid(artifact.Qualification, environmentCreateProviderRecoveryRequiredGates) {
 			return plan, "", environmentCreateStateBlock("admitted provider recovery qualification is unavailable or changed")
 		}
 		return artifact.Plan.Plan, artifact.Plan.Plan.ConfigurationSHA256, nil
@@ -314,7 +314,7 @@ func loadEnvironmentCreateAdmittedGeneration(store secretStore, parent, artifact
 		}
 		var candidate environmentCreatePlan
 		sha, shaErr := environmentCreatePlanSHA256(artifact.Plan)
-		if shaErr != nil || decodeEnvironmentJSON(artifact.Plan, &candidate) != nil || artifact.Schema != environmentCreateArtifactSchema || artifact.PlanSHA256 != parent || sha != parent || artifact.Environment != store.Environment || artifact.Stack != candidate.Stack || artifact.ConfigurationSHA256 != candidate.ConfigurationSHA256 || artifact.Qualification.PlanSHA256 != parent || artifact.Qualification.Decision != "GO" || !environmentCreateQualificationGatesValid(artifact.Qualification) {
+		if shaErr != nil || decodeEnvironmentJSON(artifact.Plan, &candidate) != nil || artifact.Schema != environmentCreateArtifactSchema || artifact.PlanSHA256 != parent || sha != parent || artifact.Environment != store.Environment || artifact.Stack != candidate.Stack || artifact.ConfigurationSHA256 != candidate.ConfigurationSHA256 || artifact.Qualification.PlanSHA256 != parent || artifact.Qualification.Decision != "GO" || !environmentCreateQualificationGatesValid(artifact.Qualification, environmentCreateRequiredGates) {
 			return plan, "", environmentCreateStateBlock("admitted original create qualification is incomplete or changed")
 		}
 		matches++
@@ -326,11 +326,11 @@ func loadEnvironmentCreateAdmittedGeneration(store secretStore, parent, artifact
 	return plan, configurationSHA, nil
 }
 
-func environmentCreateQualificationGatesValid(q deploymentplan.Qualification) bool {
-	if len(q.Gates) != len(environmentCreateRequiredGates) {
+func environmentCreateQualificationGatesValid(q deploymentplan.Qualification, required []string) bool {
+	if len(q.Gates) != len(required) {
 		return false
 	}
-	for i, id := range environmentCreateRequiredGates {
+	for i, id := range required {
 		gate := q.Gates[i]
 		if gate.ID != id || !gate.Required || gate.Status != "PASS" || !environmentPreflightDigest.MatchString(gate.EvidenceSHA256) {
 			return false
@@ -420,6 +420,8 @@ type environmentCreateExecution struct {
 	lateSourceReuse *managedLateSourceReuse
 	latePureSource  *managedLatePureSourceView
 	volumeExecution *environmentCreateExecution // pure historical volume provenance; never a write executor
+	originalPlanSHA string
+	versionState    *createOperatorVersionState
 }
 
 func startEnvironmentCreateExecution(ctx context.Context, cfg deploymentConfig, artifact *environmentCreateArtifact, operatorSHA string, admittedAt time.Time) (*environmentCreateExecution, error) {
@@ -466,7 +468,7 @@ func startEnvironmentCreateExecution(ctx context.Context, cfg deploymentConfig, 
 	if err := os.Mkdir(fence, 0700); err != nil {
 		return nil, environmentCreateStateBlocker("deployment.create.execution", "another controller or interrupted operation owns environment execution")
 	}
-	e := &environmentCreateExecution{Store: store}
+	e := &environmentCreateExecution{versionState: &createOperatorVersionState{}, Store: store}
 	var succeeded bool
 	defer func() {
 		if !succeeded {

@@ -418,6 +418,10 @@ func verifyDeploymentUpgradeImageCIAtWithCommand(ctx context.Context, image, sha
 }
 
 func deploymentUpgradeSuccessfulRun(raw []byte, sha string) (int64, error) {
+	return deploymentSuccessfulRunForBranch(raw, sha, "main")
+}
+
+func deploymentSuccessfulRunForBranch(raw []byte, sha, branch string) (int64, error) {
 	var result struct {
 		TotalCount int `json:"total_count"`
 		Runs       []struct {
@@ -434,7 +438,7 @@ func deploymentUpgradeSuccessfulRun(raw []byte, sha string) (int64, error) {
 	}
 	// GitHub returns newest runs first. Do not borrow an older passing rerun.
 	for _, run := range result.Runs {
-		if run.HeadSHA != sha || run.HeadBranch != "main" || (run.Event != "push" && run.Event != "workflow_dispatch") {
+		if run.HeadSHA != sha || run.HeadBranch != branch || (run.Event != "push" && run.Event != "workflow_dispatch") {
 			continue
 		}
 		if run.ID <= 0 || run.Status != "completed" || run.Conclusion != "success" {

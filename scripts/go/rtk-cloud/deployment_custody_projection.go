@@ -173,6 +173,10 @@ func projectEnvironmentCustodyResources(values map[string]string, environment st
 			}
 			memoryVolumes[deploymentplan.String(volume["name"])] = deploymentplan.Map(volume["emptyDir"])["medium"] == "Memory"
 		}
+		projectDeviceMemoryTrustInitializer(d.Object)
+		if _, err := projectDeviceMemoryTrustPrivateSubPath(d.Object); err != nil {
+			return nil, err
+		}
 		account := ""
 		podDependencies := map[string]bool{}
 		for _, collection := range []string{"containers", "initContainers"} {
@@ -273,6 +277,7 @@ func projectEnvironmentCustodyResources(values map[string]string, environment st
 			// their own private subdirectories as the selected runtime user.
 			pod["initContainers"] = environmentCreateServiceWithoutNamed(pod["initContainers"], controllerIdentityInitializerName)
 			pod["initContainers"] = environmentCreateServiceWithoutNamed(pod["initContainers"], coreIdentityInitializerName)
+			pod["initContainers"] = environmentCreateServiceWithoutNamed(pod["initContainers"], deviceBrokerTrustInitializer)
 			podDependencies["ServiceAccount/"+namespace+"/"+account] = true
 			if additionalNamespaces[namespace] {
 				podDependencies["NetworkPolicy/"+stack+"-secrets/allow-openbao-workload-custody"] = true
@@ -290,13 +295,19 @@ func projectEnvironmentCustodyResources(values map[string]string, environment st
 			}
 			labels["rtk.realtek.com/pki-state-backend"] = "openbao"
 			add(deploymentplan.Object{"apiVersion": "v1", "kind": "ServiceAccount", "metadata": deploymentplan.Object{"name": account, "namespace": namespace}, "automountServiceAccountToken": false})
-			pod["volumes"] = mergeEnvironmentNamedFields(pod["volumes"], []any{
-				deploymentplan.Object{"name": "pki-custody-auth", "projected": deploymentplan.Object{"defaultMode": float64(288), "sources": []any{
-					deploymentplan.Object{"serviceAccountToken": deploymentplan.Object{"audience": "openbao", "expirationSeconds": float64(900), "path": "openbao.jwt"}},
-					deploymentplan.Object{"serviceAccountToken": deploymentplan.Object{"expirationSeconds": float64(900), "path": "kube.jwt"}},
-					deploymentplan.Object{"configMap": deploymentplan.Object{"name": "kube-root-ca.crt", "items": []any{deploymentplan.Object{"key": "ca.crt", "path": "ca.crt"}}}},
-				}}}, environmentCreateServiceVolume("pki-custody-trust", "configMap", environmentCustodyTrustName),
-			})
+			authProjection := deploymentplan.Object{"sources": []any{
+				deploymentplan.Object{"serviceAccountToken": deploymentplan.Object{"audience": "openbao", "expirationSeconds": float64(900), "path": "openbao.jwt"}},
+				deploymentplan.Object{"serviceAccountToken": deploymentplan.Object{"expirationSeconds": float64(900), "path": "kube.jwt"}},
+				deploymentplan.Object{"configMap": deploymentplan.Object{"name": "kube-root-ca.crt", "items": []any{deploymentplan.Object{"key": "ca.crt", "path": "ca.crt"}}}},
+			}}
+			// With image-default users kubelet cannot infer token ownership from
+			// OCI USER. Use its native projection default; explicit fsGroup intent
+			// can retain the existing restricted group-readable projection.
+			if deploymentplan.Map(pod["securityContext"])["fsGroup"] != nil {
+				authProjection["defaultMode"] = float64(0440)
+			}
+			pod["volumes"] = mergeEnvironmentNamedFields(pod["volumes"], []any{deploymentplan.Object{"name": "pki-custody-auth", "projected": authProjection}, environmentCreateServiceVolume("pki-custody-trust", "configMap", environmentCustodyTrustName)})
+			allowCustodyPublicCARead(pod)
 		}
 		if len(podDependencies) != 0 {
 			dependencies := append([]string(nil), d.Dependencies...)
@@ -322,9 +333,17 @@ func projectEnvironmentCustodyResources(values map[string]string, environment st
 	for _, id := range ids {
 		if existing := seen[id]; existing == nil {
 			result = append(result, deploymentplan.Definition{Object: dependencies[id], Phase: "bootstrap"})
-		} else if existing["kind"] != "ServiceAccount" && existing["kind"] != "Lease" && deploymentplan.Digest(existing) != deploymentplan.Digest(dependencies[id]) {
-			return nil, environmentCreateBootstrapBlocker("existing native custody RBAC conflicts with the exact workload owner and identity Lease")
 		} else {
+			if existing["kind"] != "ServiceAccount" && existing["kind"] != "Lease" {
+				// Accepted native owners carry their original UID and compiler/API
+				// metadata. Keep it intact while comparing every access-body field.
+				expected := deploymentplan.Clone(dependencies[id])
+				expected["metadata"] = existing["metadata"]
+				labels := deploymentplan.Map(deploymentplan.Map(existing["metadata"])["labels"])
+				if labels["rtk.realtek.com/stack"] != nil && labels["rtk.realtek.com/stack"] != stack || labels["app.kubernetes.io/managed-by"] != nil && labels["app.kubernetes.io/managed-by"] != "rtk-cloud" || deploymentplan.Digest(existing) != deploymentplan.Digest(expected) {
+					return nil, environmentCreateBootstrapBlocker("existing native custody RBAC conflicts with the exact workload owner and identity Lease: " + id)
+				}
+			}
 			for i := range result {
 				if deploymentplan.ID(result[i].Object) != id {
 					continue
@@ -339,6 +358,36 @@ func projectEnvironmentCustodyResources(values map[string]string, environment st
 		}
 	}
 	return result, nil
+}
+
+// A public ConfigMap file is root-owned when the Pod has no fsGroup. The
+// This legacy compatibility helper changes only the public CA item. Token
+// access is separately qualified against the actual Pod/runtime identity.
+func allowCustodyPublicCARead(pod deploymentplan.Object) bool {
+	if deploymentplan.Map(pod["securityContext"])["fsGroup"] != nil {
+		return false
+	}
+	for _, raw := range certIssuerObjectList(pod["volumes"]) {
+		volume := deploymentplan.Map(raw)
+		projection := deploymentplan.Map(volume["projected"])
+		if volume["name"] != "pki-custody-auth" || projection["defaultMode"] != float64(0440) {
+			continue
+		}
+		for _, raw := range certIssuerObjectList(projection["sources"]) {
+			config := deploymentplan.Map(deploymentplan.Map(raw)["configMap"])
+			if config["name"] != "kube-root-ca.crt" {
+				continue
+			}
+			for _, raw := range certIssuerObjectList(config["items"]) {
+				item := deploymentplan.Map(raw)
+				if item["key"] == "ca.crt" && item["path"] == "ca.crt" && item["mode"] == nil {
+					item["mode"] = float64(0444)
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func environmentCustodyPolicy(values map[string]string, environment string, binding environmentCustodyBinding, owner environmentCustodyOwnerBinding) (string, error) {

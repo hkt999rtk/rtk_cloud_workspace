@@ -88,7 +88,7 @@ func (f schemaOwnerFixture) read(ctx context.Context, id string) (deploymentplan
 
 func TestSchemaOwnerQualificationDistinguishesInitialAndExistingDatabases(t *testing.T) {
 	for _, environment := range []string{"dev", "staging", "prod"} {
-		for _, mode := range []string{"initial", "applied", "applied-unstarted-job", "upgrade-empty", "no-producer", "nonempty-no-history", "missing-version", "wrong-job", "missing-edge", "existing-api", "existing-cronjob", "unrecorded-job", "database-owner-drift", "query-pod-drift", "null-evidence", "foreign-schema"} {
+		for _, mode := range []string{"initial", "applied", "applied-unstarted-job", "upgrade-empty", "scoped-without-create-authority", "no-producer", "nonempty-no-history", "missing-version", "wrong-job", "missing-edge", "existing-api", "existing-cronjob", "unrecorded-job", "database-owner-drift", "query-pod-drift", "null-evidence", "foreign-schema"} {
 			t.Run(environment+"/"+mode, func(t *testing.T) {
 				f := newSchemaOwnerFixture(t, environment)
 				switch mode {
@@ -104,6 +104,8 @@ func TestSchemaOwnerQualificationDistinguishesInitialAndExistingDatabases(t *tes
 					f.setState(t, true, 9)
 				case "upgrade-empty":
 					f.plan.Operation = "upgrade"
+				case "scoped-without-create-authority":
+					f.plan.Operation = "scoped"
 				case "no-producer":
 					f.plan.Resources = slices.DeleteFunc(f.plan.Resources, func(r deploymentplan.Resource) bool { return r.Desired["kind"] == "Job" })
 				case "nonempty-no-history":
@@ -238,11 +240,25 @@ type schemaOwnerLifecycleBackend struct {
 	postgresPath, podPath string
 }
 
+func (b *schemaOwnerLifecycleBackend) BeforeWrite(ctx context.Context, action string, body deploymentplan.Object) error {
+	if body["kind"] == "Job" && b.failure == "guard-rejected" && !b.interrupted {
+		b.interrupted = true
+		return environmentSchemaBlocker("billing", "isolated pre-send guard rejection")
+	}
+	return b.native.beforeSchemaOwnerWrite(ctx, body)
+}
+
+func (b *schemaOwnerLifecycleBackend) CheckParentExecution(ctx context.Context, p *deploymentplan.Plan, root string) error {
+	if p.Operation == "scoped" {
+		return b.native.CheckParentExecution(ctx, p, root)
+	}
+	return b.normalTailE2EBackend.CheckParentExecution(ctx, p, root)
+}
+
 func (b *schemaOwnerLifecycleBackend) Write(ctx context.Context, action string, body deploymentplan.Object, dry bool) (deploymentplan.Object, error) {
-	if !dry && body["kind"] == "Job" {
-		if err := b.native.beforeSchemaOwnerWrite(ctx, body); err != nil {
-			return nil, err
-		}
+	if !dry && body["kind"] == "Job" && b.failure == "legacy-guard-rejected" && !b.interrupted {
+		b.interrupted = true
+		return nil, environmentSchemaBlocker("billing", initialBillingScopeRejection)
 	}
 	actual, err := b.normalTailE2EBackend.Write(ctx, action, body, dry)
 	if err == nil && !dry && body["kind"] == "Job" {
@@ -298,8 +314,19 @@ func (b *schemaOwnerLifecycleBackend) Wait(ctx context.Context, r deploymentplan
 }
 
 func TestSchemaOwnerOriginalChildRecoveryNeverRecreatesMigration(t *testing.T) {
-	for _, mode := range []string{"complete", "before-admission", "job-written", "job-partial-schema", "after-job-complete", "application-readiness", "acceptance", "unknown-job-write"} {
+	for _, path := range []string{"normal-tail", "scoped-stage"} {
+		t.Run(path, func(t *testing.T) {
+			testSchemaOwnerOriginalChildRecovery(t, path == "scoped-stage")
+		})
+	}
+}
+
+func testSchemaOwnerOriginalChildRecovery(t *testing.T, scoped bool) {
+	for _, mode := range []string{"complete", "before-admission", "guard-rejected", "legacy-guard-rejected", "job-written", "job-partial-schema", "after-job-complete", "application-readiness", "acceptance", "unknown-job-write"} {
 		t.Run(mode, func(t *testing.T) {
+			if mode == "legacy-guard-rejected" && !scoped {
+				return
+			}
 			cfg, store, operator, a := createStateFixture(t, "dev")
 			e, err := startEnvironmentCreateExecution(t.Context(), cfg, a, operator, time.Now().UTC())
 			if err != nil {
@@ -310,8 +337,12 @@ func TestSchemaOwnerOriginalChildRecoveryNeverRecreatesMigration(t *testing.T) {
 			f.store = store
 			t.Setenv("RTK_CLOUD_CONFIG_ROOT", store.ConfigRoot)
 			h := &createNormalTailHandoff{Execution: e, Pins: map[string]string{"isolated-verified-bootstrap": deploymentplan.Digest("original-terminal")}}
-			f.plan.CreateParentSHA256 = e.Journal.PlanSHA256
-			f.plan.CreateHandoffSHA256 = deploymentplan.Digest(h.Pins)
+			if scoped {
+				f.plan.Operation = "scoped"
+			} else {
+				f.plan.CreateParentSHA256 = e.Journal.PlanSHA256
+				f.plan.CreateHandoffSHA256 = deploymentplan.Digest(h.Pins)
+			}
 			native := environmentCreateKubernetesBackend{environmentKubernetesBackend: environmentKubernetesBackend{Store: store, KubeconfigContent: []byte("isolated-only"), RolloutTimeout: time.Second, SchemaWorkspace: "/deliberately-wrong-unselected-workspace"}, cfg: f.cfg, store: store, execution: e, stagePlanSHA256: f.plan.SHA256()}
 			b := &schemaOwnerLifecycleBackend{normalTailE2EBackend: &normalTailE2EBackend{e: e, objects: f.objects, writes: map[string]int{}}, f: f, native: native, failure: mode, postgresPath: filepath.Join(t.TempDir(), "postgres"), podPath: filepath.Join(t.TempDir(), "pod")}
 			for id, path := range map[string]string{"StatefulSet/" + f.plan.Stack + "-platform/postgresql": b.postgresPath, "Pod/" + f.plan.Stack + "-platform/postgresql-0": b.podPath} {
@@ -337,6 +368,9 @@ esac`)
 					beforeAdmit = true
 					return errors.New("interrupted before admission")
 				}
+				if scoped {
+					return e.Check(ctx)
+				}
 				return verifyEnvironmentReleaseSchemasForPlan(ctx, f.cfg, store, f.release, p, b.Read)
 			}
 			accept := func(context.Context, *deploymentplan.Plan) error {
@@ -351,6 +385,9 @@ esac`)
 				b.normalTailE2EBackend.failure = "after-write-workload"
 			}
 			run := func() error {
+				if scoped {
+					return executeEnvironmentCreateStagePlan(t.Context(), store, e, "workload", f.plan, b, qualify, fence, accept, func(context.Context) error { return nil }, io.Discard)
+				}
 				return executeCreateNormalTailWorkloadBackend(t.Context(), store, h, f.plan, b, qualify, fence, accept, io.Discard, func(context.Context) error { return nil })
 			}
 			first := run()
@@ -360,6 +397,44 @@ esac`)
 				}
 			} else if first == nil {
 				t.Fatal("required interruption did not execute")
+			}
+			if mode == "guard-rejected" {
+				j, exists, err := f.plan.ReadExecution(store.Root)
+				if err != nil || !exists || j.InFlight != "" || b.writes[deploymentplan.ID(f.job.Object)] != 0 {
+					t.Fatal("pre-send rejection became an uncertain mutation", err)
+				}
+			}
+			if scoped && (mode == "legacy-guard-rejected" || mode == "unknown-job-write") {
+				path := filepath.Join(store.Root, "deployment", "rollback", f.plan.SHA256(), "journal.json")
+				raw, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				sourceSHA := environmentPreflightBytesSHA256(raw)
+				log := "[RUNNING] deployment.execution.migration.apply action=create step=apply resource=" + deploymentplan.ID(f.job.Object) + "\n[BLOCKED] deployment.compatibility.schema\n  cause: " + initialBillingScopeRejection + "\nNO-GO environment=dev operation=create scope=original-generation-recovery completed=false\n"
+				if err := store.write("deployment/logs/isolated-original-rejection.log", []byte(log), false); err != nil {
+					t.Fatal(err)
+				}
+				installSchemaRecoveryInventory(t, b.objects)
+				err = reconcileInitialBillingScopeRejection(t.Context(), f.cfg, store, e, native.environmentKubernetesBackend, sourceSHA, filepath.Join(store.Root, "deployment/logs/isolated-original-rejection.log"))
+				if mode == "unknown-job-write" {
+					after, _ := os.ReadFile(path)
+					if err == nil || string(after) != string(raw) {
+						t.Fatal("native unknown write was reclassified", err)
+					}
+				} else {
+					if err != nil {
+						t.Fatal("exact legacy guard rejection did not reconcile", err)
+					}
+					archived, _ := os.ReadFile(filepath.Join(filepath.Dir(path), "rejected-creates", sourceSHA, "journal.json"))
+					if string(archived) != string(raw) {
+						t.Fatal("original uncertain journal was not preserved byte-for-byte")
+					}
+					j, exists, err := f.plan.ReadExecution(store.Root)
+					if err != nil || !exists || j.InFlight != "" || len(j.RejectedCreates) != 1 || j.Owners[deploymentplan.ID(f.job.Object)] != "" {
+						t.Fatal("reconciliation fabricated a Job write", err)
+					}
+				}
 			}
 			if mode == "unknown-job-write" {
 				writes := deploymentplan.Digest(b.writes)
@@ -392,6 +467,72 @@ esac`)
 				t.Fatal("completed stage replayed migration")
 			}
 		})
+	}
+}
+
+func installSchemaRecoveryInventory(t *testing.T, objects map[string]deploymentplan.Object) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "objects.json")
+	raw, _ := json.Marshal(objects)
+	writeTestFile(t, path, string(raw))
+	t.Setenv("RTK_SCHEMA_OBJECTS", path)
+	py := filepath.Join(t.TempDir(), "kubectl-get.py")
+	writeTestFile(t, py, `import sys,os,json
+a=sys.argv[1:]; a=a[a.index('get')+1:]
+objects=list(json.load(open(os.environ['RTK_SCHEMA_OBJECTS'])).values())
+names=sorted(set(x.get('metadata',{}).get('namespace') for x in objects if x.get('metadata',{}).get('namespace')))
+if a[0]=='namespace':
+ print(json.dumps({'items':[{'apiVersion':'v1','kind':'Namespace','metadata':{'name':n}} for n in names]}))
+elif '--namespace' in a:
+ n=a[a.index('--namespace')+1]; print(json.dumps({'items':[x for x in objects if x.get('metadata',{}).get('namespace')==n]}))
+else: print('{"items":[]}')
+`)
+	t.Setenv("RTK_SCHEMA_GET_HELPER", py)
+	deploymentRuntimeTestKubectl(t, `case "$*" in
+ *"get StatefulSet postgresql "*) cat "$RTK_SCHEMA_POSTGRES" ;;
+ *"get Pod postgresql-0 "*) cat "$RTK_SCHEMA_POD" ;;
+ *"get Deployment "*|*"get CronJob "*) exit 0 ;;
+ *"get Job "*) if test "$(cat "$RTK_SCHEMA_JOB")" != null; then cat "$RTK_SCHEMA_JOB"; fi ;;
+ *"json_build_object('database'"*) cat "$RTK_SCHEMA_STATE" ;;
+ *"json_agg(required.version)"*) cat "$RTK_SCHEMA_MISSING" ;;
+ *"wait --for=condition=complete"*) exit 0 ;;
+ *"get "*) python3 "$RTK_SCHEMA_GET_HELPER" "$@" ;;
+ *) exit 95 ;;
+esac`)
+}
+
+func TestSchemaOwnerLegacyRejectionLogAndPodsCannotMaskNativeWrites(t *testing.T) {
+	id := "Job/video-cloud-dev-billing/billing-migrate-original"
+	log := "action=create step=apply resource=" + id + "\n[BLOCKED] deployment.compatibility.schema\n  cause: " + initialBillingScopeRejection + "\nNO-GO environment=dev operation=create scope=original-generation-recovery completed=false\n"
+	for _, mode := range []string{"exact", "foreign-environment", "foreign-job", "other-cause", "completed", "duplicate"} {
+		candidate := log
+		switch mode {
+		case "foreign-environment":
+			candidate = strings.ReplaceAll(candidate, "environment=dev", "environment=staging")
+		case "foreign-job":
+			candidate = strings.ReplaceAll(candidate, id, id+"-different")
+		case "other-cause":
+			candidate = strings.ReplaceAll(candidate, initialBillingScopeRejection, "HTTP 403")
+		case "completed":
+			candidate += "[PASS] deployment.create.kubernetes.workload\n"
+		case "duplicate":
+			candidate += "  cause: " + initialBillingScopeRejection + "\n"
+		}
+		if err := validateInitialBillingScopeRejectionLog([]byte(candidate), "dev", id); (err == nil) != (mode == "exact") {
+			t.Fatalf("%s: %v", mode, err)
+		}
+	}
+	job := deploymentplan.Object{"metadata": deploymentplan.Object{"namespace": "video-cloud-dev-billing", "name": "original"}}
+	for _, label := range []string{"job-name", "batch.kubernetes.io/job-name", "ownerReference"} {
+		meta := deploymentplan.Object{"namespace": "video-cloud-dev-billing", "name": "migration-pod"}
+		if label == "ownerReference" {
+			meta["ownerReferences"] = []any{deploymentplan.Object{"kind": "Job", "name": "original"}}
+		} else {
+			meta["labels"] = deploymentplan.Object{label: "original"}
+		}
+		if verifyInitialBillingMigrationPodsAbsent([]deploymentplan.Object{{"kind": "Pod", "metadata": meta}}, job) == nil {
+			t.Fatal("orphan migration Pod was ignored", label)
+		}
 	}
 }
 

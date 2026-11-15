@@ -727,7 +727,7 @@ func loadManagedTransportPartialServiceCore(ctx context.Context, cfg deploymentC
 	p.Materials["accepted-service-core-managed-partial-original-plan"] = original.SHA256()
 	p.Materials["accepted-service-core-managed-partial-original-journal"] = deploymentplan.Digest(j)
 	p.Materials["accepted-service-core-managed-partial-native-proof"] = deploymentplan.Digest(d.Partial)
-	_, management, err := foundationRecoveryMaterials(store, e.Journal.PlanSHA256, createRecoveryTransportMinimumLife(ctx, 0, true))
+	_, management, err := recoveryTransportTemplateMaterials(ctx, cfg, store, e, r, createRecoveryTransportMinimumLife(ctx, 0, true))
 	if err != nil {
 		return nil, err
 	}
@@ -742,6 +742,17 @@ func loadManagedTransportPartialServiceCore(ctx context.Context, cfg deploymentC
 	}
 	if renewal != nil {
 		caPath = filepath.Join(store.Root, "deployment/create/transport-renewal", renewal.Review, "openbao-transport/ca.crt")
+	}
+	if _, ready, err := readCompletedInitialTransportSuccessor(store, e.Journal.PlanSHA256); err != nil {
+		return nil, err
+	} else if ready {
+		if renewal != nil {
+			return nil, createProviderRecoveryBlock("temporary transport has conflicting renewal proofs")
+		}
+		caPath, _, err = initialTransportAuthorityPath(store, e.Journal.PlanSHA256, "openbao")
+		if err != nil {
+			return nil, err
+		}
 	}
 	listeners, _, err := loadInitialListenerCheckpoint(store, e, p, true)
 	if err != nil {

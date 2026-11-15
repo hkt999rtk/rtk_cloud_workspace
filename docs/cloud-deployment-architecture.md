@@ -27,6 +27,18 @@ are not retried. Exhausted transient failures are not reused as cached evidence.
 The limit of twelve and complete qualification deadline are unchanged; mutations,
 container execution and SQL are not replayed by this retry policy. These maintained
 defaults add no operator setting or identity change.
+Formal CI evidence reads use the selected environment credential and the same
+pinned run and artifact. Plain GitHub REST GETs have at most three attempts,
+20 seconds per attempt and a context-aware 200-millisecond retry delay, bounded
+by the original caller deadline. Only classified timeout, connection reset/EOF,
+HTTP 429, 502, 503 or 504 failures retry; authentication, forbidden, missing or
+malformed evidence fails immediately. Requests with method/body options,
+GraphQL and workflow mutations are never replayed. Successful immutable content
+may use the existing invocation cache; failed reads are not cached. Safe read
+failure classes and numeric run/artifact IDs remain publication diagnostics and
+must not be relabelled as environment-setting drift. No alternate credential,
+source revision, artifact or image version is selected.
+
 The separate `deployment.execution.surge-capacity` prerequisite covers changed
 singleton Deployment templates using RollingUpdate with zero effective
 `maxUnavailable` and positive `maxSurge`. Fresh native Node and all-namespace Pod
@@ -293,7 +305,14 @@ after the corresponding native lifecycle outputs have been verified.
 The fresh allocation quota is derived from this same catalog's direct claims
 and StatefulSet ordinals plus declared earlier bootstrap claims. New claims and
 claim templates explicitly select the maintained durable storage class; existing
-UID-bound claims and templates keep their original class. New create plans pin
+UID-bound claims and templates keep their original class. For an update, the shared admission/execution body
+materializer carries an omitted claim-template `storageClassName` from that
+same UID- and baseline-fenced StatefulSet, matching claim names. It does not
+select a class or copy other storage settings. Explicit values remain unchanged;
+new allocations still require the environment's selected class. This applies
+to PostgreSQL and every other StatefulSet, including an already frozen child
+plan: its intent, hash and original journal are not rewritten.
+New create plans pin
 `durable_foundation: true`: foundation Redis starts on its declared `redis-data`
 claim with AOF and a single writer, before any application can write data. Older
 plans omit the flag and retain their original recipe and explicit migration path.
@@ -1680,6 +1699,45 @@ A short bounded reread handles a valid consumer/export advance between reads;
 persistent mismatch fails. The legacy profile keeps its existing static Secret
 validation.
 
+Create-tail and ordinary compilation qualify this explicitly selected public-only
+recipe before lifecycle comparison. Only the app's public CRL path and its
+manager's export path may change to the same managed bundle; the exact producer,
+public-only startup seed and shared socket must match the maintained renderer.
+All original key, Root, Secret, state and mount checks still apply. Without the
+selected operator profile, the usual unchanged-trust comparison remains in force.
+
+The fresh-create readback after public TLS resolves these same operator-selected
+image roles before observing bindings, just as the ordinary target compiler
+does. An image-role alias is derived from the selected release; comparing a
+base-release observation with an operator-selected observation is invalid.
+The complete bindings comparison remains strict for original ownership,
+identity references, trust and mounts.
+
+After that fenced full target is compiled, the workload child receives its
+explicit original owner map in an execution/stage/input-bound context. This
+preserves qualified controller-created PVC owners that have no stack label;
+the child does not infer adoption from a later live read. Custody projection
+follows this handoff, and ordinary ownership checks still reject replacement,
+foreign or terminating resources. The authority is local to the workload apply.
+
+Initial PKI HTTP reads and the original operator's password login may repeat
+once after a transient transport error or HTTP 429/5xx. Each attempt opens its
+own tunnel and rechecks the original namespace and Deployment UIDs. PKI mutations
+are sent once, including when their result is uncertain; an idempotency key does
+not authorize replay. Cancellation, ownership drift, HTTP 401/403, malformed
+metadata and a different authenticated user are terminal. Device/App trust
+recovery reports its exact failed boundary without exposing transport stderr,
+credentials or private response bodies. A failed observation is not evidence
+that the original identity changed.
+
+An original session-lineage observation authenticates each immutable admission
+ancestor once and shares that result across its readers. Private serialized
+proof bytes remain in memory only, bound to the original execution's journal
+epoch; callers receive independent objects. A journal write requires a new
+observation, and execution ownership is still checked on reuse. Later observations
+read and authenticate the original files again. Live resources, readiness, CRLs
+and HTTP outcomes are not cached by this admission reader.
+
 The scoped update uses ordinary `deployment/rollback/<planSHA>/plan.json` and
 `journal.json`; its follow-up run record links the new FULL-health report under
 `deployment/reports/`. These are environment operational data with `0700`
@@ -2758,6 +2816,71 @@ migration history or repeats the completed Account Manager bootstrap. Failed
 qualification reports retain the exact selected public release metadata and safe
 schema-owner diagnostics for direct investigation.
 
+For an environment-selected StatefulSet `OnDelete` strategy, completed ordinary
+init containers are historical startup evidence. Runtime acceptance reads only
+the Pod-bound original ControllerRevision and verifies its namespace, original
+StatefulSet UID, init recipe, successful termination and actual immutable image
+ID. It does not require that finished init to rerun the newer future template.
+Regular containers and restartable init sidecars still require their selected
+target images, startup and readiness. Create, recovery and full health use this
+same check. The in-memory historical init view changes neither the frozen plan,
+the StatefulSet template, original Pod/volume owners nor environment settings.
+See [Kubernetes OnDelete behavior](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/#update-strategies)
+and [init-container lifecycle](https://kubernetes.io/docs/concepts/workloads/pods/init-containers/#detailed-behavior).
+
+Whole-environment compilation, continuation qualification and original workload
+recovery construct their Kubernetes backend from the same selected deployment
+configuration. That binding carries the maintained rollout timeout and selected
+workspace used to read the exact released migration source. A completed retained
+schema Job keeps its original native UID/body and is verified against committed
+database versions; recovery does not rerun the Job or infer completion from
+Kubernetes status alone. Identity-only inspection keeps its frozen-context
+constructor and does not acquire unrelated schema policy.
+
+The generic fresh-create executor runs this frozen workload as a `scoped`
+child. Initial Billing authority therefore comes from the held original create,
+the exact immutable workload input, pending parent intent and recorded native
+Lease, rather than the child operation name. Ordinary upgrades and unrelated
+scoped plans cannot initialize an empty database. Native pre-write guards run
+before the in-flight marker; rejection is an unstarted request, while an error
+after a native API call remains an uncertain outcome.
+
+The official `recover-create-schema-rejection` operation can reconcile the
+historical scoped-operation guard defect only after matching its exact original
+failure log, original PostgreSQL ownership, empty schema and absence of both the
+migration Job and its Pods. It writes no cloud resources and claims no migration
+completion. It preserves the failed child journal byte-for-byte under
+`deployment/rollback/<child-sha>/rejected-creates/<source-journal-sha>/journal.json`
+and records the independent observations in `evidence.json` beside it. The child
+journal links these digests; its normal recovery reader verifies the preserved
+chain before resuming the unchanged plan and completed write prefix. Other
+uncertain writes retain their recovery blocker.
+
+Workload phase checks reuse one fresh native inventory per phase, as the normal
+continuation executor already does. Missing inventory IDs still require direct
+reads, and every conditional write reads its owner independently. Observations
+are discarded after each phase; final verification and acceptance remain live.
+
+Once an initializer repair is complete through its accepted original alias,
+preflight, application/session owner readers and the repair dispatcher treat its
+old body as history. They authenticate the immutable alias and native child
+receipts, fold every later accepted or known pending write in parent order, then
+compare the latest body and original UID with live state. A partially written
+ordinary workload can therefore supersede a historical Service or NetworkPolicy
+without reopening the old repair or changing its receipts. Unknown in-flight
+writes, broken predecessor bodies and replacement UIDs remain blockers; a known
+write prefix is never readiness or whole-stage acceptance.
+
+Completed Device ACTIVE evidence uses the same native read-only issuer registry
+boundary as the managed-authority and public-CRL checks. The original accepted
+activation Job UID/output, immutable public document, configured operator login,
+registry environment/domain/kind/ACTIVE status and full document digest must
+agree. It does not reopen a historical Controller HTTP dependency: an interrupted
+workload can have updated a Service's named target port before its original Pod
+has adopted the target port name. This changes no registry state or identity and
+is not a transport-health receipt. The actual target Controller route remains
+part of deployment acceptance and full post-deploy health.
+
 ### Billing configuration and interrupted workload recovery
 
 The common Billing renderer and dependency validator use the same selected
@@ -2948,6 +3071,19 @@ cleanup. The old signer policy follows its authenticated absence receipt. This
 finite cleanup does not extend the ordinary planner's generic deletion kinds;
 the original expired session remains historical and unfinalized.
 
+Retained temporary enrollment Deployments are producer history, not permanent
+application replicas. During the original workload or its image-forward retry,
+the shared observer and executor classify them from the original accepted
+fresh-product program, enrollment children, native enrollment closure and
+unchanged permanent identity outputs. Their original Deployment UIDs and exact
+recorded bodies remain verified; an expired or contending enrollment Pod is not
+asked to enroll again to become Ready. Runtime workload acceptance excludes
+only those authenticated retained producers and their descendants. The frozen
+workload plan and journal remain unchanged. Permanent services still require
+ordinary readiness, immutable runtime image proof and real installation ACKs.
+Normal finalization then removes transient ACK settings, retires those exact
+producer owners, closes the original deployment and runs full environment health.
+
 After native product finalization and temporary producer retirement, the
 remaining program can apply one finite correction through ordinary
 `prepare`, `apply` and `retire` children. Its source pins the original completed
@@ -2994,6 +3130,7 @@ use 0700 directories and 0600 files.
 | `deployment/create/<parent>/bootstrap/product-identities/<scope>/service/session-renewal/{source,observed,completed,cleanup-source,cleanup-completed}.json` | The recovery qualifier freezes original expired-session evidence, key/CSR hashes, permanent output owners and distinct session intent. The native producer records the real renewed session and accepted scoped children; finalization records the original/new certificate hashes, genuine native finalization, exact old-owner conditional-deletion receipts and observed policy absence. Effective-session resolution, successor rendering, interrupted cleanup and final verification consume those records. Private key/CSR bytes remain on the original PVC. |
 | Original bootstrap PVC: `renew-<binding>/bootstrap.crt`, `expired-<old-session>/bootstrap.crt`, canonical `bootstrap.crt` and `bootstrap.finalized.json` | The same-key native renewal writes its distinct public certificate. Only after genuine new-session finalization, the cleanup adapter preserves the old public certificate and places the renewed public certificate at the native cleanup path. Native cleanup alone records its tombstone and removes the exact key/CSR/canonical certificate. Retry validation consumes the preserved hashes and genuine tombstone; permanent product keys and claims are unrelated and retained. |
 | Original execution `rejected/<raw-sha256>.json` | The pre-execution forward correction producer preserves the exact rejected descriptor before replacing its derived input. Recovery verifies the same bytes; audit readers retain this historical evidence. It cannot authorize execution or change original native history. |
+| `deployment/create/<parent>/session-retain/<binding>/candidate.json` | Completed-session continuation freezes the native baselines of a separately accepted all-retain child, bound to the original private-state qualification, failed-retain plan/journal and exact completed session qualification. Preflight, execution and historical alias verification reproduce the recipe from these immutable baselines. Missing material after native execution blocks; original failed child journals remain unchanged. |
 | Original execution `stage-inputs/<stage>.json` | Fresh/shared create saves each exact scoped plan before admission, using exclusive creation; retries execute that original input and its child journal. |
 | Original execution `normal-tail-stages/product-identities-<scope12>-{steady,producer-retire}.json` or `stage-inputs/fresh-product-{steady,producer-retire}.json` | Existing stage executors save ACK cleanup and exact six-owner retirement plans; recovery authenticates the same child journals under `deployment/rollback/<child-plan>/` before final rendering. These are ordinary children under the original parent and deadline, not additional admission authorities. |
 | `deployment/create/<parent>/bootstrap/product-identities/<scope>/` | Native producer records original-Root policy, real issuer/session and output evidence; resolver, finalizer and recovery consume it. Original custody material remains at its original paths. |
@@ -3024,6 +3161,52 @@ mirror and native registration ACK mechanisms. Finalization follows installation
 the final acceptance target omits transition-only ACK settings. Historical
 bootstrap plans, original CA material, existing runtime credentials and completed
 migration receipts are not rewritten to match the new program.
+
+Accepted original-stage history is an ownership/content observation, not another
+rollout admission. For larger stages the common verifier uses one fresh selected-stack inventory
+for that observation; small stages retain direct resource reads. It authenticates same-UID successor writes and recorded
+retirements. It does not wait for completed preparation Pods to become ready.
+Current target readiness and immediate original-owner checks before every write
+remain in their ordinary stages. No inventory survives the observation or a
+write, and missing/failed inventory cannot fall back to another environment.
+
+For a fully installed fresh session whose original leaf has expired, the
+executor mechanically enables the original issuer's OpenBao
+`allow_expired_cert_revocation` compatibility field so the existing native
+revocation/finalization contract can complete. It does not extend expiry,
+reenroll a workload, replace identity, or change other CRL settings. Before a
+write, it saves original and expected provider configurations at
+`deployment/create/material/<parent>/expired-bootstrap-revocation/<session>.json`
+in the selected canonical environment store (directories 0700, files 0600).
+The same executor consumes that public binding and original parent journal on
+retry, revalidates exact session/issuer/leaf and unchanged provider fields, and
+reconciles a known write by readback. Preflight never performs this mutation.
+
+Fresh finalization distinguishes native work pending, native work committed and
+custody cleanup completed. The authenticated original fresh program and effective
+ceremony bind all observations to the original pending finalizer intent, issuer,
+session, credential UIDs and complete native installation roster. An empty native
+finalization result permits explicit continuation of that same operation; a
+committed result skips the POST and resumes the original custody cleanup. A
+cleanup tombstone is required after cleanup, not before native finalization. The
+selected native backend can observe committed finalization to authenticate the
+primary Secret's original guarded deletion after a lost response; accepted-stage
+history does not fabricate local receipts or recreate the deleted Secret.
+
+The original plan's provider TURN registrar image/checksum remains an independent
+package binding when API/PKI images are forwarded. Recovery release qualification
+and provider execution share the same artifact inspector and canonical private
+artifact path. They validate that frozen package instead of requiring its image
+to equal a later API image. No environment version or completed evidence is
+rewritten to satisfy this check.
+
+Once original fresh PKI finalization, the steady transition and preparation
+retirement are committed, recovery observes their genuine native/local completion
+proofs, unchanged permanent outputs and original ownership bindings. It does not
+require the deliberately erased temporary credentials or retired custody reader
+to remain live. Accepted-stage history recognizes completed same-UID native
+retirements and verifies current absence; a replacement owner, missing completion
+proof, incomplete installation roster or changed permanent identity still blocks.
 
 The public HTTPS producer is shared by fresh create and completed-bootstrap
 continuation. Its frozen consumer contract contains the exact ingress hosts and
@@ -3177,8 +3360,230 @@ for activation, status, removal and failure handling.
 
 ## OpenBao workload identity custody target (2026-11-08)
 
+The preflight and execution responsibilities follow the same dependency order:
+
+| Phase | Preflight responsibility | Deployment responsibility |
+| --- | --- | --- |
+| OpenBao foundation | Validate the selected environment intent, bootstrap capabilities and prerequisites. A new generation has no future runtime UID or ACK to inspect. | Prepare OpenBao's own minimal transport and initialization material, then start, initialize and unseal OpenBao independently of Controller/CertIssuer. |
+| Identity storage and trust | Qualify the declared KV, Kubernetes auth, policies and public trust producers. For existing state, authenticate the original generation and completed evidence. | Prepare scoped KV/auth/policies and signed public trust caches before their consumers start. |
+| Workload consumers | Render and admit the exact environment-selected consumer configuration and dependency order. An unfinished create follows recorded current owners and the completed current session. | Enroll or restore the original workload identity, publish its required trust material, then start the consuming service. |
+| Acceptance and closure | Do not require outputs of an unexecuted producer. Existing deployment observations remain factual checks of the original resources. | Verify actual resource owners and installed consumer ACKs; retire temporary bootstrap credentials and close the original deployment after its required outputs exist. Then run the standard full environment health check. |
+
+Create and upgrade derive settings from the same selected environment. Their
+checks differ because a new producer has no installed output yet. Preflight
+never creates a permanent identity to satisfy its own check. OpenBao's startup
+must not depend on a Controller that needs OpenBao to obtain its own identity.
+
 After the independent OpenBao root startup, configure scoped Kubernetes auth
 and KV v2 custody before Controller/CertIssuer and application consumers start.
+For new plans, the common compiler and dependency catalog derive this root-first
+order from the selected `PKI_STATE_BACKEND=openbao` setting. It is not a separate
+operator switch or conditional on unrelated recovery qualification. The plan
+records its order; recovery retains that original value and does not reinterpret
+an already admitted generation after a script update. Fresh preflight qualifies
+these producers without requiring a future OpenBao runtime or generating identity.
+For an unfinished generation, completed bootstrap session renewals are followed
+through the original admitted lineage. The original session and Secret remain
+historical identity evidence; only the latest completed session with its live
+consumer acknowledgements authorizes further enrollment. Accepted Kubernetes
+stages are observed from their exact native child cutoff through the shared
+chronological owner history (same UID and continuous before/after bodies). An accepted no-write retain may
+record platform defaults such as a Service's `type=ClusterIP`: verify that
+retained declaration against its authenticated native baseline, preserving all
+prior owned fields and the accumulated original intent. A previous renderer's
+omission of a platform default is not a configuration change.
+When a later stage reprojects an authenticated custody graph, generated Role,
+RoleBinding and NetworkPolicy access bodies must still match exactly. Compiler
+management labels and recorded UID metadata are preserved independently; they
+are not access-rule drift. Ordinary native compilation and acceptance still
+verify the original owner UID and the complete dependency graph.
+Installation ACK observation distinguishes completion facts from enrollment
+authority. An exact complete roster remains a completion fact after its
+temporary session clock expires. It must be allowed to reach the existing
+native expiry/finalization producer, which verifies lineage, real ACKs and
+exclusive current-session ownership before recording expiry and cleanup. This
+does not extend any certificate/session lifetime or permit further enrollment;
+incomplete expired rosters and foreign or duplicate subjects still block.
+Once the original fresh product outputs and complete current installation
+roster are authenticated, preflight and every continuation entry follow that
+original session through enrollment closure and finalization. Completed closure
+is authenticated as history; a pending closure remains work for its existing
+producer, never a reason to mint another session for an already completed
+program. Expiry alone must not select a new session that conflicts with the
+immutable completed program.
+Temporary credential lifetime is verified against its authenticated completed
+batch; permanent identity, public trust, owner and execution-deadline checks
+retain the actual current time. Pending or incomplete enrollment still needs
+live temporary authority and its existing same-key recovery path.
+Issuance and installation are separate facts: five committed product identity
+outputs do not prove that their five workloads have acknowledged installation.
+When issuance is complete but installation is still pending after session expiry,
+the ordinary same-key/CSR session batch establishes successor authority. It does
+not reissue the permanent product keys or certificates. After that native batch
+completes and the five original outputs are verified unchanged, its continuation
+producer writes the immutable canonical-store record
+`deployment/create/<parent>/bootstrap/product-identities/session-successor/<current-review>.json`.
+The record binds the original program, scope and installed receipt hashes,
+original/current session and admission, same generation/Root/ICA/key/CSR and
+unchanged output identities. Historical program validation and producer/preparation
+retirement keep the original program and birth IDs. ACK bindings, live target
+inspection, finalization and current cleanup resolve the separately authenticated
+effective session. Neither the original lifecycle nor its installed receipt is
+rewritten; changing its session fields would change the original product scope.
+If the native batch completed before the linkage record was published, the same
+ordinary continuation completes that idempotent producer before consumers use it.
+This fresh-program binding is distinct from the normal-tail renewal schema.
+Preflight and continuation use that same history; they neither require stale
+session templates to remain live nor replay those templates over successors.
+The common stage executor also observes completed native children through this
+same verifier, after rechecking the original parent and current environment
+inputs. Observation preserves the accepted receipt and performs no new child
+lease, resource write or volume capture. Incomplete children still use native
+resumable execution and must complete their actual acceptance and parent capture.
+If the environment has already completed an authenticated in-place OpenBao
+image update, historical bootstrap-release verification binds that original
+image through the completed same-owner handoff. Only that historical role is
+substituted in the verifier's in-memory evidence selection; the environment's
+current digest, executable release plans and other selected roles stay intact.
+Both preflight and continuation apply this same distinction.
+If an ordinary remaining-core child was interrupted before a completed temporary
+session renewal, render its remaining recipe with the authenticated current
+session. Freeze one native successor against the original input, literal failed
+journal, recorded lease and chronological same-UID owner history. Keep unchanged
+owners and the old immutable cleanup projection; publish the current projection
+and apply only the current recipe's remaining differences. Preflight admits that
+exact child and binds its qualification together with the original continuation
+review and any separately admitted application-forward review in the reported GO.
+The CLI passes each exact review to its own dispatcher before returning to the
+original continuation; an earlier application stage cannot replace the complete
+GO with its narrower review. Execution consumes that same selection under the
+original deadline, waits for real native acceptance and closes the original
+parent entry with an explicit successor receipt. The old native child remains
+failed. Product provisioning and later enrollment closure consume the genuinely
+accepted successor, never a fabricated accepted original journal.
+The preflight producer and deployment consumer share private records at
+`deployment/create/<parent>/current-core-forward/<qualification>/qualification.json`
+and `deployment/create/<parent>/current-core-forward/<session-review>/selected.json`.
+Their full-GO binding is
+`deployment/create/issuer-enrollment-continuation/<review>/current-core-forward.json`.
+All paths use the selected canonical environment store, 0700 directories and
+0600 files; no configuration, identity or new execution clock is produced.
+
+Cold-process operator validation may reuse that completed image's original
+publication authority: the unique environment updater receipt, exact selection,
+target and manifest hashes, original parent/qualification, accepted source and
+single-image template child journals, canonical kubeconfig and current original
+StatefulSet UID/template must agree. This historical proof is checked without
+re-downloading the old CI artifact. Its verifier does not recurse through
+operator validation or require a live Pod, unseal, Controller HTTP or ACK;
+those remain separate runtime gates. A new, incomplete or different image
+selection still requires its own formal CI publication. A reformatted cached
+manifest or another generation's proof cannot substitute for original bytes.
+Completed API serving-certificate publication is observed at its original Secret
+output. Authenticate the enrollment, logical KV references, export and reader
+retirement, exact Secret owner/material and current native admitted client/server
+state before reusing it across temporary-session renewal. Server inspection uses
+the registered DNS subject; client inspection uses its Service role. No enrollment
+Job or retired reader is recreated. A completed logical application repair with
+an accepted session successor likewise observes that recorded current-owner child
+instead of comparing a new session renderer with its historical failed template.
+For an unfinished create whose core consumers are installed but whose declared
+product identities have not yet been produced, preflight qualifies the original
+producer declarations against the completed current session and its existing
+consumer ACKs. It does not require future product ACKs. Execution freezes the
+selected admitted continuation in the existing `fresh-program.json`, binds the
+exact accepted renewal custody child, and resumes those original producers.
+Only the original continuation entry may advance from its frozen pending state
+through its recorded completion; all other source-prefix entries remain exact.
+A completed original App routing publication remains valid in every later
+continuation profile. Its private `pki/app/routing.json` is authenticated through
+the original routing child, native lease and accepted owner, parent publication
+intent/receipt and live routed Service/listener UIDs. The lineage reader allows
+only that exact public file hash beside the already verified App issuer. The
+publisher observes completed output instead of replaying its parent intent;
+interrupted local publication is reconciled only through its original accepted
+native output. Unrecognized files, changed owners or missing completed evidence
+remain failures. This does not authorize another identity or rewrite the original
+publication.
+
+OpenBao transport CRL caches have an explicit native producer before the
+Controller or CertIssuer begins consuming their managed OpenBao trust manifest.
+After KV/auth/policy preparation, the producer initializes the original owner's
+logical public Root/intermediate CRL purposes from their signed registry records.
+It uses native compare-and-set and monotonic high-water checks; ordinary runtime
+readers still refuse missing caches instead of creating them while starting.
+Fresh preflight qualifies this future producer and its required native capability,
+not future service ACKs. A retry qualification verifies the original native
+Job UID, body, lease and written journal prefix without waiting for that same
+Job to succeed first. Execution retains the actual Job readiness and runtime
+acceptance checks. Deployment runs the producer before enabling the consumer.
+An interrupted generation may use the same qualified public-data producer while
+CertIssuer is down, binding its original stage input, native owner/journal and
+current signed issuer records. This neither enrolls an identity nor requires a
+live bootstrap session, changes a runtime digest, or marks a failed stage accepted.
+The official repair-publication command records its separately selected
+`openbao-public-crl` tool under
+`deployment/create/<parent>/repair-evidence/openbao-public-crl-v1.json`.
+The normal PR/Release verifier and immutable native capability probe produce this
+parent-bound record; qualification and execution consume it. Existing
+`public-crl-v2.json` evidence remains unchanged. Both paths use the canonical
+private environment store with `0700` directories and `0600` files.
+
+Before rendering a new remaining issuer stage, a completed renewed session uses
+its supported immutable `pki-bootstrap-cleanup-binding-<session-prefix>` projection.
+A completed session renewal is observed rather than executed again. Its original
+client-inventory proof remains literal when later declared products add valid
+issuance rows; current signed rows and ACKs are checked separately against the
+same admitted subjects and preserved original identities. Preflight and execution
+consume the same completed-session observer. An incomplete producer still follows
+its original recovery path, while a missing prior proof after downstream product
+creation cannot be reconstructed as a new authority. The observer preserves the
+saved cleanup binding until the existing remaining-issuer projection boundary.
+The original stored observation and global cleanup ConfigMap remain unchanged;
+only the in-memory ConfigMap name is derived from the authenticated current session.
+The same ceremony then supplies the issuer stage, product installation, target
+bindings and finalizer. Preflight and execution share the complete remaining-issuer
+renderer. Preflight compiles its projected custody definitions and runs the existing
+native resumable admission in dry-run mode, so immutable conflicts are found before
+any new stage is applied. It does not write a stage input, credential or receipt.
+The deferred finalizer retains the original session-recovery and OpenBao custody
+context while refreshing transport. It requires the actual complete native ACK
+roster before expiring the session, deleting credential copies or finalizing.
+Retirement archives certificates under each actual original or ancestor session
+and verifies their accepted credential owners. After native finalization erases
+the temporary key/CSR/certificate, retries authenticate its exact native tombstone,
+accepted cleanup proof and public archives; they do not require erased material
+or issue another finalize request. A pending ancestor retirement reconciles the
+original UID and recorded absence through those same proofs, rejecting replacement
+owners or missing archives. Permanent workload identities remain retained.
+
+A saved ceremony records original identity and issuance evidence; its CRL bytes
+are not a permanent source of current revocation state. A newly prepared Account
+Manager registration listener reads the signed current Root and intermediate CRLs
+from the native registry, validates them against the same original issuers, and
+uses a local rendering copy. The saved ceremony, original key and certificate
+remain unchanged. Its prerequisite closure follows authenticated accepted owner
+history, including the accepted removal of temporary issuer provisioning. It must
+not reopen provisioning or retain a stale pre-closure CertIssuer template.
+
+Once the original server export and temporary-exporter retirement are accepted,
+a retry reads the same committed server identity through its authenticated
+permanent owner and checks the original certificate receipt and custody references.
+It does not replay the retired exporter. A saved fresh-product program also does
+not remove the need for preflight to restore the completed core authority; only
+new-product producer qualification is skipped when the exact program exists.
+Its original declaration is resolved through the execution journal's exact plan
+and artifact digests, including the admitted provider-recovery envelope. The inner
+create-plan digest and outer recovery-execution digest identify different artifact
+kinds; the mutable current preflight pointer does not replace either authority.
+Registration-enabled tail tests must exercise this actual outer caller after five
+product installations and exporter retirement, before workload/finalizer recovery.
+
+Temporary bootstrap CA future-lifetime requirements also end at an authenticated
+completed managed-transport and original-key session handoff. Its original bytes
+may still reconstruct immutable templates; that scoped reader verifies lineage,
+material hashes and CA signatures without renewing the retired authority.
+Independent current managed TLS and session checks remain mandatory before writes.
 The selected environment declares `PKI_STATE_BACKEND=pvc|openbao` and, for
 OpenBao, `PKI_STATE_KV_MOUNT`; create, upgrade, recovery and preflight resolve
 these inputs identically. No script chooses or silently flips the backend.
@@ -3320,6 +3725,121 @@ environment's rollout timeout bounds the read, without resetting its parent
 deadline. The same canonical public transport reader serves stage compilation
 and inspection; it cannot restore a withdrawn bootstrap anchor.
 
+Final runtime role packages must satisfy that same selected backend contract.
+Qualifying a ceremony or repair-tool package does not qualify a different
+Controller, Management or other API-family runtime package. The existing
+isolated immutable-image probe deduplicates package references and checks the
+native OpenBao identity/CRL features on the actual selected packages. This is
+configuration compatibility, with no comparison to a latest release and no
+implicit version changes.
+
+A failed fresh workload may select explicitly reviewed Controller/Management
+packages through `prepare-create-runtime-images`. This operation verifies the
+exact formal Release and native package capabilities, the original held
+generation, unchanged known write prefix, same Kubernetes UIDs and successor
+server dry-run. Preview writes no cloud resources or environment settings.
+Explicit `--apply` records the two-role environment selection in the existing
+version-update format and freezes `workload-image-forward.json` in the original
+execution directory. All unrelated settings and role selections remain exact.
+The complete ordinary preflight and create runner consume that artifact; it
+does not grant rollout authorization itself. Previously completed resources
+become same-UID retains, completed migration Jobs are never recreated, only the
+selected runtime package fields change, and the unstarted routing tail remains
+the original intent. Original failed plans and journals remain literal history;
+a parent completion receipt points to the genuinely accepted successor.
+
+After the direct fresh workload and its native finalization, steady and preparer
+retirement children are complete, later explicitly selected runtime-role images
+use a selection-bound ordinary `workload-image-forward-<selection-sha256>` child.
+The full preflight envelope binds that exact child and rejects an older image GO.
+The source is the actual accepted workload child and chronological recorded
+same-UID bodies, bounded before the new child's own intent. Native reads verify
+those owners and bodies; they cannot become replacement source evidence. Saved
+stage inputs fix the original baseline for partial and accepted retries. The
+original image artifact and failed/accepted journals and aliases remain literal.
+Only the existing Controller and Account Manager Management container roles may
+change, with the current environment selection retaining authority. Final public
+CRL convergence and complete health remain post-rollout requirements.
+
+If an expired session still lacks consumer ACKs, the ordinary create dispatcher
+first qualifies and applies only the two reviewed runtime Deployment templates
+under `workload-runtime-hosts`. OpenBao must already be independently ready.
+This narrow stage proves the Kubernetes templates and original owner UIDs; it
+does not wait for whole application readiness or claim runtime health. The
+subsequent original same-key session flow performs real workload readiness and
+native ACK verification. Every consumer batch is admitted before another seed is
+signed, so a stale baseline cannot cause an unnecessary renewal.
+
+Custody JWT projections use Kubernetes native ownership/mode behavior when the
+maintained Pod has no explicit `fsGroup`; a script-created root-group `0440`
+projection cannot infer ownership from OCI `USER`. Explicit Pod group intent
+keeps the restricted group-readable projection. Tokens remain short lived,
+audience bound and mounted read-only only into the selected custody containers.
+The platform's ownership behavior is described in the
+[Kubernetes projected-volume contract](https://kubernetes.io/docs/concepts/storage/projected-volumes/#securitycontext-interactions).
+
+An interrupted legacy generation can qualify `custody-token-runtime-access`.
+This finite compatibility stage adds only a missing Pod `fsGroup` taken from the
+same recorded owner's actual Kubernetes runtime user metadata and pinned image.
+Its private source/fact/plan artifact is `custody-token-access.json` under the
+original execution directory. It preserves existing UID/GID settings, `0440`,
+keys, session references and all other fields. Applied template acceptance does
+not claim service readiness; the original live session then resumes its known
+writes and performs genuine rollout and ACK checks without another mint.
+
+Every enabled product workload uses its own OpenBao public-state scope as well
+as its permanent identity. Before the first normal product workload wait,
+`product-initial-crls` runs the shared native public-CRL initializer against the
+rendered manifests and registered issuer fingerprints. This includes MQTT
+foundation and Shadow; application-only initialization cannot seed their scopes.
+It reads already signed current CRLs from the original registry, preserves CAS
+and high-water checks, and neither signs certificates nor opens private-key
+Leases. Existing frozen Service-only packages instead use the original
+generation's exact merged `public-crl-v2.json` repair publication; no latest
+lookup or runtime image update is performed. Its native capability is checked
+before Job creation. A terminal old initializer Job remains unchanged; a
+separate source-bound child runs the same public purposes with the qualified
+tool. The parent records the actual accepted successor and original failed
+journal digest, while the failed child continues to show its literal failure.
+Native receipt retries compare canonical JSON objects, retaining exact numbers
+and values independently of field order. Recovery reads literal known parent writes and referenced ConfigMaps
+without waiting for those consumers to become Ready. Preflight freezes and
+admits the native child; ordinary create executes it, then the original session
+performs real readiness and ACK checks. A public-cache scoped PASS is not whole
+environment completion.
+
+The effective workload continuation retains the original captured API baseline,
+including Namespace finalizers, allocated Service addresses and Pod defaults.
+Only field changes authenticated by native parent/child history are applied to
+that baseline; named container/environment entries retain their native defaults.
+A sparse renderer object is not a replacement baseline. This derives no new
+setting values and reads no live policy into intent. UID changes and changed
+allocated/configuration fields remain admission drift failures.
+
+The immutable original workload image artifact remains unchanged. Its effective
+continuation follows later authenticated same-parent native writes, only until
+the final forward stage's first request. Known resources keep those exact UIDs
+and current recorded session/cleanup bodies; selected package references remain
+explicit, migrations stay retained, and the original unstarted tail remains the
+intent. The complete GO envelope and actual completion receipt bind this derived
+plan. Retries do not rederive from their own writes or overwrite original inputs.
+When an application repair returns its preflight result early, its full GO
+envelope also binds this exact workload continuation together with the original
+and application reviews and any current-core qualification. The application
+dispatcher retains its separate reviewed scope; a full GO cannot silently omit
+the workload binding required by the create runner.
+
+Service session source discovery uses the same chronological native owner history
+for application and core resources. A later accepted stage or an authenticated
+ordinary pending write supersedes the earlier body only along its recorded UID
+and baseline chain. A new core owner already created in such a known native
+prefix is also discoverable before whole-workload acceptance, using its original
+create outcome as its birth UID. Current inventory never creates this authority,
+and unknown in-flight outcomes remain blocked. A no-write retain preserves the
+last actual body; an
+interrupted readiness check never becomes acceptance. These observations perform
+no writes, readiness waits, lease acquisition or bootstrap identity generation.
+
 For the selected OpenBao backend, the existing immutable-image capability probe
 requires `committed-identity-inspection-v1` and
 `committed-identity-batch-admission-v1` before allocation. The original bootstrap
@@ -3349,16 +3869,55 @@ recipe and owner references before/after execution, limits public output, reconc
 lost create/delete responses by exact name, and uses UID-preconditioned foreground
 cleanup. Job deadline/TTL bound a lost operator. The application container may be
 faulted; only its metadata and current controller ownership chain are needed.
-The existing CRL maintenance `install` dispatcher now uses this path for OpenBao
-owners; PVC consumers keep the existing native file installer.
+Within one maintenance invocation, public read/write RPCs reuse a helper only
+when its complete recipe, selected kubeconfig, namespace and environment store
+match. Each RPC still executes the native command and verifies the original
+Job/Pod UID and recipe before and after reading fresh output. Reader, writer and
+different trust/owner profiles remain separate. Pooled Jobs use the original
+caller's remaining deadline; startup and individual RPCs retain the maintained
+rollout timeout. Cancellation cannot start a new lifetime. UID-preconditioned
+cleanup runs before releasing maintenance ownership; helpers are never reused
+across invocations or used as runtime ACKs.
+The CRL maintenance `install` dispatcher commits this state for OpenBao owners,
+then uses the existing native atomic file installer to refresh the original
+running container's public CRL projection. This writes signed public cache data
+only, without touching its private identity. A stopped container restores that
+projection from KV at startup. PVC consumers keep the same native file installer.
 
 Maintenance recovery orders independent local offline Root caches first, online
 provider renewal second, then local online caches before any KV-dependent cache
 installation. Kubernetes discovery order does not choose these dependencies.
+If a local PVC-backed consumer cannot start, maintenance uses a bounded helper
+on that Pod's original node and mounted claims. It verifies the original Pod,
+controller and claim UIDs before each operation; inspection mounts claims
+read-only. Execution requires the maintenance fence. The helper has no enrollment
+or init command and omits fsGroup preparation so original ownership is retained.
+After local Root installation, the original OpenBao `prepare-startup` command
+refreshes only its signed public startup snapshot from the registry. The original
+Pod and provider container must resume without replacement before online signers
+or KV-dependent caches are used. UID-guarded helper cleanup precedes fence release.
 Convergence reads remote cache state through the same independently authenticated
 native inspector, checks the selected signed fresh record and still requires the
 actual registry ACK for the expected consumer. A temporary application file mirror
 is not remote durability evidence; a committed KV cache is not a runtime ACK.
+For a running OpenBao consumer, the shared native reader also compares its
+actual public CRL projection with the committed record. A stale running mirror
+cannot pass merely because the durable successor or another path's ACK exists.
+Faulted consumers remain inspectable through original KV evidence without
+requiring their private identity files or application startup.
+
+OpenBao custody clients that use native registry-backed TLS verification have
+no OpenBao TLS CRL file cache. Renewal convergence still accounts for every
+declared consumer: it binds the original running Pod, scoped owner and service
+account, matches the environment's managed Root to the native issuer, and reads
+an existing public record through a native managed-only TLS transport. This probe
+omits bootstrap trust and verifies that the selected Root CRL stayed unchanged.
+Its scoped readback, Root/CRL digests, Pod UID and helper image are recorded as
+`registry_transports` in maintenance status. Declared file-cache consumers keep
+their installation and genuine ACK checks; a transport proof cannot substitute
+for an explicit cache or an unknown consumer. Native revocation/finalization
+policies retain their existing receipts; renewal transport observations are
+recorded separately.
 
 Native public-export discovery binds the original writer's admitted client
 purpose, current owner chain, selected remote scope and signed manifest entries.
@@ -3389,8 +3948,17 @@ validation; standalone Account health retains the selected full configuration.
 Public TLS re-observation and ordinary upgrade preserve custody facts from the
 same generation's `bootstrap/bindings.json` and managed transport snapshot, without
 copying old images, workload behavior or Kubernetes UIDs over current observation.
-Before that completion file exists, only the admitted create runtime context may
-supply its initialized scope and registered Service Root. Missing upgrade evidence
+Before that completion file exists, the admitted create runtime context or CRL
+maintenance under the original create execution fence may read its initialized
+scope and registered Service Root. Maintenance verifies the admitted plan,
+immutable `custody/owners.json`, completed native initialization and original Root
+activation receipts; it never publishes final bindings. An invalid existing
+completion file cannot fall back to this path.
+Maintenance of an unfinished generation shares its authenticated
+create execution owner, records the actual scoped Kubernetes Lease and keeps the
+original fence through cleanup and status. Nested readers use that held owner;
+they never relock it, release its deployment fence or invent create completion.
+Missing upgrade evidence
 is an error, never permission to create another identity or search a different
 environment. Current placement and native KV/registry admission remain distinct.
 
@@ -3401,3 +3969,19 @@ KV state; this checkpoint alone is not full renewal or environment acceptance.
 Targets are not deployed facts; each environment needs its own completion and
 health evidence. See the accepted OpenBao custody design and canonical
 Platform PKI contract.
+
+Canonical `DEPLOYMENT_IMAGES` PKI role selections also govern the post-bootstrap
+identity observation and final workload compiler. Legacy individual image aliases
+remain stored but cannot override a selected canonical role. These in-memory
+projections preserve release provenance and are idempotent when a compiler already
+carries that role. Selecting a Management image does not enable the optional
+registration CRL refresh profile. Create reports separate binding observation and
+workload compilation from the preceding public TLS publication stage.
+
+PKI volume-source comparison excludes both volume-level default permissions and
+per-file permission modes, including nested projected ConfigMap/Secret sources.
+These fields describe access modes, not a different key, trust or state source;
+native startup/access qualification remains responsible for readability. The
+comparison still preserves source names, keys, paths, token audiences, mounts,
+read-only access, private identity references and original owner UIDs. It never
+changes live resources or maintained settings while comparing them.

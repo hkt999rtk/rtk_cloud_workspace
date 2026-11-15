@@ -51,6 +51,9 @@ func TestCreateWorkloadCarriesOriginalUnsealRuntime(t *testing.T) {
 	}
 	current := append(append(append([]byte{}, raw[:start]...), []byte(body)...), raw[end:]...)
 	old := bytes.Replace(current, []byte(`apply(bootstrapCtx, "workload"`), []byte(`apply(ctx, "workload"`), 1)
+	// Keep the historical negative control valid Go when apply deliberately
+	// drops the new block-local context; it must fail on lost runtime authority.
+	old = bytes.Replace(old, []byte(`bootstrapCtx := context.WithValue(bootstrapCtx, environmentCreateQualifiedStageKey{}`), []byte(`bootstrapCtx = context.WithValue(bootstrapCtx, environmentCreateQualifiedStageKey{}`), 1)
 	if bytes.Equal(current, old) {
 		t.Fatal("workload no longer binds its original runtime context")
 	}
@@ -131,7 +134,7 @@ func TestDeploymentWorkloadContextFixture(t *testing.T) {
   if !has || !actual.Equal(deadline) || ctx.Value(parentMarker{})!="original-parent" {t.Fatal("workload changed original parent deadline or authority")}
   called=true;return nil
  }
- err:=executeEnvironmentCreateWithRuntime(parent,deploymentConfig{},&environmentCreatePlan{},nil,secretStore{},nil,e,nil,runtime,apply)
+ err:=executeEnvironmentCreateWithRuntime(parent,deploymentConfig{},&environmentCreatePlan{},nil,secretStore{},nil,e,io.Discard,runtime,apply)
  if !called || !errors.Is(err,testWorkloadReachedExternal) {t.Fatal("real create workflow did not reach isolated post-workload boundary",err)}
 }
 func TestDeploymentWorkloadSkipAcceptedFixture(t *testing.T){

@@ -19,7 +19,7 @@ func TestProductSessionRenewalNextExpiredCompleteACKUsesNativeFinalization(t *te
 	slices.Sort(subjects)
 	now := time.Now().UTC()
 	ack := productSessionInstallations{Session: f.service.BootstrapSessionID, Issuer: f.service.Intermediate.ID, Root: f.service.Root.RootFingerprint, Subjects: subjects, Installed: slices.Clone(subjects), Expires: now.Add(-time.Minute)}
-	for _, status := range []string{"sealed", "expired"} {
+	for _, status := range []string{"active", "sealed", "expired"} {
 		t.Run(status, func(t *testing.T) {
 			v := ack
 			v.Status = status
@@ -31,10 +31,6 @@ func TestProductSessionRenewalNextExpiredCompleteACKUsesNativeFinalization(t *te
 				t.Fatal("incomplete expired session accepted")
 			}
 		})
-	}
-	ack.Status = "active"
-	if _, err := productInstallationsComplete(ack, f.service, subjects, now); err == nil {
-		t.Fatal("active expired session cannot be natively sealed")
 	}
 	ack.Status = "expired"
 	ack.Issuer = "foreign"

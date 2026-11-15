@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -14,9 +17,21 @@ type environmentCreateDependencyRender struct {
 	managed              map[string]bool
 	outputs              map[string]string
 	publicCertIssuerHost string
+	futureRuntime        bool
+}
+
+func (r *environmentCreateDependencyRender) addOutput(p environmentCreateBootstrapPlan, id, stage string) {
+	r.outputs[id] = deploymentplan.Digest(struct {
+		Recipe          environmentCreateBootstrapPlan
+		Stage, Resource string
+	}{p, stage, id})
 }
 
 func environmentCreateDependencyOutputs(cfg deploymentConfig, p environmentCreateBootstrapPlan, values map[string]string) (*environmentCreateDependencyRender, error) {
+	return environmentCreateDependencyOutputsForOrder(cfg, p, values, environmentCreateOpenBaoFirst(cfg))
+}
+
+func environmentCreateDependencyOutputsForOrder(cfg deploymentConfig, p environmentCreateBootstrapPlan, values map[string]string, openBaoFirst bool) (*environmentCreateDependencyRender, error) {
 	if p.Environment != cfg.Environment || p.Stack != cfg.Values["CLOUD_STACK_NAME"] || p.Stack != "video-cloud-"+cfg.Environment || p.IngressAdmissionProfile != environmentCreateIngressAdmissionProfile || len(p.Claims) == 0 {
 		return nil, environmentCreateBootstrapBlocker("fresh dependency qualification requires the complete selected bootstrap recipe")
 	}
@@ -30,10 +45,7 @@ func environmentCreateDependencyOutputs(cfg deploymentConfig, p environmentCreat
 	}
 	intent := &environmentCreateDependencyRender{managed: map[string]bool{}, outputs: map[string]string{}, publicCertIssuerHost: host}
 	add := func(id, stage string) {
-		intent.outputs[id] = deploymentplan.Digest(struct {
-			Recipe          environmentCreateBootstrapPlan
-			Stage, Resource string
-		}{p, stage, id})
+		intent.addOutput(p, id, stage)
 	}
 	for _, name := range p.Claims {
 		suffix := "video-cloud"
@@ -72,7 +84,11 @@ func environmentCreateDependencyOutputs(cfg deploymentConfig, p environmentCreat
 	add("Secret/"+p.Stack+"-account-manager/account-manager-service-registration-tls", "account-registration")
 	add("IngressClass//"+environmentIngressClass(values), "ingress-controller")
 	for _, suffix := range []string{"video-cloud", "account-manager", "secrets"} {
-		add("Secret/"+p.Stack+"-"+suffix+"/"+lkeImagePullSecretName(values), "foundation")
+		stage := "foundation"
+		if openBaoFirst && suffix != "secrets" {
+			stage = "foundation-services"
+		}
+		add("Secret/"+p.Stack+"-"+suffix+"/"+lkeImagePullSecretName(values), stage)
 	}
 	// Namespace creation precedes the native bootstrap. Kubernetes' namespace
 	// controller creates this API-defined account; it is not a secret producer
@@ -114,6 +130,10 @@ func bindEnvironmentCreateDependencyPublicTransport(env map[string]string, defin
 // Future keys/certificates, owner UIDs and provider endpoints are not invented:
 // their exact declared producer contracts satisfy only this static graph pass.
 func qualifyEnvironmentCreateDependencyContract(ctx context.Context, cfg deploymentConfig, release environmentRelease, store secretStore, operator map[string]string, p environmentCreateBootstrapPlan) (int, error) {
+	return qualifyEnvironmentCreateDependencyContractForOrder(ctx, cfg, release, store, operator, p, environmentCreateOpenBaoFirst(cfg))
+}
+
+func qualifyEnvironmentCreateDependencyContractForOrder(ctx context.Context, cfg deploymentConfig, release environmentRelease, store secretStore, operator map[string]string, p environmentCreateBootstrapPlan, openBaoFirst bool) (int, error) {
 	publicTLS, err := prepareEnvironmentCreatePublicTLS(ctx, cfg, store)
 	if err != nil {
 		return 0, err
@@ -122,9 +142,23 @@ func qualifyEnvironmentCreateDependencyContract(ctx context.Context, cfg deploym
 	if err != nil {
 		return 0, err
 	}
-	secrets, err := environmentRuntimeSecretSnapshot(store)
-	if err != nil {
-		return 0, err
+	secrets := map[string]string{}
+	info, runtimeErr := os.Lstat(store.RuntimeDir())
+	futureRuntime := errors.Is(runtimeErr, os.ErrNotExist)
+	if futureRuntime {
+		// The fresh entry point has already verified provider absence. A
+		// retained inventory still forbids treating missing data as new state.
+		if _, err := os.Lstat(filepath.Join(store.Root, "inventory.json")); !errors.Is(err, os.ErrNotExist) {
+			return 0, environmentCreateBlocker("deployment.create.inputs", "runtime directory is missing while the selected active inventory exists or cannot be inspected")
+		}
+	} else {
+		if runtimeErr != nil || !info.IsDir() || info.Mode().Perm() != 0700 {
+			return 0, environmentCreateBlocker("deployment.create.inputs", "selected runtime directory must be a real 0700 directory")
+		}
+		secrets, err = environmentRuntimeSecretSnapshot(store)
+		if err != nil {
+			return 0, environmentCreateBlocker("deployment.create.inputs", "selected runtime SecretStore inventory cannot be read")
+		}
 	}
 	snapshot := environmentDeploymentSnapshot{Operator: operator, Secrets: secrets}
 	var support []deploymentplan.Definition
@@ -144,9 +178,13 @@ func qualifyEnvironmentCreateDependencyContract(ctx context.Context, cfg deploym
 	values["CLOUD_ENV_NAME"] = cfg.Environment
 	allocations := 0
 	err = withEnvironmentRenderValues(store, release, snapshot, values, func(env map[string]string) error {
-		intent, err := environmentCreateDependencyOutputs(cfg, p, env)
+		intent, err := environmentCreateDependencyOutputsForOrder(cfg, p, env, openBaoFirst)
 		if err != nil {
 			return err
+		}
+		intent.futureRuntime = futureRuntime
+		if futureRuntime {
+			intent.addOutput(p, "Secret/"+p.Stack+"-video-cloud/mqtt-pki-runtime", "managed-mqtt-dependencies")
 		}
 		for id, contract := range publicOutputs {
 			intent.outputs[id] = contract
@@ -163,7 +201,7 @@ func qualifyEnvironmentCreateDependencyContract(ctx context.Context, cfg deploym
 		if err != nil {
 			return err
 		}
-		runtime, err := renderEnvironmentRuntimeDependencyDefinitions(env, secrets, operator)
+		runtime, err := renderEnvironmentRuntimeDependencyDefinitionsWithFuture(env, secrets, operator, environmentBillingRuntimeKeyProfile, futureRuntime)
 		if err != nil {
 			return err
 		}
@@ -172,6 +210,15 @@ func qualifyEnvironmentCreateDependencyContract(ctx context.Context, cfg deploym
 		foundation, err := decodeEnvironmentCreateManifests(lkePostgresSecretManifest(env), lkeAccountManagerSecretManifest(env), lkeVideoCloudRuntimeSecretManifest(env), lkeFactoryEnrollRuntimeSecretManifest(env), lkeVideoCloudWorkersSecretManifest(env))
 		if err != nil {
 			return err
+		}
+		if futureRuntime {
+			for _, group := range [][]deploymentplan.Definition{runtime, foundation} {
+				for _, d := range group {
+					if d.Object["kind"] == "Secret" {
+						intent.addOutput(p, deploymentplan.ID(d.Object), "runtime-initialization")
+					}
+				}
+			}
 		}
 		defs = append(defs, runtime...)
 		defs = append(defs, foundation...)

@@ -46,7 +46,7 @@ func installEnvironmentCreateOpenBaoPolicy(ctx context.Context, cfg deploymentCo
 		}
 		switch entry.State {
 		case "pending":
-			if runtime.ProductIdentityScope == "" || len(entry.Receipt) != 0 || !entry.CompletedAt.IsZero() {
+			if runtime.ProductIdentityScope == "" && !partialSessionAllowsPendingOpenBao(cfg, runtime, "policy", name) || len(entry.Receipt) != 0 || !entry.CompletedAt.IsZero() {
 				return environmentCreateBootstrapBlocker("policy has an uncertain or changed original outcome")
 			}
 			observePending = true
@@ -339,6 +339,12 @@ func createEnvironmentServiceSession(ctx context.Context, cfg deploymentConfig, 
 			return s, err
 		}
 		secrets = append(secrets, environmentCreateServiceTrustDefinition(namespace, s.Root, runtime.TransportCAPEM, manifest))
+	}
+	if r := runtime.ServiceSessionRecovery; r != nil && r.ManagedTransportRecovery != nil && r.ManagedTransportRecovery.PartialSessionRenewal {
+		secrets, err = partialSessionCredentialDefinitions(secrets, s)
+		if err != nil {
+			return s, err
+		}
 	}
 	if err := apply(ctx, renewalStage(runtime, "service-credential-secrets"), secrets); err != nil {
 		return s, err

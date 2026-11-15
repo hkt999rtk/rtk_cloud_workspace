@@ -14,11 +14,22 @@ import (
 
 func TestDirectCIImagesUseFrozenGitlinksAndExactPublicationForAllEnvironments(t *testing.T) {
 	for _, environment := range []string{"dev", "staging", "prod"} {
-		for _, mode := range []string{"valid", "backups-disabled", "root-dirty", "leaf-dirty", "source-drift", "CI-pending", "MQTT-missing", "host-published", "old-attempt", "backup-base", "mutable-provider", "legacy-file-invalid", "private-error"} {
+		for _, mode := range []string{"valid", "selected-host", "backups-disabled", "root-dirty", "leaf-dirty", "source-drift", "CI-pending", "MQTT-missing", "host-published", "old-attempt", "backup-base", "mutable-provider", "legacy-file-invalid", "private-error"} {
 			t.Run(environment+"/"+mode, func(t *testing.T) {
 				_, _, providers := completeEnvironmentRenderFixture(environment)
 				legacyRoot := t.TempDir()
 				t.Setenv("RTK_CLOUD_CONFIG_ROOT", legacyRoot)
+				if mode == "selected-host" {
+					store, storeErr := newSecretStore(legacyRoot, environment)
+					if storeErr != nil {
+						t.Fatal(storeErr)
+					}
+					selected := environmentImageSelection{Environment: environment, Images: map[string]environmentReleaseImage{"LKE_OPENBAO_PKI_IMAGE": {Reference: "ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-openbao-pki@sha256:" + strings.Repeat("a", 64), SourceRevision: strings.Repeat("e", 40), Publication: &createVersionPublication{Repository: "hkt999rtk/rtk_video_cloud", RunID: 77, Attempt: 2, ManifestSHA: strings.Repeat("f", 64)}}}}
+					raw, _ := json.Marshal(selected)
+					if storeErr = store.write(filepath.Join("operator", "env", environmentImagesKey), raw, false); storeErr != nil {
+						t.Fatal(storeErr)
+					}
+				}
 				legacyPath := filepath.Join(legacyRoot, environment, "deployment", "release.json")
 				if mode == "legacy-file-invalid" {
 					if err := os.MkdirAll(filepath.Dir(legacyPath), 0700); err != nil {
@@ -160,7 +171,7 @@ func TestDirectCIImagesUseFrozenGitlinksAndExactPublicationForAllEnvironments(t 
 				progress := &environmentProgress{out: &progressOutput, log: &progressLog, resources: -1}
 				progressCtx := context.WithValue(context.Background(), environmentProgressKey{}, progress)
 				release, err := loadEnvironmentCIImages(progressCtx, cfg, run)
-				if (err == nil) != (mode == "valid" || mode == "host-published" || mode == "backups-disabled" || mode == "legacy-file-invalid" || mode == "root-dirty" || mode == "leaf-dirty") {
+				if (err == nil) != (mode == "valid" || mode == "selected-host" || mode == "host-published" || mode == "backups-disabled" || mode == "legacy-file-invalid" || mode == "root-dirty" || mode == "leaf-dirty") {
 					t.Fatal("release decision differs", mode, err)
 				}
 				if err != nil && strings.Contains(err.Error(), "never-public") {
@@ -189,6 +200,15 @@ func TestDirectCIImagesUseFrozenGitlinksAndExactPublicationForAllEnvironments(t 
 				}
 				if mode == "valid" && states["deployment.release.provider.POSTGRES_IMAGE"] != "[OK]" {
 					t.Fatal("provider digest was validated without its logged OK result", progressLog.String())
+				}
+				if mode == "selected-host" {
+					image := release.Images["LKE_OPENBAO_PKI_IMAGE"]
+					if err != nil || image.Reference != "ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-openbao-pki@sha256:"+strings.Repeat("a", 64) || image.SourceRevision != strings.Repeat("e", 40) || image.Publication == nil {
+						t.Fatal("environment host selection lost", err)
+					}
+					if release.Images["LKE_POSTGRES_IMAGE"].Reference != providers.Images["LKE_POSTGRES_IMAGE"].Reference || release.Images["LKE_MQTT_PKI_IMAGE"].Reference != refs["LKE_MQTT_PKI_IMAGE"] {
+						t.Fatal("selection changed an unrelated role")
+					}
 				}
 				if mode == "backups-disabled" {
 					if err != nil {

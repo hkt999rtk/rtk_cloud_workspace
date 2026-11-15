@@ -27,6 +27,19 @@ func reconcileProductFinalization(ctx context.Context, cfg deploymentConfig, run
 		return environmentCreateBootstrapBlocker("product finalization original native result is unavailable")
 	}
 	stage := "kubernetes/service-custody-reader"
+	var freshCustodyPlan string
+	if l.FreshResume != nil && runtime.ProductIdentityScope == "" {
+		stage = "kubernetes/" + l.FreshResume.CustodyStage
+		freshCustodyPlan = l.FreshResume.CustodyPlanSHA256
+		binding, err := readFreshProductSessionSuccessor(e.Store, e, l)
+		if err != nil {
+			return err
+		}
+		if binding != nil {
+			stage = "kubernetes/service-custody-reader-renewal-" + binding.CurrentReview
+			freshCustodyPlan = binding.CustodyPlanSHA256
+		}
+	}
 	if runtime.ProductIdentityScope != "" {
 		stage = "kubernetes/product-identities-" + productIdentityScope(l)[:12] + "-service-custody-reader"
 	}
@@ -40,6 +53,9 @@ func reconcileProductFinalization(ctx context.Context, cfg deploymentConfig, run
 	}
 	if err != nil || len(p.Resources) != 1 {
 		return environmentCreateBootstrapBlocker("product finalization has no original accepted custody owner")
+	}
+	if l.FreshResume != nil && runtime.ProductIdentityScope == "" && p.SHA256() != freshCustodyPlan {
+		return environmentCreateBootstrapBlocker("fresh finalization changed its original current custody child")
 	}
 	resource := p.Resources[0]
 	owner, err := runtime.Backend.Read(ctx, resource.ID)
@@ -132,8 +148,10 @@ func verifyProductFinalization(ctx context.Context, cfg deploymentConfig, runtim
 			return zero, environmentCreateBootstrapBlocker("product finalization lost an original custody hash")
 		}
 	}
-	raw, err := json.Marshal(tombstone)
-	if err != nil || environmentPreflightBytesSHA256(raw) != receipt.TombstoneSHA && environmentPreflightBytesSHA256(append(raw, '\n')) != receipt.TombstoneSHA {
+	// Preserve the stored native field order instead of assuming that a later
+	// observer struct serializes to the original receipt bytes.
+	raw := bytes.TrimSpace(saved.Tombstone)
+	if environmentPreflightBytesSHA256(raw) != receipt.TombstoneSHA && environmentPreflightBytesSHA256(append(bytes.Clone(raw), '\n')) != receipt.TombstoneSHA {
 		return zero, environmentCreateBootstrapBlocker("product finalization original tombstone bytes changed")
 	}
 	query := "SELECT json_build_object('environment',environment,'session_id',session_id,'bootstrap_leaf_sha256',bootstrap_fingerprint,'crl_sha256',finalized_crl_sha256,'cleanup_sha256',cleanup_sha256,'finalized_at',finalized_at) FROM pki_deployment_bootstrap_sessions WHERE environment='" + cfg.Environment + "' AND session_id='" + s.BootstrapSessionID + "' AND finalized_at IS NOT NULL AND status IN ('sealed','expired')"

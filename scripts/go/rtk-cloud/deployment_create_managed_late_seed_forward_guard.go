@@ -97,7 +97,8 @@ func validateManagedLateSeedForwardCandidate(f *createManagedLateSeedForward, ca
 }
 
 // Public trust must consist solely of self-signed CA certificates. The live
-// caller also binds the exact original managed Root and current validity.
+// caller binds the exact original managed Root and its current validity;
+// retained bootstrap history does not authorize this managed connection.
 func managedLateSeedForwardRoots(value, requiredRoot string, now time.Time) bool {
 	found, count := requiredRoot == "", 0
 	seen := map[string]bool{}
@@ -110,10 +111,13 @@ func managedLateSeedForwardRoots(value, requiredRoot string, now time.Time) bool
 			return false
 		}
 		cert, err := x509.ParseCertificate(block.Bytes)
-		if err != nil || !cert.IsCA || !cert.BasicConstraintsValid || cert.KeyUsage&x509.KeyUsageCertSign == 0 || cert.CheckSignatureFrom(cert) != nil || !now.IsZero() && (cert.NotBefore.After(now) || !cert.NotAfter.After(now)) {
+		if err != nil || !cert.IsCA || !cert.BasicConstraintsValid || cert.KeyUsage&x509.KeyUsageCertSign == 0 || cert.CheckSignatureFrom(cert) != nil {
 			return false
 		}
 		digest := environmentPreflightBytesSHA256(cert.Raw)
+		if !now.IsZero() && (requiredRoot == "" || digest == requiredRoot) && (cert.NotBefore.After(now) || !cert.NotAfter.After(now)) {
+			return false
+		}
 		if seen[digest] {
 			return false
 		}

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -134,6 +135,9 @@ func TestTransportServerEnrollmentRetainsOriginalStaticPolicyBeforeRuntimeConsum
 		prefix := "EMQX_PKI_HOST_RENEWAL"
 		if strings.Contains(deploymentplan.ID(d.Object), "openbao-server") {
 			prefix = "OPENBAO_PKI_HOST_RENEWAL"
+			if settings["OPENBAO_PKI_STARTUP_TRUST"] != filepath.Join(filepath.Dir(settings["OPENBAO_PKI_HOST_IDENTITY_STATE"]), "startup-trust.json") {
+				t.Fatal("OpenBao enrollment omitted its retained startup trust path")
+			}
 		}
 		if settings["PKI_BOOTSTRAP_SESSION_ID"] != "" || settings[prefix+"_SERVER_CRL_MANIFEST"] != "" || settings[prefix+"_PKI_CONTROLLER_URL"] != "" || settings[prefix+"_MANAGEMENT_CA"] != "" {
 			t.Fatal("completed enrollment recipe gained runtime installation/CRL side effects")
@@ -156,6 +160,9 @@ func TestTransportServerEnrollmentRetainsOriginalStaticPolicyBeforeRuntimeConsum
 	} {
 		object := createRecipeObject(t, defs, owner.id)
 		settings := createRecipeEnv(managedNamedField(environmentPKIPod(object)["containers"], owner.name))
+		if owner.name == "openbao-pki" && settings["OPENBAO_PKI_STARTUP_TRUST"] != filepath.Join(filepath.Dir(settings["OPENBAO_PKI_HOST_IDENTITY_STATE"]), "startup-trust.json") {
+			t.Fatal("OpenBao runtime omitted its retained startup trust path")
+		}
 		if settings["PKI_BOOTSTRAP_SESSION_ID"] != service.BootstrapSessionID || settings[owner.prefix+"_SERVER_CRL_MANIFEST"] != environmentCreateServiceTrust+"/outbound-crls.json" || settings[owner.prefix+"_PKI_CONTROLLER_URL"] == "" || settings[owner.prefix+"_MANAGEMENT_CA"] == "" {
 			t.Fatal("installed runtime host omitted its actual native ACK consumer")
 		}

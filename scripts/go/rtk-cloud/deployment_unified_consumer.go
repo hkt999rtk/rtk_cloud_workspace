@@ -34,7 +34,7 @@ func hydrateQualifiedEnvironmentDeployment(ctx context.Context, cfg deploymentCo
 	if err != nil || snapshot.Digest(cfg) != artifact.Plan.ConfigurationSHA256 {
 		return nil, &deploymentplan.Blocker{ID: "deployment.inputs.changed", Cause: "maintained configuration or original canonical credentials changed after preflight", Next: "run full preflight against the current selected environment and review its new plan SHA-256"}
 	}
-	backend, err := newEnvironmentKubernetesBackend(snapshot.Kubeconfig, cfg.Environment)
+	backend, err := newEnvironmentKubernetesBackendForConfig(snapshot.Kubeconfig, cfg)
 	if err != nil {
 		return nil, environmentCompilationError(err, "deployment.access.kubeconfig", "selected Kubernetes identity could not be initialized", "restore the selected environment's embedded Kubernetes identity and repeat preflight")
 	}

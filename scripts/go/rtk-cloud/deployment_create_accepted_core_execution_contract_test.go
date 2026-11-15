@@ -198,6 +198,7 @@ type coreExecutionContractHooks struct {
 	BeforeServiceSession                 func(*acceptedCoreExecutionContract, environmentCreateBootstrapRuntime, environmentCreateServiceCeremony, []byte)
 	TransportNames                       func(deploymentConfig, string) map[string][]string
 	Configure                            func(*deploymentConfig, *environmentCreatePlan, *environmentCreateBootstrapPlan)
+	ConfigureOperator                    func(map[string]string)
 	BeforeSource                         func(*acceptedCoreExecutionContract, *environmentCreateBootstrapRuntime)
 }
 
@@ -252,6 +253,9 @@ func newCoreExecutionContractAtBoundaryWithHooks(t *testing.T, expired, listener
 	}
 	cfg.Values["DEPLOYMENT_PREFLIGHT_VALIDITY_SECONDS"] = "3600"
 	operator := map[string]string{"PKI_OPERATOR_USER_ID": "77777777-7777-4777-8777-777777777777", "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL": "operator@isolated.test", "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD": "isolated-password"}
+	if hooks.ConfigureOperator != nil {
+		hooks.ConfigureOperator(operator)
+	}
 	cfg, store, e, _, original := providerExecutionContractFixture(t, providerExecutionContractInputs{
 		cfg: cfg, operator: operator, bootstrap: bootstrap,
 		prepare: func(selected *deploymentConfig, plan *environmentCreatePlan) []environmentReleasePublicationProof {
@@ -745,6 +749,7 @@ if 'port-forward' in a:
    if self.path!='/v1/auth/login' or body!={'email':d['email'],'password':d['password']}:self.respond({},403);return
    self.respond({'user':{'id':d['operator'],'email':d['email']},'tokens':{'access_token':'isolated-native-session'}})
   def do_GET(self):
+   if d.get('issuer_read_unavailable'):self.respond({},503);return
    key=self.path.split('/')[-1]
    if self.headers.get('Authorization')!='Bearer isolated-native-session' or key not in d['issuers']:self.respond({},403);return
    self.respond(d['issuers'][key])
@@ -772,6 +777,9 @@ if 'get' in a:
  sys.exit()
 joined=' '.join(a)
 if 'SELECT id FROM users' in joined:print(d['operator'])
+elif a[-2:]==['registry-read',"SELECT json_agg(json_build_object('id',id,'environment',environment,'domain',domain,'kind',kind,'status',status,'document',document) ORDER BY id) FROM pki_issuers"]:
+ assert 'PGOPTIONS=-c default_transaction_read_only=on' in a
+ print(json.dumps([{'id':id,'environment':v['environment'],'domain':v['trust_domain'],'kind':v['kind'],'status':v['status'],'document':v} for id,v in sorted(d['issuers'].items())] or None))
 elif 'SELECT (SELECT count(*) FROM pki_issuers)' in joined:print('2|2')
 elif 'registry-read' in a and 'json_agg(subject' in joined and 'pki_service_client_issuances' in joined:print(json.dumps(d['issued']))
 elif 'registry-read' in a:print(json.dumps(d['session']))

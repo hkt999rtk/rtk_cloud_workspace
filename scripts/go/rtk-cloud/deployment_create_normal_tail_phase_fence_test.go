@@ -40,7 +40,48 @@ func (b *normalTailPhaseBackend) CheckParentExecution(ctx context.Context, p *de
 	if b.rejectParent {
 		return errors.New("original parent changed")
 	}
+	if p.Operation == "scoped" {
+		if root != b.e.Store.Root || p.Environment != b.e.Journal.Environment || p.Stack != b.e.Journal.Stack {
+			return errors.New("foreign original stage")
+		}
+		return b.e.Check(ctx)
+	}
 	return b.normalTailE2EBackend.CheckParentExecution(ctx, p, root)
+}
+
+func TestCreateScopedWorkloadUsesFreshPhaseInventoryWithoutReplayingWrites(t *testing.T) {
+	reads := [2]int{}
+	for index, optimized := range []bool{false, true} {
+		f := newNormalTailPhaseFixture(t, false)
+		f.p.Operation, f.p.CreateParentSHA256, f.p.CreateHandoffSHA256 = "scoped", "", ""
+		sha, snapshots, fences := f.p.SHA256(), 0, 0
+		check := func(ctx context.Context, _ *deploymentplan.Plan) error { return f.h.Execution.Check(ctx) }
+		fence := func(ctx context.Context, p *deploymentplan.Plan) error { fences++; return check(ctx, p) }
+		var phaseFences []deploymentplan.PhaseFence
+		if optimized {
+			phaseFences = append(phaseFences, func(ctx context.Context, p *deploymentplan.Plan) (map[string]deploymentplan.Object, error) {
+				if err := fence(ctx, p); err != nil {
+					return nil, err
+				}
+				snapshots++
+				if snapshots == 2 && deploymentplan.Map(f.b.objects[f.first]["data"])["value"] != "desired" {
+					t.Fatal("phase inventory was not refreshed after writes")
+				}
+				return f.b.snapshot(), nil
+			})
+		}
+		if err := executeEnvironmentCreateStagePlan(t.Context(), f.store, f.h.Execution, "workload", f.p, f.b, check, fence, check, func(context.Context) error { return nil }, io.Discard, phaseFences...); err != nil {
+			t.Fatal(err)
+		}
+		if f.p.SHA256() != sha || f.b.writes[f.first] != 1 || f.b.writes[f.later] != 1 || f.b.writes[f.retained] != 0 || fences < 2 || optimized && snapshots != 2 {
+			t.Fatal("phase observations changed plan, writes or fences", fences, snapshots)
+		}
+		reads[index] = len(f.b.reads)
+	}
+	if reads[1] >= reads[0] {
+		t.Fatal("fresh phase inventory did not remove duplicate dependency GETs", reads)
+	}
+	t.Logf("scoped workload reads: ordinary=%d, fresh phase inventory=%d", reads[0], reads[1])
 }
 
 func (b *normalTailPhaseBackend) snapshot() map[string]deploymentplan.Object {

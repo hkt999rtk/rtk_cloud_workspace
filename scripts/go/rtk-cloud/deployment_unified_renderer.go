@@ -236,7 +236,7 @@ func renderEnvironmentResourceCatalog(env map[string]string, bindings environmen
 			mqttSecrets[lkeSecretFileName(name)] = lkeRuntimeSecretValue(name)
 		}
 	}
-	mqttDependencies, err := renderManagedMQTTDependencyDefinitions(env, mqttSecrets)
+	mqttDependencies, err := renderManagedMQTTDependencyDefinitionsWithFuture(env, mqttSecrets, intent != nil && intent.futureRuntime)
 	if err != nil {
 		return nil, err
 	}
@@ -365,8 +365,10 @@ func renderEnvironmentResourceCatalog(env map[string]string, bindings environmen
 	if err := bindEnvironmentCurrentMQTTConsumers(definitions, bindings); err != nil {
 		return nil, err
 	}
-	if err := applyEnvironmentBillingRuntimeConfiguration(env, definitions); err != nil {
-		return nil, err
+	if intent == nil || !intent.futureRuntime {
+		if err := applyEnvironmentBillingRuntimeConfiguration(env, definitions); err != nil {
+			return nil, err
+		}
 	}
 	if err := applyCoreIdentityPreparation(definitions, release.Images["LKE_ALPINE_IMAGE"].Reference); err != nil {
 		return nil, err

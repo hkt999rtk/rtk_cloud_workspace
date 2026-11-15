@@ -13,10 +13,13 @@ import (
 
 type environmentCreateKubernetesBackend struct {
 	environmentKubernetesBackend
-	execution       *environmentCreateExecution
-	cfg             deploymentConfig
-	store           secretStore
-	stagePlanSHA256 string
+	execution             *environmentCreateExecution
+	cfg                   deploymentConfig
+	store                 secretStore
+	stagePlanSHA256       string
+	templateOnly          bool // finite early runtime-template stage, before consumer readiness
+	completedPreparations map[string]string
+	observationOnly       bool
 }
 
 func (b environmentCreateKubernetesBackend) initialOpenBaoWaitResource(ctx context.Context, resource deploymentplan.Resource) (deploymentplan.Resource, error) {
@@ -36,21 +39,33 @@ func (b environmentCreateKubernetesBackend) initialOpenBaoWaitResource(ctx conte
 	return resource, nil
 }
 
-func (b environmentCreateKubernetesBackend) Write(ctx context.Context, action string, body deploymentplan.Object, dry bool) (deploymentplan.Object, error) {
-	if !dry {
-		if err := b.beforeSchemaOwnerWrite(ctx, body); err != nil {
-			return nil, err
-		}
-	}
-	return b.environmentKubernetesBackend.Write(ctx, action, body, dry)
+func (b environmentCreateKubernetesBackend) BeforeWrite(ctx context.Context, action string, body deploymentplan.Object) error {
+	return b.beforeSchemaOwnerWrite(ctx, body)
 }
 
 func (b environmentCreateKubernetesBackend) Wait(ctx context.Context, resource deploymentplan.Resource) error {
+	if b.templateOnly {
+		current, err := b.Read(ctx, resource.ID)
+		if err != nil || resource.Desired["kind"] != "Deployment" || current == nil || deploymentplan.Map(current["metadata"])["uid"] != resource.UID || !deploymentplan.Matches(resource.Desired, current) {
+			return createProviderRecoveryBlock("runtime host template does not match its original owner")
+		}
+		return nil // Real workload readiness and ACKs remain in following stages.
+	}
+	// Only native completed enrollment producers have this exact ID/UID map.
+	// Keep body/owner checks even though the permanent consumer now owns the
+	// identity and the old enrollment Pod can no longer become Ready.
+	if uid := b.completedPreparations[resource.ID]; uid != "" {
+		current, err := b.Read(ctx, resource.ID)
+		if err != nil || resource.Action != "retain" || resource.Desired["kind"] != "Deployment" || resource.UID != uid || current == nil || deploymentplan.Map(current["metadata"])["uid"] != uid || !deploymentplan.Matches(resource.Desired, current) {
+			return environmentCreateBootstrapBlocker("completed preparation differs from its original retained owner: " + resource.ID)
+		}
+		return nil
+	}
 	// A retained owner creates no new allocation. Keep its native readiness
 	// checks and the phase/final storage proofs without replaying the complete
 	// allocation producer for each recorded PVC. Decide before OnDelete turns
 	// an original create into a retained readiness check.
-	captureAllocation := resource.Action != "retain" && (resource.Desired["kind"] == "PersistentVolumeClaim" || resource.Desired["kind"] == "StatefulSet")
+	captureAllocation := !b.observationOnly && resource.Action != "retain" && (resource.Desired["kind"] == "PersistentVolumeClaim" || resource.Desired["kind"] == "StatefulSet")
 	resource, err := b.initialOpenBaoWaitResource(ctx, resource)
 	if err != nil {
 		return err
@@ -64,6 +79,19 @@ func (b environmentCreateKubernetesBackend) Wait(ctx context.Context, resource d
 		resource.UID = journal.Owners[resource.ID]
 	}
 	b.environmentKubernetesBackend.SchemaWorkspace = b.cfg.Workspace
+	if resource.Action == "retain" && environmentOnDeleteOpenBao(resource) {
+		owner, found, err := optionalOpenBaoInPlaceReady(ctx, b.cfg, b.store, b.execution, b.environmentKubernetesBackend)
+		if err != nil {
+			return err
+		}
+		if found {
+			live, err := b.Read(ctx, resource.ID)
+			if err != nil || live == nil || owner.StatefulSetUID != resource.UID || !deploymentplan.Matches(resource.Desired, live) {
+				return createProviderRecoveryBlock("in-place OpenBao owner differs from retained target")
+			}
+			return nil
+		}
+	}
 	if err := b.environmentKubernetesBackend.Wait(ctx, resource); err != nil {
 		return err
 	}
@@ -230,6 +258,10 @@ func applyEnvironmentCreateStage(ctx context.Context, cfg deploymentConfig, stor
 			return err
 		}
 	}
+	qualifiedOwners, err := environmentCreateQualifiedStageOwners(ctx, execution, stage, definitions)
+	if err != nil {
+		return err
+	}
 	definitions, err = projectEnvironmentCreateCustodyStage(ctx, cfg, store, parent, execution, definitions, plan)
 	if err != nil {
 		return err
@@ -238,7 +270,7 @@ func applyEnvironmentCreateStage(ctx context.Context, cfg deploymentConfig, stor
 	if err != nil {
 		return err
 	}
-	native, err := newEnvironmentKubernetesBackend(string(raw), cfg.Environment)
+	native, err := newEnvironmentKubernetesBackendForConfig(string(raw), cfg)
 	if err != nil {
 		return err
 	}
@@ -254,30 +286,97 @@ func applyEnvironmentCreateStage(ctx context.Context, cfg deploymentConfig, stor
 			return unsealEnvironmentCreateOpenBaoRestart(ctx, cfg, store, runtime, pod)
 		}
 	}
-	backend := environmentCreateKubernetesBackend{environmentKubernetesBackend: native, execution: execution, cfg: cfg, store: store}
-	inputs := deploymentplan.Inputs{Environment: cfg.Environment, Stack: parent.Stack, Operation: "scoped", ConfigurationSHA256: parent.ConfigurationSHA256, ReleaseSHA256: deploymentplan.Digest(parent.Release), BindingsSHA256: environmentCreateStageBindingsSHA(stage, definitions)}
+	var live []deploymentplan.Object
 	if plan == nil {
-		live, err := native.Inventory(ctx, parent.Stack)
+		live, err = native.Inventory(ctx, parent.Stack)
 		if err != nil {
 			return err
 		}
-		plan, err = deploymentplan.Compile(inputs, definitions, live)
+		if err := bindOpenBaoAllocations(definitions, live); err != nil {
+			return err
+		}
+	} else if environmentCreateStageBindingsSHA(stage, definitions) != plan.BindingsSHA256 {
+		// Reconstruct a previously frozen allocation from its own baseline,
+		// never from a newer live object on a retry.
+		for _, resource := range plan.Resources {
+			if resource.Baseline != nil {
+				live = append(live, resource.Baseline)
+			}
+		}
+		if err := bindOpenBaoAllocations(definitions, live); err != nil {
+			return err
+		}
+	}
+	if stage == "managed-complete-issuer" {
+		if runtime, ok := ctx.Value(environmentCreateBootstrapRuntimeKey{}).(environmentCreateBootstrapRuntime); ok && runtime.Execution == execution && runtime.ServiceSessionRecovery != nil && runtime.ServiceSessionRecovery.currentCore != nil {
+			return executeCurrentCoreForward(ctx, cfg, store, parent, runtime, definitions, func(ctx context.Context, name string, frozen *deploymentplan.Plan) error {
+				return executeCompiledEnvironmentCreateStage(ctx, cfg, store, parent, execution, name, frozen, native, out)
+			})
+		}
+	}
+	inputs := deploymentplan.Inputs{Environment: cfg.Environment, Stack: parent.Stack, Operation: "scoped", ConfigurationSHA256: parent.ConfigurationSHA256, ReleaseSHA256: deploymentplan.Digest(parent.Release), BindingsSHA256: environmentCreateStageBindingsSHA(stage, definitions)}
+	if plan == nil {
+		plan, err = deploymentplan.Compile(inputs, definitions, live, qualifiedOwners)
 		if err != nil {
 			return err
 		}
 	}
 	if plan.Inputs != inputs {
-		return environmentCreateBootstrapBlocker("stage changed its qualified original input or definitions")
+		blocked := environmentCreateBootstrapBlocker("stage changed its qualified original input or definitions")
+		if detail, ok := blocked.(*deploymentplan.Blocker); ok {
+			detail.Resource = "Stage/" + stage
+		}
+		return blocked
 	}
-	backend.stagePlanSHA256 = plan.SHA256()
+	return executeCompiledEnvironmentCreateStage(ctx, cfg, store, parent, execution, stage, plan, native, out)
+}
+
+func executeCompiledEnvironmentCreateStage(ctx context.Context, cfg deploymentConfig, store secretStore, parent *environmentCreatePlan, execution *environmentCreateExecution, stage string, plan *deploymentplan.Plan, native environmentKubernetesBackend, out io.Writer) error {
+	// Forwarded stages use this same executor directly. They must carry the
+	// original OpenBao restart handling just like freshly compiled stages.
+	if runtime, ok := ctx.Value(environmentCreateBootstrapRuntimeKey{}).(environmentCreateBootstrapRuntime); ok && runtime.ExecutionSHA256 == execution.Journal.PlanSHA256 {
+		native.OpenBaoReplacementReady = func(ctx context.Context, controller, pod deploymentplan.Object) error {
+			if err := validateOpenBaoPodOwner(controller, pod); err != nil {
+				return err
+			}
+			return unsealEnvironmentCreateOpenBaoRestart(ctx, cfg, store, runtime, pod)
+		}
+	}
+	var backend environmentCreateKubernetesBackend
+	var err error
+	if stage == "workload" || stage == createWorkloadImageForwardStage {
+		err = runEnvironmentProgress(ctx, out, "deployment.create.preparations.completion", func(ctx context.Context) error {
+			objects, err := native.Inventory(ctx, plan.Stack)
+			if err != nil {
+				return err
+			}
+			backend, err = newEnvironmentCreateStageReadinessBackend(ctx, cfg, store, execution, stage, plan, native, objects)
+			return err
+		})
+	} else {
+		backend, err = newEnvironmentCreateStageReadinessBackend(ctx, cfg, store, execution, stage, plan, native, nil)
+	}
+	if err != nil {
+		return err
+	}
 	fence := func(ctx context.Context, p *deploymentplan.Plan) error {
 		if err := backend.CheckParentExecution(ctx, p, store.Root); err != nil {
 			return err
 		}
 		fresh, err := resolveDeploymentConfig(cfg.Workspace, cfg.Environment, cfg.EnvironmentRoot)
 		_, operator, readErr := readEnvironmentCreateOperator(cfg)
-		if err != nil || readErr != nil || deploymentplan.Digest(fresh) != parent.ConfigurationSHA256 || deploymentplan.Digest(operator) != parent.OperatorSHA256 {
+		if err != nil || readErr != nil || deploymentplan.Digest(fresh) != parent.ConfigurationSHA256 {
 			return environmentCreateBlocker("deployment.create.inputs", "maintained intent or operator credentials changed during the admitted create execution")
+		}
+		reference := parent
+		if deploymentplan.Digest(operator) != parent.OperatorSHA256 {
+			reference, err = authenticatedCreateOperatorPlan(store, execution)
+			if err != nil || reference.OperatorSHA256 != parent.OperatorSHA256 || reference.ConfigurationSHA256 != parent.ConfigurationSHA256 {
+				return environmentCreateBlocker("deployment.create.inputs", "original operator evidence differs from the admitted stage")
+			}
+		}
+		if _, _, err := verifyCreateEnvironmentOperator(ctx, cfg, store, execution, operator, reference); err != nil {
+			return err
 		}
 		return nil
 	}
@@ -285,6 +384,9 @@ func applyEnvironmentCreateStage(ctx context.Context, cfg deploymentConfig, stor
 	accept := func(ctx context.Context, p *deploymentplan.Plan) error {
 		if err := backend.CheckParentExecution(ctx, p, store.Root); err != nil {
 			return err
+		}
+		if stage == createRuntimeHostStage || stage == custodyTokenAccessStage {
+			return p.Verify(ctx, backend)
 		}
 		if strings.HasPrefix(stage, "current-owner-quiesce-") || strings.HasPrefix(stage, "used-installation-owner-quiesce-") {
 			if len(p.Resources) != 2 {
@@ -294,7 +396,7 @@ func applyEnvironmentCreateStage(ctx context.Context, cfg deploymentConfig, stor
 				return err
 			}
 		}
-		objects, err := native.Inventory(ctx, p.Stack)
+		objects, err := native.TargetWorkloadInventory(ctx, p)
 		if err != nil {
 			return targetWorkloadBlocker("", "selected native stage inventory is unavailable")
 		}
@@ -306,13 +408,52 @@ func applyEnvironmentCreateStage(ctx context.Context, cfg deploymentConfig, stor
 			}
 			ownerProof = []map[string]string{owners}
 		}
-		return verifyEnvironmentTargetWorkloads(ctx, p, environmentCreateStageInventory(p, objects), func(ctx context.Context, image string) (map[string]bool, error) {
+		runtimePlan, err := freshPreparationRuntimePlan(p, backend.completedPreparations)
+		if err != nil {
+			return err
+		}
+		// Original resources remain native verified. Only runtime health and its
+		// descendants use the authenticated application workload view.
+		for _, resource := range p.Resources {
+			uid := backend.completedPreparations[resource.ID]
+			if uid == "" {
+				continue
+			}
+			var actual deploymentplan.Object
+			for _, object := range objects {
+				if deploymentplan.ID(object) == resource.ID {
+					actual = object
+					break
+				}
+			}
+			if actual == nil || deploymentplan.Map(actual["metadata"])["uid"] != uid || !deploymentplan.Matches(resource.Desired, actual) {
+				return environmentCreateBootstrapBlocker("completed preparation owner or body changed before workload acceptance: " + resource.ID)
+			}
+		}
+		return verifyEnvironmentTargetWorkloads(ctx, runtimePlan, environmentCreateStageInventory(runtimePlan, objects), func(ctx context.Context, image string) (map[string]bool, error) {
 			return environmentRuntimeImageDigests(ctx, store, image)
 		}, ownerProof...)
 	}
+	var phaseFences []deploymentplan.PhaseFence
+	if stage == "workload" || stage == createWorkloadImageForwardStage {
+		phaseFences = append(phaseFences, func(ctx context.Context, p *deploymentplan.Plan) (map[string]deploymentplan.Object, error) {
+			if err := fence(ctx, p); err != nil {
+				return nil, err
+			}
+			objects, err := native.Inventory(ctx, p.Stack)
+			if err != nil {
+				return nil, err
+			}
+			observed := make(map[string]deploymentplan.Object, len(objects))
+			for _, object := range objects {
+				observed[deploymentplan.ID(object)] = object
+			}
+			return observed, nil
+		})
+	}
 	return executeEnvironmentCreateStagePlan(ctx, store, execution, stage, plan, backend, qualify, fence, accept, func(ctx context.Context) error {
 		return captureEnvironmentCreateVolumeOwners(ctx, cfg, native, execution)
-	}, out)
+	}, out, phaseFences...)
 }
 
 func environmentRedisTargetPodOwners(store secretStore, plan *deploymentplan.Plan) (map[string]string, error) {
@@ -400,6 +541,52 @@ func compileCreatedEnvironmentTarget(ctx context.Context, cfg deploymentConfig, 
 	release, err := effectiveCreateOpenBaoACKRelease(ctx, cfg, store, parentSHA, parent.Release, commands...)
 	if err != nil {
 		return nil, err
+	}
+	if runtime, ok := ctx.Value(environmentCreateBootstrapRuntimeKey{}).(environmentCreateBootstrapRuntime); ok && runtime.Execution != nil && runtime.ExecutionSHA256 == parentSHA {
+		_, operator, err := readEnvironmentCreateOperator(cfg)
+		if err != nil {
+			return nil, err
+		}
+		reference := parent
+		if deploymentplan.Digest(operator) != parent.OperatorSHA256 {
+			reference, err = authenticatedCreateOperatorPlan(store, runtime.Execution)
+			if err != nil || reference.OperatorSHA256 != parent.OperatorSHA256 || reference.ConfigurationSHA256 != parent.ConfigurationSHA256 {
+				return nil, createProviderRecoveryBlock("original operator evidence differs from the admitted create plan")
+			}
+		}
+		_, selected, err := verifyCreateEnvironmentOperator(ctx, cfg, store, runtime.Execution, operator, reference)
+		if err != nil {
+			return nil, err
+		}
+		owner, found, err := optionalOpenBaoInPlaceReady(ctx, cfg, store, runtime.Execution, runtime.Backend)
+		if err != nil {
+			return nil, err
+		}
+		if selected.Reference != reference.Release.Images["LKE_OPENBAO_PKI_IMAGE"].Reference {
+			if !found || owner.ReleaseImage.Reference != selected.Reference {
+				return nil, createProviderRecoveryBlock("environment-selected OpenBao host image has not completed its in-place handoff")
+			}
+			images := make(map[string]environmentReleaseImage, len(release.Images))
+			for role, image := range release.Images {
+				images[role] = image
+			}
+			images["LKE_OPENBAO_PKI_IMAGE"] = selected // selected from the current environment, never from a receipt
+			release.Images = images
+		} else if found && release.Images["LKE_OPENBAO_PKI_IMAGE"].Reference != owner.ReleaseImage.Reference {
+			return nil, createProviderRecoveryBlock("environment-selected OpenBao host image differs from completed in-place image")
+		}
+	}
+	if runtime, ok := ctx.Value(environmentCreateBootstrapRuntimeKey{}).(environmentCreateBootstrapRuntime); ok && runtime.Execution != nil && runtime.Execution.versionState != nil && runtime.Execution.versionState.cache != nil {
+		if len(runtime.Execution.versionState.cache.RuntimeImages) != 0 {
+			images := make(map[string]environmentReleaseImage, len(release.Images))
+			for role, image := range release.Images {
+				images[role] = image
+			}
+			for role, image := range runtime.Execution.versionState.cache.RuntimeImages {
+				images[role] = image
+			}
+			release.Images = images
+		}
 	}
 	compiled, err := compileEnvironmentDeploymentWithImagesTarget(ctx, cfg, "create", release, nil)
 	if err != nil {

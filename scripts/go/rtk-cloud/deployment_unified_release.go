@@ -19,6 +19,9 @@ const (
 )
 
 func environmentReleaseFailure(err error, id, resource, cause, next string) error {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
 	var blocker *deploymentplan.Blocker
 	if errors.As(err, &blocker) {
 		if id == "deployment.release.source" && blocker.ID == id && blocker.Resource == "" && resource != "" {
@@ -30,6 +33,10 @@ func environmentReleaseFailure(err error, id, resource, cause, next string) erro
 	}
 	if err != nil {
 		code := ""
+		var pull *deploymentImagePullError
+		if errors.As(err, &pull) && (id == "deployment.release.pull" || id == "deployment.provider.images") {
+			return &deploymentplan.Blocker{ID: id, Resource: resource, Cause: pull.Error(), Next: next}
+		}
 		switch err.Error() {
 		case "selected environment credentials unavailable":
 			code = "ENV_STORE"
@@ -186,11 +193,30 @@ func environmentReleaseProgressCommand(key string, run environmentReleaseCommand
 	}
 }
 
-func verifyEnvironmentReleaseWithCommand(ctx context.Context, cfg deploymentConfig, release environmentRelease, run func(context.Context, string, ...string) ([]byte, error)) error {
+func verifyEnvironmentReleaseWithCommand(ctx context.Context, cfg deploymentConfig, release environmentRelease, run func(context.Context, string, ...string) ([]byte, error), selectedEvidence ...environmentImageSelection) error {
 	nextStep, abortSteps := environmentDeploymentSteps(ctx)
 	defer abortSteps()
 	if err := verifyEnvironmentReleaseCheckout(ctx, cfg.Workspace, release.WorkspaceRevision, environmentReleaseProgressCommand("workspace", run, nextStep)); err != nil {
 		return environmentReleaseFailure(err, "deployment.release.source", "workspace", "executing workspace revision does not match the selected immutable release", environmentReleaseSourceNext)
+	}
+	store, err := newSecretStore("", cfg.Environment)
+	if err != nil {
+		return err
+	}
+	var selection environmentImageSelection
+	if len(selectedEvidence) > 1 {
+		return errors.New("one authenticated release selection required")
+	}
+	if len(selectedEvidence) == 1 {
+		selection = selectedEvidence[0]
+		if selection.Environment != cfg.Environment {
+			return errors.New("release selection belongs to another environment")
+		}
+	} else {
+		selection, err = readEnvironmentImageSelection(store)
+		if err != nil {
+			return err
+		}
 	}
 	keys := make([]string, 0, len(release.Images))
 	for key := range release.Images {
@@ -209,6 +235,12 @@ func verifyEnvironmentReleaseWithCommand(ctx context.Context, cfg deploymentConf
 				return environmentReleaseFailure(err, "deployment.release.pull", key, "selected immutable image is unavailable for linux/amd64", environmentReleasePullNext)
 			}
 			pulled[image.Reference] = true
+		}
+		if explicit, ok := selection.Images[key]; ok {
+			if deploymentplan.Digest(explicit) != deploymentplan.Digest(image) {
+				return environmentReleaseFailure(nil, "deployment.release.source", key, "selected environment image changed", "repeat preflight with the selected environment settings")
+			}
+			continue
 		}
 		if image.RetainedPlanSHA256 != "" {
 			if !isEnvironmentRetainedDevImage(release, key, image) {

@@ -11,11 +11,12 @@ import (
 )
 
 type environmentCreateOwnedServerMaterial struct {
-	Certificate string `json:"certificate_pem"`
-	Key         string `json:"private_key_pem"`
-	Root        string `json:"root_sha256"`
-	Name        string `json:"server_name"`
-	Environment string `json:"environment"`
+	Certificate      string                      `json:"certificate_pem"`
+	Key              string                      `json:"private_key_pem"`
+	Root             string                      `json:"root_sha256"`
+	Name             string                      `json:"server_name"`
+	Environment      string                      `json:"environment"`
+	registrationCore []deploymentplan.Definition // same-call authenticated facts; never serialized
 }
 
 // Native keys remain in their original selected durable store. The adapter captures the
@@ -25,6 +26,11 @@ type environmentCreateOwnedServerMaterial struct {
 func publishEnvironmentCreateApplicationServers(ctx context.Context, cfg deploymentConfig, p environmentCreateBootstrapPlan, runtime environmentCreateBootstrapRuntime, service environmentCreateServiceCeremony, apply environmentCreateBootstrapApply) error {
 	for _, owner := range environmentCreateApplicationOwners() {
 		if owner.Name != "video-cloud-api-pki" && owner.Name != "video-cloud-api-app-pki" {
+			continue
+		}
+		if completed, err := observeCompletedEnvironmentServerPublication(ctx, cfg, p, runtime, service, owner); err != nil {
+			return err
+		} else if completed {
 			continue
 		}
 		namespace := p.Stack + "-video-cloud"
@@ -67,6 +73,12 @@ func readEnvironmentCreateOwnedServer(ctx context.Context, cfg deploymentConfig,
 	if err := runtime.Execution.Check(ctx); err != nil {
 		return empty, err
 	}
+	if owner == "account-manager" && createOpenBaoACKCompletionEntry(runtime.Execution.Journal, "product-identities/fresh") != nil {
+		retireKey := "retire-pki-export-account-manager-" + runtime.ExecutionSHA256[:12]
+		if retired := createOpenBaoACKCompletionEntry(runtime.Execution.Journal, retireKey); retired != nil && retired.State == "completed" {
+			return readCompletedEnvironmentAccountServer(ctx, cfg, p, runtime, service)
+		}
+	}
 	if r := runtime.ServiceSessionRecovery; r != nil && r.completedTail != nil && owner == "account-manager" {
 		return readManagedLateCompletedAccountServer(ctx, cfg, p, runtime, service, namespace, role, claim, stateRoot, clientState, serverState, serverName)
 	}
@@ -95,15 +107,7 @@ func readEnvironmentCreateOwnedServer(ctx context.Context, cfg deploymentConfig,
 		claimUID = deploymentplan.Map(originalClaim["metadata"])["uid"]
 	}
 	readerName := "pki-export-" + owner + "-" + runtime.ExecutionSHA256[:12]
-	labels := deploymentplan.Object{"app.kubernetes.io/name": readerName, "rtk.realtek.com/stack": p.Stack}
-	readerLabels := deploymentplan.Clone(labels)
-	readerLabels["app.kubernetes.io/managed-by"] = "rtk-cloud"
-	settings := map[string]string{"PKI_ENVIRONMENT": p.Environment, "PKI_SERVER_NAME": serverName, "PKI_SERVER_BOOTSTRAP_OWNER_CLIENT_STATE": clientState, "PKI_SERVER_BOOTSTRAP_OWNER_CLIENT_SUBJECT": "service:" + role, "PKI_SERVER_BOOTSTRAP_OWNER_CLIENT_ROOT_SHA256": service.Root.RootFingerprint}
-	if remote {
-		settings["PKI_CLIENT_IDENTITY_STATE"], settings["PKI_SERVER_IDENTITY_STATE"] = clientState, serverState
-	}
-	container := deploymentplan.Object{"name": "custody", "image": p.Image, "command": []any{"/bin/sh", "-ec", "exec sleep 3600"}, "env": append(environmentCreateEnv(settings), environmentCreateServiceDatabaseEnv("pki-verifier-database")), "securityContext": environmentCreateServiceContainerSecurity(), "volumeMounts": []any{environmentCreateServiceMount("owner-state", stateRoot, false)}}
-	reader := deploymentplan.Definition{Phase: "bootstrap", Object: deploymentplan.Object{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": deploymentplan.Object{"name": readerName, "namespace": namespace, "labels": readerLabels}, "spec": deploymentplan.Object{"replicas": float64(1), "strategy": deploymentplan.Object{"type": "Recreate"}, "selector": deploymentplan.Object{"matchLabels": deploymentplan.Object{"app.kubernetes.io/name": readerName}}, "template": deploymentplan.Object{"metadata": deploymentplan.Object{"labels": labels}, "spec": deploymentplan.Object{"automountServiceAccountToken": false, "imagePullSecrets": []any{deploymentplan.Object{"name": "ghcr-pull"}}, "securityContext": environmentCreateServicePodSecurity(), "containers": []any{container}, "volumes": []any{environmentCreateServiceVolume("owner-state", "persistentVolumeClaim", claim)}}}}}}
+	reader := environmentCreateOwnedServerReader(p, service, namespace, readerName, role, claim, stateRoot, clientState, serverState, serverName, remote)
 	stage := "server-custody-" + owner
 	retained, err := verifyManagedTransportAcceptedExportStage(ctx, runtime, stage, reader)
 	if err != nil {
@@ -293,4 +297,18 @@ func (owner environmentCreateExportPod) Verify(ctx context.Context, backend envi
 		return environmentCreateBootstrapBlocker("native export cannot execute in a foreign reader Pod or changed claim/image recipe")
 	}
 	return nil
+}
+
+// Shared by the initial producer and authenticated recovery of that frozen recipe.
+func environmentCreateOwnedServerReader(p environmentCreateBootstrapPlan, service environmentCreateServiceCeremony, namespace, readerName, role, claim, stateRoot, clientState, serverState, serverName string, remote bool) deploymentplan.Definition {
+	labels := deploymentplan.Object{"app.kubernetes.io/name": readerName, "rtk.realtek.com/stack": p.Stack}
+	readerLabels := deploymentplan.Clone(labels)
+	readerLabels["app.kubernetes.io/managed-by"] = "rtk-cloud"
+	settings := map[string]string{"PKI_ENVIRONMENT": p.Environment, "PKI_SERVER_NAME": serverName, "PKI_SERVER_BOOTSTRAP_OWNER_CLIENT_STATE": clientState, "PKI_SERVER_BOOTSTRAP_OWNER_CLIENT_SUBJECT": "service:" + role, "PKI_SERVER_BOOTSTRAP_OWNER_CLIENT_ROOT_SHA256": service.Root.RootFingerprint}
+	if remote {
+		settings["PKI_CLIENT_IDENTITY_STATE"], settings["PKI_SERVER_IDENTITY_STATE"] = clientState, serverState
+	}
+	container := deploymentplan.Object{"name": "custody", "image": p.Image, "command": []any{"/bin/sh", "-ec", "exec sleep 3600"}, "env": append(environmentCreateEnv(settings), environmentCreateServiceDatabaseEnv("pki-verifier-database")), "securityContext": environmentCreateServiceContainerSecurity(), "volumeMounts": []any{environmentCreateServiceMount("owner-state", stateRoot, false)}}
+	reader := deploymentplan.Definition{Phase: "bootstrap", Object: deploymentplan.Object{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": deploymentplan.Object{"name": readerName, "namespace": namespace, "labels": readerLabels}, "spec": deploymentplan.Object{"replicas": float64(1), "strategy": deploymentplan.Object{"type": "Recreate"}, "selector": deploymentplan.Object{"matchLabels": deploymentplan.Object{"app.kubernetes.io/name": readerName}}, "template": deploymentplan.Object{"metadata": deploymentplan.Object{"labels": labels}, "spec": deploymentplan.Object{"automountServiceAccountToken": false, "imagePullSecrets": []any{deploymentplan.Object{"name": "ghcr-pull"}}, "securityContext": environmentCreateServicePodSecurity(), "containers": []any{container}, "volumes": []any{environmentCreateServiceVolume("owner-state", "persistentVolumeClaim", claim)}}}}}}
+	return reader
 }

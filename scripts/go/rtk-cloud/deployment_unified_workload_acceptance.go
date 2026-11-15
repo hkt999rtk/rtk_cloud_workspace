@@ -23,7 +23,7 @@ func (b environmentKubernetesBackend) CheckTargetWorkloads(ctx context.Context, 
 	if plan == nil || plan.Environment != b.Store.Environment || plan.Operation == "scoped" {
 		return targetWorkloadBlocker("", "complete selected environment plan required")
 	}
-	objects, err := b.Inventory(ctx, plan.Stack)
+	objects, err := b.TargetWorkloadInventory(ctx, plan)
 	if err != nil {
 		return targetWorkloadBlocker("", "complete native workload inventory is unavailable")
 	}
@@ -62,6 +62,7 @@ func environmentPodEvidenceFailureCause(err error) string {
 	switch message {
 	case "incomplete container inventory", "invalid declared container", "duplicate container",
 		"duplicate container status", "missing current container", "init not successfully completed",
+		"completed init lacks its original owned revision", "completed init differs from its original revision",
 		"container not running and ready", "running digest differs from the approved image":
 		return message
 	}
@@ -254,7 +255,11 @@ func verifyEnvironmentTargetWorkloads(ctx context.Context, plan *deploymentplan.
 		if deploymentplan.Map(pod["status"])["phase"] != "Running" {
 			return targetWorkloadBlocker(owner, "owned application Pod is not Running")
 		}
-		if err := verifyEnvironmentPodContainers(ctx, controller, pod, cache, imageDigests); err != nil {
+		runtimeController, err := onDeleteInitRuntimeController(controller, pod, live)
+		if err != nil {
+			return targetWorkloadBlocker(owner, err.Error())
+		}
+		if err := verifyEnvironmentPodContainers(ctx, runtimeController, pod, cache, imageDigests); err != nil {
 			return targetWorkloadBlocker(owner, "owned Pod startup and approved immutable runtime image evidence could not be verified: "+environmentPodEvidenceFailureCause(err))
 		}
 		counts[owner]++

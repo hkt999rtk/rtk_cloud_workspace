@@ -55,7 +55,7 @@ func TestFreshCreateStorageQualificationUsesOriginalLimitedKeysReadOnly(t *testi
 }
 
 func TestFreshCreateStorageActivationRecordsActualCanariesAndCannotFakeCutover(t *testing.T) {
-	for _, mode := range []string{"valid", "public-acl", "read-mismatch", "delete-not-absent", "missing-post-receipt"} {
+	for _, mode := range []string{"valid", "public-acl", "public-policy", "policy-forbidden", "list-forbidden", "read-mismatch", "delete-not-absent", "missing-post-receipt"} {
 		t.Run(mode, func(t *testing.T) {
 			cfg, store, operatorSHA, artifact := createStateFixture(t, "dev")
 			execution, err := startEnvironmentCreateExecution(context.Background(), cfg, artifact, operatorSHA, time.Now().UTC())
@@ -75,18 +75,28 @@ func TestFreshCreateStorageActivationRecordsActualCanariesAndCannotFakeCutover(t
 			puts, deletes := 0, 0
 			s3 := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Query().Has("acl") {
-					if mode == "public-acl" {
-						fmt.Fprint(w, strings.ReplaceAll(privateStorageACLForTest, "<ID>owner</ID></Grantee>", "<URI>http://acs.amazonaws.com/groups/global/AllUsers</URI></Grantee>"))
-					} else {
-						fmt.Fprint(w, privateStorageACLForTest)
-					}
+					t.Error("create used the application credential for bucket ACL")
+					w.WriteHeader(http.StatusForbidden)
 					return
 				}
 				if r.URL.Query().Has("policy") {
-					w.WriteHeader(http.StatusNotFound)
+					switch mode {
+					case "public-policy":
+						fmt.Fprint(w, `{"Statement":[{"Effect":"Allow","Principal":"*"}]}`)
+					case "policy-forbidden":
+						w.WriteHeader(http.StatusForbidden)
+						fmt.Fprint(w, "private-provider-body")
+					default:
+						w.WriteHeader(http.StatusNotFound)
+					}
 					return
 				}
 				if r.URL.Query().Has("list-type") {
+					if mode == "list-forbidden" && strings.Contains(r.URL.Path, cfg.Storage.OTAFirmware.Bucket) {
+						w.WriteHeader(http.StatusForbidden)
+						fmt.Fprint(w, "private-provider-body")
+						return
+					}
 					fmt.Fprint(w, "<ListBucketResult/>")
 					return
 				}
@@ -123,6 +133,14 @@ func TestFreshCreateStorageActivationRecordsActualCanariesAndCannotFakeCutover(t
 					return true
 				}
 				for _, target := range []deploymentStorageTarget{cfg.Storage.RuntimeMedia, cfg.Storage.OTAFirmware} {
+					if r.URL.Path == "/object-storage/buckets/"+target.Region+"/"+target.Bucket+"/access" {
+						acl, xml := "private", privateStorageACLForTest
+						if mode == "public-acl" {
+							acl = "public-read"
+						}
+						json.NewEncoder(w).Encode(map[string]string{"acl": acl, "acl_xml": xml})
+						return true
+					}
 					if r.URL.Path == "/object-storage/buckets/"+target.Region+"/"+target.Bucket {
 						kind := "E1"
 						if target.Purpose == "ota-firmware" {
@@ -190,10 +208,17 @@ func TestFreshCreateStorageActivationRecordsActualCanariesAndCannotFakeCutover(t
 			} else if err == nil {
 				t.Fatal("unverified storage activation completed")
 			}
-			if mode == "public-acl" || mode == "missing-post-receipt" {
+			if mode == "public-acl" || mode == "public-policy" || mode == "policy-forbidden" || mode == "list-forbidden" || mode == "missing-post-receipt" {
 				if puts != 0 {
-					t.Fatal("unverified ownership/privacy reached object write")
+					t.Fatal("unverified ownership, privacy or application list reached object write")
 				}
+			}
+			if mode == "policy-forbidden" && (!strings.Contains(err.Error(), "bucket privacy") || !strings.Contains(err.Error(), "HTTP 403")) ||
+				mode == "list-forbidden" && (!strings.Contains(err.Error(), cfg.Storage.OTAFirmware.Bucket) || !strings.Contains(err.Error(), "application ListObjectsV2") || !strings.Contains(err.Error(), "HTTP 403")) {
+				t.Fatalf("missing specific storage diagnostic: %v", err)
+			}
+			if err != nil && strings.Contains(err.Error(), "private-provider-body") {
+				t.Fatal("private response leaked")
 			}
 			if mode == "read-mismatch" && len(objects) != 0 {
 				t.Fatal("failed readback left its owned exact canary")

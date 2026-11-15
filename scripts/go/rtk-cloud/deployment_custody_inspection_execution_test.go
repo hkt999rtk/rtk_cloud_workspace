@@ -60,15 +60,29 @@ func TestCustodyInspectionJobExecutionFencesOriginalJobPodAndCleanup(t *testing.
 func installCustodyInspectionProcessFixture(t *testing.T, fixture, mode string) {
 	t.Helper()
 	script := `#!/usr/bin/env python3
-import sys,json,os,copy
+import sys,json,os,copy,uuid
 from pathlib import Path
 root=Path(os.environ['RTK_INSPECTION_FIXTURE']); mode=os.environ['RTK_INSPECTION_MODE']; args=sys.argv[1:]
-def save(name,value): (root/name).write_text(json.dumps(value))
-def load(name): return json.loads((root/name).read_text())
+selected=''
+if mode=='public-pooled':
+ if 'delete' in args:selected=args[args.index('--raw')+1].rsplit('/',1)[-1]
+ elif 'get' in args:
+  at=args.index('get');kind=args[at+1].lower()
+  if kind in ('job','pod'):selected=args[at+2].removeprefix('original-inspection-pod-')
+  elif kind=='pods':
+   wanted=next((x.split('=',1)[1] for x in args if x.startswith('batch.kubernetes.io/controller-uid=')),'')
+   for path in root.glob('pooled-*-job.json'):
+    obj=json.loads(path.read_text())
+    if obj['metadata']['uid']==wanted:selected=obj['metadata']['name']
+ elif 'exec' in args:selected=next((x.split('/',1)[1] for x in args if x.lower().startswith('pod/')),'').removeprefix('original-inspection-pod-')
+def file(name):return root/('pooled-'+selected+'-'+name if mode=='public-pooled' and name in ('job.json','pod.json') else name)
+def save(name,value): file(name).write_text(json.dumps(value))
+def load(name): return json.loads(file(name).read_text())
 if 'create' in args:
  count=root/'creates';count.write_text(str((int(count.read_text()) if count.exists() else 0)+1))
- job=json.load(sys.stdin);job['metadata']['uid']='11111111-1111-4111-8111-111111111111';job['metadata']['resourceVersion']='1';job['status']={'conditions':[{'type':'Complete','status':'True'}]};save('job.json',job)
- pod={'apiVersion':'v1','kind':'Pod','metadata':{'name':'original-inspection-pod','namespace':job['metadata']['namespace'],'uid':'22222222-2222-4222-8222-222222222222','ownerReferences':[{'kind':'Job','name':job['metadata']['name'],'uid':job['metadata']['uid'],'controller':True}],'labels':job['spec']['template']['metadata']['labels']},'spec':copy.deepcopy(job['spec']['template']['spec']),'status':{'phase':'Succeeded'}}
+ job=json.load(sys.stdin);selected=job['metadata']['name'];job['metadata']['uid']=str(uuid.uuid4()) if mode=='public-pooled' else '11111111-1111-4111-8111-111111111111';job['metadata']['resourceVersion']='1';job['status']={'conditions':[{'type':'Complete','status':'True'}]};save('job.json',job)
+ with (root/'created-recipes.jsonl').open('a') as history:history.write(json.dumps(job)+'\n')
+ pod={'apiVersion':'v1','kind':'Pod','metadata':{'name':'original-inspection-pod-'+selected if mode=='public-pooled' else 'original-inspection-pod','namespace':job['metadata']['namespace'],'uid':str(uuid.uuid4()) if mode=='public-pooled' else '22222222-2222-4222-8222-222222222222','ownerReferences':[{'kind':'Job','name':job['metadata']['name'],'uid':job['metadata']['uid'],'controller':True}],'labels':job['spec']['template']['metadata']['labels']},'spec':copy.deepcopy(job['spec']['template']['spec']),'status':{'phase':'Succeeded'}}
  if mode=='foreign-pod':pod['metadata']['ownerReferences'][0]['uid']='foreign-job'
  if mode.startswith('public-'):pod['status']={'phase':'Running','containerStatuses':[{'name':'inspect','ready':True,'state':{'running':{}}}]}
  save('pod.json',pod)
@@ -77,12 +91,13 @@ if 'create' in args:
 elif 'get' in args:
  kind=args[args.index('get')+1]
  if kind.lower()=='job':
-  if (root/'job.json').exists():print(json.dumps(load('job.json')))
+  if file('job.json').exists():print(json.dumps(load('job.json')))
  elif kind.lower()=='secret':print(json.dumps(load('mirror.json')))
  elif kind=='pods':
   if 'app.kubernetes.io/name=postgresql' in args and (root/'sql-latest.json').exists():print(json.dumps({'items':[{'metadata':{'name':'postgresql-0'}}]}))
-  else:print(json.dumps({'items':[load('pod.json')]}))
- elif kind.lower()=='pod':print(json.dumps(load('pod.json')))
+  else:print(json.dumps({'items':[load('pod.json')] if file('pod.json').exists() else []}))
+ elif kind.lower()=='pod':
+  if file('pod.json').exists():print(json.dumps(load('pod.json')))
  else:sys.exit(90)
 elif 'wait' in args:
  if '--for=delete' in args:sys.exit(0)
@@ -108,7 +123,7 @@ elif 'logs' in args:
 elif 'delete' in args:
  request=json.load(sys.stdin);save('delete.json',request)
  if request['preconditions']['uid']!=load('job.json')['metadata']['uid']:sys.exit(1)
- (root/'job.json').unlink();(root/'pod.json').unlink()
+ file('job.json').unlink();file('pod.json').unlink()
  if mode=='lost-delete-response':sys.exit(1)
 else:sys.exit(91)
 `

@@ -23,6 +23,7 @@ type environmentRelease struct {
 type environmentReleaseImage struct {
 	Reference          string                              `json:"reference"`
 	SourceRevision     string                              `json:"source_revision,omitempty"`
+	Publication        *createVersionPublication           `json:"publication,omitempty"`
 	RetainedPlanSHA256 string                              `json:"retained_plan_sha256,omitempty"`
 	OTARegistration    *environmentOTARegistrationManifest `json:"ota_registration,omitempty"`
 }

@@ -449,3 +449,47 @@ done
 		})
 	}
 }
+
+// A retained trust bundle contains public bootstrap history as well as the
+// explicitly selected current Root. Only the selected Root authorizes this job.
+func TestManagedOpenBaoTrustRetainsExpiredBootstrapHistory(t *testing.T) {
+	f := managedLateSeedForwardFixture(t)
+	managed := deploymentplan.String(deploymentplan.Map(f.TrustOwner.Desired["data"])["roots.pem"])
+	block, _ := pem.Decode([]byte(managed))
+	root := environmentPreflightBytesSHA256(block.Bytes)
+	now := time.Now().UTC()
+	pub, key, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ca := &x509.Certificate{SerialNumber: big.NewInt(77), Subject: pkix.Name{CommonName: "retired bootstrap"}, NotBefore: now.Add(-48 * time.Hour), NotAfter: now.Add(-24 * time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign}
+	der, err := x509.CreateCertificate(rand.Reader, ca, ca, pub, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expired := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+	bundle := managed + expired
+	if !managedLateSeedForwardRoots(bundle, root, now) {
+		t.Fatal("expired bootstrap history blocked the valid selected managed Root")
+	}
+	if managedLateSeedForwardRoots(bundle, environmentPreflightBytesSHA256(der), now) || managedLateSeedForwardRoots(bundle, root, now.Add(2*time.Hour)) || managedLateSeedForwardRoots(bundle, "", now) {
+		t.Fatal("an expired selected or unpinned authority was accepted")
+	}
+	// Keeping its public certificate does not make an expired authority usable.
+	leaf := &x509.Certificate{SerialNumber: big.NewInt(78), DNSNames: []string{"openbao.test"}, NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	leafDER, err := x509.CreateCertificate(rand.Reader, leaf, ca, pub, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := x509.ParseCertificate(leafDER)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM([]byte(bundle)) {
+		t.Fatal("public bundle was invalid")
+	}
+	if _, err := cert.Verify(x509.VerifyOptions{Roots: pool, DNSName: "openbao.test", CurrentTime: now}); err == nil {
+		t.Fatal("native TLS verification accepted an expired bootstrap chain")
+	}
+}

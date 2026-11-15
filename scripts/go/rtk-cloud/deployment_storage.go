@@ -1043,11 +1043,15 @@ var (
 	errStorageKeyMissing     = errors.New("configured access-key ID was not found in Linode inventory")
 )
 
-func (c deploymentCredentialChecker) validateStorageReadWriteCanary(store provisionObjectStore, prefix string) (err error) {
+func (c deploymentCredentialChecker) validateStorageReadWriteCanary(store provisionObjectStore, prefix string) error {
 	query := url.Values{"list-type": {"2"}, "max-keys": {"1"}, "prefix": {strings.Trim(prefix, "/") + "/"}}
 	if _, err := provisionSignedObjectRequestWithClient(c.client, store, http.MethodGet, "", query, nil); err != nil {
 		return fmt.Errorf("signed list failed: %w", err)
 	}
+	return c.validateStorageObjectCanary(store, prefix)
+}
+
+func (c deploymentCredentialChecker) validateStorageObjectCanary(store provisionObjectStore, prefix string) (err error) {
 	body := []byte("rtk-cloud-storage-canary")
 	key := strings.Trim(prefix, "/") + "/__rtk_cloud_validation__/" + fmt.Sprintf("%d-%s", time.Now().UTC().UnixNano(), hex.EncodeToString(sha256.New().Sum(nil))[:8])
 	cleaned := false
@@ -1081,15 +1085,20 @@ func (c deploymentCredentialChecker) validateStorageReadWriteCanary(store provis
 }
 
 func (c deploymentCredentialChecker) validateNewStorageKey(store provisionObjectStore, prefix string) error {
+	return c.waitForNewStorageKey(func() error {
+		if err := c.validateStoragePrivacy(store); err != nil {
+			return err
+		}
+		return c.validateStorageReadWriteCanary(store, prefix)
+	})
+}
+
+func (c deploymentCredentialChecker) waitForNewStorageKey(verify func() error) error {
 	const attempts = 6
 	var err error
 	for attempt := 1; attempt <= attempts; attempt++ {
 		// New buckets and limited-key grants can take time to become readable.
-		// Privacy must pass before any canary writes.
-		err = c.validateStoragePrivacy(store)
-		if err == nil {
-			err = c.validateStorageReadWriteCanary(store, prefix)
-		}
+		err = verify()
 		if err == nil {
 			return nil
 		}

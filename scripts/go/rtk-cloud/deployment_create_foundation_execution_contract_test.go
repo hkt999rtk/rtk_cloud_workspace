@@ -320,6 +320,12 @@ func TestFoundationExecutionContractMaterialReadPreservesOriginalAuthorities(t *
 			} else if err == nil {
 				t.Fatal("invalid/missing original foundation material was accepted")
 			}
+			if mode == "expired-transport" {
+				_, historical, err := readFoundationRecoveryMaterials(store, parent, nil, true, time.Minute)
+				if err != nil || deploymentplan.Digest(historical) != deploymentplan.Digest(management) {
+					t.Fatal("historical template reader changed or rejected original expired authority", err)
+				}
+			}
 			assertRecoveryContractReadOnly(t, store, before)
 			if path != "" {
 				if _, err := os.Lstat(filepath.Join(store.Root, path)); !errors.Is(err, os.ErrNotExist) {

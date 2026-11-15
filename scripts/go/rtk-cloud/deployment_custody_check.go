@@ -52,7 +52,8 @@ func newEnvironmentCheckRuntime(ctx context.Context, cfg deploymentConfig, store
 		if err != nil {
 			return bad()
 		}
-		image = operator["LKE_PKI_CONTROLLER_IMAGE"]
+		// readOperator already projects the selected environment image roles.
+		image = firstNonEmpty(operator["PKI_CONTROLLER_IMAGE"], operator["LKE_PKI_CONTROLLER_IMAGE"])
 	}
 	if !immutableEnvironmentImage.MatchString(image) {
 		return bad()

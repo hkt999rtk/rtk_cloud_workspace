@@ -487,6 +487,9 @@ opts=[a[i+1] for i,v in enumerate(a) if v=='-o'];assert 'StrictHostKeyChecking=y
 ip=a[a.index('--')+1].removeprefix('root@');assert ip in d['hosts'] and a[-2:]==['bash','-s']
 known=next(x.split('=',1)[1] for x in opts if x.startswith('UserKnownHostsFile='));assert open(known).read()==json.load(open(os.environ['RTK_DATAPLANE_HOST_KEYS']))[ip]
 s=sys.stdin.read();host=d['hosts'][ip];files=host['files']
+if 'for path in ' in s and 'RTK_DATAPLANE_ABSENCE' in s:
+ paths=s.split('for path in ',1)[1].split('; do',1)[0].split()
+ host['reads']+=1;save();print('present' if any(path in files for path in paths) else 'absent');sys.exit()
 if '\nsha256sum ' in s:
  paths=s.split('\nsha256sum ',1)[1].strip().split();expected=['/etc/haproxy/haproxy.cfg','/etc/sysctl.d/99-rtk-cloud-edge.conf','/etc/systemd/system/haproxy.service.d/10-rtk-cloud-edge.conf'] if ip.endswith('.12') else ['/etc/turnserver.conf','/etc/video-cloud-coturn-cli.env','/etc/video-cloud-turnregistrar.env','/etc/systemd/system/video-cloud-turnregistrar.service','/opt/video_cloud/bin/turnregistrar']
  assert paths==expected and host['installs']==1 and set(files)==set(paths)
@@ -703,13 +706,78 @@ func TestCreateDataPlaneCoordinatorPreservesUnknownWritesAndRejectsChangedArtifa
 			if entry == nil || entry.State != "pending" || len(entry.Receipt) != 0 {
 				t.Fatal("unknown result gained receipt")
 			}
-			if err := f.run(t); err == nil || !strings.Contains(err.Error(), "data-plane outcome is not recorded") {
-				t.Fatal("pending native mutation replayed", err)
+			retryCause := cause
+			copies := before.DockerCopies
+			if mode == "response-lost" {
+				retryCause = "data-plane outcome is not recorded"
+			} else if mode == "artifact-drift" {
+				copies++ // The absent original host still requires the exact package.
+			}
+			if err := f.run(t); err == nil || !strings.Contains(err.Error(), retryCause) {
+				t.Fatal("pending native boundary not enforced", err)
 			}
 			after := f.read(t)
-			if after.Hosts["198.51.100.13"].Installs != expected || after.DockerCopies != before.DockerCopies || *f.providerWrites != 0 {
+			if after.Hosts["198.51.100.13"].Installs != expected || after.DockerCopies != copies || *f.providerWrites != 0 {
 				t.Fatal("retry reminted or replayed an uncertain host")
 			}
 		})
+	}
+}
+
+func TestCreateDataPlaneCoordinatorResumesOriginalPendingBeforeNativeWrite(t *testing.T) {
+	f := newCreateDataPlaneContract(t, "artifact-drift")
+	if err := f.run(t); err == nil || !strings.Contains(err.Error(), "differs from the exact create qualification") {
+		t.Fatal("expected original pre-write package failure", err)
+	}
+	pending := *createOpenBaoACKCompletionEntry(f.e.Journal, "configure-turn-01")
+	before := f.read(t)
+	if pending.State != "pending" || len(pending.Receipt) != 0 || before.Hosts["198.51.100.13"].Installs != 0 {
+		t.Fatal("fixture crossed the native write boundary")
+	}
+	password, err := f.store.read("deployment/turn/turn01/cli-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	native := before
+	native.Mode = "normal"
+	f.save(t, native)
+	for _, mode := range []string{"changed-intent", "partial-file"} {
+		t.Run(mode, func(t *testing.T) {
+			original := f.read(t)
+			changed := f.read(t)
+			revision := f.plan.Release.WorkspaceRevision
+			if mode == "changed-intent" {
+				f.plan.Release.WorkspaceRevision = strings.Repeat("9", 40)
+			} else {
+				host := changed.Hosts["198.51.100.13"]
+				host.Files["/etc/turnserver.conf"] = base64.StdEncoding.EncodeToString([]byte("unresolved partial configuration"))
+				changed.Hosts["198.51.100.13"] = host
+				f.save(t, changed)
+			}
+			err := f.run(t)
+			after := f.read(t)
+			f.plan.Release.WorkspaceRevision = revision
+			f.save(t, original)
+			if err == nil || after.Hosts["198.51.100.13"].Installs != 0 || len(createOpenBaoACKCompletionEntry(f.e.Journal, "configure-turn-01").Receipt) != 0 {
+				t.Fatal("pending native intent or partial configuration was overwritten", err)
+			}
+		})
+	}
+	if err := f.run(t); err != nil {
+		t.Fatal("pending original absent configuration could not resume", err)
+	}
+	complete := createOpenBaoACKCompletionEntry(f.e.Journal, "configure-turn-01")
+	after := f.read(t)
+	if complete.State != "completed" || complete.IntentSHA256 != pending.IntentSHA256 || !complete.StartedAt.Equal(pending.StartedAt) || len(complete.Receipt) == 0 || after.Hosts["198.51.100.12"].Installs != 1 || after.Hosts["198.51.100.13"].Installs != 1 || *f.providerWrites != 0 {
+		t.Fatal("retry changed original intent, owner or native outcomes")
+	}
+	if kept, err := f.store.read("deployment/turn/turn01/cli-password"); err != nil || kept != password {
+		t.Fatal("retry replaced original credentials", err)
+	}
+	if err := f.run(t); err != nil {
+		t.Fatal("completed native readback", err)
+	}
+	if f.read(t).Hosts["198.51.100.13"].Installs != 1 {
+		t.Fatal("completed retry repeated native installation")
 	}
 }

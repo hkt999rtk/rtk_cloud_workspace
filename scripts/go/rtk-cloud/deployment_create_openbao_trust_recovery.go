@@ -70,6 +70,17 @@ func prepareOpenBaoTrustNameRecovery(ctx context.Context, cfg deploymentConfig, 
 	if renewal != nil {
 		caPath = filepath.Join(store.Root, "deployment/create/transport-renewal", renewal.Review, "openbao-transport/ca.crt")
 	}
+	if _, ready, err := readCompletedInitialTransportSuccessor(store, e.Journal.PlanSHA256); err != nil {
+		return err
+	} else if ready {
+		if renewal != nil {
+			return createProviderRecoveryBlock("temporary transport has conflicting renewal proofs")
+		}
+		caPath, _, err = initialTransportAuthorityPath(store, e.Journal.PlanSHA256, "openbao")
+		if err != nil {
+			return err
+		}
+	}
 	runtime := environmentCreateBootstrapRuntime{ExecutionSHA256: e.Journal.PlanSHA256, Execution: e, Backend: b, ServiceSessionRecovery: r, TransportCAPEM: management.CACert, TransportRootSHA256: environmentPreflightBytesSHA256(ca.Raw), TransportTrustConfigMap: "pki-create-transport-trust", TransportSecrets: map[string]string{"account-manager": "pki-create-account-manager-transport", "pki-controller": "pki-create-pki-controller-transport", "certissuer": "pki-create-certissuer-transport"}, OpenBao: environmentCreateOpenBaoBootstrap{CACertPath: caPath}}
 	listeners, _, err := loadInitialListenerCheckpoint(store, e, p, true)
 	if err != nil {
@@ -253,7 +264,7 @@ func loadOriginalActiveCreateIntermediate(ctx context.Context, cfg deploymentCon
 	if _, err = client.Authenticate(ctx, operator["ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL"], operator["ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD"]); err != nil {
 		return issuer, err
 	}
-	actual, err := client.ReadIssuer(ctx, issuer.ID)
+	actual, err := readOriginalCreateIssuerDocument(ctx, cfg, e, b, issuer.ID)
 	if err != nil || deploymentplan.Digest(actual) != deploymentplan.Digest(doc) {
 		return bad()
 	}

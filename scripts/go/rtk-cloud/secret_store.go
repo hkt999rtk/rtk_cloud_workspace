@@ -293,6 +293,9 @@ func (s secretStore) readOperator() (map[string]string, error) {
 		}
 		values[entry.Name()] = value
 	}
+	if err := projectEnvironmentImageSelection(s.Environment, values); err != nil {
+		return nil, err
+	}
 	return values, nil
 }
 

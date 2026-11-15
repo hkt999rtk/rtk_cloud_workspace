@@ -152,7 +152,7 @@ func TestDeploymentWorkloadHealthBoundedReadsAndFailureRedaction(t *testing.T) {
 }
 
 func TestDeploymentWorkloadHealthOnDeleteRequiresReadyOwnedPodsAtDeclaredImages(t *testing.T) {
-	for _, name := range []string{"ready", "old-image", "missing-owner", "missing-template", "old-init"} {
+	for _, name := range []string{"ready", "old-image", "missing-owner", "missing-template", "old-init", "old-restartable-init", "failed-init"} {
 		t.Run(name, func(t *testing.T) {
 			items := deploymentHealthyInventory(t)
 			items[0].Kind = "StatefulSet"
@@ -171,6 +171,12 @@ func TestDeploymentWorkloadHealthOnDeleteRequiresReadyOwnedPodsAtDeclaredImages(
 				items[1].Spec.Containers[0].Image = "old:1"
 			case "old-init":
 				items[1].Spec.InitContainers[0].Image = "old:1"
+			case "old-restartable-init":
+				items[0].Spec.Template.Spec.InitContainers[0].RestartPolicy = "Always"
+				items[1].Spec.InitContainers[0].RestartPolicy = "Always"
+				items[1].Spec.InitContainers[0].Image = "old:1"
+			case "failed-init":
+				_ = json.Unmarshal([]byte(`[{"name":"init","state":{"terminated":{"exitCode":1}}}]`), &items[1].Status.InitContainerStatuses)
 			case "missing-owner":
 				items[1].Metadata.OwnerReferences = nil
 			case "missing-template":
@@ -178,7 +184,9 @@ func TestDeploymentWorkloadHealthOnDeleteRequiresReadyOwnedPodsAtDeclaredImages(
 			}
 			raw, _ := json.Marshal(map[string]any{"items": items})
 			err := validateDeploymentWorkloadHealth("staging", raw)
-			if (err == nil) != (name == "ready") {
+			// This is liveness only. Full target acceptance separately requires the
+			// Pod-bound original revision and real immutable completed-init evidence.
+			if (err == nil) != (name == "ready" || name == "old-init") {
 				t.Fatal(err)
 			}
 		})

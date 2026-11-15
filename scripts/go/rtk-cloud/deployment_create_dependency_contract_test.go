@@ -259,3 +259,47 @@ func TestCreateDependencyContractQualifiesRemoteStorageWithoutInventedGeneration
 		}
 	}
 }
+
+func TestCreateDependencyContractWithoutActiveRuntimeAfterArchive(t *testing.T) {
+	cfg, store, release, operator, _ := createDependencyContractFixture(t)
+	cfg.Values["PKI_STATE_BACKEND"] = "openbao"
+	archive := filepath.Join(store.Root, "deployment", "archives", "lke-123", "state")
+	if err := os.MkdirAll(archive, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"runtime", "inventory.json"} {
+		if err := os.Rename(filepath.Join(store.Root, name), filepath.Join(archive, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p, err := buildEnvironmentCreateBootstrapPlan(t.Context(), cfg, release, store, operator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := qualifyEnvironmentCreateDependencyContract(t.Context(), cfg, release, store, operator, p); err != nil {
+		t.Fatal("fresh dependency qualification requires future runtime credentials", err)
+	}
+	if _, err := environmentRuntimeSecretSnapshot(store); err == nil {
+		t.Fatal("existing runtime reader accepted an absent inventory")
+	}
+	if _, err := os.Lstat(store.RuntimeDir()); !os.IsNotExist(err) {
+		t.Fatal("fresh dependency qualification wrote runtime state", err)
+	}
+	if _, err := os.Stat(filepath.Join(archive, "runtime", "postgres")); err != nil {
+		t.Fatal("archived runtime did not survive qualification", err)
+	}
+	cfg.Values["PAYPAL_ENABLED"] = "true"
+	_, err = qualifyEnvironmentCreateDependencyContract(t.Context(), cfg, release, store, operator, p)
+	var blocker *deploymentplan.Blocker
+	if !errors.As(err, &blocker) || !strings.Contains(blocker.Resource, "runtime/paypal-client-id") {
+		t.Fatal("missing explicit payment credentials did not block", err)
+	}
+	cfg.Values["PAYPAL_ENABLED"] = "false"
+	if err := store.write("inventory.json", []byte("{}"), false); err != nil {
+		t.Fatal(err)
+	}
+	_, err = qualifyEnvironmentCreateDependencyContract(t.Context(), cfg, release, store, operator, p)
+	if !errors.As(err, &blocker) || blocker.ID != "deployment.create.inputs" {
+		t.Fatal("missing runtime with a retained inventory did not block", err)
+	}
+}

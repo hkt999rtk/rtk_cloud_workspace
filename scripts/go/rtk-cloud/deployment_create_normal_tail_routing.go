@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -29,13 +28,38 @@ func createOriginalRoutingContext(ctx context.Context, e *environmentCreateExecu
 	return true, e.Check(ctx)
 }
 
+func createDataPlaneConfigurationFiles(resource environmentCreateProviderResource) string {
+	if resource.Key == "edge" {
+		return "/etc/haproxy/haproxy.cfg /etc/sysctl.d/99-rtk-cloud-edge.conf /etc/systemd/system/haproxy.service.d/10-rtk-cloud-edge.conf"
+	}
+	return "/etc/turnserver.conf /etc/video-cloud-coturn-cli.env /etc/video-cloud-turnregistrar.env /etc/systemd/system/video-cloud-turnregistrar.service /opt/video_cloud/bin/turnregistrar"
+}
+
+// A durable intent can precede package extraction or any native write. Only
+// verified absence on the original pinned host permits that same intent to run;
+// existing, partial or symlinked configuration still requires reconciliation.
+func createDataPlaneConfigurationAbsent(ctx context.Context, store secretStore, plan *environmentCreatePlan, execution *environmentCreateExecution, resource environmentCreateProviderResource, receipt environmentCreateProviderReceipt) (bool, error) {
+	if err := execution.Check(ctx); err != nil {
+		return false, err
+	}
+	script := "set -eu\n# RTK_DATAPLANE_ABSENCE\nfor path in " + createDataPlaneConfigurationFiles(resource) + "; do\n  if test -e \"$path\" || test -L \"$path\"; then printf 'present\\n'; exit 0; fi\ndone\nprintf 'absent\\n'\n"
+	raw, err := environmentCreatePinnedSSH(ctx, store, plan.Provider, environmentCreateHostMaterialPlan(execution), resource, receipt, script)
+	if err != nil {
+		return false, err
+	}
+	if string(raw) != "absent\n" && string(raw) != "present\n" {
+		return false, createProviderRecoveryBlock("original data-plane absence observation is invalid")
+	}
+	return string(raw) == "absent\n", execution.Check(ctx)
+}
+
 func createNormalTailDataPlaneReadback(ctx context.Context, store secretStore, plan *environmentCreatePlan, execution *environmentCreateExecution, resource environmentCreateProviderResource, receipt environmentCreateProviderReceipt) (string, error) {
 	if err := execution.Check(ctx); err != nil {
 		return "", err
 	}
-	script := "set -eu\nsystemctl is-active coturn >/dev/null\nsha256sum /etc/turnserver.conf /etc/video-cloud-coturn-cli.env /etc/video-cloud-turnregistrar.env /etc/systemd/system/video-cloud-turnregistrar.service /opt/video_cloud/bin/turnregistrar\n"
+	script := "set -eu\nsystemctl is-active coturn >/dev/null\nsha256sum " + createDataPlaneConfigurationFiles(resource) + "\n"
 	if resource.Key == "edge" {
-		script = "set -eu\nhaproxy -c -f /etc/haproxy/haproxy.cfg >/dev/null\nsystemctl is-active haproxy >/dev/null\nsha256sum /etc/haproxy/haproxy.cfg /etc/sysctl.d/99-rtk-cloud-edge.conf /etc/systemd/system/haproxy.service.d/10-rtk-cloud-edge.conf\n"
+		script = "set -eu\nhaproxy -c -f /etc/haproxy/haproxy.cfg >/dev/null\nsystemctl is-active haproxy >/dev/null\nsha256sum " + createDataPlaneConfigurationFiles(resource) + "\n"
 	}
 	raw, err := environmentCreatePinnedSSH(ctx, store, plan.Provider, environmentCreateHostMaterialPlan(execution), resource, receipt, script)
 	if err != nil {
@@ -51,49 +75,10 @@ func createNormalTailDataPlaneReadback(ctx context.Context, store secretStore, p
 }
 
 func qualifyCreateNormalTailDNS(ctx context.Context, cfg deploymentConfig, h *createNormalTailHandoff, operator map[string]string) error {
-	if h == nil || h.Execution == nil || h.OriginalPlan == nil || h.Execution.Check(ctx) != nil {
+	if h == nil || h.Execution == nil || h.OriginalPlan == nil {
 		return createProviderRecoveryBlock("original DNS continuation owner unavailable")
 	}
-	adapter, local, err := environmentCreateDNSAdapter(cfg, operator)
-	if err != nil {
-		return err
-	}
-	if err := adapter.Validate(ctx, local); err != nil {
-		return err
-	}
-	zone, err := adapter.DiscoverZone(ctx, local)
-	if err != nil {
-		return err
-	}
-	records, err := bindEnvironmentCreateDNS(h.OriginalPlan.DNS, cfg, h.Receipts)
-	if err != nil {
-		return err
-	}
-	for _, record := range records {
-		key := "dns/" + record.Type + "/" + record.Name
-		entry := createOpenBaoACKCompletionEntry(h.Execution.Journal, key)
-		if entry != nil {
-			intent, _ := json.Marshal(record)
-			sha, err := environmentCreatePlanSHA256(intent)
-			if err != nil || entry.Phase != "routing" || entry.IntentSHA256 != sha || entry.State != "allocated" && entry.State != "completed" || activeTransportJournalDigest(jsonRawObject(entry.Receipt)) != activeTransportJournalDigest(jsonRawObject(intent)) {
-				return createProviderRecoveryBlock("DNS request outcome is uncertain or differs from its original record: " + record.Name)
-			}
-		}
-		for _, kind := range []string{"A", "AAAA", "CNAME"} {
-			current, err := adapter.GetRecordSet(ctx, local, zone, record.Name, kind)
-			if err != nil {
-				return err
-			}
-			if entry != nil && kind == record.Type {
-				if !sameDNSValues(current.Values, record.Values) {
-					return createProviderRecoveryBlock("recorded DNS target changed: " + record.Name)
-				}
-			} else if len(current.Values) != 0 {
-				return createProviderRecoveryBlock("unrecorded DNS owner is occupied: " + record.Name + "/" + kind)
-			}
-		}
-	}
-	return h.Execution.Check(ctx)
+	return qualifyOriginalEnvironmentCreateDNS(ctx, cfg, h.OriginalPlan.DNS, h.Receipts, h.Execution, operator)
 }
 
 func createNormalTailRoutingStageKeys(plan *environmentCreatePlan) []string {

@@ -91,7 +91,7 @@ var deploymentArchitectureKeys = architectureKeySet()
 
 var deploymentEnvironmentKeys = keySet(
 	"CLOUD_STACK_NAME", "CLOUD_DNS_ROOT_DOMAIN", "DEPLOYMENT_LOCATION",
-	"DEPLOYMENT_REQUIRE_PKITURN",
+	"DEPLOYMENT_REQUIRE_PKITURN", "PKI_BOOTSTRAP_TTL",
 	"PRIVACY_POLICY_URL", "GOOGLE_ANALYTICS_MEASUREMENT_ID",
 	"FRONTEND_DOMAIN", "CONSOLE_DOMAIN", "PUBLIC_BASE_URL", "DISABLE_SEARCH_INDEXING",
 	"TEST_LAB_ENABLED",
@@ -170,6 +170,8 @@ func keySet(keys ...string) map[string]bool {
 func runDeployment(args []string) error {
 	if len(args) > 0 {
 		switch args[0] {
+		case "prepare-create-runtime-images":
+			return runCreateWorkloadImageForward(args[1:])
 		case "renew-crls":
 			return runCRLMaintenance(args[1:])
 		case "crl-schedule":
@@ -178,6 +180,16 @@ func runDeployment(args []string) error {
 			return runCreateNormalTailRuntimeSourceCapture(args[1:])
 		case "recover-create-provider":
 			return runEnvironmentCreateProviderRecovery(args[1:])
+		case "recover-create-issuer-lease":
+			return runEnvironmentCreateIssuerLeaseRepair(args[1:])
+		case "recover-create-stale-identity-pod":
+			return runCreateStaleIdentityPodRecovery(args[1:])
+		case "recover-create-openbao-ca":
+			return runCreateOpenBaoPublicCAHandoff(args[1:])
+		case "recover-create-openbao-public-crl":
+			return runCreateOpenBaoPublicCRLRecovery(args[1:])
+		case "recover-create-openbao-inplace":
+			return runCreateOpenBaoInPlace(args[1:])
 		case "recover-create-foundation":
 			return runEnvironmentCreateFoundationRecovery(args[1:])
 		case "recover-create-service-root-crl-installed":
@@ -198,6 +210,18 @@ func runDeployment(args []string) error {
 			return runEnvironmentCreateRootCRLRecovery(args[1:])
 		case "recover-create-active-transports":
 			return runEnvironmentCreateActiveTransportRenewal(args[1:])
+		case "recover-create-initial-transports":
+			return runEnvironmentCreateInitialTransportSuccessor(args[1:])
+		case "record-create-repair-publication":
+			return runRecordCreateRepairPublication(args[1:])
+		case "extend-create-issuer-deadline":
+			return runCreateIssuerDeadlineSupplement(args[1:])
+		case "recover-create-custody-controller":
+			return runCreateCustodyControllerRecovery(args[1:])
+		case "recover-create-schema-rejection":
+			return runCreateSchemaRejectionRecovery(args[1:])
+		case "recover-create-managed-openbao-unseal":
+			return runCreateManagedOpenBaoUnseal(args[1:])
 		case "recover-create-openbao":
 			return runEnvironmentCreateOpenBaoRecovery(args[1:])
 		case "plan", "create", "upgrade", "preflight":

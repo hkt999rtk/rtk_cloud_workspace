@@ -46,7 +46,11 @@ func bindEnvironmentManagedMQTTConsumers(defs []deploymentplan.Definition, sessi
 
 func bindEnvironmentManagedMQTTConsumersForRender(defs []deploymentplan.Definition, binding *environmentFreshProductBinding) error {
 	if binding != nil {
-		return bindEnvironmentManagedMQTTConsumers(defs, binding.SessionID)
+		session := binding.SessionID
+		if binding.EnrollmentSessionID != "" {
+			session = binding.EnrollmentSessionID
+		}
+		return bindEnvironmentManagedMQTTConsumers(defs, session)
 	}
 	// Future product outputs do not yet have a SID. Their typed resolver binds
 	// the cache and RWO placement after native enrollment; existing API derives now.

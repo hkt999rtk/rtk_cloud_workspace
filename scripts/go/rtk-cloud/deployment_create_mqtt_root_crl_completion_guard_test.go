@@ -149,6 +149,11 @@ func TestMQTTRootCRLCompletionRetryCanOnlyAdvanceTheSameOriginalTop(t *testing.T
 			t.Fatal("actual same-top completion retry rejected")
 		}
 	}
+	formatted := cloneMQTTCompletionJournal(t, completed)
+	formatted.Entries[index].Receipt = append(formatted.Entries[index].Receipt, '\n')
+	if !mqttRootCRLCompletionMembership(a, source, allocated, formatted) {
+		t.Fatal("equivalent formatted receipt rejected after persistence")
+	}
 	for _, scenario := range []string{"regress", "change-child-time", "change-child-evidence", "change-original-start", "change-completed-time", "change-allocated-receipt-bytes", "add-lease", "change-metadata"} {
 		t.Run(scenario, func(t *testing.T) {
 			before := captured
@@ -172,7 +177,7 @@ func TestMQTTRootCRLCompletionRetryCanOnlyAdvanceTheSameOriginalTop(t *testing.T
 				current.Entries[index].CompletedAt = current.Entries[index].CompletedAt.Add(-time.Second)
 			case "change-allocated-receipt-bytes":
 				before = allocated
-				current.Entries[index].Receipt = append(current.Entries[index].Receipt, '\n')
+				current.Entries[index].Receipt = json.RawMessage(`{"tampered":true}`)
 			case "add-lease":
 				current.KubernetesLeases = append(current.KubernetesLeases, current.KubernetesLeases[0])
 			case "change-metadata":

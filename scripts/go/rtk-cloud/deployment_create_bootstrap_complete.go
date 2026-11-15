@@ -66,7 +66,7 @@ func completeEnvironmentCreateBootstrap(ctx context.Context, cfg deploymentConfi
 			}
 		}
 	}
-	if !postService {
+	if !postService && runtime.AcceptedMQTTRoot == nil {
 		if err := apply(ctx, stage, enrollment); err != nil {
 			return empty, err
 		}
@@ -85,7 +85,7 @@ func completeEnvironmentCreateBootstrap(ctx context.Context, cfg deploymentConfi
 	if err != nil {
 		return empty, err
 	}
-	if runtime.ServiceSessionRecovery == nil || runtime.ServiceSessionRecovery.DeviceTrustRecovery == nil && (!runtime.ServiceSessionRecovery.OpenBaoIntermediateRejected || runtime.ServiceSessionRecovery.PostServiceRenewal) {
+	if runtime.AcceptedMQTTRoot == nil && (runtime.ServiceSessionRecovery == nil || runtime.ServiceSessionRecovery.DeviceTrustRecovery == nil && (!runtime.ServiceSessionRecovery.OpenBaoIntermediateRejected || runtime.ServiceSessionRecovery.PostServiceRenewal)) {
 		transportStage := "transport-client-enrollment"
 		if runtime.ServiceSessionRecovery != nil && runtime.ServiceSessionRecovery.OpenBaoIntermediateRejected {
 			transportStage += "-renewal-" + runtime.ServiceSessionRecovery.Review
@@ -234,7 +234,7 @@ func completeEnvironmentCreateBootstrap(ctx context.Context, cfg deploymentConfi
 	if err != nil {
 		return empty, err
 	}
-	if err := apply(ctx, "managed-application-owners", applications); err != nil {
+	if err := applyCreateApplicationOwners(ctx, cfg, p, release, runtime, service, roots, intermediates, applications, apply); err != nil {
 		return empty, err
 	}
 	return completeEnvironmentCreateAfterApplicationOwners(ctx, cfg, p, release, store, operator, runtime, service, roots, intermediates, apply)
@@ -247,6 +247,14 @@ func completeEnvironmentCreateAfterApplicationOwners(ctx context.Context, cfg de
 	}
 	var core []deploymentplan.Definition
 	var err error
+	service, err = remainingFreshProductServiceCeremony(store, p, runtime, service)
+	if err != nil {
+		return empty, err
+	}
+	runtime.ServiceCeremony = &service
+	if err := applyFreshProductSuccessorControls(ctx, cfg, store, runtime, apply); err != nil {
+		return empty, err
+	}
 	if r := runtime.ServiceSessionRecovery; r != nil && r.ManagedLateSession != nil {
 		if err := verifyManagedLateAcceptedOwners(ctx, cfg, runtime); err != nil {
 			return empty, err
@@ -265,19 +273,26 @@ func completeEnvironmentCreateAfterApplicationOwners(ctx context.Context, cfg de
 				return empty, err
 			}
 		}
-		core, err = renderEnvironmentCreateManagedServiceDefinitions(ctx, cfg, p, runtime, service)
-		if err != nil {
-			return empty, err
-		}
-		core, err = applyEnvironmentCreateManagedOpenBaoConsumers(p, service, roots, intermediates, core)
-		if err != nil {
-			return empty, err
-		}
-		core, err = configureEnvironmentCreateFinalIssuer(p, roots, intermediates, core)
+		core, err = remainingFreshProductIssuerDefinitions(ctx, cfg, p, runtime, service, roots, intermediates)
 		if err != nil {
 			return empty, err
 		}
 		if r := runtime.ServiceSessionRecovery; r == nil || r.ManagedCorePartial == nil {
+			parent := runtime.ServiceSessionRecovery
+			var selected *environmentCreatePlan
+			if parent != nil {
+				selected = parent.qualifiedPlan
+			}
+			if selected == nil {
+				var err error
+				selected, err = authenticatedCreateOperatorPlan(store, runtime.Execution)
+				if err != nil {
+					return empty, err
+				}
+			}
+			if err := ensureEnvironmentCreateOpenBaoPublicCRLs(ctx, cfg, store, selected, runtime, service, core); err != nil {
+				return empty, err
+			}
 			if err := apply(ctx, "managed-complete-issuer", core); err != nil {
 				return empty, err
 			}
@@ -294,7 +309,7 @@ func completeEnvironmentCreateAfterApplicationOwners(ctx context.Context, cfg de
 			}
 		}
 	}
-	freshProducts := len(p.ProductIdentities) > 0 && runtime.ServiceSessionRecovery == nil
+	freshProducts := len(p.ProductIdentities) > 0
 	if freshProducts {
 		if err := executeEnvironmentCreateFreshProductIdentities(ctx, cfg, p, release, store, runtime, service, apply); err != nil {
 			return empty, err
@@ -354,34 +369,7 @@ func completeEnvironmentCreateAfterApplicationOwners(ctx context.Context, cfg de
 		}
 	}
 	if cfg.Values["ACCOUNT_MANAGER_SERVICE_REGISTRATION_ENABLED"] == "true" && (runtime.ServiceSessionRecovery == nil || runtime.ServiceSessionRecovery.normalTail == nil) {
-		namespace := p.Stack + "-account-manager"
-		serverName := "account-manager." + namespace + ".svc.cluster.local"
-		material, err := readEnvironmentCreateOwnedServer(ctx, cfg, p, runtime, service, namespace, "account-manager", "account-manager", "account-manager-service-state", environmentCreateServiceState, environmentCreateServiceState+"/private/client.json", environmentCreateServiceState+"/private/server.json", serverName, apply)
-		if err != nil {
-			return empty, err
-		}
-		if err := refreshEnvironmentCreateAuthentication(ctx, runtime.PKIClient, operator); err != nil {
-			return empty, err
-		}
-		var current struct {
-			Issuer string `json:"issuer_id"`
-			PEM    string `json:"crl_pem"`
-		}
-		if err := runtime.PKIClient.call(ctx, "GET", "/v1/platform/pki/issuers/"+service.Intermediate.ID+"/crl", "", nil, &current); err != nil {
-			return empty, err
-		}
-		if current.Issuer != service.Intermediate.ID || current.PEM == "" {
-			return empty, environmentCreateBootstrapBlocker("finalized original Service revocation CRL cannot be read for registration")
-		}
-		registration, err := renderEnvironmentCreateAccountRegistration(cfg, p, service, material.Certificate, material.Key, current.PEM, core)
-		if err != nil {
-			return empty, err
-		}
-		account, err := environmentCreateAccountRegistrationStage(p, registration)
-		if err != nil {
-			return empty, err
-		}
-		if err := apply(ctx, "account-manager-registration", account); err != nil {
+		if err := configureEnvironmentCreateAccountRegistration(ctx, cfg, p, runtime, service, operator, core, apply); err != nil {
 			return empty, err
 		}
 	}
@@ -430,6 +418,8 @@ func completeEnvironmentCreateAfterApplicationOwners(ctx context.Context, cfg de
 	path := filepath.Join("deployment", "create", runtime.ExecutionSHA256, "bootstrap", "bindings.json")
 	if len(commands) == 1 {
 		_, err = writeManagedLateNormalTailBindings(ctx, store, runtime.Execution, bindings)
+	} else if freshProducts {
+		err = writeOrReuseFreshBootstrapBindings(ctx, cfg, store, runtime.Execution, bindings)
 	} else {
 		_, err = writeEnvironmentCreateBootstrapJSON(store, path, bindings)
 	}
@@ -464,12 +454,12 @@ func completeEnvironmentCreateAfterApplicationOwners(ctx context.Context, cfg de
 	return bindings, nil
 }
 
-func configureEnvironmentCreateCompleteSignerRole(ctx context.Context, cfg deploymentConfig, runtime environmentCreateBootstrapRuntime, roots, intermediates map[string]environmentCreateRegisteredIssuer) error {
+func environmentCreateCompleteSignerPolicies(roots, intermediates map[string]environmentCreateRegisteredIssuer) ([]string, error) {
 	policies := []string{"create-device-signer"}
 	for _, domain := range []string{"service", "mqtt", "openbao_tls", "app"} {
 		issuer := intermediates[domain]
 		if issuer.Status != "active" || issuer.RootFingerprint != roots[domain].RootFingerprint || issuer.Reference == "" {
-			return environmentCreateBootstrapBlocker("final native issuer requires all original active signing mounts")
+			return nil, environmentCreateBootstrapBlocker("final native issuer requires all original active signing mounts")
 		}
 		policies = append(policies, "create-"+issuer.ID+"-signer")
 		if domain == "service" {
@@ -477,6 +467,14 @@ func configureEnvironmentCreateCompleteSignerRole(ctx context.Context, cfg deplo
 		}
 	}
 	slices.Sort(policies)
+	return policies, nil
+}
+
+func configureEnvironmentCreateCompleteSignerRole(ctx context.Context, cfg deploymentConfig, runtime environmentCreateBootstrapRuntime, roots, intermediates map[string]environmentCreateRegisteredIssuer) error {
+	policies, err := environmentCreateCompleteSignerPolicies(roots, intermediates)
+	if err != nil {
+		return err
+	}
 	if managedTransportOpenBaoPullRepair(runtime.ServiceSessionRecovery) {
 		return verifyManagedTransportRecordedOpenBaoRole(runtime, cfg, "certissuer-"+cfg.Environment, []string{"certissuer"}, policies)
 	}
@@ -669,4 +667,53 @@ func retireEnvironmentCreateOwnedDeploymentInNamespace(ctx context.Context, cfg 
 		return err
 	}
 	return runtime.Execution.CompleteEntry(key, time.Now().UTC())
+}
+
+// Execute the maintained registration producer through the same path in a fresh
+// run and a retry. Historical identity/export evidence remains immutable; newly
+// rendered consumers use current signed trust and accepted prerequisite owners.
+func configureEnvironmentCreateAccountRegistration(ctx context.Context, cfg deploymentConfig, p environmentCreateBootstrapPlan, runtime environmentCreateBootstrapRuntime, service environmentCreateServiceCeremony, operator map[string]string, core []deploymentplan.Definition, apply environmentCreateBootstrapApply) error {
+	if cfg.Values["ACCOUNT_MANAGER_SERVICE_REGISTRATION_ENABLED"] != "true" {
+		return nil
+	}
+	if apply == nil {
+		return environmentCreateBootstrapBlocker("maintained registration requires its original stage adapter")
+	}
+	// Completed registration is immutable history. A later admitted session may
+	// advance the same owners; authenticate those writes instead of rendering
+	// the old stage from today's session or CRL export.
+	if e := runtime.Execution; e != nil {
+		if entry := createOpenBaoACKCompletionEntry(e.Journal, "kubernetes/account-manager-registration"); entry != nil && entry.State == "completed" {
+			if runtime.ExecutionSHA256 != e.Journal.PlanSHA256 || e.Journal.Environment != cfg.Environment || e.Journal.Stack != p.Stack || runtime.Backend.Store != e.Store {
+				return environmentCreateBootstrapBlocker("completed registration requires its original environment and execution")
+			}
+			_, err := verifyAcceptedStageAfterRecordedHistory(ctx, e.Store, e, runtime.Backend, entry.Key)
+			return err
+		}
+	}
+	namespace := p.Stack + "-account-manager"
+	serverName := "account-manager." + namespace + ".svc.cluster.local"
+	material, err := readEnvironmentCreateOwnedServer(ctx, cfg, p, runtime, service, namespace, "account-manager", "account-manager", "account-manager-service-state", environmentCreateServiceState, environmentCreateServiceState+"/private/client.json", environmentCreateServiceState+"/private/server.json", serverName, apply)
+	if err != nil {
+		return err
+	}
+	if err := refreshEnvironmentCreateAuthentication(ctx, runtime.PKIClient, operator); err != nil {
+		return err
+	}
+	currentCore := material.registrationCore
+	if currentCore == nil {
+		currentCore, err = currentEnvironmentCreateAccountRegistrationCore(ctx, cfg, runtime, core)
+		if err != nil {
+			return err
+		}
+	}
+	registration, err := renderEnvironmentCreateCurrentAccountRegistration(ctx, cfg, p, runtime, service, material.Certificate, material.Key, currentCore)
+	if err != nil {
+		return err
+	}
+	account, err := environmentCreateAccountRegistrationStage(p, registration)
+	if err != nil {
+		return err
+	}
+	return apply(ctx, "account-manager-registration", account)
 }

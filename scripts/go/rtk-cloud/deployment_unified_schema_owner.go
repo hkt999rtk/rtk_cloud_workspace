@@ -231,7 +231,7 @@ func verifyEnvironmentReleaseSchemasForPlan(ctx context.Context, cfg deploymentC
 			if source.Key != "billing" || state.Objects != 0 {
 				return environmentSchemaBlocker(source.Key, "original database has no migration history; an existing or nonempty schema cannot be initialized implicitly")
 			}
-			if err := verifyEnvironmentInitialBillingOwner(ctx, cfg, store, release, plan, read, false); err != nil {
+			if err := verifyEnvironmentInitialBillingOwner(ctx, cfg, store, release, plan, read, false, nil); err != nil {
 				return err
 			}
 			continue // A qualified empty input, never evidence of applied versions.
@@ -256,7 +256,7 @@ func verifyEnvironmentReleaseSchemasForPlan(ctx context.Context, cfg deploymentC
 		}
 		if err := verifyEnvironmentSchemaVersions(store, source.Key, versions); err != nil {
 			var unapplied *environmentUnappliedSchemaError
-			if !errors.As(err, &unapplied) || source.Key != "billing" || verifyEnvironmentInitialBillingOwner(ctx, cfg, store, release, plan, read, true) != nil {
+			if !errors.As(err, &unapplied) || source.Key != "billing" || verifyEnvironmentInitialBillingOwner(ctx, cfg, store, release, plan, read, true, nil) != nil {
 				return err
 			}
 		}
@@ -292,10 +292,37 @@ func verifyEnvironmentSchemaDatabaseTarget(ctx context.Context, plan *deployment
 	return ctx.Err()
 }
 
-func verifyEnvironmentInitialBillingOwner(ctx context.Context, cfg deploymentConfig, store secretStore, release environmentRelease, plan *deploymentplan.Plan, read func(context.Context, string) (deploymentplan.Object, error), requireRecorded bool) error {
+func verifyEnvironmentInitialBillingOwner(ctx context.Context, cfg deploymentConfig, store secretStore, release environmentRelease, plan *deploymentplan.Plan, read func(context.Context, string) (deploymentplan.Object, error), requireRecorded bool, originalCreate *environmentCreateExecution) error {
 	fail := func(cause string) error { return environmentSchemaBlocker("billing", cause) }
-	if plan == nil || plan.Operation != "create" || plan.Environment != store.Environment || plan.Stack != "video-cloud-"+store.Environment || read == nil {
+	if plan == nil || plan.Environment != store.Environment || plan.Stack != "video-cloud-"+store.Environment || read == nil {
 		return fail("Billing database is empty and has no applied history; this plan does not declare its initial owner migration")
+	}
+	if plan.Operation != "create" {
+		// Fresh create executes its immutable workload as a scoped child. The
+		// operation name alone grants no initialization authority: bind this
+		// exact input and child journal to the still-held original create.
+		if plan.Operation != "scoped" || originalCreate == nil || originalCreate.Store != store || !originalCreate.Journal.CompletedAt.IsZero() {
+			return fail("empty Billing initialization requires its original create execution")
+		}
+		if err := originalCreate.Check(ctx); err != nil {
+			return err
+		}
+		original, err := readEnvironmentCreateStageInput(store, originalCreate, "workload")
+		if err != nil || original == nil || original.SHA256() != plan.SHA256() {
+			return fail("initial migration differs from the original frozen workload input")
+		}
+		entry := createOpenBaoACKCompletionEntry(originalCreate.Journal, "kubernetes/workload")
+		intent, err := environmentCreateKubernetesStageIntent(plan)
+		intentSHA, hashErr := environmentCreatePlanSHA256(intent)
+		leased := false
+		for _, lease := range originalCreate.Journal.KubernetesLeases {
+			leased = leased || managedLateLeaseMatches(lease, plan.Stack, plan.SHA256())
+		}
+		// The executor has already marked this write in-flight, so its normal
+		// resumable-journal reader must not be used inside the write callback.
+		if err != nil || hashErr != nil || entry == nil || entry.Phase != "workload" || entry.State != "pending" || entry.IntentSHA256 != intentSHA || !leased {
+			return fail("initial migration lacks its original pending workload and recorded native lease")
+		}
 	}
 	want := environmentBillingSchemaJob(plan.Environment, plan.Stack, release.Images["LKE_BILLING_IMAGE"], cfg.Values["LKE_IMAGE_PULL_SECRET_NAME"])
 	id := deploymentplan.ID(want.Object)
@@ -458,7 +485,7 @@ func (b environmentCreateKubernetesBackend) beforeSchemaOwnerWrite(ctx context.C
 	if state.History || state.Objects != 0 {
 		return environmentSchemaBlocker("billing", "initial migration write no longer has a genuinely empty original database")
 	}
-	if err := verifyEnvironmentInitialBillingOwner(ctx, b.cfg, store, release, &plan, b.environmentKubernetesBackend.Read, false); err != nil {
+	if err := verifyEnvironmentInitialBillingOwner(ctx, b.cfg, b.store, release, &plan, b.environmentKubernetesBackend.Read, false, b.execution); err != nil {
 		return err
 	}
 	return b.execution.Check(ctx)

@@ -257,7 +257,7 @@ func (r *maintenanceRuntime) consumerID(ctx context.Context, ns, pod, container 
 		if (!managed && !static) || !filepath.IsAbs(path) {
 			continue
 		}
-		raw, err := r.command(ctx, nil, "--namespace", ns, "exec", "pod/"+pod, "--container", container, "--", "cat", path)
+		raw, err := r.localConsumerCommand(ctx, crlMaintenanceConsumer{Namespace: ns, Pod: pod, Container: container}, nil, nil, "cat", path)
 		if err != nil || len(raw) > 256<<10 {
 			continue
 		}

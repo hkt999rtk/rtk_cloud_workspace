@@ -20,6 +20,13 @@ func productPreparationDefinitions(cfg deploymentConfig, store secretStore, e *e
 	}
 	isFresh := len(fresh) == 1 && fresh[0]
 	originalInstalled := installed
+	if isFresh {
+		var err error
+		originalInstalled, err = readProductInstalled(store, l)
+		if err != nil {
+			return nil, err
+		}
+	}
 	var renewal *productSessionRenewal
 	if !isFresh {
 		var er error
@@ -41,6 +48,7 @@ func productPreparationDefinitions(cfg deploymentConfig, store secretStore, e *e
 	seen := map[string]bool{}
 	var definitions []deploymentplan.Definition
 	for _, stage := range stages {
+		pinnedCustody := isFresh && stage == "service-custody-reader" && l.FreshResume != nil
 		recipe, err := productStageDefinitions(context.Background(), cfg, l, originalInstalled.Ceremony, stage)
 		if err != nil {
 			return nil, err
@@ -55,12 +63,23 @@ func productPreparationDefinitions(cfg deploymentConfig, store secretStore, e *e
 		}
 		if isFresh && stage == "service-custody-reader" {
 			full = stage
+			if pinnedCustody {
+				full = l.FreshResume.CustodyStage
+			}
 		}
 		p, j, err := acceptedCreateStage(store, e, "kubernetes/"+full)
-		if err == nil {
+		if err == nil && pinnedCustody {
+			if p.SHA256() != l.FreshResume.CustodyPlanSHA256 || full != "service-custody-reader-renewal-"+l.FreshResume.SessionReviewSHA256 {
+				return bad()
+			}
+			recipe = nil
+			for _, resource := range p.Resources {
+				recipe = append(recipe, deploymentplan.Definition{Object: deploymentplan.Clone(resource.Desired), Phase: resource.Phase, Dependencies: resource.Dependencies})
+			}
+		} else if err == nil {
 			recipe, err = projectEnvironmentCustodyFrozenRecipe(cfg, l.Bootstrap, e.Journal.PlanSHA256, l.Root.RootFingerprint, recipe, p)
 		}
-		if err != nil || !isFresh && p.CreateParentSHA256 != e.Journal.PlanSHA256 || p.Environment != cfg.Environment || p.Stack != e.Journal.Stack || p.BindingsSHA256 != environmentCreateStageBindingsSHA(full, recipe) || len(p.Resources) != len(recipe) {
+		if err != nil || !isFresh && p.CreateParentSHA256 != e.Journal.PlanSHA256 || p.Environment != cfg.Environment || p.Stack != e.Journal.Stack || !pinnedCustody && p.BindingsSHA256 != environmentCreateStageBindingsSHA(full, recipe) || len(p.Resources) != len(recipe) {
 			return bad()
 		}
 		verified, err := readProductPreparationProgress(store, e, full, p, isFresh)
@@ -127,6 +146,9 @@ func readProductPreparationProgress(store secretStore, e *environmentCreateExecu
 
 func productPreparationsRetired(ctx context.Context, cfg deploymentConfig, store secretStore, e *environmentCreateExecution, l *createNormalTailProductLifecycle, installed *environmentProductIdentitySession, backend deploymentplan.Backend, fresh ...bool) error {
 	definitions, err := productPreparationDefinitions(cfg, store, e, l, installed, true, fresh...)
+	if len(fresh) == 1 && fresh[0] {
+		definitions, err = freshProductPreparationDefinitions(ctx, cfg, store, e, l, installed, backend, true)
+	}
 	if err != nil {
 		return err
 	}

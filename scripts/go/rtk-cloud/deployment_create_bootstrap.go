@@ -76,6 +76,10 @@ type environmentCreateBootstrapRuntime struct {
 	Execution                           *environmentCreateExecution
 	PKIClient                           *environmentCreatePKIClient
 	ServiceCeremony                     *environmentCreateServiceCeremony
+	AcceptedIssuerEnrollment            *environmentCreateServiceCeremony
+	AcceptedServiceCoreCRLs             bool
+	AcceptedMQTTRoot                    *environmentCreateRegisteredIssuer
+	AcceptedMQTTRootOperation           *environmentCreateIssuerOperation
 	ServiceSessionRecovery              *createServiceSessionRecovery
 	ProductIdentityScope                string
 	ProductIdentityOpenBaoTrustProfile  string
@@ -222,7 +226,19 @@ func qualifyEnvironmentCreateBootstrap(ctx context.Context, cfg deploymentConfig
 }
 
 func qualifyEnvironmentCreateBootstrapCapabilities(ctx context.Context, cfg deploymentConfig, p environmentCreateBootstrapPlan, store secretStore, operator map[string]string, preservedRoots ...string) error {
-	return qualifyEnvironmentCreateBootstrapCapabilitiesWithPublications(ctx, cfg, p, store, operator, nil, preservedRoots...)
+	return qualifyEnvironmentCreateBootstrapCapabilitiesWithMode(ctx, cfg, p, store, operator, nil, "", true, preservedRoots...)
+}
+
+// Recovery reuses the originally selected release; the separately qualified
+// repair tool supplies any newly introduced native capability.
+func qualifyEnvironmentCreateBootstrapForRecovery(ctx context.Context, cfg deploymentConfig, p environmentCreateBootstrapPlan, store secretStore, operator map[string]string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := qualifyEnvironmentCreateBootstrapLocalState(ctx, cfg, store, operator); err != nil {
+		return err
+	}
+	return qualifyEnvironmentCreateBootstrapCapabilitiesWithPublications(ctx, cfg, p, store, operator, nil)
 }
 
 // Published issuer files are allowed only by the separately authenticated
@@ -231,9 +247,13 @@ func qualifyEnvironmentCreateBootstrapCapabilitiesWithPublications(ctx context.C
 	return qualifyEnvironmentCreateBootstrapCapabilitiesWithRouting(ctx, cfg, p, store, operator, publications, "", preservedRoots...)
 }
 
-// Only the authenticated stopped-core profile may supply its already accepted
-// App routing allocation. Issuer publications remain exactly five files.
+// Original continuation supplies only an independently authenticated App routing
+// publication. Issuer publications remain exactly five files.
 func qualifyEnvironmentCreateBootstrapCapabilitiesWithRouting(ctx context.Context, cfg deploymentConfig, p environmentCreateBootstrapPlan, store secretStore, operator map[string]string, publications map[string]string, routingSHA string, preservedRoots ...string) error {
+	return qualifyEnvironmentCreateBootstrapCapabilitiesWithMode(ctx, cfg, p, store, operator, publications, routingSHA, false, preservedRoots...)
+}
+
+func qualifyEnvironmentCreateBootstrapCapabilitiesWithMode(ctx context.Context, cfg deploymentConfig, p environmentCreateBootstrapPlan, store secretStore, operator map[string]string, publications map[string]string, routingSHA string, fresh bool, preservedRoots ...string) error {
 	verifiedRoots := map[string]bool{}
 	verifiedCustody := map[string]bool{"roots": true}
 	if len(preservedRoots) > 4 {
@@ -298,6 +318,9 @@ func qualifyEnvironmentCreateBootstrapCapabilitiesWithRouting(ctx context.Contex
 	identityCapabilities := serviceIdentityBootstrapCapabilities(cfg.Values["PKI_STATE_BACKEND"])
 	if cfg.Values["PKI_STATE_BACKEND"] == "openbao" {
 		identityCapabilities = append(identityCapabilities, "initial-service-crl-custody-v1")
+		if fresh {
+			identityCapabilities = append(identityCapabilities, "initial-public-crl-custody-v2", openBaoPublicCRLCapability)
+		}
 	}
 	capabilities := []environmentProductCapability{{p.AccountManagerImage, "/app/rtk-account-manager", "account-manager", []string{"deployment-bootstrap-finalize-v1"}}, {p.Image, "/app/pkimanagement", "pkimanagement", []string{"first-trust-v1", "deployment-bootstrap-finalize-v1"}}, {p.Image, "/app/certissuer", "certissuer", []string{"create-service-enrollment-v1", "registry-only-issuance-v1"}}, {p.Image, "/app/api", "api", []string{"fresh-bootstrap-trust-v1", "mqtt-bundle-bootstrap-v1"}}, {p.Image, "/app/logingester", "logingester", []string{"fresh-bootstrap-trust-v1", "mqtt-bundle-bootstrap-v1"}}, {p.Image, "/app/pkibroker", "pkibroker", []string{"fresh-bootstrap-trust-v1"}}, {p.Image, "/app/serviceidentity-bootstrap", "serviceidentity-bootstrap", identityCapabilities}, {p.Images["LKE_MQTT_PKI_IMAGE"], "/usr/local/bin/emqxpkihost", "emqxpkihost", managedMQTTRequiredCapabilities(cfg.Values["TEST_LAB_ENABLED"] == "true")}}
 	productCaps, err := productRegistrationCapabilities(p.Image, p.ProductIdentities)
@@ -305,6 +328,35 @@ func qualifyEnvironmentCreateBootstrapCapabilitiesWithRouting(ctx context.Contex
 		return err
 	}
 	capabilities = append(capabilities, productCaps...)
+	// Inspect the actual final role packages too. A capable ceremony/tool image
+	// does not make an older environment-selected runtime understand KV state.
+	if cfg.Values["PKI_STATE_BACKEND"] == "openbao" {
+		selected, err := parseEnvironmentImageSelection(cfg.Environment, operator[environmentImagesKey])
+		if err != nil {
+			return err
+		}
+		checked := map[string]bool{p.Image: true}
+		roles := environmentVersionRoles()
+		keys := make([]string, 0, len(p.Images))
+		for role := range p.Images {
+			keys = append(keys, role)
+		}
+		slices.Sort(keys)
+		for _, role := range keys {
+			if roles[role] != "ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api" {
+				continue
+			}
+			image := p.Images[role]
+			if explicit, ok := selected.Images[role]; ok {
+				image = explicit.Reference
+			}
+			if image == "" || checked[image] {
+				continue
+			}
+			checked[image] = true
+			capabilities = append(capabilities, environmentProductCapability{image, "/app/serviceidentity-bootstrap", "serviceidentity-bootstrap", serviceIdentityBootstrapCapabilities("openbao")})
+		}
+	}
 	for _, capability := range capabilities {
 		if !immutableEnvironmentImage.MatchString(capability.Image) {
 			return environmentCreateBootstrapBlocker("the initial authentication capability has no exact formal immutable image")
@@ -329,8 +381,8 @@ func qualifyEnvironmentCreateBootstrapCapabilitiesWithRouting(ctx context.Contex
 }
 
 // A removed provider cluster is not evidence that retained identity may be
-// regenerated. Managed continuation admits five pinned issuer files and, only
-// for the stopped-core profile, one separately authenticated App routing file.
+// regenerated. Managed continuation admits five pinned issuer files and one
+// separately authenticated original App routing publication.
 func qualifyEnvironmentCreateBootstrapLineage(store secretStore, verifiedRoots, verifiedCustody map[string]bool, publications map[string]string, routing ...string) error {
 	routingSHA := ""
 	if len(routing) > 1 {
@@ -493,6 +545,44 @@ func newEnvironmentCreatePKIClient(origin string, client *http.Client, environme
 }
 
 func (c *environmentCreatePKIClient) call(ctx context.Context, method, path, key string, body any, output any) error {
+	err := c.callOnce(ctx, method, path, key, body, output)
+	// Only reads and password authentication are safe to repeat after a lost
+	// response. Never replay a PKI mutation, even with its idempotency key.
+	if ctx.Err() == nil && (method == http.MethodGet || method == http.MethodPost && path == "/v1/auth/login") && environmentCreatePKIRetryableRead(err) {
+		return c.callOnce(ctx, method, path, key, body, output)
+	}
+	return err
+}
+
+// Keep private transport diagnostics out of operator-facing errors while
+// retaining their type for the bounded safe-read retry decision.
+type environmentCreatePKITransportFailure struct {
+	cause error
+}
+
+func (e *environmentCreatePKITransportFailure) Error() string {
+	return environmentCreateBootstrapBlocker("authenticated initial ceremony transport failed; retain its original journal").Error()
+}
+func (e *environmentCreatePKITransportFailure) Unwrap() error { return e.cause }
+func (e *environmentCreatePKITransportFailure) As(target any) bool {
+	return errors.As(environmentCreateBootstrapBlocker("authenticated initial ceremony transport failed; retain its original journal"), target)
+}
+
+func environmentCreatePKIRetryableRead(err error) bool {
+	var status *environmentCreatePKIHTTPFailure
+	if errors.As(err, &status) {
+		return status.Status == http.StatusTooManyRequests || status.Status >= 500 && status.Status <= 599
+	}
+	var transport *environmentCreatePKITransportFailure
+	var ownership *deploymentplan.Blocker
+	if !errors.As(err, &transport) || errors.As(transport.cause, &ownership) {
+		return false
+	}
+	var network net.Error
+	return errors.Is(transport.cause, io.EOF) || errors.Is(transport.cause, io.ErrUnexpectedEOF) || errors.As(transport.cause, &network) && (network.Timeout() || network.Temporary())
+}
+
+func (c *environmentCreatePKIClient) callOnce(ctx context.Context, method, path, key string, body any, output any) error {
 	if c == nil || c.Origin == nil || c.HTTP == nil || !strings.HasPrefix(path, "/v1/") || strings.ContainsAny(path, "?#") {
 		return environmentCreateBootstrapBlocker("invalid fixed initial ceremony request")
 	}
@@ -532,14 +622,17 @@ func (c *environmentCreatePKIClient) call(ctx context.Context, method, path, key
 	}
 	measured(queryErr)
 	if err != nil {
-		return environmentCreateBootstrapBlocker("authenticated initial ceremony request failed or has an uncertain outcome; retain its original journal")
+		return &environmentCreatePKITransportFailure{cause: err}
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusCreated && response.StatusCode != http.StatusNoContent {
 		return &environmentCreatePKIHTTPFailure{response.StatusCode, environmentCreateBootstrapBlocker(fmt.Sprintf("authenticated initial ceremony was rejected with HTTP %d; inspect its original registered operation before resuming", response.StatusCode))}
 	}
 	result, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
-	if err != nil || len(result) > 1<<20 {
+	if err != nil {
+		return &environmentCreatePKITransportFailure{cause: err}
+	}
+	if len(result) > 1<<20 {
 		return environmentCreateBootstrapBlocker("initial ceremony response is unavailable or exceeds its bound")
 	}
 	if output != nil && json.Unmarshal(result, output) != nil {
@@ -570,6 +663,9 @@ func (c *environmentCreatePKIClient) Authenticate(ctx context.Context, email, pa
 	}
 	c.token = result.Tokens.Access
 	c.OperatorID = result.User.ID
+	// Refresh long native phases with this same authenticated operator only.
+	// Retain no unrelated provider credentials and never retry a mutation.
+	c.operatorCredentials = map[string]string{"ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL": email, "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD": password}
 	c.authenticatedAt = time.Now().UTC()
 	return result.User.ID, nil
 }
@@ -1152,7 +1248,7 @@ func configureEnvironmentCreateOpenBaoRoleInNamespace(ctx context.Context, cfg d
 			if reuse {
 				return environmentCreateBootstrapBlocker("duplicate native role receipt is ambiguous")
 			}
-			if runtime.ProductIdentityScope != "" && entry.State == "pending" {
+			if entry.State == "pending" && (runtime.ProductIdentityScope != "" || partialSessionAllowsPendingOpenBao(cfg, runtime, "role", name) || initialSuccessorAllowsPendingRole(runtime.Execution.Store, runtime.Execution, key, intent)) {
 				if entry.Phase != "bootstrap" || entry.StartedAt.IsZero() || !entry.CompletedAt.IsZero() || len(entry.Receipt) != 0 || entry.IntentSHA256 != deploymentplan.Digest(intent) {
 					return environmentCreateBootstrapBlocker("product role pending intent changed")
 				}
@@ -1384,9 +1480,29 @@ func readEnvironmentCreateRegistryJSON(ctx context.Context, cfg deploymentConfig
 	if err := runtime.Execution.Check(ctx); err != nil {
 		return nil, err
 	}
-	raw, err := runtime.Backend.command(ctx, nil, "--namespace", cfg.Values["CLOUD_STACK_NAME"]+"-platform", "exec", "postgresql-0", "--container", "postgres", "--", "env", "PGOPTIONS=-c default_transaction_read_only=on", "/bin/sh", "-ec", `PGPASSWORD="$POSTGRES_PASSWORD" psql -U postgres -d video_cloud -v ON_ERROR_STOP=1 -At -c "$1"`, "registry-read", query)
-	if err != nil || len(raw) > 256<<10 {
-		return nil, environmentCreateBootstrapBlocker("native read-only selected registry evidence cannot be inspected")
+	var raw []byte
+	var err error
+	for attempt := 0; attempt < deploymentReadMaxAttempts; attempt++ {
+		if err = runtime.Execution.Check(ctx); err != nil {
+			return nil, err
+		}
+		raw, err = runtime.Backend.command(ctx, nil, "--namespace", cfg.Values["CLOUD_STACK_NAME"]+"-platform", "exec", "postgresql-0", "--container", "postgres", "--", "env", "PGOPTIONS=-c default_transaction_read_only=on", "/bin/sh", "-ec", `PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U postgres -d video_cloud -v ON_ERROR_STOP=1 -At -c "$1"`, "registry-read", query)
+		if err == nil || !transientDeploymentReadError(err) || attempt+1 == deploymentReadMaxAttempts {
+			break
+		}
+		timer := time.NewTimer(newDeploymentCheckRuntime(ctx, cfg.Environment).retryDelay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, classifyDeploymentRuntimeError(ctx, nil, ctx.Err(), false)
+		case <-timer.C:
+		}
+	}
+	if err != nil {
+		return nil, secretCheckFailure(err, "native read-only selected registry evidence cannot be inspected")
+	}
+	if len(raw) > 256<<10 {
+		return nil, environmentCreateBootstrapBlocker("native read-only selected registry evidence exceeds its output bound")
 	}
 	return bytes.TrimSpace(raw), nil
 }

@@ -25,6 +25,19 @@ func environmentCreateDNSAdapter(cfg deploymentConfig, operator map[string]strin
 // Fresh create never appropriates an old live address. Earlier ownership and
 // ACME history are preserved, and every maintained name must genuinely be free.
 func qualifyEnvironmentCreateDNS(ctx context.Context, cfg deploymentConfig, plan genericDNSPlan, operator map[string]string) error {
+	return qualifyEnvironmentCreateDNSWithOriginal(ctx, cfg, plan, operator, nil, nil)
+}
+
+// The held original execution may read back its exact allocated/completed DNS
+// receipts. Absence remains mandatory for every unrecorded name and kind.
+func qualifyOriginalEnvironmentCreateDNS(ctx context.Context, cfg deploymentConfig, plan genericDNSPlan, receipts map[string]environmentCreateProviderReceipt, execution *environmentCreateExecution, operator map[string]string) error {
+	if execution == nil || execution.Journal.Environment != cfg.Environment || execution.Journal.Stack != cfg.Values["CLOUD_STACK_NAME"] || execution.Check(ctx) != nil {
+		return createProviderRecoveryBlock("original DNS continuation owner unavailable")
+	}
+	return qualifyEnvironmentCreateDNSWithOriginal(ctx, cfg, plan, operator, receipts, execution)
+}
+
+func qualifyEnvironmentCreateDNSWithOriginal(ctx context.Context, cfg deploymentConfig, plan genericDNSPlan, operator map[string]string, receipts map[string]environmentCreateProviderReceipt, execution *environmentCreateExecution) error {
 	adapter, local, err := environmentCreateDNSAdapter(cfg, operator)
 	if err != nil {
 		return err
@@ -47,6 +60,35 @@ func qualifyEnvironmentCreateDNS(ctx context.Context, cfg deploymentConfig, plan
 	if err != nil {
 		return err
 	}
+	known := map[string]dnsRecordSet{}
+	if execution != nil {
+		records, err := bindEnvironmentCreateDNS(plan, cfg, receipts)
+		if err != nil {
+			return err
+		}
+		for _, record := range records {
+			key := "dns/" + record.Type + "/" + record.Name
+			var entry *environmentCreateJournalEntry
+			for i := range execution.Journal.Entries {
+				if execution.Journal.Entries[i].Key != key {
+					continue
+				}
+				if entry != nil {
+					return createProviderRecoveryBlock("DNS request outcome is uncertain or differs from its original record: " + record.Name)
+				}
+				entry = &execution.Journal.Entries[i]
+			}
+			if entry == nil {
+				continue
+			}
+			intent, _ := json.Marshal(record)
+			sha, err := environmentCreatePlanSHA256(intent)
+			if err != nil || entry.Phase != "routing" || entry.IntentSHA256 != sha || entry.State != "allocated" && entry.State != "completed" || activeTransportJournalDigest(jsonRawObject(entry.Receipt)) != activeTransportJournalDigest(jsonRawObject(intent)) {
+				return createProviderRecoveryBlock("DNS request outcome is uncertain or differs from its original record: " + record.Name)
+			}
+			known[record.Name] = record
+		}
+	}
 	// Previously owned names outside the new target remain historical evidence.
 	// They are never silently republished or used as a naming fallback.
 	seen := map[string]bool{}
@@ -60,10 +102,26 @@ func qualifyEnvironmentCreateDNS(ctx context.Context, cfg deploymentConfig, plan
 		seen[record.Name] = true
 		for _, kind := range []string{"A", "AAAA", "CNAME"} {
 			current, err := adapter.GetRecordSet(ctx, local, zone, record.Name, kind)
-			if err != nil || len(current.Values) != 0 {
+			if execution != nil {
+				if original, ok := known[record.Name]; ok && kind == original.Type {
+					if err != nil || !sameDNSValues(current.Values, original.Values) {
+						return createProviderRecoveryBlock("recorded DNS target changed: " + record.Name)
+					}
+					continue
+				}
+				if err != nil {
+					return err
+				}
+				if len(current.Values) != 0 {
+					return createProviderRecoveryBlock("unrecorded DNS owner is occupied: " + record.Name + "/" + kind)
+				}
+			} else if err != nil || len(current.Values) != 0 {
 				return environmentCreateBlocker("deployment.create.dns", "a maintained or previously owned endpoint is occupied or cannot be read: "+record.Name+"/"+kind)
 			}
 		}
+	}
+	if execution != nil {
+		return execution.Check(ctx)
 	}
 	return ctx.Err()
 }

@@ -243,7 +243,7 @@ func TestCreateStageNativeWrapperAcceptsAndRevalidatesKnownOwner(t *testing.T) {
 				t.Cleanup(func() { current := f.read(t); current.Objects = before.Objects; f.save(t, current) })
 			}
 			err := f.apply(t)
-			cause := map[string]string{"configuration": "maintained intent or operator credentials changed", "operator": "maintained intent or operator credentials changed", "definitions": "stage changed its qualified original input", "native-uid": "deployment.drift", "native-body": "deployment.drift"}[mode]
+			cause := map[string]string{"configuration": "maintained intent or operator credentials changed", "operator": "original operator evidence differs from the admitted stage", "definitions": "stage changed its qualified original input", "native-uid": "accepted owner differs from its recorded current state", "native-body": "accepted owner differs from its recorded current state"}[mode]
 			if err == nil || !strings.Contains(err.Error(), cause) {
 				t.Fatalf("%s did not refuse at the actual boundary: %v", mode, err)
 			}
@@ -320,5 +320,78 @@ func TestCreateStageNativeWrapperRefusesUnknownPersistedWrite(t *testing.T) {
 	}
 	if err := f.e.Check(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A completed stage remains historical after a later accepted same-owner update.
+// Retrying its real wrapper must observe that chain rather than replay old data.
+func TestCreateStageNativeWrapperObservesAcceptedSuccessorWithoutReplay(t *testing.T) {
+	f := newNativeCreateStageContract(t, "normal")
+	if err := f.apply(t); err != nil {
+		t.Fatal(err)
+	}
+	original, _ := f.accepted(t)
+	sourcePath := filepath.Join(f.store.Root, "deployment/rollback", original.SHA256(), "journal.json")
+	sourceBytes, err := os.ReadFile(sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceReceipt := append([]byte(nil), createOpenBaoACKCompletionEntry(f.e.Journal, "kubernetes/native-contract").Receipt...)
+	newer := deploymentplan.Clone(f.definitions[0].Object)
+	deploymentplan.Map(newer["data"])["selected"] = "renewed-session-reference"
+	if err := applyEnvironmentCreateStage(t.Context(), f.cfg, f.store, &f.parent, f.e, "native-successor", []deploymentplan.Definition{{Phase: "configuration", Object: newer}}, io.Discard); err != nil {
+		t.Fatal("recorded same-owner successor", err)
+	}
+	before := f.read(t)
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := f.apply(t); err != nil {
+			t.Fatal("completed source must follow recorded successor", err)
+		}
+	}
+	after := f.read(t)
+	if after.Writes != before.Writes || after.Leases != before.Leases || after.VolumeReads != before.VolumeReads || deploymentplan.Digest(after.Objects) != deploymentplan.Digest(before.Objects) {
+		t.Fatal("historical observation changed native owners, acquired a new lease or repeated capture")
+	}
+	if b, err := os.ReadFile(sourcePath); err != nil || !bytes.Equal(b, sourceBytes) || !bytes.Equal(sourceReceipt, createOpenBaoACKCompletionEntry(f.e.Journal, "kubernetes/native-contract").Receipt) {
+		t.Fatal("historical observation rewrote original accepted evidence", err)
+	}
+	for _, mode := range []string{"unrecorded-body", "foreign-owner", "missing-native-successor"} {
+		t.Run(mode, func(t *testing.T) {
+			state := f.read(t)
+			switch mode {
+			case "unrecorded-body":
+				deploymentplan.Map(state.Objects[original.Resources[0].ID]["data"])["selected"] = "unrecorded"
+				f.save(t, state)
+			case "foreign-owner":
+				deploymentplan.Map(state.Objects[original.Resources[0].ID]["metadata"])["uid"] = "22222222-2222-4222-8222-222222222222"
+				f.save(t, state)
+			case "missing-native-successor":
+				successor, _, err := acceptedCreateStage(f.store, f.e, "kubernetes/native-successor")
+				if err != nil {
+					t.Fatal(err)
+				}
+				path := filepath.Join(f.store.Root, "deployment/rollback", successor.SHA256(), "journal.json")
+				raw, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() {
+					if err := os.WriteFile(path, raw, 0600); err != nil {
+						t.Fatal(err)
+					}
+				})
+			}
+			t.Cleanup(func() { f.save(t, before) })
+			if err := f.apply(t); err == nil {
+				t.Fatal("accepted an unauthenticated current owner", mode)
+			}
+			current := f.read(t)
+			if current.Writes != before.Writes || current.Leases != before.Leases {
+				t.Fatal("refused observation wrote native state")
+			}
+		})
 	}
 }

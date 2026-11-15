@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -266,6 +267,158 @@ func TestCreateDNSExecutionContractCompletesAndReconcilesExactNativePublication(
 				if err != nil || len(owned.Records) != len(f.plan.Records) {
 					t.Fatal("verified native ownership not retained", err)
 				}
+			}
+		})
+	}
+}
+
+// A late image-only ordinary child does not invalidate already published
+// original routing, nor make full qualification require fresh DNS absence.
+func TestOriginalCreateDNSQualificationAfterPublishedManagementRepair(t *testing.T) {
+	f := newCreateDNSExecutionContract(t)
+	ctx := withEnvironmentCreateBootstrapRuntime(t.Context(), environmentCreateBootstrapRuntime{Execution: f.e, ExecutionSHA256: f.e.Journal.PlanSHA256})
+	backend := freshStageBackend{&normalTailE2EBackend{e: f.e, objects: map[string]deploymentplan.Object{}, writes: map[string]int{}}}
+	body := deploymentplan.Object{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": deploymentplan.Object{"namespace": f.e.Journal.Stack + "-account-manager", "name": "account-manager"}, "spec": deploymentplan.Object{"replicas": float64(1), "template": deploymentplan.Object{"spec": deploymentplan.Object{"containers": []any{deploymentplan.Object{"name": "pkimanagement", "image": "ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api@sha256:" + strings.Repeat("a", 64)}}}}}}
+	apply := func(stage string, object deploymentplan.Object) error {
+		defs := []deploymentplan.Definition{{Object: object, Phase: "workload"}}
+		var live []deploymentplan.Object
+		for _, o := range backend.objects {
+			live = append(live, o)
+		}
+		p, err := deploymentplan.Compile(deploymentplan.Inputs{Environment: f.cfg.Environment, Stack: f.e.Journal.Stack, Operation: "scoped", ConfigurationSHA256: deploymentplan.Digest(f.cfg), ReleaseSHA256: deploymentplan.Digest(object), BindingsSHA256: environmentCreateStageBindingsSHA(stage, defs), CreateParentSHA256: f.e.Journal.PlanSHA256}, defs, live)
+		if err != nil {
+			return err
+		}
+		check := func(ctx context.Context, _ *deploymentplan.Plan) error { return f.e.Check(ctx) }
+		return executeEnvironmentCreateStagePlan(ctx, f.store, f.e, stage, p, backend, check, check, func(ctx context.Context, p *deploymentplan.Plan) error { return p.Verify(ctx, backend) }, func(context.Context) error { return nil }, io.Discard)
+	}
+	if err := qualifyEnvironmentCreateDNS(ctx, f.cfg, f.plan, f.operator); err != nil {
+		t.Fatal("true fresh target", err)
+	}
+	if err := apply("workload", body); err != nil {
+		t.Fatal("genuine original workload", err)
+	}
+	if err := executeEnvironmentCreateDNS(ctx, f.cfg, f.plan, f.receipts, f.operator, f.e); err != nil {
+		t.Fatal("genuine original DNS publication", err)
+	}
+	originalOwner := deploymentplan.Map(backend.objects[deploymentplan.ID(body)]["metadata"])["uid"]
+	updated := deploymentplan.Clone(body)
+	deploymentplan.Map(updated["metadata"])["uid"] = originalOwner
+	deploymentplan.Map(certIssuerObjectList(environmentPKIPod(updated)["containers"])[0])["image"] = "ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api@sha256:" + strings.Repeat("b", 64)
+	if err := apply("workload-image-forward-"+deploymentplan.Digest(updated), updated); err != nil {
+		t.Fatal("genuine same-parent Management image child", err)
+	}
+	if deploymentplan.Map(backend.objects[deploymentplan.ID(body)]["metadata"])["uid"] != originalOwner || !f.e.Journal.CompletedAt.IsZero() {
+		t.Fatal("late image child replaced its original owner or prematurely closed create")
+	}
+	// Requalifying after the original routing phase follows the same genuine
+	// same-UID child history used by the selected image GO, not the live Pod as
+	// source authority. The image GO loader itself is covered by the finalized
+	// fresh-workload fixture; here its DNS successor side remains native/read-only.
+	source, sourceJournal, err := acceptedCreateStage(f.store, f.e, "kubernetes/workload")
+	if err != nil {
+		t.Fatal("original accepted image source", err)
+	}
+	latest, err := completedRecordedOwnerSuccessorsAfterHistory(ctx, f.store, f.e, backend, "kubernetes/workload", []activeTransportRenewalResource{sessionRecordedOwnerBase(source.Resources[0].ID, sourceJournal.Owners[source.Resources[0].ID], source.Resources[0].Desired)}, nil)
+	if err != nil || len(latest) != 1 || latest[0].UID != originalOwner || !deploymentplan.Matches(updated, latest[0].Desired) {
+		t.Fatal("post-routing Management GO source lost its original owner/body chain", err)
+	}
+	before, puts := createBootstrapStateSnapshot(t, f.store.Root), f.puts
+	if err := qualifyOriginalEnvironmentCreateDNS(ctx, f.cfg, f.plan, f.receipts, f.e, f.operator); err != nil {
+		t.Fatal("full qualification rejected original completed DNS after Management repair", err)
+	}
+	if err := executeEnvironmentCreateDNS(ctx, f.cfg, f.plan, f.receipts, f.operator, f.e); err != nil {
+		t.Fatal("ordinary original runtime DNS readback", err)
+	}
+	if f.puts != puts || !reflect.DeepEqual(before, createBootstrapStateSnapshot(t, f.store.Root)) {
+		t.Fatal("qualification or runtime retry republished DNS or changed original evidence")
+	}
+	if err := qualifyEnvironmentCreateDNS(ctx, f.cfg, f.plan, f.operator); err == nil {
+		t.Fatal("true fresh create appropriated occupied original addresses")
+	}
+}
+
+func TestOriginalCreateDNSQualificationPreservesExactKnownPublication(t *testing.T) {
+	for _, mode := range []string{"unstarted", "completed", "allocated", "pending", "unowned-A", "unowned-AAAA", "unowned-CNAME", "changed-address", "provider-address-drift", "missing-provider", "conflicting-AAAA", "conflicting-CNAME", "changed-intent", "changed-phase", "changed-receipt", "changed-maintained-intent", "duplicate-entry", "outside-owned-free", "outside-owned-occupied", "unresolved-challenge", "denied", "missing-owner", "foreign-environment", "cancelled"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newCreateDNSExecutionContract(t)
+			ctx := withEnvironmentCreateBootstrapRuntime(t.Context(), environmentCreateBootstrapRuntime{Execution: f.e, ExecutionSHA256: f.e.Journal.PlanSHA256})
+			if mode != "unstarted" && !strings.HasPrefix(mode, "unowned-") {
+				f.failReadback, f.loseWriteResponse = mode == "allocated", mode == "pending"
+				err := executeEnvironmentCreateDNS(ctx, f.cfg, f.plan, f.receipts, f.operator, f.e)
+				if (err != nil) != (mode == "allocated" || mode == "pending") {
+					t.Fatal("genuine DNS producer", err)
+				}
+			}
+			cfg, plan, e := f.cfg, f.plan, f.e
+			receipts := map[string]environmentCreateProviderReceipt{}
+			for key, value := range f.receipts {
+				receipts[key] = value
+			}
+			first := plan.Records[0]
+			entry := createOpenBaoACKCompletionEntry(e.Journal, "dns/"+first.Type+"/"+first.Name)
+			_, local, err := environmentCreateDNSAdapter(cfg, f.operator)
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch mode {
+			case "unowned-A", "unowned-AAAA", "unowned-CNAME":
+				f.records[f.key(first, strings.TrimPrefix(mode, "unowned-"))] = []string{"unrecorded-owner"}
+			case "changed-address":
+				f.records[f.key(first, first.Type)] = []string{"198.51.100.99"}
+			case "provider-address-drift":
+				edge := receipts["edge"]
+				edge.PublicIP = "198.51.100.99"
+				receipts["edge"] = edge
+			case "missing-provider":
+				delete(receipts, "edge")
+			case "conflicting-AAAA", "conflicting-CNAME":
+				f.records[f.key(first, strings.TrimPrefix(mode, "conflicting-"))] = []string{"unrecorded-conflict"}
+			case "changed-intent":
+				entry.IntentSHA256 = deploymentplan.Digest("foreign-intent")
+			case "changed-phase":
+				entry.Phase = "workload"
+			case "changed-receipt":
+				entry.Receipt = mustProviderRecoveryJSON(deploymentplan.Object{"unrecorded": "receipt"})
+			case "changed-maintained-intent":
+				plan.Records = append([]dnsRecordSet(nil), plan.Records...)
+				plan.Records[0].TTL++
+			case "duplicate-entry":
+				e.Journal.Entries = append(e.Journal.Entries, *entry)
+			case "outside-owned-free", "outside-owned-occupied":
+				old := dnsRecordSet{Name: "historical.dev." + plan.RootDomain, Type: "A", Values: []string{"198.51.100.90"}, TTL: 600}
+				if err := writeDNSOwnership(local, "godaddy", []dnsRecordSet{old}); err != nil {
+					t.Fatal(err)
+				}
+				if mode == "outside-owned-occupied" {
+					f.records[f.key(old, "A")] = old.Values
+				}
+			case "unresolved-challenge":
+				if err := writeDNSChallenges(local, "godaddy", []dnsChallengeState{{Domain: first.Name, Value: "original-unresolved-acme"}}); err != nil {
+					t.Fatal(err)
+				}
+			case "denied":
+				f.deny = true
+			case "missing-owner":
+				e = nil
+			case "foreign-environment":
+				cfg.Environment = "staging"
+			case "cancelled":
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(ctx)
+				cancel()
+			}
+			if err := f.e.save(); err != nil {
+				t.Fatal(err)
+			}
+			before, puts := createBootstrapStateSnapshot(t, f.store.Root), f.puts
+			err = qualifyOriginalEnvironmentCreateDNS(ctx, cfg, plan, receipts, e, f.operator)
+			want := mode == "unstarted" || mode == "completed" || mode == "allocated" || mode == "outside-owned-free"
+			if (err == nil) != want {
+				t.Fatal("unexpected original DNS qualification", mode, err)
+			}
+			if f.puts != puts || !reflect.DeepEqual(before, createBootstrapStateSnapshot(t, f.store.Root)) {
+				t.Fatal("qualification changed original DNS or receipt state")
 			}
 		})
 	}

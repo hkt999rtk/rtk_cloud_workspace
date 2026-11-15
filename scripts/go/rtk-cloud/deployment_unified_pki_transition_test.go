@@ -173,3 +173,43 @@ func TestCertIssuerAdoptionPreservesServingAndSigningProviderReferences(t *testi
 		})
 	}
 }
+
+func TestCustodyProjectedPublicCAPermissionsAreNotIdentitySources(t *testing.T) {
+	for _, env := range []string{"dev", "staging", "prod"} {
+		for _, kind := range []string{"Deployment", "StatefulSet", "DaemonSet"} {
+			for _, change := range []string{"file-mode", "configmap", "key", "path", "audience", "mount"} {
+				t.Run(env+"/"+kind+"/"+change, func(t *testing.T) {
+					current := deploymentplan.Object{"apiVersion": "apps/v1", "kind": kind, "metadata": deploymentplan.Object{"name": "factoryenroll", "namespace": "video-cloud-" + env + "-video-cloud", "uid": "original"}, "spec": deploymentplan.Object{"template": deploymentplan.Object{"spec": deploymentplan.Object{"volumes": []any{deploymentplan.Object{"name": "pki-custody-auth", "projected": deploymentplan.Object{"defaultMode": float64(0440), "sources": []any{deploymentplan.Object{"configMap": deploymentplan.Object{"name": "kube-root-ca.crt", "items": []any{deploymentplan.Object{"key": "ca.crt", "path": "ca.crt", "mode": float64(0444)}}}}, deploymentplan.Object{"serviceAccountToken": deploymentplan.Object{"audience": "openbao", "expirationSeconds": float64(900), "path": "openbao.jwt"}}}}}}, "containers": []any{deploymentplan.Object{"name": "factoryenroll", "env": []any{deploymentplan.Object{"name": "PKI_STATE_BACKEND", "value": "openbao"}}, "volumeMounts": []any{deploymentplan.Object{"name": "pki-custody-auth", "mountPath": "/run/pki-custody-auth", "readOnly": true}}}}}}}}
+					target := deploymentplan.Clone(current)
+					pod := environmentPKIPod(target)
+					proj := deploymentplan.Map(deploymentplan.Map(certIssuerObjectList(pod["volumes"])[0])["projected"])
+					delete(proj, "defaultMode")
+					sources := certIssuerObjectList(proj["sources"])
+					cm := deploymentplan.Map(deploymentplan.Map(sources[0])["configMap"])
+					item := deploymentplan.Map(certIssuerObjectList(cm["items"])[0])
+					delete(item, "mode")
+					switch change {
+					case "configmap":
+						cm["name"] = "foreign-ca"
+					case "key":
+						item["key"] = "foreign.crt"
+					case "path":
+						item["path"] = "foreign.crt"
+					case "audience":
+						deploymentplan.Map(deploymentplan.Map(sources[1])["serviceAccountToken"])["audience"] = "foreign"
+					case "mount":
+						deploymentplan.Map(certIssuerObjectList(deploymentplan.Map(certIssuerObjectList(pod["containers"])[0])["volumeMounts"])[0])["mountPath"] = "/foreign"
+					}
+					before, wanted := deploymentplan.Digest(current), deploymentplan.Digest(target)
+					err := validateEnvironmentPKITransition([]deploymentplan.Definition{{Object: target, Phase: "workload"}}, []deploymentplan.Object{current})
+					if (err == nil) != (change == "file-mode") {
+						t.Fatal("public CA permission defaults were confused with a source remap", err)
+					}
+					if before != deploymentplan.Digest(current) || wanted != deploymentplan.Digest(target) {
+						t.Fatal("transition changed source/intent")
+					}
+				})
+			}
+		}
+	}
+}

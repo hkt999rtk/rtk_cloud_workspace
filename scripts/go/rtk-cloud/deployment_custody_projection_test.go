@@ -128,6 +128,7 @@ func TestCustodyProjectionPreservesBusinessDataAndIndependentOpenBao(t *testing.
 	binding := &environmentCustodyBinding{Generation: strings.Repeat("a", 64), OpenBaoRootSHA256: strings.Repeat("b", 64), Owners: []environmentCustodyOwnerBinding{{ID: "mqtt-host", Namespace: "video-cloud-dev-video-cloud", ServiceAccount: "mqtt-pki"}}}
 	container := deploymentplan.Object{"name": "host", "env": environmentCreateEnv(map[string]string{"EMQX_PKI_HOST_IDENTITY_STATE": "/identity/private/server.json"}), "volumeMounts": []any{environmentCreateServiceMount("identity", "/identity", false)}}
 	object := deploymentplan.Object{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": deploymentplan.Object{"name": "mqtt-pki", "namespace": "video-cloud-dev-video-cloud"}, "spec": deploymentplan.Object{"template": deploymentplan.Object{"spec": deploymentplan.Object{"containers": []any{container}, "volumes": []any{environmentCreateServiceVolume("identity", "persistentVolumeClaim", "mqtt-host"), environmentCreateServiceVolume("data", "persistentVolumeClaim", "mqtt-pki-data")}}}}}
+	environmentPKIPod(object)["initContainers"] = []any{deploymentplan.Object{"name": deviceBrokerTrustInitializer}, deploymentplan.Object{"name": "other-initializer"}}
 	openbao := deploymentplan.Clone(object)
 	openbao["kind"] = "StatefulSet"
 	deploymentplan.Map(openbao["metadata"])["name"] = "openbao"
@@ -142,7 +143,23 @@ func TestCustodyProjectionPreservesBusinessDataAndIndependentOpenBao(t *testing.
 			t.Fatal("OpenBao root startup now depends on its own KV custody")
 		}
 		if deploymentplan.ID(d.Object) == deploymentplan.ID(object) {
+			initializers := environmentPKIPod(d.Object)["initContainers"]
+			if managedNamedField(initializers, deviceBrokerTrustInitializer) != nil || managedNamedField(initializers, "other-initializer") == nil {
+				t.Fatal("custody projection must discard only the PVC identity initializer")
+			}
 			volumes := certIssuerObjectList(environmentPKIPod(d.Object)["volumes"])
+			for _, volume := range volumes {
+				v := deploymentplan.Map(volume)
+				if v["name"] != "pki-custody-auth" {
+					continue
+				}
+				projection := deploymentplan.Map(v["projected"])
+				sources := certIssuerObjectList(projection["sources"])
+				ca := deploymentplan.Map(certIssuerObjectList(deploymentplan.Map(deploymentplan.Map(sources[2])["configMap"])["items"])[0])
+				if projection["defaultMode"] != nil || ca["mode"] != nil {
+					t.Fatal("image-default users require native Kubernetes projection ownership and mode")
+				}
+			}
 			if deploymentplan.Map(deploymentplan.Map(volumes[1])["persistentVolumeClaim"])["claimName"] != "mqtt-pki-data" {
 				t.Fatal("business storage was removed with PKI identity storage")
 			}

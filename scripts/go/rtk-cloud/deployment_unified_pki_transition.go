@@ -194,11 +194,21 @@ func environmentPKIVolumeSource(volume deploymentplan.Object) deploymentplan.Obj
 	delete(copy, "name")
 	// API defaults for permissions and absent optional flags do not change the
 	// original source. Key readability is independently qualified at startup.
-	for _, kind := range []string{"secret", "configMap", "projected"} {
-		source := deploymentplan.Map(copy[kind])
+	normalizePermissions := func(source deploymentplan.Object) {
 		delete(source, "defaultMode")
 		if source["optional"] == false {
 			delete(source, "optional")
+		}
+		for _, item := range certIssuerObjectList(source["items"]) {
+			delete(deploymentplan.Map(item), "mode")
+		}
+	}
+	for _, kind := range []string{"secret", "configMap", "projected"} {
+		normalizePermissions(deploymentplan.Map(copy[kind]))
+	}
+	for _, raw := range certIssuerObjectList(deploymentplan.Map(copy["projected"])["sources"]) {
+		for _, kind := range []string{"secret", "configMap", "downwardAPI"} {
+			normalizePermissions(deploymentplan.Map(deploymentplan.Map(raw)[kind]))
 		}
 	}
 	if source := deploymentplan.Map(copy["persistentVolumeClaim"]); source["readOnly"] == false {
