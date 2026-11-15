@@ -46,7 +46,7 @@ func defaultEnvironmentCreateDependencies() environmentCreateDependencies {
 	return environmentCreateDependencies{
 		Release: func(ctx context.Context, cfg deploymentConfig) (environmentRelease, []environmentReleasePublicationProof, error) {
 			ctx = newEnvironmentReleaseProofCapture(ctx)
-			release, err := loadEnvironmentCIImages(ctx, cfg, environmentCIImageCommand(cfg))
+			release, err := loadEnvironmentCIImages(ctx, cfg, environmentCIImageCommand(cfg), "create")
 			return release, snapshotVerifiedReleaseProofs(ctx, release), err
 		},
 		Build:   buildEnvironmentCreatePlan,

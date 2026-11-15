@@ -27,6 +27,14 @@ restore its original private `~/.config/rtk_cloud/<environment>/` store and use
 explicit owner/state migrations. Restoring checkout `runtime/` cannot restore
 deployment authority.
 
+## Dev CI rollout selection
+
+`dev/ci-rollout.env` contains only the `CI_ROLLOUT_BRANCHES` JSON mapping from
+service repository to tracked branch. The default selected branch is explicitly
+`main` for each listed service. Digests, credentials and execution records are
+not stored in this file. See the [Dev CI fast rollout guide](../docs/deployment-operations.md#dev-ci-fast-rollout)
+for setup, restricted permissions, recovery and supported change scope.
+
 ## Create the Minimal Configuration
 
 The environment identity comes directly from its directory name under `cloud_env/`. Use lowercase alphanumeric characters and `-`. Do not copy another environment's `runtime/`.

@@ -58,6 +58,8 @@ var commands = map[string]commandSpec{
 	"account-manager-email-deploy":     {run: runAccountManagerEmailDeploy},
 	"activate-load-owner":              {run: runActivateLoadOwner},
 	"check-certificates":               {run: runCheckCertificates},
+	"ci-rollout":                       {run: runCIRollout},
+	"ci-rollout-prepare":               {run: runCIRolloutPrepare},
 	"certissuer-openbao-sync":          {run: runCertIssuerOpenBaoSync},
 	"cloud-admin-image-deploy":         {run: runCloudAdminImageDeploy},
 	"collect-evidence":                 {run: runCollectEvidence},
@@ -211,7 +213,7 @@ func run(args []string) error {
 }
 
 func normalizeEnvironmentArgs(args []string) ([]string, error) {
-	if len(args) == 0 || args[0] == "deployment" || args[0] == "monitor-inventory" || args[0] == "secrets" || args[0] == "backup" || args[0] == "restore" || args[0] == "billing-lifecycle" || args[0] == "postgres-backup" || args[0] == "postgres-restore" || args[0] == "postgres-backup-worker" || args[0] == "test-feature-coverage" || args[0] == "object-storage-audit" || args[0] == "object-storage-lifecycle-plan" {
+	if len(args) == 0 || args[0] == "deployment" || args[0] == "ci-rollout" || args[0] == "ci-rollout-prepare" || args[0] == "monitor-inventory" || args[0] == "secrets" || args[0] == "backup" || args[0] == "restore" || args[0] == "billing-lifecycle" || args[0] == "postgres-backup" || args[0] == "postgres-restore" || args[0] == "postgres-backup-worker" || args[0] == "test-feature-coverage" || args[0] == "object-storage-audit" || args[0] == "object-storage-lifecycle-plan" {
 		return args, nil
 	}
 	var environment, workspace string

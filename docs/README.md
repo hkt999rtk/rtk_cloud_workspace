@@ -10,6 +10,7 @@ in the owning service repository; shared wire and payload contracts belong in
 | Goal | Document |
 | --- | --- |
 | Prepare, deploy, restore, accept, or remove an environment | [Deployment Operations Guide](deployment-operations.md) |
+| Configure and operate manual Dev CI image rollout | [Dev CI fast rollout](deployment-operations.md#dev-ci-fast-rollout) |
 | Establish new OpenBao/Service PKI identities for an explicitly new deployment generation | [New deployment identity lifecycle](deployment-operations.md#new-deployment-identity-lifecycle), [secrets boundary](deployment-secrets-governance.md#deployment-generation-identity-boundary) |
 | Trace current preflight, deployment and final-check scripts | [Current script flow and flow chart](deployment-operations.md#current-script-flow) |
 | Decide complete-environment GO/NO-GO and review production activation requirements | [Unified Deployment Readiness Standard](deployment-readiness-standard.md) |

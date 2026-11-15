@@ -1,0 +1,73 @@
+name: Reusable dev CI rollout
+
+on:
+  workflow_call:
+    inputs:
+      repository:
+        description: Service repository selected by the calling workflow
+        required: true
+        type: string
+    secrets:
+      RTK_DEV_ROLLOUT_KUBECONFIG:
+        required: true
+      RTK_DEV_ROLLOUT_TARGETS:
+        required: true
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  rollout:
+    runs-on: ubuntu-latest
+    environment: dev
+    concurrency:
+      group: dev-ci-rollout-${{ github.repository }}
+      cancel-in-progress: false
+    steps:
+      - name: Check caller
+        env:
+          SELECTED_REPOSITORY: ${{ inputs.repository }}
+        run: test "$SELECTED_REPOSITORY" = "$GITHUB_REPOSITORY"
+      - name: Check out trusted workspace
+        uses: actions/checkout@v6
+        with:
+          repository: hkt999rtk/rtk_cloud_workspace
+          ref: main
+          path: workspace
+          persist-credentials: false
+      - name: Check out pinned public Go dependency
+        working-directory: workspace
+        run: |
+          git -c submodule.repos/rtk_cloud_logger.url=https://github.com/hkt999rtk/rtk_cloud_logger.git \
+            submodule update --init -- repos/rtk_cloud_logger
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: workspace/scripts/go/go.mod
+          cache-dependency-path: workspace/scripts/go/go.sum
+      - name: Prepare restricted environment identity
+        env:
+          ROLLOUT_KUBECONFIG: ${{ secrets.RTK_DEV_ROLLOUT_KUBECONFIG }}
+          ROLLOUT_TARGETS: ${{ secrets.RTK_DEV_ROLLOUT_TARGETS }}
+        run: |
+          set -euo pipefail
+          test -n "$ROLLOUT_KUBECONFIG"
+          test -n "$ROLLOUT_TARGETS"
+          umask 077
+          mkdir -p "$HOME/.config/rtk_cloud/dev/kube" "$HOME/.config/rtk_cloud/dev/deployment/ci-rollout"
+          chmod 700 "$HOME/.config/rtk_cloud" "$HOME/.config/rtk_cloud/dev" "$HOME/.config/rtk_cloud/dev/kube" "$HOME/.config/rtk_cloud/dev/deployment" "$HOME/.config/rtk_cloud/dev/deployment/ci-rollout"
+          printf '%s' "$ROLLOUT_KUBECONFIG" > "$HOME/.config/rtk_cloud/dev/kube/kubeconfig.yaml"
+          printf '%s' "$ROLLOUT_TARGETS" > "$HOME/.config/rtk_cloud/dev/deployment/ci-rollout/targets.json"
+      - name: Roll out selected dev branch
+        working-directory: workspace
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: time ./scripts/rollout-dev-ci.sh --execute --environment dev --repository "$GITHUB_REPOSITORY"
+      - name: Preserve rollout journal
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dev-ci-rollout-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ~/.config/rtk_cloud/dev/deployment/ci-rollout/journals/*.json
+          if-no-files-found: ignore

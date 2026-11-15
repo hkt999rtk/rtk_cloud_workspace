@@ -31,7 +31,7 @@ func environmentProviderImageConfigKey(role string) string {
 	return strings.TrimPrefix(role, "LKE_")
 }
 
-func loadEnvironmentCIImages(ctx context.Context, cfg deploymentConfig, run environmentReleaseCommand) (environmentRelease, error) {
+func loadEnvironmentCIImages(ctx context.Context, cfg deploymentConfig, run environmentReleaseCommand, operation ...string) (environmentRelease, error) {
 	providers := environmentRelease{Environment: cfg.Environment, Stack: cfg.Values["CLOUD_STACK_NAME"], Images: map[string]environmentReleaseImage{}}
 	values := appendMap(cfg.Values, cfg.AdapterResolved)
 	for _, key := range environmentProviderImageKeys {
@@ -63,6 +63,27 @@ func loadEnvironmentCIImages(ctx context.Context, cfg deploymentConfig, run envi
 	selection, err := readEnvironmentImageSelection(store)
 	if err != nil {
 		return environmentRelease{}, err
+	}
+	if len(operation) > 1 {
+		return environmentRelease{}, errors.New("one deployment operation is required")
+	}
+	if len(operation) == 1 && operation[0] == "upgrade" {
+		selection, err = readEnvironmentCIRolloutSelection(ctx, cfg, selection)
+		if err != nil {
+			return environmentRelease{}, err
+		}
+	}
+	if len(operation) == 1 && operation[0] == "create" && cfg.Environment == "dev" {
+		policy, policyErr := readCIBranchSelection(cfg)
+		if policyErr != nil {
+			return environmentRelease{}, policyErr
+		}
+		selection, err = resolveFreshCIBranchSelection(ctx, selection, policy, func(ctx context.Context, policy ciBranchSelection, repo, repository string) (environmentReleaseImage, error) {
+			return resolveCIRolloutImage(ctx, policy, repo, repository, run)
+		})
+		if err != nil {
+			return environmentRelease{}, err
+		}
 	}
 	selected, err := resolveEnvironmentCIImages(ctx, cfg, providers, run, selection)
 	if err != nil {
@@ -133,6 +154,10 @@ func verifyEnvironmentImageSources(ctx context.Context, cfg deploymentConfig, se
 		}
 	}
 	keys := make([]string, 0, len(selected.Images))
+	policy, err := environmentCIBranchPolicy(cfg)
+	if err != nil {
+		return err
+	}
 	for key := range selected.Images {
 		keys = append(keys, key)
 	}
@@ -140,6 +165,13 @@ func verifyEnvironmentImageSources(ctx context.Context, cfg deploymentConfig, se
 	seen := map[string]bool{}
 	for _, key := range keys {
 		image := selected.Images[key]
+		tracked, err := verifyCIRolloutImageProvenance(ctx, policy, key, image, run)
+		if err != nil {
+			return err
+		}
+		if tracked {
+			continue
+		}
 		if explicit, ok := selection.Images[key]; ok {
 			if deploymentplan.Digest(explicit) != deploymentplan.Digest(image) {
 				return errors.New("selected environment image changed")
@@ -168,6 +200,8 @@ func verifyEnvironmentImageSources(ctx context.Context, cfg deploymentConfig, se
 }
 
 type environmentReleaseCommand func(context.Context, string, ...string) ([]byte, error)
+
+var errEnvironmentPublicationConsumerMissing = errors.New("deployment.release.publication: exact consumer digest missing; republish the frozen source through formal CI")
 
 // Preserve only a static access class and, when applicable, the caller's
 // cancellation/deadline. Native stderr and credentials never become a cause.
@@ -488,7 +522,7 @@ func selectEnvironmentPublishedImage(raw []byte, repo string, id int64, attempt 
 	}
 	image := environmentReleaseImage{Reference: repository + "@" + digest, SourceRevision: revision}
 	if !immutableEnvironmentImage.MatchString(image.Reference) {
-		return image, errors.New("deployment.release.publication: exact consumer digest missing; republish the frozen source through formal CI")
+		return image, errEnvironmentPublicationConsumerMissing
 	}
 	if err := verifyPublicationJSON(raw, repo, id, attempt, image, backup); err != nil {
 		return image, err

@@ -255,7 +255,7 @@ func compileEnvironmentDeployment(ctx context.Context, cfg deploymentConfig, ope
 	ctx = newEnvironmentReleaseProofCapture(ctx)
 	environmentDeploymentProgress(ctx, "deployment.release.resolve")
 	run := environmentCIImageCommand(cfg)
-	release, err := loadEnvironmentCIImages(ctx, cfg, run)
+	release, err := loadEnvironmentCIImages(ctx, cfg, run, operation)
 	environmentDeploymentProgressDone(ctx, "deployment.release.resolve", err)
 	if err != nil {
 		return nil, environmentCompilationError(err, "deployment.release.resolve", "formal CI image selection could not be completed", "verify selected service revisions, CI publication and registry access, then repeat preflight")
@@ -631,7 +631,21 @@ func (c *compiledEnvironmentDeployment) FenceInventory(ctx context.Context, plan
 		return nil, environmentFenceFailure(nil, "deployment.inputs.release", "pinned CI image selection changed")
 	}
 	if c.SourceCommand != nil {
-		if err := verifyEnvironmentImageSources(ctx, fresh, c.Release, c.SourceCommand); err != nil {
+		var sourceErr error
+		if plan.Operation == "upgrade" {
+			selection, err := readEnvironmentImageSelection(c.Store)
+			if err == nil {
+				selection, err = readEnvironmentCIRolloutSelection(ctx, fresh, selection)
+			}
+			if err != nil {
+				sourceErr = err
+			} else {
+				sourceErr = verifyEnvironmentImageSources(ctx, fresh, c.Release, c.SourceCommand, selection)
+			}
+		} else {
+			sourceErr = verifyEnvironmentImageSources(ctx, fresh, c.Release, c.SourceCommand)
+		}
+		if err := sourceErr; err != nil {
 			return nil, environmentFenceFailure(err, "deployment.inputs.release-source", "selected immutable release source could not be verified")
 		}
 	}

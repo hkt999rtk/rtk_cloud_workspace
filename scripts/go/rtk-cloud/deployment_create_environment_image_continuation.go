@@ -15,6 +15,7 @@ import (
 
 type createVersionPublication struct {
 	Repository  string `json:"repository"`
+	Branch      string `json:"branch,omitempty"`
 	RunID       int64  `json:"run_id"`
 	Attempt     int    `json:"run_attempt"`
 	ManifestSHA string `json:"manifest_sha256"`
