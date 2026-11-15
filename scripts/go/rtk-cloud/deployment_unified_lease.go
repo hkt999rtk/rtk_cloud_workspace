@@ -192,9 +192,12 @@ func environmentExecutionLeaseBody(plan *deploymentplan.Plan, holder string) dep
 	return deploymentplan.Object{"apiVersion": "coordination.k8s.io/v1", "kind": "Lease", "metadata": map[string]any{"name": "rtk-deployment-execution", "namespace": plan.Stack + "-video-cloud", "labels": map[string]any{"rtk.realtek.com/stack": plan.Stack, "app.kubernetes.io/managed-by": "rtk-cloud"}, "annotations": map[string]any{"rtk.realtek.com/plan-sha256": plan.SHA256(), "rtk.realtek.com/environment": plan.Environment}}, "spec": map[string]any{"holderIdentity": holder, "acquireTime": time.Now().UTC().Truncate(time.Microsecond).Format("2006-01-02T15:04:05.000000Z")}}
 }
 
-func acquireEnvironmentExecutionLease(ctx context.Context, b environmentExecutionAPI, plan *deploymentplan.Plan) (deploymentplan.ExecutionLease, error) {
+func acquireEnvironmentExecutionLease(ctx context.Context, b environmentExecutionAPI, plan *deploymentplan.Plan, extraAnnotations ...map[string]string) (deploymentplan.ExecutionLease, error) {
 	if plan == nil || plan.Stack == "" || plan.Environment == "" {
 		return nil, errors.New("selected plan required for execution lease")
+	}
+	if len(extraAnnotations) > 1 {
+		return nil, errors.New("one execution lease annotation set is allowed")
 	}
 	namespace, name := plan.Stack+"-video-cloud", "rtk-deployment-execution"
 	id := "Lease/" + namespace + "/" + name
@@ -208,6 +211,18 @@ func acquireEnvironmentExecutionLease(ctx context.Context, b environmentExecutio
 	}
 	holder := plan.SHA256() + ":" + hex.EncodeToString(nonce)
 	body := environmentExecutionLeaseBody(plan, holder)
+	if len(extraAnnotations) == 1 {
+		annotations := deploymentplan.Map(deploymentplan.Map(body["metadata"])["annotations"])
+		for key, value := range extraAnnotations[0] {
+			if key != "rtk.realtek.com/ci-repository" && key != "rtk.realtek.com/ci-run-id" && key != "rtk.realtek.com/ci-run-attempt" {
+				return nil, errors.New("unsupported execution lease annotation")
+			}
+			if value == "" {
+				return nil, errors.New("empty execution lease annotation")
+			}
+			annotations[key] = value
+		}
+	}
 	admitted, err := b.Write(ctx, "create", body, true)
 	if err != nil || !deploymentplan.Matches(deploymentplan.Projection(body), deploymentplan.Projection(admitted)) {
 		return nil, errors.New("cluster execution lease admission failed or changed its owner")

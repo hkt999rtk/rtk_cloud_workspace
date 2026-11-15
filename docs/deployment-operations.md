@@ -42,6 +42,36 @@ and complete provision entries are retired. The narrower image-only and current
 health checks do not replace complete qualification. No production activation
 qualification has been completed by these documentation/code changes.
 
+## Dev CI fast rollout
+
+`cloud_env/dev/ci-rollout.env` selects a branch per RTK service repository;
+its initial selection is each repository's `main`. After that source revision
+has both a successful CI run and an image publication, run
+`scripts/rollout-dev-ci.sh --environment dev --repository OWNER/REPO` to start
+and follow the manual GitHub job. CI completion never triggers deployment.
+The job resolves the exact published digest, updates only the selected existing
+Deployments and checks their readiness. It does not run complete-environment
+preflight or change environment configuration, credentials, volumes or PKI.
+The resulting digest is recorded in the dev environment's per-repository state.
+This fast path is for compatible image changes; Account Manager or Billing SQL
+migration changes stop with instructions to use the complete deployment flow.
+
+An operator runs `scripts/prepare-dev-ci-rollout.sh --environment dev` to review
+the existing dev target inventory, followed by `--apply` to establish the
+restricted per-repository identities and GitHub Actions environment secrets.
+Rerun preparation when the set of existing target Deployments changes. The
+identity can patch named Deployments and its own state ConfigMap, and acquire
+the shared execution Lease. Kubernetes cannot restrict Lease creation by name;
+read and delete are restricted to that Lease. RBAC limits the resources, not
+individual patch fields; the reviewed rollout code issues image-only guarded patches. It has no
+direct access to Secrets, PVCs or Pod creation.
+
+The next manual invocation can recover a completed interrupted attempt using
+its exact run, lease owner and recorded previous images. A live or unrelated owner is not displaced.
+If rollout or recovery fails, inspect the private journal and CI job logs.
+GitHub job timings and the rollout command's elapsed time show actual duration;
+image build and CI duration are separate from the rollout duration.
+
 ## Current script flow
 
 This is the current implementation for a complete **existing-environment

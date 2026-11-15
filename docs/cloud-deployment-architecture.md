@@ -1151,6 +1151,27 @@ An adapter maps that intent to a provider. The LKE adapter owns Linode regions a
 
 Adapter resolution is deterministic. LKE maps the logical location to an LKE region, filters its instance catalog by minimum vCPU and memory, then selects the candidate with the least memory surplus, least vCPU surplus, and finally lexicographically smallest type name. The generic plan contains only logical intent; provider region and Product are adapter-private resolved evidence.
 
+## Dev CI fast rollout architecture
+
+The maintained dev branch selection is `cloud_env/dev/ci-rollout.env`. A
+repository's successful source CI and published image manifest resolve the
+immutable digest for that branch. An operator starts the rollout script; CI
+completion never triggers deployment. The manual GitHub workflow uses a restricted
+repository-specific Kubernetes identity to patch existing named workloads and
+write the resulting digest to its dev ConfigMap; complete upgrades read the
+recorded state, while new creates resolve their own generation from the
+configured branch. The fast path does not recreate OpenBao, PKI, storage or
+other services. Details and schema-change boundaries are in the
+[operations guide](deployment-operations.md#dev-ci-fast-rollout).
+
+The selected environment's private store contains setup bindings, limited
+kubeconfigs, target lists, provisioning reports and rollout journals. CI jobs
+upload their journals as workflow artifacts; the ConfigMap holds completed and
+pending image state without credentials. A pending state is recovered against
+the exact completed CI run and original Lease identity before further writes.
+See [deployment secrets and state governance](deployment-secrets-governance.md#configuration-versus-deployment-generated-data)
+for producer and consumer paths.
+
 ## Resolution and lifecycle
 
 The complete deployment qualification contract is

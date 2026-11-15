@@ -218,6 +218,10 @@ func verifyEnvironmentReleaseWithCommand(ctx context.Context, cfg deploymentConf
 			return err
 		}
 	}
+	policy, err := environmentCIBranchPolicy(cfg)
+	if err != nil {
+		return err
+	}
 	keys := make([]string, 0, len(release.Images))
 	for key := range release.Images {
 		keys = append(keys, key)
@@ -235,6 +239,13 @@ func verifyEnvironmentReleaseWithCommand(ctx context.Context, cfg deploymentConf
 				return environmentReleaseFailure(err, "deployment.release.pull", key, "selected immutable image is unavailable for linux/amd64", environmentReleasePullNext)
 			}
 			pulled[image.Reference] = true
+		}
+		tracked, err := verifyCIRolloutImageProvenance(ctx, policy, key, image, imageRun)
+		if err != nil {
+			return environmentReleaseFailure(err, "deployment.release.source", key, "selected CI branch and completed image state do not match", "verify the configured environment branch and its completed rollout")
+		}
+		if tracked {
+			continue
 		}
 		if explicit, ok := selection.Images[key]; ok {
 			if deploymentplan.Digest(explicit) != deploymentplan.Digest(image) {
