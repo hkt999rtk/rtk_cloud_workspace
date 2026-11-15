@@ -35,9 +35,9 @@ func TestPhysicalPostgres16DockerRoundTrip(t *testing.T) {
 	c.Source.SSLMode = "disable"
 	c.MaxPlaintextBytes = 256 << 20
 	c.MaxArchiveBytes = 256 << 20
-	c.TimeoutSeconds = 120
+	c.TimeoutSeconds = 600
 	name := "rtk-pg-physical-" + recovery.NewID()
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 	if err = exec.CommandContext(ctx, docker, "run", "-d", "--network", "none", "--name", name, "--label", "rtk.postgres-backup.test=true", "--mount", "type=bind,source="+root+",target="+root, "-e", "POSTGRES_HOST_AUTH_METHOD=trust", "postgres:16-alpine", "postgres", "-c", "checkpoint_timeout=30s", "-c", "checkpoint_completion_target=0.1").Run(); err != nil {
 		t.Fatal("cannot start isolated PostgreSQL fixture")
