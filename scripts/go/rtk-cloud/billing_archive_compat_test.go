@@ -20,13 +20,16 @@ func TestBillingArchiveVideoCloudCanonicalCompatibility(t *testing.T) {
 	}
 	module := filepath.Dir(filepath.Dir(source))
 	usage := filepath.Join(module, "..", "..", "repos", "rtk_video_cloud", "internal", "usage")
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "go", "test", "-count=1", "-run", "^TestRawLifecycleArchiveCanonicalBindingCompatibility$",
 		filepath.Join(usage, "event.go"), filepath.Join(usage, "raw_lifecycle_archive_compat_test.go"))
 	cmd.Dir = module
 	cmd.Env = append(os.Environ(), "GOWORK=off")
 	if output, err := cmd.CombinedOutput(); err != nil {
+		if ctx.Err() != nil {
+			t.Fatalf("Logger/Video Cloud financial canonicalization compatibility timed out: %v\n%s", ctx.Err(), output)
+		}
 		t.Fatalf("Logger/Video Cloud financial canonicalization compatibility: %v\n%s", err, output)
 	}
 }

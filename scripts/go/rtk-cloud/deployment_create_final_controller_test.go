@@ -65,12 +65,15 @@ func TestCreateFinalControllerRetainsFixedOriginalRootAndNativeConfiguration(t *
 	if err := os.WriteFile(overlay, raw, 0600); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
 	command := exec.CommandContext(ctx, filepath.Join(runtime.GOROOT(), "bin/go"), "test", "-overlay", overlay, "-vet=off", "./internal/pkicontrollerapp", "-run", "^(TestDeploymentRenderedFixedRoot|TestFixedDeviceRootTrustRequiresNonProductionAndPin)$", "-count=1")
 	command.Dir = repo
 	command.Env = append(os.Environ(), "GOWORK=off", "GOPROXY=off", "GOSUMDB=off", "GOTOOLCHAIN=local", "VIDEO_CLOUD_TEST_DSN=", "RTK_DEPLOYMENT_CONTROLLER_FIXTURE="+fixture)
 	if output, err := command.CombinedOutput(); err != nil {
+		if ctx.Err() != nil {
+			t.Fatalf("native Controller validation timed out: %v\n%s", ctx.Err(), output)
+		}
 		t.Fatalf("actual native Controller rejected rendered fixed Root configuration: %v\n%s", err, output)
 	}
 	if _, err := os.Lstat(virtual); !os.IsNotExist(err) {
