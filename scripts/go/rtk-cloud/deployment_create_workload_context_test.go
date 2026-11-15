@@ -134,7 +134,7 @@ func TestDeploymentWorkloadContextFixture(t *testing.T) {
   if !has || !actual.Equal(deadline) || ctx.Value(parentMarker{})!="original-parent" {t.Fatal("workload changed original parent deadline or authority")}
   called=true;return nil
  }
- err:=executeEnvironmentCreateWithRuntime(parent,deploymentConfig{},&environmentCreatePlan{},nil,secretStore{},nil,e,nil,runtime,apply)
+ err:=executeEnvironmentCreateWithRuntime(parent,deploymentConfig{},&environmentCreatePlan{},nil,secretStore{},nil,e,io.Discard,runtime,apply)
  if !called || !errors.Is(err,testWorkloadReachedExternal) {t.Fatal("real create workflow did not reach isolated post-workload boundary",err)}
 }
 func TestDeploymentWorkloadSkipAcceptedFixture(t *testing.T){
