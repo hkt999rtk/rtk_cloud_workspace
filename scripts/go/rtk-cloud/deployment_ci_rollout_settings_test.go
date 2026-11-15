@@ -23,6 +23,7 @@ func TestCIRolloutReadsOnlyRelevantEnvironmentSettings(t *testing.T) {
 }
 
 func TestCIRolloutCommandRejectsUnselectedRepositoryBeforeAccessingCluster(t *testing.T) {
+	t.Setenv("GITHUB_REPOSITORY", "")
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "cloud_env/dev/environment.env"), "CLOUD_STACK_NAME=video-cloud-dev\n")
 	writeTestFile(t, filepath.Join(root, "cloud_env/dev/deployment.env"), "DEPLOYMENT_ARCHITECTURE=kubernetes\n")
