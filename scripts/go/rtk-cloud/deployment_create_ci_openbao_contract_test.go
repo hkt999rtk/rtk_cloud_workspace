@@ -813,10 +813,21 @@ func TestCIOpenBaoPublicCAHandoffPreservesBothAuthoritiesAndNativeOwner(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
+	leaseRelease := "delete --raw=/apis/coordination.k8s.io/v1/namespaces/" + ns + "/leases/rtk-deployment-execution -f -"
+	releases := 0
 	for _, line := range strings.Split(string(rawCalls), "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "delete ") || strings.Contains(line, "/sys/") {
+		line = strings.TrimSpace(line)
+		if line == leaseRelease {
+			// The native simulator also verifies the lease UID/resourceVersion.
+			releases++
+			continue
+		}
+		if strings.HasPrefix(line, "delete ") || strings.Contains(line, "/sys/") {
 			t.Fatal("public CA handoff attempted a private authority operation")
 		}
+	}
+	if releases != 1 {
+		t.Fatal("handoff did not release exactly its original execution lease")
 	}
 }
 
