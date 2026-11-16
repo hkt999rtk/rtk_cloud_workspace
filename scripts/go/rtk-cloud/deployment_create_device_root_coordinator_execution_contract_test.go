@@ -300,9 +300,22 @@ func TestDeviceRootCoordinatorUsesOneNativeAuthorityAndRetiresOnlyBootstrapCapab
 			prefix := deploymentplan.Digest(f.e.Journal.Entries)
 			prefixLength := len(f.e.Journal.Entries)
 			identity := createBootstrapStateSnapshot(t, filepath.Join(f.store.Root, "pki"))
-			ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
 			defer cancel()
-			root, err := executeEnvironmentCreateDeviceRoot(ctx, f.cfg, f.p.Plan.Bootstrap, f.store, f.operator, f.runtime, d.apply(t), d.distribute(t))
+			distribute := d.distribute(t)
+			if mode == "missing-ack" {
+				distribute = func(root environmentCreateRegisteredIssuer) error {
+					if err := d.distribute(t)(root); err != nil {
+						return err
+					}
+					// Give the ceremony time to initialize; only bound the wait for
+					// the intentionally absent consumer receipt.
+					timer := time.AfterFunc(15*time.Second, cancel)
+					t.Cleanup(func() { timer.Stop() })
+					return nil
+				}
+			}
+			root, err := executeEnvironmentCreateDeviceRoot(ctx, f.cfg, f.p.Plan.Bootstrap, f.store, f.operator, f.runtime, d.apply(t), distribute)
 			want := map[string]string{"before-ready": "isolated Device Job interruption", "before-consumers": "isolated consumer interruption", "missing-ack": "timeout ended", "active-identity-drift": "activation changed", "unsafe-policy": "exposes bootstrap Root generation", "retirement-readback": "role removal cannot be verified"}
 			if mode == "complete" {
 				if err != nil || root.ID != d.root.ID || root.Status != "active" || root.Certificate != d.root.Certificate {

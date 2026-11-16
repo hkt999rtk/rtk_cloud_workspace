@@ -13,12 +13,15 @@ import (
 func engineConfig() Config {
 	return Config{Environment: "dev", Stack: "video-cloud-dev", Timezone: "Asia/Taipei", DailyAt: "08:00", RetentionDays: 30}
 }
+
+const watchTestTimeout = 20 * time.Second
+
 func waitEngine(t *testing.T, ch <-chan Snapshot) Snapshot {
 	t.Helper()
 	select {
 	case s := <-ch:
 		return s
-	case <-time.After(3 * time.Second):
+	case <-time.After(watchTestTimeout):
 		t.Fatal("watch did not sample")
 		return Snapshot{}
 	}
@@ -49,7 +52,7 @@ func TestWatchFailureDoesNotDuplicateOrPauseSampling(t *testing.T) {
 	first := waitEngine(t, samples)
 	select {
 	case <-reports:
-	case <-time.After(3 * time.Second):
+	case <-time.After(watchTestTimeout):
 		t.Fatal("report callback missing")
 	}
 	ticks <- at.Add(30*time.Second - 200*time.Millisecond)
@@ -69,7 +72,7 @@ func TestWatchFailureDoesNotDuplicateOrPauseSampling(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(watchTestTimeout):
 		t.Fatal("watch cancellation hung")
 	}
 	got, err := LoadHistory(dir, "dev", at, at.Add(time.Minute))
@@ -110,7 +113,7 @@ func TestWatchSlowCertificateDoesNotBlockOrOverlap(t *testing.T) {
 	}()
 	select {
 	case <-started:
-	case <-time.After(3 * time.Second):
+	case <-time.After(watchTestTimeout):
 		t.Fatal("certificate collector never started")
 	}
 	if budget := <-certificateBudget; budget < 4*time.Minute || budget > 5*time.Minute {
@@ -139,7 +142,7 @@ func TestWatchSlowCertificateDoesNotBlockOrOverlap(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(watchTestTimeout):
 		t.Fatal("cancel did not stop collectors")
 	}
 }

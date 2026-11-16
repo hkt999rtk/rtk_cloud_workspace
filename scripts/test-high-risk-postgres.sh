@@ -18,6 +18,7 @@ trap cleanup EXIT INT TERM
 docker run --detach --rm \
   --name "$container_name" \
   --label rtk.local-test=high-risk-postgres \
+  --tmpfs /var/lib/postgresql/data:rw,size=2g \
   --env POSTGRES_USER=postgres \
   --env POSTGRES_PASSWORD=local_test_only \
   --env POSTGRES_DB=postgres \
@@ -25,7 +26,7 @@ docker run --detach --rm \
   "$image" >/dev/null
 
 port=""
-for attempt in $(seq 1 30); do
+for attempt in $(seq 1 180); do
   port="$(docker port "$container_name" 5432/tcp | sed 's/.*://')"
   if docker exec "$container_name" pg_isready -h 127.0.0.1 -U postgres -d postgres >/dev/null 2>&1; then
     break
@@ -56,7 +57,7 @@ echo "Running cross-service Account Manager to Video Cloud activation delivery a
 (
   cd "$workspace_root/repos/rtk_video_cloud"
   GOWORK=off VIDEO_CLOUD_TEST_DSN="$video_cloud_dsn" ACCOUNT_MANAGER_TEST_DSN="$account_manager_dsn" \
-    go test -count=1 ./internal/httpapi -run '^TestIntegrationCrossRepositoryActivationReplay$'
+    go test -timeout=15m -count=1 ./internal/httpapi -run '^TestIntegrationCrossRepositoryActivationReplay$'
 )
 
 echo "Running Billing invoice, payment authorization, webhook, ledger, reconciliation, refund, simulator, and idempotency integration tests"

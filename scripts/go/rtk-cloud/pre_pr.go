@@ -400,7 +400,7 @@ func startVideoCloudPRFixtures(workspace string) (func(), error) {
 	}
 	postgresReady := false
 	for attempt := 0; attempt < 30; attempt++ {
-		if ready("", nil, "docker", "exec", postgresName, "pg_isready", "-U", "video_cloud", "-d", "video_cloud_test") {
+		if ready("", nil, "docker", "exec", postgresName, "pg_isready", "-h", "127.0.0.1", "-U", "video_cloud", "-d", "video_cloud_test") {
 			postgresReady = true
 			break
 		}

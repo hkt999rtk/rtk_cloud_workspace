@@ -234,12 +234,13 @@ jobs:
           }
           trap cleanup_qualification_postgres EXIT
           docker run --detach --name "$qualification_postgres" \
+            --tmpfs /var/lib/postgresql/data:rw,size=2g \
             --env POSTGRES_PASSWORD=postgres \
             --publish 127.0.0.1::5432 \
             postgres:16-alpine >/dev/null
           qualification_postgres_ready=false
-          for attempt in {1..30}; do
-            if docker exec "$qualification_postgres" pg_isready -U postgres >/dev/null 2>&1; then
+          for attempt in {1..180}; do
+            if docker exec "$qualification_postgres" pg_isready -h 127.0.0.1 -U postgres >/dev/null 2>&1; then
               qualification_postgres_ready=true
               break
             fi

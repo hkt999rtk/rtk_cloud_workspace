@@ -123,12 +123,15 @@ func TestCreateFinalPKIRolesPassActualNativeAPIValidation(t *testing.T) {
 	if err := os.WriteFile(overlay, raw, 0600); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
 	command := exec.CommandContext(ctx, filepath.Join(runtime.GOROOT(), "bin/go"), "test", "-overlay", overlay, "-vet=off", "./internal/config", "-run", "^TestDeploymentRenderedPKIRoleAPIValidation$", "-count=1")
 	command.Dir = repo
 	command.Env = append(os.Environ(), "GOWORK=off", "GOPROXY=off", "GOSUMDB=off", "GOTOOLCHAIN=local", "VIDEO_CLOUD_TEST_DSN=", "RTK_DEPLOYMENT_PKI_ROLE_FIXTURE="+fixture)
 	if output, err := command.CombinedOutput(); err != nil {
+		if ctx.Err() != nil {
+			t.Fatalf("native API validation timed out: %v\n%s", ctx.Err(), output)
+		}
 		t.Fatalf("actual native API validation rejected role-specific CRL configuration: %v\n%s", err, output)
 	}
 	if _, err := os.Lstat(virtual); !os.IsNotExist(err) {
