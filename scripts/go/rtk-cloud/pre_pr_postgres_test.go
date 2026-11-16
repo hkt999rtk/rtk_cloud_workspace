@@ -17,6 +17,9 @@ func TestPostgresPRFixtureNeverUsesAmbientDatabaseAndRestoresAfterCleanup(t *tes
 				calls := []string{}
 				prePRRunFixtureCommand = func(_ string, _ []string, name string, args ...string) ([]byte, error) {
 					calls = append(calls, name+" "+strings.Join(args, " "))
+					if args[0] == "exec" && !strings.Contains(strings.Join(args, " "), "pg_isready -h 127.0.0.1") {
+						t.Fatal("readiness must check the final PostgreSQL TCP listener")
+					}
 					if args[0] == "run" && mode == "start-failed" {
 						return nil, errors.New("failed")
 					}

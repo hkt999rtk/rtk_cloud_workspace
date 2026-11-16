@@ -272,6 +272,9 @@ func TestStartVideoCloudPRFixturesUsesIsolatedDependenciesAndRestoresEnvironment
 	calls := []call{}
 	prePRRunFixtureCommand = func(dir string, env []string, name string, args ...string) ([]byte, error) {
 		calls = append(calls, call{dir: dir, name: name, args: append([]string(nil), args...), env: append([]string(nil), env...)})
+		if name == "docker" && len(args) > 2 && args[0] == "exec" && !strings.Contains(strings.Join(args, " "), "pg_isready -h 127.0.0.1") {
+			t.Fatal("readiness must check the final PostgreSQL TCP listener")
+		}
 		if name == "docker" && len(args) >= 3 && args[0] == "port" {
 			switch args[2] {
 			case "5432/tcp":

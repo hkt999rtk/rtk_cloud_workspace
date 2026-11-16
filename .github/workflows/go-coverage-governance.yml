@@ -108,13 +108,13 @@ jobs:
           set -euo pipefail
           pg="rtk-vc-unit-pg-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           bao="rtk-vc-unit-bao-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          docker run -d --rm --name "$pg" -e POSTGRES_USER=integration -e POSTGRES_PASSWORD=integration_password -e POSTGRES_DB=integration -p 127.0.0.1::5432 postgres:16
+          docker run -d --rm --name "$pg" --tmpfs /var/lib/postgresql/data:rw,size=2g -e POSTGRES_USER=integration -e POSTGRES_PASSWORD=integration_password -e POSTGRES_DB=integration -p 127.0.0.1::5432 postgres:16
           docker run -d --rm --name "$bao" -p 127.0.0.1::8200 quay.io/openbao/openbao@sha256:6150c4a6b62067db6141c8da7a6a6b5763f4f47c315343d0c848b40fecdfd452 server -dev -dev-root-token-id=rtk-local-fixture -dev-listen-address=0.0.0.0:8200
           pg_port="$(docker port "$pg" 5432/tcp | awk -F: '{print $NF}')"
           bao_port="$(docker port "$bao" 8200/tcp | awk -F: '{print $NF}')"
           ready=0
-          for attempt in {1..60}; do
-            if docker exec "$pg" pg_isready -U integration -d integration >/dev/null 2>&1; then
+          for attempt in {1..180}; do
+            if docker exec "$pg" pg_isready -h 127.0.0.1 -U integration -d integration >/dev/null 2>&1; then
               ready=$((ready + 1))
             else
               ready=0

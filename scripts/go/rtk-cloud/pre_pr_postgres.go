@@ -27,7 +27,7 @@ func startPostgresPRFixture(module string) (func(), error) {
 	}
 	ready := false
 	for attempt := 0; attempt < 30; attempt++ {
-		if _, err := prePRRunFixtureCommand("", nil, "docker", "exec", name, "pg_isready", "-U", "pr_test", "-d", "pr_test"); err == nil {
+		if _, err := prePRRunFixtureCommand("", nil, "docker", "exec", name, "pg_isready", "-h", "127.0.0.1", "-U", "pr_test", "-d", "pr_test"); err == nil {
 			ready = true
 			break
 		}
