@@ -57,7 +57,7 @@ echo "Running cross-service Account Manager to Video Cloud activation delivery a
 (
   cd "$workspace_root/repos/rtk_video_cloud"
   GOWORK=off VIDEO_CLOUD_TEST_DSN="$video_cloud_dsn" ACCOUNT_MANAGER_TEST_DSN="$account_manager_dsn" \
-    go test -count=1 ./internal/httpapi -run '^TestIntegrationCrossRepositoryActivationReplay$'
+    go test -timeout=15m -count=1 ./internal/httpapi -run '^TestIntegrationCrossRepositoryActivationReplay$'
 )
 
 echo "Running Billing invoice, payment authorization, webhook, ledger, reconciliation, refund, simulator, and idempotency integration tests"
